@@ -130,19 +130,16 @@ describe("v2 thread shell lists", () => {
     const dispose = registry.mount(inputs);
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
-    // A follow-up queued behind the blocked run leaves the question live.
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
       threads: [root, { ...child, status: "queued" as const }],
     });
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
-    // An async question stays pending after the run that asked it completes.
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
       threads: [root, { ...child, status: "completed" as const, activityRunStatus: null }],
     });
     expect(registry.get(inputs)).toEqual([]);
-    // Older servers omit the activity run, so the latest run's status decides.
     const { activityRunStatus: _omitted, ...legacyChild } = child;
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
@@ -172,7 +169,6 @@ describe("v2 thread shell lists", () => {
       id: ThreadId.make("review-helper"),
       lineage: { ...child.lineage, parentThreadId: child.id },
     };
-    // The parent's turn ended; the delegated review keeps it in Working.
     const root = {
       ...v2ThreadShell,
       latestRunId: RunId.make("root-run"),

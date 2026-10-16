@@ -78,7 +78,6 @@ const sourceControlHost = ServerSourceControlHost.layer.pipe(
   Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
   Layer.provide(GitVcsDriver.layer),
   Layer.provide(ServerSettings.layerTest()),
-  // A scratch state directory, so nothing here touches a real T3 home.
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-measure-pr-preview-" })),
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),
@@ -93,7 +92,6 @@ const services = GitHubPullRequestApi.layer.pipe(
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 for (const mode of ["detail", "preview"] as const) {
-  // Start each side cold, then retain the caches shared across PRs in one session.
   const rows = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {

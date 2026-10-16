@@ -33,18 +33,9 @@ import { startThreadTurn } from "./commands.ts";
 const ROW_COUNT = 600;
 const OUTPUT_BYTES_PER_ROW = 8_192;
 
-// Recorded before server-resolved dispatch and raw tool-output wire omission at
-// 91b193653ec. The old path read this entire response once for every routine
-// implicit-auto message send; keep the raw fixture to preserve that baseline.
 const HISTORICAL_FULL_PROJECTION_APPLICATION_BYTES = 10_371_419;
-// Projection response + dispatch command + dispatch receipt, excluding RPC
-// envelope bytes. The omitted projection request only makes the old path larger.
 const HISTORICAL_FORMER_SEND_APPLICATION_BYTES = 10_371_678;
-// Corrected measurement: contract-encoded payloads in Effect RPC Request/Exit
-// envelopes before WebSocket framing and compression. Trace values use the
-// production 32/16 hex-character widths so the byte cost is representative.
 const FORMER_SEND_RPC_JSON_BYTES = 10_372_184;
-// The corrected first server-resolved implementation measured 522 bytes.
 const MAX_CURRENT_SEND_RPC_JSON_BYTES = 1_024;
 
 const RPC_TRACE_CONTEXT = {

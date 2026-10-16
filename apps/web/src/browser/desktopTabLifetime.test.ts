@@ -25,7 +25,6 @@ import { acquireDesktopTab } from "./desktopTabLifetime";
 import * as browserDefaults from "./browserDefaults";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 
-/** Tests load default settings unless they select other preferences. */
 const DEFAULT_TAB_STATE = {
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   colorScheme: DEFAULT_PREVIEW_APPEARANCE,
@@ -86,9 +85,6 @@ describe("desktopTabLifetime", () => {
     const first = acquireDesktopTab("tab_readiness");
     const second = acquireDesktopTab("tab_readiness");
 
-    // Both leases share one creation, and it is still in flight: creation now
-    // waits for client settings to hydrate so the guest is born at the user's
-    // zoom and appearance rather than painting at the defaults first.
     expect(first.ready).toBe(second.ready);
 
     let ready = false;

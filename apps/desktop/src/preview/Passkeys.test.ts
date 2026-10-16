@@ -66,7 +66,6 @@ const makeGuest = (origin = "https://accounts.example.com") => {
 
 const bridgeLayer = layerFor({ t3codeWebAuthn: { browserPasskeys: true } });
 
-/** CBOR `{ fmt: "packed", attStmt: { alg: -7, sig }, authData }`, as authenticators encode it. */
 const attestationObject = (authData: ReadonlyArray<number>) => {
   const text = (value: string) => [0x60 + value.length, ...Buffer.from(value)];
   const bytes = (value: ReadonlyArray<number>) => [0x58, value.length, ...value];
@@ -93,7 +92,6 @@ describe("PreviewPasskeys", () => {
       getNativeWindowHandle: () => Buffer.from([1]),
     });
   });
-  // Restored here so a failing fake-timer test cannot leak fake timers into the next one.
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -126,7 +124,6 @@ describe("PreviewPasskeys", () => {
       yield* call(PASSKEY_GET_CHANNEL, { challenge: new Uint8Array([1]) });
       assert.strictEqual(webauthn.getCredential.mock.calls[1]?.[0].rpId, "accounts.example.com");
 
-      // Only the main frame runs the preload; anything else is not the page.
       const forged = yield* call(PASSKEY_CREATE_CHANNEL, publicKey, {
         origin: "https://evil.example",
       });
@@ -182,7 +179,6 @@ describe("PreviewPasskeys", () => {
       assert.deepStrictEqual(unsupported, { success: false, error: "NotSupportedError" });
       assert.strictEqual(webauthn.createCredential.mock.calls.length, 1);
 
-      // A malformed algorithm list is the page's error, not a cue to pick ES256.
       const malformed = yield* call(PASSKEY_CREATE_CHANNEL, {
         ...publicKey,
         pubKeyCredParams: { type: "public-key", alg: -7 },
@@ -190,7 +186,6 @@ describe("PreviewPasskeys", () => {
       assert.deepStrictEqual(malformed, { success: false, error: "TypeError" });
       assert.strictEqual(webauthn.createCredential.mock.calls.length, 1);
 
-      // Without authenticator data the site cannot verify the passkey.
       webauthn.createCredential.mockResolvedValueOnce({
         success: true,
         data: { credentialId: "AQ", attestationObject: Buffer.from([0x00]).toString("base64url") },
@@ -231,7 +226,6 @@ describe("PreviewPasskeys", () => {
       webauthn.getCredential.mockResolvedValueOnce(assertion("AQ"));
       assert.deepInclude(yield* call(PASSKEY_GET_CHANNEL, publicKey), { success: true });
 
-      // With no allow list, any of the site's credentials will do.
       webauthn.getCredential.mockResolvedValueOnce(assertion("Ag"));
       const discoverable = yield* call(PASSKEY_GET_CHANNEL, {
         challenge: new Uint8Array([1]),
@@ -268,7 +262,6 @@ describe("PreviewPasskeys", () => {
       yield* Effect.promise(() => new Promise((resolve) => setImmediate(resolve)));
       assert.deepStrictEqual(yield* page.call(PASSKEY_GET_CHANNEL, publicKey), notAllowed);
 
-      // The page navigated while the sheet was up; its credential goes nowhere.
       page.mainFrame.origin = "https://other.example";
       finish({ success: true, data: { credentialId: "AQ" } });
       assert.deepStrictEqual(yield* Fiber.join(first), notAllowed);

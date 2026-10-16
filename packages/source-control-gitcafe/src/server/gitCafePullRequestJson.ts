@@ -1,9 +1,3 @@
-/**
- * GitCafe's REST bodies, and their conversion into the neutral `Provider*` shapes. Every
- * conversion takes the repository's host, so a staging repository's links stay on staging.
- *
- * @module source-control-gitcafe/server/gitCafePullRequestJson
- */
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -81,7 +75,6 @@ export const GitCafePullDetail = Schema.Struct({
   closedAt: Schema.NullOr(IsoDateTime),
   mergedAt: Schema.NullOr(IsoDateTime),
   sourceRepo: Schema.NullOr(Schema.Struct({ owner: Schema.String, name: Schema.String })),
-  /** The base GitCafe last compared the pull request against, which a provider merge fences on. */
   observedBaseOid: Schema.optional(Schema.NullOr(Schema.String)),
   mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
   lockedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -107,7 +100,6 @@ const CommentCapabilities = Schema.Struct({
 const GitCafeComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   threadId: TrimmedNonEmptyString,
-  /** What a resolution or rewrite fences on; absent from older answers. */
   version: Schema.optional(NonNegativeInt),
   author: Actor,
   body: Schema.NullOr(Schema.String),
@@ -172,7 +164,6 @@ export const GitCafeReactions = Schema.Struct({
 const GitCafeStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
-  /** What a land or restack fences on. */
   revision: PositiveInt,
   landingBase: Schema.String,
   members: Schema.Array(
@@ -262,7 +253,6 @@ function toActor(actor: Actor, host: string): PullRequestActor | null {
   };
 }
 
-/** The reviewers GitCafe has asked, as the detail's reviewer list shows them. */
 export function toReviewers(
   pull: Pick<GitCafePull, "reviewers">,
   host: string,
@@ -273,7 +263,6 @@ export function toReviewers(
   });
 }
 
-/** A linked GitHub reviewer answers to both logins, so either one finds the review request. */
 function reviewerLogins(actor: Actor, host: string): ReadonlyArray<string> {
   const reviewer = toActor(actor, host);
   if (reviewer === null) return [];
@@ -307,14 +296,11 @@ export function toChangeRequest(
   };
 }
 
-/** What GitCafe's own capabilities let this viewer do with the pull request. */
 export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewerPermissions {
   const { comment, edit, review, merge, moderate } = detail.capabilities;
-  // A locked conversation keeps its composer for moderators only.
   const open = comment && (detail.lockedAt == null || moderate);
   return {
     actions: [
-      // A merged pull request is settled; a closed one can only be reopened.
       ...(edit && detail.state === "open"
         ? ([detail.draft ? "ready" : "draft", "close"] as const)
         : edit && detail.state === "closed"
@@ -324,7 +310,6 @@ export function toViewerPermissions(detail: GitCafePullDetail): PullRequestViewe
     ],
     stackRebase: merge,
     comment: open,
-    // Each thread's root narrows this further with its own `canResolve`.
     resolve: open,
     verdicts: review ? ["approve", "request-changes", "comment"] : [],
     requestReviewers: false,
@@ -345,7 +330,6 @@ const REACTIONS: Readonly<Record<string, PullRequestReactionContent>> = {
   "👀": "eyes",
 };
 
-/** The emoji GitCafe takes for one of the shared reactions. */
 export const REACTION_EMOJI: Readonly<Record<PullRequestReactionContent, string>> = {
   "thumbs-up": "👍",
   "thumbs-down": "👎",
@@ -357,7 +341,6 @@ export const REACTION_EMOJI: Readonly<Record<PullRequestReactionContent, string>
   eyes: "👀",
 };
 
-/** The shared reaction an emoji stands for; custom and unlisted ones stand for none. */
 export function reactionContent(emoji: string): PullRequestReactionContent | undefined {
   return REACTIONS[emoji.replaceAll("\uFE0F", "")];
 }
@@ -390,7 +373,6 @@ const REVIEW_STATES = {
   comment: "commented",
 } as const;
 
-/** GitCafe persists a thread's identity apart from its line, so threads group by `threadId`. */
 export function toActivity(input: {
   readonly comments: typeof GitCafeComments.Type;
   readonly reviews: typeof GitCafeReviews.Type;
@@ -410,7 +392,6 @@ export function toActivity(input: {
     ...(comment.capabilities === undefined ? {} : { canEdit: comment.capabilities.edit }),
     ...(reactions === undefined ? {} : { reactions: reactions.byComment.get(comment.id) ?? [] }),
   });
-  // Stable, so remarks written in the same instant keep GitCafe's own order.
   const ordered = input.comments.items.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
   const groups = new Map<string, Array<GitCafeComment>>();
   for (const comment of ordered) {
@@ -492,7 +473,6 @@ export function toStack(stack: GitCafeStack, target: RepositoryOnHost): Provider
   };
 }
 
-/** Converts GitCafe's structured hunks into a unified patch, keeping omitted files' counts. */
 export function toDiff(diff: typeof GitCafeDiff.Type): ProviderDiffSlice {
   const chunks: Array<string> = [];
   const omittedFileStats: Array<{ path: string; additions: number; deletions: number }> = [];

@@ -184,10 +184,6 @@ function AgentElapsed(props: {
   );
 }
 
-/**
- * Elapsed time for one agent. Only live work ticks, inside AgentElapsed,
- * so the timer never repaints the metadata or a settled sheet.
- */
 function useSubagentElapsed(
   subagent: Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">,
   tickSeconds: boolean,

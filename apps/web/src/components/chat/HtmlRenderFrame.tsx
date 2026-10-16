@@ -21,15 +21,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { observeResize } from "~/lib/observeResize";
 
-// A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
-/**
- * An agent's HTML render inline in the thread: the page itself on the thread's
- * own background, at the server's measured height for this width until the
- * page reports its own. Loading and failure hold the same box so nothing below
- * it moves.
- */
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
@@ -37,8 +30,6 @@ export function HtmlRenderFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { attachmentId, title } = props.htmlRender;
-  // The frame takes the page's measured height at its own width, read before
-  // first paint so the reserved box is already the right size.
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   useLayoutEffect(() => {
@@ -66,13 +57,10 @@ export function HtmlRenderFrame(props: {
   );
   // A cached URL with life left is reused, so the browser's cache serves the
   // page again; one near expiry is minted afresh, since a frame cannot report a
-  // failed load. The page keeps its first URL for its lifetime.
+  // failed load.
   const [src, setSrc] = useState<string | null>(null);
-  // Full screen reuses the inline URL while it has life left, so the page
-  // comes from the browser's cache instead of a new mint and download.
   const srcExpiresAt = useRef(0);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
-  // The page stays hidden behind a skeleton until it reports its content.
   const [ready, setReady] = useState(false);
   const showPage = useCallback(() => setReady(true), []);
   const fitPage = useCallback((contentHeight: number) => {
@@ -184,8 +172,6 @@ export function HtmlRenderFrame(props: {
   );
 }
 
-// Without an outline: one heading, a line of text, and a chart-sized block,
-// the shape most pages take, repeated to fill the frame's reserved height.
 const SKELETON_SECTION_HEIGHT = 264;
 
 const OUTLINE_BOX_CLASS = {
@@ -196,8 +182,6 @@ const OUTLINE_BOX_CLASS = {
 
 const OUTLINE_BAR = "color-mix(in srgb, var(--color-muted-foreground) 15%, transparent)";
 
-// Text lines and table rows are bars painted by one gradient per box, so a
-// long page costs one element per block rather than one per line.
 function outlineBoxStyle(box: HtmlRenderOutlineBox): React.CSSProperties {
   const style: React.CSSProperties = {
     left: box.x,
@@ -215,11 +199,6 @@ function outlineBoxStyle(box: HtmlRenderOutlineBox): React.CSSProperties {
   };
 }
 
-/**
- * Holds the frame's place while the page loads: the page's own blocks when the
- * server measured an outline, else a generic page shape. The outline pulses
- * as one layer.
- */
 function HtmlRenderSkeleton(props: {
   readonly title: string;
   readonly height: number;

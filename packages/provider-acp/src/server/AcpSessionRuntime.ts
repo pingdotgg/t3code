@@ -99,9 +99,7 @@ export interface AcpSessionRuntimeOptions {
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
   readonly interruptPromptOnCancel?: boolean;
-  /** Optional provider metadata forwarded on `session/cancel`. */
   readonly cancelMeta?: EffectAcpSchema.CancelNotification["_meta"];
-  /** Optional provider metadata forwarded on `initialize`. */
   readonly initializeMeta?: EffectAcpSchema.InitializeRequest["_meta"];
   readonly ownDetachedProcessGroup?: boolean;
   readonly ownDescendantProcessGroups?: boolean;
@@ -112,7 +110,6 @@ export interface AcpSessionRuntimeOptions {
   ) => Effect.Effect<void, AcpProcessGroupTerminationError>;
   readonly posixProcessTreeController?: AcpPosixProcessTreeController;
   readonly linuxCgroupController?: AcpLinuxCgroupController | null;
-  /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
@@ -122,25 +119,22 @@ export interface AcpSessionRuntimeOptions {
   };
   readonly authMethodId?: string;
   /**
-   * Call `authenticate` right after `initialize` instead of waiting for an
-   * auth-required error. Antigravity selects its credential source (Google
-   * account vs API key) from the method, so the session must not open first.
+   * Antigravity selects its credential source (Google account vs API key) from
+   * the method, so the session must not open first.
    */
   readonly authenticateEagerly?: boolean;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
-  /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
-  /** Transforms provider stdout before protocol parsing and protocol logging. */
   readonly transformStdout?: EffectAcpClient.AcpClientOptions["transformStdout"];
-  /** Normalizes provider-specific fields before notification queues or runtime state retain them. */
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
-  /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
+  /**
+   * Redact secrets before logging. A failure closes the runtime.
+   */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Disable only for non-interactive discovery that must surface auth-required immediately. */
   readonly authenticateOnAuthRequired?: boolean;
-  /** Observes the normalized handshake before any session setup or authentication retry. */
   readonly onInitialized?: (
     result: EffectAcpSchema.InitializeResponse,
   ) => Effect.Effect<void, never>;
@@ -156,9 +150,8 @@ export interface AcpSessionRuntimeOptions {
   readonly onOutgoingResponseFailure?: EffectAcpClient.AcpClientOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: EffectAcpClient.AcpClientOptions["onOutgoingResponse"];
   /**
-   * Model ids the user configured for this instance. The model config option
-   * accepts them even when the agent does not advertise them, and the agent
-   * validates them instead.
+   * The model config option accepts them even when the agent does not advertise
+   * them, and the agent validates them instead.
    */
   readonly customModels?: ReadonlyArray<string>;
 }
@@ -193,11 +186,6 @@ export interface AcpPosixProcessIdentity {
   readonly pid: number;
   readonly ppid: number;
   readonly sid: number;
-  /**
-   * Linux `/proc/<pid>/stat` state when known (`R`/`S`/`D`/`Z`/…). Omitted on
-   * platforms or fixtures that do not surface it. Zombies (`Z`) are already
-   * dead and must not count as residual teardown survivors.
-   */
   readonly state?: string;
   readonly startTime: string;
 }
@@ -336,9 +324,7 @@ export function resolveLinuxCgroupTargetCommand(
       if (!NodeFS.statSync(candidate).isFile()) continue;
       NodeFS.accessSync(candidate, NodeFS.constants.X_OK);
       return candidate;
-    } catch {
-      // Try the next PATH entry.
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -368,7 +354,6 @@ function defaultReadCgroupPopulated(siblingPath: string): "0" | "1" | undefined 
   return state === "0" || state === "1" ? state : undefined;
 }
 
-/** Best-effort removal of empty `t3-acp-<dead-pid>-*` sibling leases under a parent cgroup. */
 export function sweepStaleLinuxCgroupSiblings(
   parentPath: string,
   options: SweepStaleLinuxCgroupSiblingsOptions = {},
@@ -390,13 +375,9 @@ export function sweepStaleLinuxCgroupSiblings(
         if (NodePath.dirname(siblingPath) !== parentPath) continue;
         if (readPopulated(siblingPath) !== "0") continue;
         remove(siblingPath);
-      } catch {
-        // Ignore unreadable or busy siblings; never fail lease creation.
-      }
+      } catch {}
     }
-  } catch {
-    // Ignore readdir failures on the parent path.
-  }
+  } catch {}
 }
 
 function tryCreateLinuxCgroupLease(
@@ -438,9 +419,7 @@ function tryCreateLinuxCgroupLease(
   } catch {
     try {
       NodeFS.rmdirSync(childPath);
-    } catch {
-      // The unavailable cgroup was never used for a child process.
-    }
+    } catch {}
     return undefined;
   }
   return {
@@ -489,7 +468,6 @@ export function makeLinuxCgroupController(): AcpLinuxCgroupController {
         return undefined;
       }
       if (!isSafeCgroupPath(currentRelative)) return undefined;
-      // Prefer the first mount that successfully creates a writable child cgroup.
       // Multi-mount hosts often list a read-only view before the delegated one.
       for (const mount of mounts) {
         const lease = tryCreateLinuxCgroupLease(currentRelative, mount);
@@ -578,9 +556,7 @@ export function signalLinuxCgroupRootTerm(input: {
     const observed = input.controller.identity(root.pid);
     if (!samePosixProcessIdentity(root, observed) || !input.lease.contains(root.pid)) return;
     input.controller.signalProcess(root.pid, "SIGTERM");
-  } catch {
-    // TERM is optional. cgroup.kill remains the authoritative teardown.
-  }
+  } catch {}
 }
 
 function readLinuxProcessIdentity(pid: number): AcpPosixProcessIdentity | undefined {
@@ -643,9 +619,7 @@ function readLinuxChildPids(pid: number): ReadonlyArray<number> {
         .map(Number)) {
         childPids.add(childPid);
       }
-    } catch {
-      // The task exited while its children were being read.
-    }
+    } catch {}
   }
   return [...childPids];
 }
@@ -737,7 +711,6 @@ export function observePosixOwnershipLedger(input: {
       if (child.ppid !== parent.pid) continue;
       let reservedPid = input.frontier.get(child.pid);
       if (reservedPid !== undefined && !samePosixProcessIdentity(reservedPid, child)) {
-        // PID reused under an owned parent; drop the stale reservation.
         input.frontier.delete(child.pid);
         for (const [key, owned] of input.ledger.entries()) {
           if (owned.pid === child.pid) input.ledger.delete(key);
@@ -1054,7 +1027,6 @@ export function terminatePosixOwnedProcessTree(input: {
       if (!samePosixProcessIdentity(owned, observed) || observed === undefined) {
         return false;
       }
-      // Already-killed zombies still appear in /proc until reaped; not live.
       return !posixProcessIsZombie(observed);
     });
     if (residual.length > 0) {
@@ -1142,109 +1114,38 @@ export interface AcpSessionActivationOptions {
 export class AcpSessionRuntime extends Context.Service<
   AcpSessionRuntime,
   {
-    /**
-     * Registers a handler for `session/request_permission`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/request_permission
-     */
     readonly handleRequestPermission: EffectAcpClient.AcpClient["Service"]["handleRequestPermission"];
-    /**
-     * Registers a handler for `session/elicitation`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/elicitation
-     */
     readonly handleElicitation: EffectAcpClient.AcpClient["Service"]["handleElicitation"];
     readonly handleMcpConnect: EffectAcpClient.AcpClient["Service"]["handleMcpConnect"];
     readonly handleMcpMessage: EffectAcpClient.AcpClient["Service"]["handleMcpMessage"];
     readonly handleMcpDisconnect: EffectAcpClient.AcpClient["Service"]["handleMcpDisconnect"];
     readonly handleMcpNotification: EffectAcpClient.AcpClient["Service"]["handleMcpNotification"];
-    /**
-     * Registers a handler for `fs/read_text_file`.
-     * @see https://agentclientprotocol.com/protocol/schema#fs/read_text_file
-     */
     readonly handleReadTextFile: EffectAcpClient.AcpClient["Service"]["handleReadTextFile"];
-    /**
-     * Registers a handler for `fs/write_text_file`.
-     * @see https://agentclientprotocol.com/protocol/schema#fs/write_text_file
-     */
     readonly handleWriteTextFile: EffectAcpClient.AcpClient["Service"]["handleWriteTextFile"];
-    /**
-     * Registers a handler for `terminal/create`.
-     * @see https://agentclientprotocol.com/protocol/schema#terminal/create
-     */
     readonly handleCreateTerminal: EffectAcpClient.AcpClient["Service"]["handleCreateTerminal"];
-    /**
-     * Registers a handler for `terminal/output`.
-     * @see https://agentclientprotocol.com/protocol/schema#terminal/output
-     */
     readonly handleTerminalOutput: EffectAcpClient.AcpClient["Service"]["handleTerminalOutput"];
-    /**
-     * Registers a handler for `terminal/wait_for_exit`.
-     * @see https://agentclientprotocol.com/protocol/schema#terminal/wait_for_exit
-     */
     readonly handleTerminalWaitForExit: EffectAcpClient.AcpClient["Service"]["handleTerminalWaitForExit"];
-    /**
-     * Registers a handler for `terminal/kill`.
-     * @see https://agentclientprotocol.com/protocol/schema#terminal/kill
-     */
     readonly handleTerminalKill: EffectAcpClient.AcpClient["Service"]["handleTerminalKill"];
-    /**
-     * Registers a handler for `terminal/release`.
-     * @see https://agentclientprotocol.com/protocol/schema#terminal/release
-     */
     readonly handleTerminalRelease: EffectAcpClient.AcpClient["Service"]["handleTerminalRelease"];
-    /**
-     * Registers a handler for `session/update`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/update
-     */
     readonly handleSessionUpdate: EffectAcpClient.AcpClient["Service"]["handleSessionUpdate"];
-    /**
-     * Registers a handler for `session/elicitation/complete`.
-     * @see https://agentclientprotocol.com/protocol/schema#session/elicitation/complete
-     */
     readonly handleElicitationComplete: EffectAcpClient.AcpClient["Service"]["handleElicitationComplete"];
-    /**
-     * Registers a fallback extension request handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleUnknownExtRequest: EffectAcpClient.AcpClient["Service"]["handleUnknownExtRequest"];
-    /**
-     * Registers a fallback extension notification handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleUnknownExtNotification: EffectAcpClient.AcpClient["Service"]["handleUnknownExtNotification"];
-    /**
-     * Registers a typed extension request handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleExtRequest: EffectAcpClient.AcpClient["Service"]["handleExtRequest"];
-    /**
-     * Registers a typed extension notification handler.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
     /**
-     * Sends only `initialize` and returns the agent's response. Health probes use this to read
-     * advertised capabilities without authenticating or opening a session, so a probe can never
-     * start an interactive login or boot MCP servers.
-     * @see https://agentclientprotocol.com/protocol/schema#initialize
+     * Health probes use this to read advertised capabilities without authenticating or opening
+     * a session, so a probe can never start an interactive login or boot MCP servers.
      */
     readonly initialize: () => Effect.Effect<
       EffectAcpSchema.InitializeResponse,
       EffectAcpErrors.AcpError
     >;
-    /** Explicit login uses the negotiated v1 authenticate / v2 auth/login operation. */
     readonly authenticate?: (methodId: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-    /**
-     * Initializes the ACP connection, authenticates, and loads, resumes, or creates the session.
-     * Concurrent calls share the same in-flight startup and a failed startup may be retried.
-     */
     readonly start: () => Effect.Effect<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError>;
-    /** Stream of parsed root-session events and connection failures. */
     readonly getEvents: () => Stream.Stream<AcpSessionRuntimeEvent, never>;
-    /** Waits for queued events to be processed, or for the runtime scope to close. */
     readonly drainEvents: Effect.Effect<void>;
-    /** Latest mode state observed from session setup and `session/update` notifications. */
     readonly getModeState: Effect.Effect<AcpSessionModeState | undefined>;
-    /** Latest configuration options observed from session setup and configuration writes. */
     readonly getConfigOptions: Effect.Effect<ReadonlyArray<EffectAcpSchema.SessionConfigOption>>;
     readonly loadSession: (
       sessionId: string,
@@ -1277,42 +1178,26 @@ export class AcpSessionRuntime extends Context.Service<
     readonly disableProvider: (
       providerId: string,
     ) => Effect.Effect<EffectAcpSchema.DisableProviderResponse, EffectAcpErrors.AcpError>;
-    /** Logs out the current ACP identity when the agent advertises support. */
     readonly logout: Effect.Effect<EffectAcpSchema.LogoutResponse, EffectAcpErrors.AcpError>;
     /**
-     * Sends a prompt turn to the active session. `options.dispatched` settles once the
-     * `session/prompt` RPC is registered as the active prompt, so a caller that forks this
-     * effect knows when a later `cancel` will target this prompt.
-     * @see https://agentclientprotocol.com/protocol/schema#session/prompt
+     * `options.dispatched` settles once the `session/prompt` RPC is registered as the
+     * active prompt, so a caller that forks this effect knows when a later `cancel` will
+     * target this prompt.
      */
     readonly prompt: (
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: { readonly dispatched?: Deferred.Deferred<void> },
     ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
-    /**
-     * Sends a real ACP `session/cancel` notification for the active session.
-     * @see https://agentclientprotocol.com/protocol/schema#session/cancel
-     */
     readonly cancel: Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly processContainment:
       | "cgroup-v2"
       | "process-ledger-reduced-guarantee"
       | "process-group"
       | "none";
-    /** Terminates the opt-in detached ACP process group and all inherited work. */
     readonly terminateProcessGroup?: Effect.Effect<void, AcpProcessGroupTerminationError>;
-    /**
-     * Selects the active mode through the negotiated `mode` configuration option.
-     * This is a no-op when the requested mode is already active.
-     * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
-     */
     readonly setMode: (
       modeId: string,
     ) => Effect.Effect<EffectAcpSchema.SetSessionModeResponse, EffectAcpErrors.AcpError>;
-    /**
-     * Updates a session configuration option and the runtime configuration snapshot.
-     * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
-     */
     readonly setSessionModel: (
       modelId: string,
       meta?: EffectAcpSchema.SetSessionModelRequest["_meta"],
@@ -1321,24 +1206,11 @@ export class AcpSessionRuntime extends Context.Service<
       configId: string,
       value: string | boolean,
     ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
-    /**
-     * Selects the base model through the negotiated model configuration option.
-     * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
-     */
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
-    /**
-
-     * Sends a generic ACP extension request and records it through the request logger.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly request: (
       method: string,
       payload: unknown,
     ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
-    /**
-     * Sends a generic ACP extension notification.
-     * @see https://agentclientprotocol.com/protocol/extensibility
-     */
     readonly notify: (
       method: string,
       payload: unknown,
@@ -1392,13 +1264,10 @@ export const make = (
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    // A child of the caller's scope, so termination can close the runtime without closing the caller's.
     const runtimeScope = yield* Scope.fork(yield* Scope.Scope);
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
-    // Recently shown tool calls. A late update to a finished call is not a new
-    // boundary in the answer, although its progress state is gone.
     const shownToolCallIds = new Set<string>();
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4().pipe(
       Effect.mapError(
@@ -1567,8 +1436,6 @@ export const make = (
               cause: new Error("Contained ACP command was not found on PATH"),
             });
           });
-    // A cgroup lease is already its own leaf cgroup, so it only needs the
-    // raised OOM score (in its wrapper). Other agents get their own scope.
     const scopedSpawnCommand =
       linuxCgroupLease !== undefined || spawnCommand.shell
         ? spawnCommand
@@ -2444,7 +2311,6 @@ export const make = (
       const acknowledge = yield* Deferred.make<void>();
       yield* notificationSemaphore.withPermit(
         Effect.gen(function* () {
-          // Keep a provider's final flushed chunks together until the adapter settles the turn.
           if (Option.isNone(yield* Ref.get(activePromptRef))) {
             yield* Ref.set(assistantUpdatesOpenRef, false);
             yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
@@ -2797,8 +2663,6 @@ export const make = (
             return {} satisfies EffectAcpSchema.SetSessionModeResponse;
           }
           const response = yield* setConfigOption(modeConfigOption?.id ?? "mode", modeId);
-          // The agent answers with its config options, so the mode it reports
-          // is the mode it runs in, even when it kept another one.
           const reported = parseSessionModeState({ configOptions: response.configOptions });
           if (reported === undefined) {
             yield* updateCurrentModeId(modeId);
@@ -2944,15 +2808,11 @@ const handleSessionUpdate = ({
         if (!decision.emit) {
           continue;
         }
-        // A new tool call is a boundary in the prose. Progress on a call that
-        // is already shown, such as a background command finishing, is not.
         if (!shownToolCallIds.has(merged.toolCallId)) {
           shownToolCallIds.add(merged.toolCallId);
-          // Only recent calls get late updates; keep a long session bounded.
           if (shownToolCallIds.size > MAX_SHOWN_TOOL_CALL_IDS) {
             shownToolCallIds.delete(shownToolCallIds.values().next().value!);
           }
-          // A call still running is already on screen, even if it aged out.
           if (!active) yield* closeActiveAssistantSegment({ queue, assistantSegmentRef });
         }
         yield* Queue.offer(queue, {

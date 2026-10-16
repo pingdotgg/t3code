@@ -55,7 +55,6 @@ describe("ManagedEndpointAllocations", () => {
         }),
       ).toBe(8);
       expect(updated?.tunnelId).toBe("replacement-tunnel");
-      // Any recorded tunnel ends a released state, so status stops reporting it.
       expect(updated?.tunnelReleasedAt).toBeNull();
       const query = new PgDialect().sqlToQuery(updated?.readyAt as never);
       expect(query.sql).toBe(

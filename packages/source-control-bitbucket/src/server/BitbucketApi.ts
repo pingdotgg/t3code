@@ -35,11 +35,8 @@ import * as BitbucketClient from "../client/definition.ts";
 import { retryAtFromHeader } from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 const DEFAULT_API_BASE_URL = "https://api.bitbucket.org/2.0";
-/** A response body past this is cut short, so one huge diff cannot exhaust the server. */
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-/** Bitbucket redirects a diff once; this leaves room without following a chain forever. */
 const MAX_REDIRECTS = 3;
-/** A single API operation must bound both header delivery and body consumption. */
 const BITBUCKET_API_REQUEST_TIMEOUT = "30 seconds";
 
 const BitbucketApiEnvConfig = Config.all({
@@ -61,8 +58,6 @@ const BitbucketApiOperation = Schema.Literals([
   "createPullRequest",
   "probeAuth",
   "checkoutPullRequest",
-  // The raw escape hatch. Callers name their own operation in their own error, the way the
-  // pull request wrappers do on top of `gh` and `glab`.
   "request",
 ]);
 type BitbucketApiOperation = typeof BitbucketApiOperation.Type;
@@ -235,9 +230,9 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
 }
 
 /**
- * A url that does not belong to the configured Bitbucket. Refused rather than followed, because
- * the request carries the account's credentials and a url that came back in a response — a
- * pagination cursor, or the target of a redirect — is not this server's to trust.
+ * Refused rather than followed, because the request carries the account's credentials and a url
+ * that came back in a response — a pagination cursor, or the target of a redirect — is not this
+ * server's to trust.
  */
 export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntrustedUrlError>()(
   "BitbucketUntrustedUrlError",
@@ -330,21 +325,10 @@ export class BitbucketApi extends Context.Service<
   {
     readonly probeAuth: Effect.Effect<SourceControlProviderAuth, never>;
 
-    /**
-     * One authenticated request, returning the body verbatim. Bitbucket answers most endpoints
-     * with JSON and a few — a pull request diff, for one — with plain text, so the body is
-     * handed back undecoded for the caller to read as it sees fit.
-     */
     readonly request: (input: {
       readonly method: "GET" | "POST" | "PUT" | "DELETE";
-      /**
-       * A path below the API base, or a whole URL as a paged response reports its next page.
-       * A whole URL is refused unless it belongs to the configured Bitbucket.
-       */
       readonly url: string;
-      /** A JSON document, for the endpoints that take one. */
       readonly body?: string;
-      /** Response bytes to keep; past this the body comes back cut short and marked. */
       readonly maxBytes?: number;
     }) => Effect.Effect<{ readonly body: string; readonly truncated: boolean }, BitbucketApiError>;
     readonly listPullRequests: (input: {
@@ -548,8 +532,8 @@ type BitbucketCredential =
   | { readonly kind: "api-token"; readonly email: string; readonly apiToken: string };
 
 /**
- * Visible ASCII only. A value the HTTP stack rejects makes it throw an error quoting the whole
- * header, and that error travels to clients as a cause, so an unusable token is treated as unset.
+ * A value the HTTP stack rejects makes it throw an error quoting the whole header, and that
+ * error travels to clients as a cause, so an unusable token is treated as unset.
  */
 const HEADER_SAFE = /^[\x21-\x7e]+$/u;
 
@@ -567,10 +551,6 @@ function credentialFrom(input: {
   return null;
 }
 
-/**
- * Credentials saved in settings win over the `T3CODE_BITBUCKET_*` environment variables, which
- * stay as a fallback. Within each source the access token wins.
- */
 function resolveCredential(
   settings: BitbucketClient.BitbucketSettings,
   env: Config.Success<typeof BitbucketApiEnvConfig>,
@@ -614,7 +594,6 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
   };
 }
 
-/** Null for anything that is not a url at all, which is never the configured Bitbucket. */
 function originOf(value: string): string | null {
   try {
     return new URL(value).origin;
@@ -627,8 +606,6 @@ function responseError(
   operation: BitbucketApiOperation,
   response: HttpClientResponse.HttpClientResponse,
 ): Effect.Effect<never, BitbucketApiError> {
-  // Bounded like any other body: an error response is no smaller than a successful one, and
-  // only its length is reported anyway.
   return Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const retryAt = retryAtFromHeader(response.headers["retry-after"], now);
@@ -665,7 +642,6 @@ export const make = Effect.gen(function* () {
 
   const apiUrl = (path: string) => `${config.baseUrl.replace(/\/+$/u, "")}${path}`;
 
-  // Read on every request so credentials saved in settings apply without a restart.
   const currentCredential = host.settings.get.pipe(
     Effect.map((settings) =>
       resolveCredential(
@@ -876,14 +852,6 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  // A pull request's diff, diffstat and conflicts are served as redirects to a commit-range
-  // URL, and the client does not follow redirects unless asked. The hop stays on the same host,
-  // so the credentials travel with it.
-  /**
-   * The one host these credentials may be sent to. A url that came back inside a response — a
-   * pagination cursor, or the target of a redirect — is data, not instruction, so it is checked
-   * against this before the account's token travels with it.
-   */
   const apiOrigin = originOf(config.baseUrl);
 
   const trustedUrl = (value: string): string | null => {
@@ -950,9 +918,8 @@ export const make = Effect.gen(function* () {
     send({ ...input, redirects: 0 }).pipe(
       Effect.flatMap((response) =>
         HttpClientResponse.matchStatus({
-          // Read through the body stream rather than `text`, so an oversized diff is stopped
-          // as it arrives instead of being materialized whole and then cut. The same collector
-          // the process runner bounds command output with.
+          // Read through the body stream rather than `text`, so an oversized diff is stopped as
+          // it arrives instead of being materialized whole and then cut.
           "2xx": (success) =>
             collectUint8StreamText({
               stream: success.stream,
@@ -1111,12 +1078,6 @@ export const make = Effect.gen(function* () {
         ),
         Effect.map(defaultChangeRequestTargetBranch),
       ),
-    // Bitbucket Cloud pull requests are Git-backed and Bitbucket does not provide
-    // an official checkout CLI. This provider-local path uses GitVcsDriver as a
-    // narrow escape hatch to materialize Bitbucket PR refs. Do not generalize this
-    // as the source-control provider model: if we support non-Git-compatible
-    // hosting providers or native JJ/Sapling checkout flows, move this into a
-    // VCS-specific change-request checkout capability.
     checkoutPullRequest: (input) =>
       Effect.gen(function* () {
         const destinationRepository = yield* resolveRepository(input);

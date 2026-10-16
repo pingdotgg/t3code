@@ -1,23 +1,9 @@
 #!/usr/bin/env node
 /**
- * Turns the per-platform CLI archives of one release into the npm packages
- * behind `npx t3` / `npm i -g t3`: one `@t3code/t3-<platformKey>` package per
- * archive holding the archive's contents verbatim, plus the `t3` launcher
- * that lists them as optionalDependencies and execs the one npm installed.
- * The bytes a user gets from npm are therefore the release archive's, and
- * running them needs neither a Node runtime, npm, nor a native build.
- *
- * Output layout under `--output-dir`:
- *
- *   @t3code/t3-<platformKey>/      archive contents flattened + package.json
- *   @t3code/t3-<platformKey>.tgz   the same tree as an npm tarball
- *   t3/                             launcher: package.json, bin/t3.js, README.md
- *   t3.tgz                          the launcher as an npm tarball
- *
- * The tarballs are what gets published. `npm publish <dir>` always drops
- * `node_modules/` (npm-packlist ignores it whatever `files` says, and
- * bundleDependencies needs an arborist tree these flattened installs are
- * not), whereas `npm publish <tarball>` uploads the bytes as given.
+ * `npm publish <dir>` always drops `node_modules/` (npm-packlist ignores it
+ * whatever `files` says, and bundleDependencies needs an arborist tree these
+ * flattened installs are not), whereas `npm publish <tarball>` uploads the
+ * bytes as given.
  */
 import { legacyCliLauncherScript } from "@t3tools/shared/legacyCliLauncher";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -89,13 +75,10 @@ export function npmPlatformPackageName(platformKey: CliArchivePlatformKey): stri
 }
 
 /**
- * package.json for one platform package; `os`/`cpu` let npm skip the other
- * five. The archive's runtime `node_modules` (native addons and their
- * loaders) ships inside the tarball, and npm only keeps a nested tree it can
- * account for: anything not declared is extraneous and pruned on the next
- * `npm install` in that project, which then breaks the executable. Declaring
- * every bundled package as a bundled dependency at the exact version on disk
- * makes npm treat the tree as part of this package and leave it alone.
+ * The archive's runtime `node_modules` (native addons and their loaders) ships
+ * inside the tarball, and npm only keeps a nested tree it can account for:
+ * anything not declared is extraneous and pruned on the next `npm install` in
+ * that project, which then breaks the executable.
  */
 export function npmPlatformPackageManifest(
   platformKey: CliArchivePlatformKey,
@@ -122,7 +105,6 @@ export function npmPlatformPackageManifest(
 const PackageVersion = Schema.Struct({ version: Schema.String });
 const decodePackageVersion = Schema.decodeUnknownEffect(Schema.fromJsonString(PackageVersion));
 
-/** Every top-level package under `node_modules`, scoped ones included, at the version its manifest names. */
 const readBundledPackages = Effect.fn("readBundledPackages")(function* (nodeModulesDir: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -147,9 +129,8 @@ const readBundledPackages = Effect.fn("readBundledPackages")(function* (nodeModu
 });
 
 /**
- * README for one platform package. Without one at the package root, npm
- * shows the first README it finds in the tarball, which is a bundled
- * dependency's (ffi-rs).
+ * Without one at the package root, npm shows the first README it finds in the
+ * tarball, which is a bundled dependency's (ffi-rs).
  */
 export function npmPlatformPackageReadme(platformKey: CliArchivePlatformKey): string {
   return [
@@ -168,7 +149,6 @@ export function npmPlatformPackageReadme(platformKey: CliArchivePlatformKey): st
   ].join("\n");
 }
 
-/** package.json for the `t3` launcher. No engines: bin/t3.js is trivial CJS. */
 export function npmLauncherPackageManifest(
   version: string,
   platformKeys: ReadonlyArray<CliArchivePlatformKey>,
@@ -187,11 +167,6 @@ export function npmLauncherPackageManifest(
   };
 }
 
-/**
- * The launcher every `npx t3` runs. Plain CommonJS with no dependencies so it
- * loads on any Node that npm itself runs on; the real work happens in the
- * single-executable it execs.
- */
 export const NPM_LAUNCHER_SCRIPT = `#!/usr/bin/env node
 "use strict";
 const { spawnSync } = require("node:child_process");
@@ -246,9 +221,8 @@ const runCommand = Effect.fn("runCommand")(function* (
 });
 
 /**
- * Extracts an archive and returns its single top-level directory. `.tar.gz`
- * goes through tar everywhere; `.zip` through the bsdtar Windows ships or,
- * elsewhere, `unzip`, since GNU tar cannot read zip.
+ * `.tar.gz` goes through tar everywhere; `.zip` through the bsdtar Windows
+ * ships or, elsewhere, `unzip`, since GNU tar cannot read zip.
  */
 const extractArchive = Effect.fn("extractArchive")(function* (archive: string, into: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -286,10 +260,6 @@ const hostTar = Effect.map(HostProcess.Platform, (platform) =>
   platform === "win32" ? windowsSystemTar() : "tar",
 );
 
-/**
- * Writes `stageDir/package` as a gzipped npm tarball and then moves the tree
- * to `packageDir` so the contents stay inspectable beside the tarball.
- */
 const packAndPlace = Effect.fn("packAndPlace")(function* (input: {
   readonly stageDir: string;
   readonly packageDir: string;
@@ -311,11 +281,6 @@ export interface NpmPackageOutput {
   readonly tarball: string;
 }
 
-/**
- * Extracts one archive, adds its package.json, and emits the package dir and
- * tarball. The scratch dir lives inside the output dir so the extracted tree
- * is renamed into place rather than copied across filesystems.
- */
 const stagePlatformPackage = Effect.fn("stagePlatformPackage")(function* (input: {
   readonly key: CliArchivePlatformKey;
   readonly archive: string;
@@ -365,7 +330,6 @@ const stagePlatformPackage = Effect.fn("stagePlatformPackage")(function* (input:
   return output;
 }, Effect.scoped);
 
-/** Writes the launcher package (package.json, bin/t3.js, README) and its tarball. */
 const stageLauncherPackage = Effect.fn("stageLauncherPackage")(function* (input: {
   readonly outputDir: string;
   readonly version: string;
@@ -429,8 +393,6 @@ export const buildNpmPlatformPackages = Effect.fn("buildNpmPlatformPackages")(fu
   yield* fs.makeDirectory(path.join(input.outputDir, NPM_PLATFORM_PACKAGE_SCOPE), {
     recursive: true,
   });
-  // Each archive stages in its own scratch dir, so all of them unpack and
-  // compress at once. Sequentially this took about 45s for five archives.
   const platformOutputs = yield* Effect.forEach(
     archives,
     ({ key, archive }) =>

@@ -462,9 +462,7 @@ export class VoiceInputController {
     for (const uri of this.ownedRecordingUris) {
       try {
         this.dependencies.deleteRecording(uri);
-      } catch {
-        // The cache may already have removed a failed or interrupted recording.
-      }
+      } catch {}
     }
     this.ownedRecordingUris.clear();
     await this.releaseAudioSession();
@@ -484,9 +482,7 @@ export class VoiceInputController {
     try {
       await this.dependencies.releaseRecording();
       this.recordingConfigured = false;
-    } catch {
-      // Final cleanup retries if the prompt release before transcription fails.
-    }
+    } catch {}
   }
 
   private invalidateOperation(): void {

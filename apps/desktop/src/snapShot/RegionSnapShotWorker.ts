@@ -1,5 +1,5 @@
-// Windows region capture. Runs in a forked Node-mode child so the native
-// screenshot call cannot crash or stall the main process. One request per child.
+// Runs in a forked Node-mode child so the native screenshot call cannot crash
+// or stall the main process.
 import type { RegionSnapShotRequest, RegionSnapShotResult } from "./RegionSnapShot.ts";
 
 process.once("disconnect", () => process.exit(0));

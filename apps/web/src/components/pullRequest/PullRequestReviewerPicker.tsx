@@ -1,11 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * Asking someone to review, from the row that says who is already reviewing.
- *
- * The people who may be asked are read only once this menu opens: on a large repository that is
- * a list of everyone with access, which is worth a request when somebody wants it and worth
- * nothing on every pull request they merely open.
- */
 import type {
   EnvironmentId,
   PullRequestRef,
@@ -23,8 +16,6 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
-/** Long lists are common — an organisation repository lists everyone — so what arrived can be
- * narrowed here. It narrows only what arrived: the host is asked once, when the menu opens. */
 function matches(candidate: PullRequestReviewerCandidate, query: string): boolean {
   if (query.length === 0) return true;
   const needle = query.toLowerCase();
@@ -41,15 +32,12 @@ export function PullRequestReviewerPicker({
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  /** False where the host would refuse this account's request, which is worth saying rather than
-   * hiding: the control disabled with a reason answers the question its absence would raise. */
   allowed: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
 
-  // Mounted with the menu closed, so nothing is asked of the host until it opens.
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
   );

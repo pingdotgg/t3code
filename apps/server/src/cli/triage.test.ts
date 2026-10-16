@@ -19,7 +19,6 @@ it.effect("reports the version the running server recorded, not the CLI's", () =
       yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-" }),
       "server-runtime.json",
     );
-    // The test process stands in for the server, so its pid is alive.
     const state = yield* makePersistedServerRuntimeState({
       config: { host: undefined, devUrl: undefined },
       port: 3773,
@@ -41,8 +40,6 @@ it.effect("says the server version is unknown when the state file has none", () 
       yield* fs.makeTempDirectoryScoped({ prefix: "t3-triage-" }),
       "server-runtime.json",
     );
-    // A server from before versions were recorded, such as the 0.0.43 desktop
-    // app in #13337.
     yield* fs.writeFileString(
       statePath,
       JSON.stringify({

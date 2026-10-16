@@ -42,7 +42,6 @@ describe("pullRequestListLines", () => {
       ]),
     );
     expect(lines.map((line) => [line.link.number, line.depth, line.stack?.size ?? null])).toEqual([
-      // The stack's newest layer is #2 at 12:00, so the whole stack outranks #9 at 11:00.
       [1, 0, 2],
       [2, 1, null],
       [9, 0, null],

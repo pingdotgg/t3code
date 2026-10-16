@@ -79,7 +79,6 @@ describe("AcpClientTerminals", () => {
         environmentForSession: () => ({ T3_ACP_MCP_NODE: "mailbox-probe" }),
       });
       yield* Effect.addFinalizer(() => terminals.disposeAll);
-      // Same command-only shape as the failed production commands and live capture.
       const terminal = yield* terminals.create({
         sessionId: "devin",
         command: 'printf "%s\\n" "$T3_ACP_MCP_NODE" | tr a-z A-Z',
@@ -140,7 +139,6 @@ describe("AcpClientTerminals", () => {
         );
         expect(rejected.message).toContain("unknown terminal ID");
 
-        // Embedded tool-call content still renders released terminals.
         expect(terminals.readOutputSnapshot("session", created.terminalId)).toBeDefined();
       }),
     ),

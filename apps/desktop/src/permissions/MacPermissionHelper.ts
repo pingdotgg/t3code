@@ -18,7 +18,6 @@ const permissionGranted = (permission: MacPermission) => {
   return false;
 };
 
-/** Resolve the outer app bundle, never the executable or the ASAR inside it. */
 export function macAppBundlePath(executable: string): string | undefined {
   return /^(.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1];
 }
@@ -65,7 +64,6 @@ img { width: 32px; height: 32px; pointer-events: none; }
 </main></body></html>`;
 }
 
-/** Owns one temporary panel and its IPC listener. Closing it releases all resources. */
 export class MacPermissionHelper {
   private generation = 0;
   private window: Electron.BrowserWindow | undefined;
@@ -130,7 +128,6 @@ export class MacPermissionHelper {
       try {
         if ((await isGranted()) && !window.isDestroyed()) finish();
       } catch {
-        // An unavailable probe is not evidence of a grant; the wizard can retry.
       } finally {
         checking = false;
       }

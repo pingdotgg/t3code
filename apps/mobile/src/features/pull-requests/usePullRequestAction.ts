@@ -13,7 +13,6 @@ import { canPerformPullRequestAction } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
-/** Small row actions stay in place, preserving expanded rows and scroll position. */
 export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail | null) {
   const target = pullRequestTarget(params);
   const permissions = usePullRequestPermissions(params, pr);

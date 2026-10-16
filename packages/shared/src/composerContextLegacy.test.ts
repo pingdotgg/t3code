@@ -355,9 +355,6 @@ describe("upgradeLegacyContextMessage", () => {
   });
 
   it("keeps every line of a multiline legacy annotation comment", () => {
-    // Older clients wrote the comment verbatim, newlines and all. Reading only the first line
-    // silently drops the rest while the original block is replaced by a chip, so the dropped
-    // instructions are gone from what the reader sees and copies.
     const text = [
       "<preview_annotation>",
       "Preview annotation:",
@@ -391,8 +388,6 @@ describe("upgradeLegacyContextMessage", () => {
   });
 
   it("keeps markup inside a legacy annotation comment", () => {
-    // Only a real block delimiter ends the comment. A line that merely starts with `<` is
-    // something the author typed.
     const text = [
       "<preview_annotation>",
       "Preview annotation:",

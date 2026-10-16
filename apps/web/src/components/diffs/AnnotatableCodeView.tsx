@@ -95,7 +95,6 @@ interface AnnotatableCodeViewProps {
     fileKey: string,
     collapsed: boolean,
   ) => ReactNode;
-  /** Unfold a collapsed file that holds the find match being navigated to. */
   onRevealSearchMatch: (fileKey: string) => void;
 }
 

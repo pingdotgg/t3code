@@ -45,7 +45,6 @@ const make = Effect.fn("makeHostResources")(function* () {
 
   const sample = Effect.fn("HostResources.sample")(function* () {
     const previousCpu = readCpu();
-    // CPU counters need two readings; idle servers do no polling or process scans.
     yield* Effect.sleep("200 millis");
     const cpu = readCpu();
     const totalDelta = cpu.total - previousCpu.total;
@@ -81,7 +80,6 @@ const make = Effect.fn("makeHostResources")(function* () {
     };
   });
 
-  // One server-lifetime cache deduplicates simultaneous requests from all sockets.
   const cache = yield* Cache.make({
     capacity: 1,
     lookup: (_key: "host") => sample(),

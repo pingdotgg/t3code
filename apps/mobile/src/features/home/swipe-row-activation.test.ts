@@ -42,7 +42,6 @@ describe("createSwipeRowActivation", () => {
     activation.trackTouches(["1"], ["1", "2"]);
     activation.activate(["a"]);
 
-    // The list finger lifts while finger 2 stays on another control.
     activation.trackTouches([], ["2"]);
     expect(activation.isActive("a")).toBe(true);
   });

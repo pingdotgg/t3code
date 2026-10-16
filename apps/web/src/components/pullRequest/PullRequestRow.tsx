@@ -28,12 +28,6 @@ import {
   PullRequestReviewDecisionGlyph,
 } from "./pullRequestPresentation";
 
-/**
- * Each slot past the first only appears once the meta line is wide enough to hold it, so a
- * narrow row shows one label and a "+N" while a wide one spreads out up to three. The "+N"
- * rides on whichever pill is the last visible one, and is hidden as soon as the next slot shows.
- */
-// Each slot's pill appears at a wider row, and its overflow count yields to the next slot.
 const LABEL_SLOTS = [
   { overflow: "@xl/pr-row-meta:hidden" },
   { overflow: "@3xl/pr-row-meta:hidden" },
@@ -70,10 +64,6 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
   );
 }
 
-/**
- * The page row keeps a little more room around the shared lines than the panel, which sits in
- * a narrow column. Its outer wrapper reserves the full row height when offscreen.
- */
 const PAGE_ROW_CLASS = "px-3 py-2.5";
 
 export type PullRequestRowTarget = Pick<
@@ -101,21 +91,14 @@ function PullRequestRowImpl({
   entry: EnvironmentPullRequestEntry;
   selected: boolean;
   showProjectTitle: boolean;
-  /** Only when the list spans more than one host, where the repository alone is ambiguous. */
   showProvider: boolean;
-  /** Names the server this row was read from, where the list spans more than one. */
   environmentLabel?: string;
-  /**
-   * A search found this, but in something the row does not show — a description, a comment, a
-   * commit message. Saying so is the difference between a result and an apparently random row.
-   */
   matchedElsewhere?: boolean;
   /** Used by the list's shared visibility observer to defer optional line-count reads. */
   statsKey?: string;
   statsRef?: RefCallback<HTMLDivElement>;
   onSelect: (entry: PullRequestRowTarget) => void;
   speedMode: boolean;
-  /** What this row's host can do, which is what speed mode offers. */
   hostActions: ReadonlySet<PullRequestAction>;
   onActed: (result: PullRequestSpeedActionResult) => void;
   closing?: boolean;
@@ -129,7 +112,6 @@ function PullRequestRowImpl({
       data-pull-request-stats-key={statsKey}
       data-pull-request-key={statsKey}
       className={cn(
-        // Keep the action buttons inside the same skipped row, but outside its selection button.
         "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
@@ -149,13 +131,10 @@ function PullRequestRowImpl({
           isDraft={entry.isDraft}
           mergeability={entry.mergeability}
           baseBranch={entry.baseBranch}
-          // On the title line rather than between the lines, as main aligns it.
           className="mt-0.75 self-start"
         />
         <PullRequestRowLines
           number={
-            // The number carries the link, here as much as on the detail: a right-click on it
-            // copies the pull request's own address rather than opening the editing menu.
             <span
               className={PULL_REQUEST_ROW_NUMBER_CLASS}
               onContextMenu={(event) => {
@@ -185,10 +164,6 @@ function PullRequestRowImpl({
                   }}
                 />
               )}
-              {/* Only a verdict the host actually reports: an approval, a request for changes,
-                or a review the branch rules still require. No glyph on the common case of a
-                pull request nobody has reviewed, so a row only wears a person when the person
-                has said something. */}
               {entry.reviewDecision === undefined ? null : (
                 <PullRequestReviewDecisionGlyph decision={entry.reviewDecision} />
               )}
@@ -275,9 +250,4 @@ function PullRequestRowImpl({
   );
 }
 
-/**
- * Memoized: the list re-renders on every keystroke of a search and every status poll, and a
- * row whose entry, selection and match state are unchanged has nothing new to say. Effective
- * because the route hands it a stable `onSelect`.
- */
 export const PullRequestRow = memo(PullRequestRowImpl);

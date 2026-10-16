@@ -11,7 +11,6 @@ import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 
 const PNG_BYTES = 3_000;
 const PNG_BASE64 = Buffer.alloc(PNG_BYTES, 7).toString("base64");
-// 3,001 bytes encode with `=` padding, which must not count as data.
 const PADDED_BASE64 = Buffer.alloc(PNG_BYTES + 1, 9).toString("base64");
 
 const now = DateTime.makeUnsafe("2026-10-06T00:00:00.000Z");

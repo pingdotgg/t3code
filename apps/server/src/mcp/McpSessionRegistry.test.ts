@@ -151,8 +151,6 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
-    // Well past the liveness window in total, but each turn reports in before
-    // it lapses — this is the long-session case that used to lose the toolkit.
     for (let turn = 0; turn < 10; turn += 1) {
       timestamp += 99;
       yield* registry.touch(threadId);

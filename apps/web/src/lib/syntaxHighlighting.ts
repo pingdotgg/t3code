@@ -28,10 +28,8 @@ export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHigh
   }).catch((error) => {
     if (language === "text") {
       highlighterPromiseCache.delete(language);
-      // "text" itself failed — Shiki cannot initialize at all, surface the error
       throw error;
     }
-    // Language not supported by Shiki — fall back to "text"
     return getSyntaxHighlighterPromise("text");
   });
   highlighterPromiseCache.set(language, promise);

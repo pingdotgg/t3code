@@ -42,12 +42,6 @@ import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.tes
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
 
-// The Antigravity switch is a durable, named conformance fixture for Google's
-// official Registry distribution. It uses credentials already owned by the
-// Antigravity agent and never stores them in the test database.
-//
-// T3_ACP_ANTIGRAVITY_LIVE=1 ../../node_modules/.bin/vp test run \
-//   src/orchestration-v2/AcpRegistryOrchestratorV2.live.test.ts
 const layerPlatformTest = Layer.merge(
   NodeServices.layer,
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
@@ -121,7 +115,6 @@ const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pi
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(layerPlatformTest),
       ),
-      // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
       Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "unused-managed-installation",
       }),

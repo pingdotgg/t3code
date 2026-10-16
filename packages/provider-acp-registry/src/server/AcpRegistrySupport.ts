@@ -314,12 +314,6 @@ function withPreferredPath(
   };
 }
 
-/**
- * Directories exposing installed ACP Registry commands. The integrated
- * terminal appends them to PATH so managed package commands and
- * managed binary agents are both available by name. Best effort: unreadable
- * directories resolve to no entries.
- */
 export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManagedBinaryDirectories")(
   function* (input: {
     readonly cacheDir: string;
@@ -378,7 +372,6 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
         Effect.orElseSucceed((): ReadonlyArray<AcpRegistryAgent> => []),
       );
     const cachedAgentByInstall = new Map(
-      // Install directories are named by the URI-encoded version.
       cachedAgents.map(
         (agent) => [`${agent.id}\0${encodeURIComponent(agent.version)}`, agent] as const,
       ),
@@ -528,12 +521,6 @@ export class AcpRegistryCatalog extends Context.Service<
 const layer = (options: AcpRegistryCatalogOptions) =>
   Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
 
-/**
- * The server-lifetime catalog, with the runtime coordinator built alongside
- * it so setup, snapshots, and turn launch share one of each. Its cache lives
- * in the host's provider status cache and installed agents under the T3
- * home's `tools` directory.
- */
 export const layerFromHost = Layer.merge(
   Layer.unwrap(
     Effect.gen(function* () {
@@ -1511,8 +1498,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
         yield* fileSystem.rename(archivePath, targetPath);
       } else {
-        // The new Windows ARM fallback must extract x64 ZIPs even when Git's GNU tar wins PATH.
-        // Keep archive selection for existing native distributions unchanged in this PR.
         const tarCommand =
           platformTarget === "windows-aarch64" &&
           paths.platformTarget === "windows-x86_64" &&
@@ -1725,7 +1710,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           ? ({
               status: "ready",
               agentId,
-              // The catalog version does not describe an overridden executable.
               version: null,
               distribution: distribution.kind,
               ...(documentationUrl ? { documentationUrl } : {}),

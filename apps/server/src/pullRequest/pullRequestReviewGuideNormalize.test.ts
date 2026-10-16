@@ -4,8 +4,6 @@ import type { ReviewGuideGenerationResult } from "@t3tools/provider-core/server/
 
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
-// `git diff --unified=0` of: src/a.ts with lines 10-14 and 40-59 added and an old line 30
-// removed; src/gone.ts deleted (old lines 1-20); docs/readme.md with line 3 added.
 const patch = [
   "diff --git a/src/a.ts b/src/a.ts",
   "index 1111111..2222222 100644",
@@ -102,15 +100,10 @@ describe("normalizeReviewGuide", () => {
         stops: [
           stop({
             excerpts: [
-              // Starts on context before the hunk: clamped to the hunk.
               excerpt("src/a.ts", 5, 12),
-              // Touches the previous one once clamped: merged.
               excerpt("src/a.ts", 13, 14),
-              // Spans the whole second hunk and beyond: clamped to it.
               excerpt("src/a.ts", 38, 80),
-              // On no changed line: dropped.
               excerpt("src/a.ts", 20, 25),
-              // Removed code shown from the old side.
               excerpt("src/gone.ts", 2, 8, "old"),
             ],
             files: [{ path: "docs/readme.md", note: "" }],

@@ -60,8 +60,7 @@ const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitle
   const binaryPath = path.join(dir, "codex");
   yield* fs.writeFileString(binaryPath, FAKE_CODEX_APP_SERVER);
   yield* fs.chmod(binaryPath, 0o755);
-  // A fresh cache written by another client: the plain CLI's (no Ultrafast)
-  // when entitled, or a stale entitled catalog when the entitlement is gone.
+
   yield* fs.writeFileString(
     path.join(dir, "models_cache.json"),
     JSON.stringify({

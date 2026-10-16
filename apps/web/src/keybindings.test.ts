@@ -1212,8 +1212,6 @@ describe("resolveShortcutCommand", () => {
   it("ignores the physical key code when the layout types a different Latin letter", () => {
     const keybindings = compile([{ shortcut: modShortcut("d"), command: "diff.toggle" }]);
 
-    // On a remapped layout the physical D key types "a"; only the physical
-    // key whose layout output is "d" may trigger the shortcut.
     assert.isNull(
       resolveShortcutCommand(event({ key: "a", code: "KeyD", metaKey: true }), keybindings, {
         platform: "MacIntel",

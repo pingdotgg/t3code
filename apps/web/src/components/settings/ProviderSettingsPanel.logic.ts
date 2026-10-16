@@ -66,21 +66,13 @@ export function resolveSelectedProviderEnvironmentId(
 
 export type ProviderEnvironmentAccess =
   | { readonly kind: "editable" }
-  /** `reason` distinguishes waiting on the device from waiting on permissions. */
   | { readonly kind: "loading"; readonly reason: "config" | "permissions" }
   | { readonly kind: "read-only" }
   | { readonly kind: "unavailable" }
   | { readonly kind: "error" };
 
-/**
- * Whether the session may change provider configuration on an environment.
- * `pending` means the answer is still unknown, which must not be presented as
- * editable: rendering controls we already know might be rejected only turns a
- * permission problem into a failed write.
- */
 export type ProviderOperateAccess = "granted" | "denied" | "pending";
 
-/** Cached grants remain usable during revalidation; unknown or failed lookups grant nothing. */
 function resolveSessionOperateAccess(input: {
   readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
@@ -110,19 +102,12 @@ export function resolveRemoteOperateAccess(input: {
 }
 
 /**
- * The patch for one instance's project override, following the envelope
- * replacement rule for `projectSettingsOverrides`: the returned entry
- * replaces the project's whole override set, and `null` removes it.
- * `value: undefined` resets that single instance back to inheriting the
- * environment's enablement, leaving any other overridden keys untouched.
- *
  * `providerInstances` is always sent explicitly, even as `{}`, because the
  * server keeps a stored `providerInstances` map when an incoming entry omits
- * the key (so older clients that don't know the field cannot wipe it by
- * editing another setting). Omitting it here would undo the very clear this
- * function means to make.
+ * the key (so older clients that don't know the field cannot wipe it by editing
+ * another setting).
  */
-/** Every checkout of a project on one environment shares the same choice. */
+
 export function buildProviderInstanceOverridePatch(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectIds: readonly ProjectId[],

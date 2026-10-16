@@ -4,7 +4,6 @@ import Svg, { Path } from "react-native-svg";
 
 import type { FrostedCutoutProps } from "./FrostedCutout.types";
 
-/** Fills its parent with a theme-matched tint that leaves a rounded hole clear. iOS blurs instead. */
 export function FrostedCutout(props: FrostedCutoutProps) {
   const [width, setWidth] = useState(0);
   const [height, setHeight] = useState(0);

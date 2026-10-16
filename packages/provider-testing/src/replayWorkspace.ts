@@ -39,7 +39,6 @@ function runGit(
   });
 }
 
-/** Workspace-relative path to file contents, committed with the initial README. */
 export type ReplayWorkspaceFiles = Readonly<Record<string, string>>;
 
 const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(function* (

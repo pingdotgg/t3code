@@ -89,12 +89,10 @@ describe("PublishClientConfig", () => {
       expect(first).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v1\n");
       expect(first).toContain("T3CODE_MOBILE_OTLP_TRACES_TOKEN=mobile-v1\n");
 
-      // Same input: the action is skipped, so a change made by hand survives.
       yield* fs.writeFileString(target, `${first}MANUAL=1\n`);
       yield* stack.deploy(PublishClientConfig(clientConfig("v1"))).pipe(configured);
       expect(yield* fs.readFileString(target)).toContain("MANUAL=1\n");
 
-      // A rotated token changes the input, so it runs again and replaces the line.
       yield* stack.deploy(PublishClientConfig(clientConfig("v2"))).pipe(configured);
       const third = yield* fs.readFileString(target);
       expect(third).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");

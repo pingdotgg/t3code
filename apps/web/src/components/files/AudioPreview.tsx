@@ -1,4 +1,3 @@
-/** Native playback controls for a captured or workspace audio file. */
 export function AudioPreview(props: {
   readonly src: string;
   readonly name: string;

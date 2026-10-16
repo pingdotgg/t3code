@@ -15,7 +15,6 @@ import * as Tracer from "effect/Tracer";
 
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
-/** A writable connection that stays open until the enclosing scope closes. */
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
   const context = yield* Layer.build(NodeSqliteClient.layer({ filename }));
   const sql = Context.get(context, SqlClient.SqlClient);
@@ -25,7 +24,6 @@ const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
   };
 });
 
-/** Seeds `filename` and closes it, as a provider that has finished writing. */
 const seedDatabase = <E>(
   filename: string,
   seed: (db: Effect.Success<ReturnType<typeof openDatabase>>) => Effect.Effect<void, E>,
@@ -323,8 +321,6 @@ describe("readAntigravityUsage", () => {
       const cache = makeAntigravityUsageCache();
       assert.deepStrictEqual((yield* readAntigravityUsage(dir, 0, cache)).errors, []);
 
-      // An exclusive lock makes a fresh read fail without touching the file, so
-      // only a cache hit can still return the earlier records.
       yield* db.exec("BEGIN EXCLUSIVE");
       assert.strictEqual((yield* readAntigravityUsage(dir, 0)).errors.length, 1);
       const cached = yield* readAntigravityUsage(dir, 0, cache);
@@ -448,7 +444,6 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  /** Counts the rows each StatementSync.all() call returns, by its SQL. */
   const recordReads = Effect.gen(function* () {
     const reads: Array<{ sql: string; rows: number }> = [];
     const all = NodeSqlite.StatementSync.prototype.all;
@@ -477,7 +472,6 @@ describe("readAntigravityUsage", () => {
       const dir = yield* tempDir;
       yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
         Effect.gen(function* () {
-          // Antigravity's keys and indexes: idx is the INTEGER PRIMARY KEY, and steps has indexes.
           yield* db.exec(
             "CREATE TABLE `gen_metadata` (`idx` integer,`data` blob,`size` integer NOT NULL DEFAULT 0,PRIMARY KEY (`idx`))",
           );
@@ -493,7 +487,6 @@ describe("readAntigravityUsage", () => {
               antigravityGeneration(`g-${idx}`),
             ]);
           }
-          // A run of steps without metadata sits between steps with usage.
           for (let idx = 0; idx < 250; idx++) {
             yield* db.run("INSERT INTO steps (idx, metadata) VALUES (?, ?)", [
               idx,
@@ -524,7 +517,6 @@ describe("readAntigravityUsage", () => {
           ...Array.from({ length: 3 }, (_, idx) => `antigravity:11:g-${idx}`),
         ],
       );
-      // Page statements are untraced, so the trace does not grow with the tables.
       assert.isTrue(spans.some((span) => span.name === "sqlite"));
       assert.deepStrictEqual(
         spans.flatMap((span) => {
@@ -533,7 +525,6 @@ describe("readAntigravityUsage", () => {
         }),
         [],
       );
-      // Every row, with metadata or not, comes back through a bounded statement.
       for (const [table, total, most] of [
         ["steps", 250, 64],
         ["gen_metadata", 3, 1],
@@ -559,7 +550,6 @@ describe("readAntigravityUsage", () => {
         Effect.gen(function* () {
           yield* createTables(db);
           yield* db.exec("BEGIN");
-          // Stored in reverse idx order, so rowid order is the opposite of idx order.
           for (let idx = 99; idx >= 0; idx--) {
             yield* db.run("INSERT INTO steps VALUES (?, ?)", [idx, stepUsage(`s-${idx}`)]);
           }

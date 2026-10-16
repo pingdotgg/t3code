@@ -93,7 +93,6 @@ function collectEnvironments(environments: ReadonlyMap<EnvironmentId, ListEnviro
   };
 }
 
-/** Provider freshness and model catalogs do not affect the navigation lists. */
 export function createThreadListEnvironmentsAtom(
   configsAtom: Atom.Atom<ReadonlyMap<EnvironmentId, ServerConfig>>,
 ) {

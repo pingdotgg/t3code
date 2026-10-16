@@ -1,10 +1,3 @@
-/**
- * Screen-rotation glyph shared by the in-browser device toolbar and the
- * default-viewport setting, so the orientation control reads the same in both
- * places.
- *
- * @module ScreenRotationIcon
- */
 export function ScreenRotationIcon() {
   return (
     <svg

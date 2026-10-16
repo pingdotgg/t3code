@@ -9,11 +9,6 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { cn } from "../../lib/cn";
 import { AppText as Text } from "../../components/ui/AppText";
 
-/**
- * Live state of the clone that backs a freshly added project, shown above
- * the composer while the draft waits for its files. Running clones offer
- * Cancel; failed or cancelled ones offer Retry and Remove project.
- */
 export function ProjectCloneBanner(props: {
   readonly clone: ProjectCloneSnapshot;
   readonly onCancel: () => void;

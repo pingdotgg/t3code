@@ -30,7 +30,6 @@ export function disposeDeviceModel(root: Object3D) {
   for (const image of images) image.close();
 }
 
-/** Assets are converted offline: portrait, front +Z, centered display, height 2.2 and planar display UVs. */
 export function createImportedPhoneScene(
   asset: Group,
   texture: Texture,

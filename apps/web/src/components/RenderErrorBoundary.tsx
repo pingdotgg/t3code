@@ -17,7 +17,6 @@ export class RenderErrorBoundary extends Component<
 > {
   override state = { failed: false, resetKeys: this.props.resetKeys };
 
-  // Retry changed inputs without remounting healthy children or their controls.
   static getDerivedStateFromProps(
     { resetKeys }: RenderErrorBoundaryProps,
     state: RenderErrorBoundaryState,

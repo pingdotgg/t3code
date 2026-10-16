@@ -256,11 +256,9 @@ export const clearCache = DesktopIpc.makeIpcMethod({
 });
 
 /**
- * Partition scope for an (environment, profile) pair.
- *
  * The default profile keeps the bare environment id it used before profiles
- * existed, so upgrading does not strand anyone's existing logins in an
- * orphaned partition. Incognito derives a non-persistent partition.
+ * existed, so upgrading does not strand anyone's existing logins in an orphaned
+ * partition.
  */
 export function resolvePartitionScope(
   environmentId: string,
@@ -322,11 +320,6 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/**
- * Registered separately from `methods`: these carry `BrowserImport` in their
- * context and their own failure type, so they do not unify with the
- * manager-backed handlers the shared loop iterates.
- */
 export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
   payload: Schema.Void,

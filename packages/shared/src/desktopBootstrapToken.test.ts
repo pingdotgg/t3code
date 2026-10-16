@@ -21,7 +21,6 @@ describe("desktop bootstrap token", () => {
   });
 
   it("accepts a token from a desktop clock slightly ahead of the backend", () => {
-    // Windows crossed the boundary, the WSL clock has not yet.
     const desktopNow = 10 * WINDOW + 500;
     const backendNow = 10 * WINDOW - 500;
 

@@ -22,7 +22,6 @@ const hash = Effect.fn("AcpRegistryAuthenticationState.hash")(function* (value: 
   return Hex.encode(digest);
 });
 
-/** Remember explicit sign-in success, never discovery success or the agent's credentials. */
 export const makeAcpRegistryAuthenticationState = Effect.fn("makeAcpRegistryAuthenticationState")(
   function* (input: {
     readonly cacheDir: string;

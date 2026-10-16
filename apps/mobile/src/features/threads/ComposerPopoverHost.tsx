@@ -5,7 +5,6 @@ import { View, type ViewInstance } from "react-native";
 type ComposerPopoverHostValue = {
   readonly hostRef: RefObject<ViewInstance | null>;
   readonly setContent: (content: ReactNode) => void;
-  /** Changes when the host resizes, which moves the bottom-anchored composer. */
   readonly layoutVersion: number;
 };
 
@@ -16,12 +15,9 @@ export function useComposerPopoverHost() {
 }
 
 /**
- * Full-size layer around the composer for its popovers. Mount it inside the
- * composer's KeyboardStickyView: popovers placed here move with the composer
- * and sit inside a parent that covers them, so Android delivers their scroll
- * gestures. It wraps the composer because measureLayout needs an ancestor.
- * Pass `hidden` whenever the composer itself is hidden: popovers live outside
- * the composer's subtree, so they don't hide with it.
+ * Mount it inside the composer's KeyboardStickyView: popovers placed here move with the composer and sit inside a parent that
+ * covers them, so Android delivers their scroll gestures. Pass `hidden` whenever the composer itself is hidden: popovers live
+ * outside the composer's subtree, so they don't hide with it.
  */
 export function ComposerPopoverHost(props: {
   readonly hidden: boolean;

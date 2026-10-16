@@ -175,7 +175,6 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
       "Provider session provider-session:x is not active.",
     ),
   );
-  // Restart is compound (interrupt + detach + start). Do not swallow start failures.
   assert.isFalse(
     EffectWorker.isNonRetryableProviderTurnControlFailure(
       "provider-turn.restart",
@@ -336,9 +335,6 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
       },
       get: () =>
         Effect.gen(function* () {
-          // Model a cancellation commit immediately after this durable read
-          // took its snapshot. Its process-local signal is only delivered when
-          // the worker registered the waiter before starting the read.
           if (cancellationArmed) {
             yield* Deferred.succeed(signal, undefined);
           }

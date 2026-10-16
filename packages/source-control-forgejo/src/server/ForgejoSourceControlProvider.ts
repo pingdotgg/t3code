@@ -120,7 +120,6 @@ export const makeDiscovery = Effect.gen(function* () {
                   }),
         },
       });
-      // A configured fj account owns its requests, including authentication errors.
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
         if (login && fj.auth.status === "authenticated" && cli.getAccount) {
           const account = yield* cli.getAccount({ cwd, baseUrl: login.url }).pipe(Effect.result);
@@ -151,7 +150,6 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return null;
-        // Both CLIs claim Forgejo, so one failing does not stop the other from claiming the host.
         let failure: ForgejoCli.ForgejoCliError | undefined;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
@@ -159,7 +157,6 @@ export const makeDiscovery = Effect.gen(function* () {
             command,
             remoteUrl: input.context.remoteUrl,
           }).pipe(
-            // A CLI that is not installed holds no login.
             Effect.catchIf(
               (error) => isMissingExecutable(error.cause),
               () => Effect.succeed([]),
@@ -189,7 +186,6 @@ export const makeDiscovery = Effect.gen(function* () {
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
-/** HTTP paths can include an installation mount; Forgejo's API always names owner/repo. */
 export function repositoryNameFromRemoteUrl(url: string): string | null {
   const path = SourceControlProvider.repositoryPathFromRemoteUrl(url);
   return path === null || !/^https?:\/\//iu.test(url.trim())

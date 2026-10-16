@@ -4,7 +4,6 @@ import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-/** Matches the window-and-pointer icon used by the web work log. */
 export function BrowserAppIcon(props: {
   readonly size: number;
   readonly color?: ColorValue;

@@ -16,13 +16,6 @@ const texts = (projection: OrchestrationV2ThreadProjection | undefined) =>
     item.type === "assistant_message" ? [item.text.trim()] : [],
   );
 
-/**
- * A foreground subagent starts a background one and returns, so the
- * thread's turn ends while that grandchild runs. Ending the foreground call
- * leaves the grandchild running: the run waits on it, its report reaches
- * the subagent that started it, and that subagent's answer is a second turn
- * on its own thread. Only then does the run complete.
- */
 export function assertOpenCode2NestedBackgroundOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -39,15 +32,12 @@ export function assertOpenCode2NestedBackgroundOutput(
   assert.deepInclude(middle, { status: "completed", result: "MIDDLE_OK" });
   const middleThread = result.projections.get(middle!.childThreadId!);
   assert.isDefined(middleThread);
-  // The grandchild ran to its own end instead of being stopped with its caller.
   assert.lengthOf(middleThread.subagents, 1);
   const grandchild = middleThread.subagents[0]!;
   assert.deepInclude(grandchild, { status: "completed", result: "GRANDCHILD_OK" });
   assert.deepEqual(texts(result.projections.get(grandchild.childThreadId!)), ["GRANDCHILD_OK"]);
-  // The middle subagent answered the report in a turn of its own.
   assert.deepEqual(texts(middleThread), ["MIDDLE_OK", "GRANDCHILD_OK"]);
 
-  // The run waited on the grandchild: it completed after the grandchild did.
   const indexOf = (predicate: (event: (typeof result.domainEvents)[number]) => boolean) =>
     result.domainEvents.findIndex(predicate);
   const rootTurnEnded = indexOf(

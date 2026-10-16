@@ -88,7 +88,6 @@ function mockThreadShell() {
   };
 }
 
-// A delegated child changes while its parent's shell object stays the same.
 let stableParent: ReturnType<typeof mockThreadShell> | null = null;
 function mockThreads() {
   if (state.delegatedChild === null) return [mockThreadShell()];

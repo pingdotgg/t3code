@@ -1,10 +1,3 @@
-/**
- * Usage history for Grok Build: the format of its per-session
- * `updates.jsonl` logs and where each instance's `GROK_HOME` keeps them.
- *
- * @module provider-grok/server/usage
- */
-
 import type { UsageTokenTotals } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -23,7 +16,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * Grok reports cost in integer ticks where `1 USD = 10^10` ticks. See Grok
- * headless `total_cost_usd_ticks`. Convert to dollars for pricing.
+ * headless `total_cost_usd_ticks`.
  */
 export const GROK_COST_USD_TICKS_PER_DOLLAR = 10_000_000_000;
 
@@ -75,15 +68,6 @@ function grokTotalsToUsage(totals: GrokUsageTotals): UsageTokenTotals {
   };
 }
 
-/**
- * Parses one line of a Grok Build `updates.jsonl` session log.
- *
- * Usage lands on `turn_completed` session updates. Per-model breakdowns live
- * under `usage.modelUsage`; when present each model becomes its own record.
- *
- * Returns every record for the line (0 or more). Callers stream line-by-line
- * and flatten.
- */
 export function parseGrokLine(line: string): readonly UsageRecord[] {
   let parsed: unknown;
   try {
@@ -114,7 +98,6 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
   const sessionId = typeof paramsRecord["sessionId"] === "string" ? paramsRecord["sessionId"] : "";
   const promptId = typeof updateRecord["prompt_id"] === "string" ? updateRecord["prompt_id"] : null;
 
-  // Prefer the high-resolution agent clock; fall back to the outer unix seconds.
   const meta = paramsRecord["_meta"];
   let timestampMs: number | null = null;
   if (typeof meta === "object" && meta !== null) {
@@ -162,14 +145,6 @@ function parseGrokRecord(parsed: unknown): readonly UsageRecord[] {
     ];
   }
 
-  // Cost allocation:
-  // 1. Emitted models with their own costUsdTicks keep those values.
-  // 2. Remaining aggregate cost (top-level minus those per-model ticks,
-  //    clamped at 0) is pro-rated across emitted models that lack ticks,
-  //    by token share among the unticked models only.
-  // 3. When no model has per-model ticks, remaining equals the full
-  //    aggregate and every emitted model gets a token-share slice.
-  // Zero-token rows are never emitted and never count toward used ticks.
   const topLevelCostUsd = grokCostTicksToUsd(topLevel.costUsdTicks);
   let usedTickedCostUsd = 0;
   let untickedTokenDenominator = 0;

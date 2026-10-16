@@ -19,9 +19,7 @@ const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 const STALE_URL_MS = 5 * 60_000;
 
 /**
- * Loads a captured attachment for viewing: a fresh signed URL for a sent or uploaded file,
- * a leased local file for a draft. Text kinds read a bounded prefix; documents hand their
- * URL to a native or web renderer. Captured bytes never resolve against the workspace.
+ * Captured bytes never resolve against the workspace.
  */
 export function useAttachmentDocument(input: {
   readonly name: string;
@@ -55,8 +53,6 @@ export function useAttachmentDocument(input: {
     [content, delimiter],
   );
   const [error, setError] = useState<string | null>(null);
-  // Reading source is a separate failure from loading the file: a rendered HTML page can be
-  // fine while its bytes are not UTF-8, and switching back to the page must not stay stuck.
   const [contentError, setContentError] = useState<string | null>(null);
   const textReadUrl = useRef<{ uri: string; authorizedAt: number } | null>(null);
   const [rendered, setRendered] = useState(true);

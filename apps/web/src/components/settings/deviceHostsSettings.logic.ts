@@ -52,7 +52,6 @@ export function groupDeviceHosts(
   return [...groups.values()];
 }
 
-/** Apply one host change without replacing another environment's host list. */
 export function updateDeviceHosts(
   hosts: ReadonlyArray<SshDeviceHostConfig>,
   host: SshDeviceHostConfig,
@@ -72,8 +71,6 @@ export function updateDeviceHosts(
     }
     return matches[0];
   };
-  // A retry can encounter the updated destination on an environment that
-  // already saved, including one with a different environment-local host ID.
   const existing =
     hosts.find((candidate) => candidate.id === original.id) ??
     findDestination(original) ??

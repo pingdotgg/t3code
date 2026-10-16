@@ -226,7 +226,6 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
       expect(redemptions[0]?.body?.data).toBe(
         encodeJson({
-          // UUIDv5 of "account-b:credit-b"; must stay stable so retries deduplicate.
           redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
           credit_id: "credit-b",
         }),

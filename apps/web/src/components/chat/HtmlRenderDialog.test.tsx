@@ -147,7 +147,6 @@ it("offers only full screen and opens with the inline URL while keeping the inli
   expect(document.activeElement).toBe(expandButton);
 });
 
-// An inline URL near expiry is minted at mount, and full screen mints another.
 async function renderInlineNearExpiry() {
   cachedUrl.lifeMs = 60_000;
   refresh.mockResolvedValueOnce("https://environment.test/inline.html");

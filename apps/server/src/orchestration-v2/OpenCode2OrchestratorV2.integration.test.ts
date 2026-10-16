@@ -1,8 +1,3 @@
-/**
- * OpenCode 2 through the whole orchestrator, against a replayed HTTP server:
- * the transcript fixes the order of every request the adapter sends, so a
- * request the orchestrator never lets it make fails the run.
- */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -39,13 +34,13 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const SESSION = "ses_f148ca2deffeJcwCnRQtb0YFNX";
-/** Held until the scenario releases it, so the turn is still running meanwhile. */
+
 const FIRST_TURN_END = "first-turn-end";
-/** Held until the scenario releases it, so a follow-up is running when its stream drops. */
+
 const BACKGROUND_HOLD = "background-hold";
-/** The parent session of the recorded background run. */
+
 const BACKGROUND_PARENT = "ses_f1485cda4ffeXuc6GjAU9vDiRb";
-/** Its background subagent's session. */
+
 const BACKGROUND_CHILD = "ses_f1485c529ffea4URrYruwEg0Ja";
 const BACKGROUND_PROMPT =
   "Use the subagent tool with background enabled to delegate to the general subagent with the prompt: 'Run the shell command `sleep 20` with the bash tool and then reply exactly CHILD_OK.' As soon as it is launched, reply exactly PARENT_OK and end your turn without waiting for it.";
@@ -80,9 +75,9 @@ const mcpRules = (name: string) => [
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
 ];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
-/** Full access for the thread named `name`. */
+
 const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
-/** Paths the build and plan agents allow for themselves, as 2.0.18 lists them. */
+
 const BUILD_PATHS = [
   {
     action: "external_directory",
@@ -104,7 +99,7 @@ const agentInfo = (id: string, description: string, permissions: ReadonlyArray<u
   hidden: false,
   permissions,
 });
-/** `/api/agent` trimmed to the two agents a T3 session runs. */
+
 const agentList = (directory: string) => ({
   location: { directory },
   data: [
@@ -122,7 +117,7 @@ const agentList = (directory: string) => ({
     ]),
   ],
 });
-/** A session this runtime loads again (after a detach) waits on nothing. */
+
 const noOpenRequests: ReadonlyArray<ProviderReplayEntry> = [
   out("permission.list", { sessionID: SESSION }),
   reply("permission.list", { data: [] }),
@@ -143,7 +138,7 @@ const autoEditRules = (name: string) => [
   ...BUILD_PATHS,
   ...mcpRules(name),
 ];
-/** Plan mode on Full access: edits are denied except the plan agent's own plan files. */
+
 const planRules = (name: string) => [
   { action: "*", resource: "*", effect: "allow" },
   { action: "edit", resource: "*", effect: "deny" },
@@ -164,12 +159,12 @@ const sessionInfo = (directory: string, permissions: ReadonlyArray<unknown>, tit
     permissions,
   },
 });
-/** T3's instructions entry, written before a thread's first prompt and whenever it changes. */
+
 const instructionsWritten: ReadonlyArray<ProviderReplayEntry> = [
   out("session.instructions.entry.put", { sessionID: SESSION, key: "t3-code", value: "<any>" }),
   reply("session.instructions.entry.put", null),
 ];
-/** One prompt the server accepts and answers with `text`. */
+
 const answeredPrompt = (text: string): ReadonlyArray<ProviderReplayEntry> => [
   out("session.prompt", { sessionID: SESSION, text: "<any>" }),
   reply("session.prompt", {
@@ -190,7 +185,7 @@ const answeredPrompt = (text: string): ReadonlyArray<ProviderReplayEntry> => [
   }),
   event("session.execution.succeeded", { sessionID: SESSION }),
 ];
-/** The model list read the first time a thread runs in `directory`. */
+
 const directoryModels = (directory: string): ReadonlyArray<ProviderReplayEntry> => [
   out("model.list", { "location[directory]": directory }),
   reply("model.list", {
@@ -223,7 +218,7 @@ const createdSession = (
   directory: string,
   name: string,
   permissions: ReadonlyArray<unknown> = t3Rules(name),
-  // Only a mode that narrows Full access reads the agents' own path rules.
+
   narrows = false,
 ): ReadonlyArray<ProviderReplayEntry> => [
   out("event.subscribe"),
@@ -236,12 +231,11 @@ const createdSession = (
     ],
   }),
   ...(narrows ? [out("agent.list", "<any>"), reply("agent.list", agentList(directory))] : []),
-  // The thread's title, which is its name here.
+
   out("session.create", { location: { directory }, model: "<any>", permissions, title: name }),
   reply("session.create", sessionInfo(directory, permissions, name)),
 ];
 
-/** A recording with its scrubbed `<work>` directory replaced by `directory`. */
 const withDirectory = <T>(value: T, directory: string): T => {
   const replace = (entry: unknown): unknown =>
     entry === "<work>"
@@ -302,7 +296,6 @@ const threadCommands = (input: {
   };
 };
 
-/** Runs `commands` in order, letting the thread go idle after each message. */
 const runScenario = (input: {
   readonly name: string;
   readonly threadId: ThreadId;
@@ -348,7 +341,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             ...createdSession(cwd, name),
             ...instructionsWritten,
             ...answeredPrompt("FIRST"),
-            // The next turn resumes the session at its new selection.
+
             out("session.get", { sessionID: SESSION }),
             reply("session.get", sessionInfo(cwd, t3Rules(name), name)),
             out("session.switchModel", {
@@ -356,7 +349,7 @@ describe("OpenCode 2 through the orchestrator", () => {
               model: { providerID: "opencode", id: "mimo-v2.6-flash-free" },
             }),
             reply("session.switchModel", null),
-            // The instructions name the model, so they are written again.
+
             ...instructionsWritten,
             ...answeredPrompt("SECOND"),
           ],
@@ -383,7 +376,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             ["completed", mimo.model],
           ],
         );
-        // One native session carried both turns.
+
         assert.lengthOf(projection.providerThreads, 1);
       }).pipe(Effect.scoped),
   );
@@ -404,11 +397,11 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...directoryModels(after),
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(before, t3Rules(name), name)),
-          // The worktree change detached the thread, so its session is loaded afresh.
+
           ...noOpenRequests,
           out("session.move", { sessionID: SESSION, directory: after }),
           reply("session.move", null),
-          // The moved thread reopens its session, which writes the entry again.
+
           ...instructionsWritten,
           ...answeredPrompt("SECOND"),
         ],
@@ -446,9 +439,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...instructionsWritten,
           ...answeredPrompt("FIRST"),
           ...directoryModels(after),
-          // Reopened after a worktree change, the session reports the rules an
-          // older build gave it, which denied subagents; they are replaced
-          // before anything runs.
+
           out("session.get", { sessionID: SESSION }),
           reply(
             "session.get",
@@ -535,7 +526,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...createdSession(cwd, name),
           ...instructionsWritten,
           ...answeredPrompt("FIRST"),
-          // A mode change detaches nothing: the same session is resumed with the new rules.
+
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, t3Rules(name), name)),
           out("agent.list", "<any>"),
@@ -543,7 +534,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           out("session.update", { sessionID: SESSION, permissions: autoEditRules(name) }),
           reply("session.update", null),
           ...answeredPrompt("SECOND"),
-          // Back to Full access: the narrowing rules go.
+
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, autoEditRules(name), name)),
           out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
@@ -577,7 +568,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         threadId: thread.threadId,
         entries: [
           ...createdSession(cwd, name, planRules(name), true),
-          // Plan mode is also OpenCode's plan agent, switched before the prompt.
+
           out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
           reply("session.switchAgent", null),
           ...instructionsWritten,
@@ -616,8 +607,7 @@ describe("OpenCode 2 through the orchestrator", () => {
       const recorded = yield* readProviderReplayTranscript(
         new URL("./testkit/fixtures/opencode2_fork/opencode_transcript.ndjson", import.meta.url),
       );
-      // The recording scrubbed its directory to `<work>`; the fork it answers
-      // runs where its source does, which is this test's workspace.
+
       const transcript = yield* OpenCode2OrchestratorReplayHarness.decodeTranscript(
         withDirectory(recorded, cwd),
       );
@@ -667,8 +657,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         forked.providerThreads[0]?.nativeThreadRef?.nativeId,
         recorded.metadata?.["forkedNativeSessionId"],
       );
-      // The fork keeps the first turn and drops the second: the model answers
-      // from the first alone, and T3 shows the inherited turn but not the other.
+
       assert.deepEqual(
         forked.runs.map((run) => run.status),
         ["completed"],
@@ -691,8 +680,7 @@ describe("OpenCode 2 through the orchestrator", () => {
       });
       const ids = yield* IdAllocator.IdAllocatorV2;
       const run = (ordinal: number) => ids.derive.run({ threadId: thread.threadId, ordinal });
-      // The first turn is held open until the queue has been changed: its end
-      // is the last event, after the cancel.
+
       const [first, second, third] = [thread.message("first"), queued("second"), queued("third")];
       const cancel: OrchestrationV2Command = {
         type: "queued-run.cancel",
@@ -719,7 +707,7 @@ describe("OpenCode 2 through the orchestrator", () => {
               delivery: "steer",
             },
           }),
-          // Only the third message reaches OpenCode, as the next turn.
+
           ...answeredPrompt("THIRD"),
         ],
       });
@@ -764,13 +752,6 @@ describe("OpenCode 2 through the orchestrator", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
-  /**
-   * The recorded background run (`opencode2_background`): the parent's turn
-   * ends while its subagent runs, then the subagent's report wakes the parent
-   * and T3 opens a continuation run for that follow-up. `reconnect` replaces
-   * the recording from `cut` on with a stream drop, a restarted stream and
-   * what the server answers then.
-   */
   const backgroundReconnect = Effect.fn("backgroundReconnect")(function* (input: {
     readonly name: string;
     readonly cut: string;
@@ -822,7 +803,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         steps: input.steps(thread, run),
       },
       OpenCode2OrchestratorReplayHarness,
-      // Opens the continuation run a follow-up asks for, as the server does.
+
       { runContinuationWorker: true },
     ).pipe(provideDeterministicTestRuntime);
     const projection = result.projections.get(thread.threadId);
@@ -834,15 +815,14 @@ describe("OpenCode 2 through the orchestrator", () => {
     Effect.gen(function* () {
       const { result, projection } = yield* backgroundReconnect({
         name: "opencode2-follow-up-reconnect",
-        // The follow-up streams its reply; then the stream drops before the
-        // execution's end.
+
         cut: "session.step.streamed.5",
         hold: "session.text.ended.3",
         reconnect: (parent) => [
           out("event.subscribe"),
           out("session.active"),
           reply("session.active", { data: {} }),
-          // The follow-up's history since the report it answers, newest first.
+
           out("message.list", { sessionID: parent, order: "desc", limit: "50" }),
           reply("message.list", {
             data: [
@@ -889,7 +869,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         steps: (thread, run) => [
           { type: "dispatch", command: thread.create },
           { type: "advance_clock", duration: "1 millis" },
-          // A continuation run starts while the thread is busy, so this does not wait.
+
           {
             type: "dispatch",
             command: thread.message("start", bigPickle, BACKGROUND_PROMPT),
@@ -897,8 +877,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             key: "start",
           },
           { type: "advance_clock", duration: "1 millis" },
-          // The follow-up's continuation turn has taken its execution when the
-          // stream drops: the held reply end is the next event.
+
           { type: "await_run_steerable", threadId: thread.threadId, runId: run(2) },
           { type: "release_replay_gate", label: BACKGROUND_HOLD },
           {
@@ -933,16 +912,14 @@ describe("OpenCode 2 through the orchestrator", () => {
       Effect.gen(function* () {
         const { result, projection } = yield* backgroundReconnect({
           name: "opencode2-background-lost",
-          // The subagent runs; the stream drops before its end, its report and
-          // the follow-up it started, none of which is read back.
+
           cut: "session.step.started.3",
           reconnect: (parent) => [
             out("event.subscribe"),
-            // Nothing runs any more: the subagent and the follow-up both ended.
+
             out("session.active"),
             reply("session.active", { data: {} }),
-            // The subagent's turn was running, so its history since its prompt
-            // is read back: its end, as the recording's later events had it.
+
             out("message.list", { sessionID: BACKGROUND_CHILD, order: "desc", limit: "50" }),
             reply("message.list", {
               data: [
@@ -1012,8 +989,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             { type: "await_thread_idle", threadId: thread.threadId },
           ],
         });
-        // The parent's run ended; the lost subagent ended as interrupted and
-        // said why; no follow-up is waited on; the next turn ran normally.
+
         assert.deepEqual(
           projection.runs.map((candidate) => candidate.status),
           ["completed", "completed"],
@@ -1038,8 +1014,8 @@ describe("OpenCode 2 through the orchestrator", () => {
         // The recorded background run, reordered as 2.0.18 ran it live when the
         // child ended first: the parent's execution is still answering when the
         // child's report is queued and delivered into it, and that one
-        // execution then answers the report and ends. No execution starts on
-        // its own, so no continuation run opens.
+        // execution then answers the report and ends.
+
         const cwd = yield* checkpointWorkspace("opencode2-background-in-turn");
         const recorded = yield* readProviderReplayTranscript(
           new URL(
@@ -1064,17 +1040,16 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...recorded,
           scenario: "opencode2-background-in-turn",
           entries: [
-            // The launch, up to the parent's answer, without its end.
             ...recorded.entries.slice(0, parentEnd),
-            // The child runs to its end meanwhile.
+
             ...recorded.entries.slice(
               childStart,
               recorded.entries.indexOf(byLabel("session.inbox.enqueued.3")),
             ),
-            // Its report is queued and delivered into the parent's running execution.
+
             byLabel("session.inbox.enqueued.3"),
             byLabel("session.inbox.delivered.3"),
-            // That execution answers the report and ends.
+
             byLabel("session.text.ended.3"),
             byLabel("session.execution.succeeded.3"),
           ],
@@ -1105,8 +1080,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         ).pipe(provideDeterministicTestRuntime);
         const projection = result.projections.get(thread.threadId);
         assert.isDefined(projection);
-        // One run took the launch and the report; the subagent completed with
-        // its output, and nothing waits on a follow-up.
+
         assert.deepEqual(
           projection!.runs.map((candidate) => candidate.status),
           ["completed"],
@@ -1137,8 +1111,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         const name = "opencode2_switch";
         const cwd = yield* checkpointWorkspace(name);
         const thread = threadCommands({ name, worktreePath: cwd });
-        // The spike's recording: plan agent, then build agent and a new model on
-        // one session. Its `<work>` is this test's workspace.
+
         const recorded = yield* Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -1178,7 +1151,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         const replies = projection.turnItems.flatMap((item) =>
           item.type === "assistant_message" ? [item.text] : [],
         );
-        // The plan agent refused to write; OpenCode's own reminder told it why.
+
         assert.include(replies[0], "Plan mode");
         assert.equal(replies[1], "SWITCHED");
         assert.lengthOf(projection.providerThreads, 1);

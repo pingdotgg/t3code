@@ -4,10 +4,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 /**
- * Whether this host lets an unprivileged process create symlinks. Windows
- * refuses without Developer Mode or elevation, so tests that plant a symlink
- * to prove containment or escape detection should `skipIf(!symlinksSupported)`
- * rather than fail at setup. Probed once per process.
+ * Windows refuses without Developer Mode or elevation, so tests that plant a
+ * symlink to prove containment or escape detection should
+ * `skipIf(!symlinksSupported)` rather than fail at setup.
  */
 export const symlinksSupported: boolean = (() => {
   let directory: string | undefined;
@@ -22,8 +21,6 @@ export const symlinksSupported: boolean = (() => {
     // probe directory would otherwise throw out of module initialisation.
     try {
       if (directory !== undefined) NodeFS.rmSync(directory, { recursive: true, force: true });
-    } catch {
-      // Leave the probe directory behind rather than fail every importer.
-    }
+    } catch {}
   }
 })();

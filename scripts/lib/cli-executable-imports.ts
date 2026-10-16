@@ -3,15 +3,11 @@ import * as NodeModule from "node:module";
 import ts from "typescript-legacy";
 
 /**
- * Scan an emitted bundle chunk for ESM imports of packages that are not Node
- * built-ins.
- *
  * Inside a Node single-executable, `import` statements and `import()` can only
  * resolve built-in modules; any file-backed specifier throws at module
  * evaluation (static) or at first use (dynamic). External packages therefore
  * have to be reached through `createRequire`, which reads the real filesystem
- * in every runtime. The bundler cannot enforce this, so the check reads what it
- * produced.
+ * in every runtime.
  */
 export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<string> {
   const specifiers = new Set<string>();

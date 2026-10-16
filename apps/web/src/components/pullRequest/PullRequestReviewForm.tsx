@@ -1,10 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-/**
- * The review half of the floating composer: the summary and the verdict that sends it, together
- * with whatever line comments the review is holding. The count of those lives on the composer's
- * trigger and mode toggle, and each pending card can be dropped from the diff, so neither is
- * repeated here. The popover around it belongs to PullRequestComposer.
- */
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
@@ -100,7 +94,6 @@ export function PullRequestReviewForm({
     });
     onPendingChange(false);
     if (result._tag === "Failure") {
-      // The draft is kept: whatever went wrong, retyping the review is not the answer.
       toastManager.add({ type: "error", title: "The review could not be submitted" });
       return;
     }
@@ -120,7 +113,6 @@ export function PullRequestReviewForm({
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
       : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
-  // The placeholder asks for exactly what the submit button is waiting on.
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "")
       ? "Summarize your review (optional)"

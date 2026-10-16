@@ -1,7 +1,6 @@
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 
-/** Returns to the previous app page, or home when opened without app history. */
 function useNavigateBack() {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
@@ -15,7 +14,6 @@ function useNavigateBack() {
   }, [canGoBack, navigate]);
 }
 
-/** Enables page-level Escape navigation, letting controls consume Escape first. */
 export function useEscapeToGoBack(onEscape?: () => void) {
   const navigateBack = useNavigateBack();
   const handleEscape = onEscape ?? navigateBack;

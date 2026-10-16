@@ -1,24 +1,3 @@
-/**
- * Safari cookie extraction.
- *
- * Safari does not encrypt its cookies; it stores them in a proprietary
- * `Cookies.binarycookies` file inside its app container. The protection is
- * TCC, not cryptography — the file lives under a path only apps with Full Disk
- * Access may read, so the gate is a permission the user grants in System
- * Settings rather than a key to obtain.
- *
- * The format, big-endian throughout except the page bodies:
- *
- *   magic "cook", u32 pageCount, u32 pageSize[pageCount], then each page:
- *     u32 0x00000100, u32le cookieCount, u32le cookieOffset[cookieCount],
- *     then each cookie:
- *       u32le size, u32le unknown, u32le flags, u32le unknown,
- *       u32le urlOffset, nameOffset, pathOffset, valueOffset,
- *       u64 end-of-header, f64 expiry, f64 creation, then NUL-terminated
- *       strings at the offsets above (relative to the cookie start).
- *
- * @module SafariCookies
- */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
@@ -31,7 +10,6 @@ const APPLE_EPOCH_OFFSET_SECONDS = 978_307_200;
 
 /** `u32 0x00000100`, `u32le cookieCount`, then one `u32le` offset per cookie. */
 const COOKIE_PAGE_HEADER_SIZE = 12;
-/** Through the `f64 creation` field; string bytes follow. */
 const COOKIE_RECORD_HEADER_SIZE = 56;
 
 const FLAG_SECURE = 0x1;
@@ -44,12 +22,7 @@ export class SafariCookieReadError extends Schema.TaggedError<SafariCookieReadEr
   "SafariCookieReadError",
   {
     reason: SafariCookieReadFailure,
-    /**
-     * Which jar the read was for. The parser raises this before a path is in
-     * hand, so it is optional rather than required.
-     */
     cookieDatabasePath: Schema.optional(Schema.String),
-    /** Kept for the log; never surfaced to the user. */
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -62,7 +35,6 @@ export class SafariCookieReadError extends Schema.TaggedError<SafariCookieReadEr
 
 const isSafariCookieReadError = Schema.is(SafariCookieReadError);
 
-/** Reads a NUL-terminated ASCII string at an offset. */
 function readCString(buffer: Buffer, start: number): string {
   const end = buffer.indexOf(0, start);
   return buffer.toString("utf8", start, end === -1 ? buffer.length : end);
@@ -74,11 +46,10 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   }
 
   const pageCount = buffer.readUInt32BE(4);
-  // Every declared structure is bounds-checked against what the file actually
-  // contains, and a mismatch fails the read. `Buffer.subarray` clamps silently,
-  // so accepting a short page or an overlong record would return a cookie set
-  // that is quietly missing entries or carrying fields read out of the next
-  // record — a partial import the user has no way to notice.
+  // `Buffer.subarray` clamps silently, so accepting a short page or an overlong
+  // record would return a cookie set that is quietly missing entries or
+  // carrying fields read out of the next record — a partial import the user has
+  // no way to notice.
   if (8 + pageCount * 4 > buffer.length) {
     throw new SafariCookieReadError({ reason: "readFailed" });
   }
@@ -112,8 +83,6 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
       if (cookieStart < offsetTableEnd || cookieStart + COOKIE_RECORD_HEADER_SIZE > page.length) {
         throw new SafariCookieReadError({ reason: "readFailed" });
       }
-      // Bounded by the record's own length so a string offset cannot run past
-      // it into the following record's bytes.
       const recordSize = page.readUInt32LE(cookieStart);
       const cookieEnd = cookieStart + recordSize;
       if (
@@ -133,8 +102,6 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
       const valueOffset = cookie.readUInt32LE(28);
       const expiry = cookie.readDoubleLE(40);
 
-      // Offsets are relative to the record; one pointing outside it would
-      // otherwise read a neighbouring cookie's bytes as this one's value.
       if (
         [urlOffset, nameOffset, pathOffset, valueOffset].some(
           (offset) => offset < COOKIE_RECORD_HEADER_SIZE || offset >= cookie.length,
@@ -173,13 +140,8 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   }
 
   // Safari writes an 8-byte checksum after the pages, then an optional
-  // length-prefixed property list. Anything else past the declared pages —
-  // in particular whole extra pages — means the page table does not describe
-  // the file, and a jar the header lies about is refused rather than
-  // imported with cookies silently missing.
+  // length-prefixed property list.
   const trailer = buffer.length - pageStart;
-  // Legal shapes: nothing, the 8-byte checksum alone, or checksum + u32
-  // length + exactly that many property-list bytes.
   const validTrailer =
     trailer === 0 ||
     trailer === 8 ||
@@ -191,14 +153,6 @@ export function parseBinaryCookies(buffer: Buffer): ReadonlyArray<ImportedCookie
   return cookies;
 }
 
-/**
- * Whether a filesystem error is the OS refusing access.
- *
- * A TCC denial arrives as EPERM, which Effect tags `Unknown` rather than
- * `PermissionDenied` (reserved for EACCES), so the underlying errno is checked
- * too — otherwise a Full Disk Access refusal is reported as a generic read
- * failure and the user is never told what to grant.
- */
 export const isPermissionDenied = (error: PlatformError.PlatformError): boolean => {
   // TCC denies with EPERM, which Effect tags `Unknown` rather than
   // `PermissionDenied` — so the errno is what identifies it. EACCES (and the
@@ -210,12 +164,10 @@ export const isPermissionDenied = (error: PlatformError.PlatformError): boolean 
 };
 
 /**
- * Whether reading the jar is refused by TCC. `stat` succeeds on the jar
- * inside Safari's container even without Full Disk Access — that is what lets
- * the listing find it — so presence alone cannot tell granted from denied.
- * Opening it for read is what TCC gates: EPERM means the grant is missing.
- * Anything else (including a missing jar) is not a permission answer.
- */
+ * `stat` succeeds on the jar inside Safari's container even without Full Disk
+ * Access — that is what lets the listing find it — so presence alone cannot
+ * tell granted from denied.
+ * */
 export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(
@@ -225,7 +177,6 @@ export const safariAccessDenied = Effect.fnUntraced(function* (cookiePath: strin
   );
 });
 
-/** A missing or unreadable jar is never evidence that access was granted. */
 export const safariAccessGranted = Effect.fnUntraced(function* (cookiePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.open(cookiePath, { flag: "r" }).pipe(
@@ -241,11 +192,6 @@ export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(fu
   const fileSystem = yield* FileSystem.FileSystem;
   const contents = yield* fileSystem.readFile(cookiePath).pipe(
     Effect.mapError((cause) => {
-      // TCC denies the read even though the file exists — a permission the user
-      // grants in System Settings rather than a missing browser. macOS never
-      // prompts for Full Disk Access, so there is no dialog to wait on; the
-      // read just fails, and it fails with EPERM, which Effect surfaces as an
-      // `Unknown` system error rather than `PermissionDenied` (that is EACCES).
       return new SafariCookieReadError({
         reason: isPermissionDenied(cause) ? "needsFullDiskAccess" : "readFailed",
         cookieDatabasePath: cookiePath,
@@ -253,8 +199,6 @@ export const readSafariCookies = Effect.fn("SafariCookies.readSafariCookies")(fu
       });
     }),
   );
-  // The parser throws on a malformed jar; catch it here so callers see a typed
-  // failure rather than a defect.
   return yield* Effect.try({
     try: () => parseBinaryCookies(Buffer.from(contents)),
     catch: (cause) =>

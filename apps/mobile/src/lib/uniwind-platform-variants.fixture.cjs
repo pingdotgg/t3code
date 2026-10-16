@@ -1,17 +1,10 @@
 "use strict";
 
-// Fixture for uniwind-platform-variants.test.ts. Run as a plain Node process
-// (`node uniwind-platform-variants.fixture.cjs <fixtureDir>`) so it executes the
-// real compiler with no test-runner transforms in the way. Prints one JSON
-// object to stdout describing what each platform bundle compiled.
-//
-// It reproduces what the Metro transformer does for `global.css`: compile the
-// Tailwind entry, then run uniwind's CSS processor and stylesheet serializer
-// once per platform. Loading `dist/common` needs a small custom loader because
-// uniwind declares `"type": "module"` over that CommonJS output and its
-// internal `@/...` import alias only exists at uniwind's own build time; the
-// loader hands unmodified file bytes to V8 and resolves those aliases the same
-// way, so this runs the exact compiled code the Metro transformer bundles.
+// Loading `dist/common` needs a small custom loader because uniwind declares
+// `"type": "module"` over that CommonJS output and its internal `@/...` import
+// alias only exists at uniwind's own build time; the loader hands unmodified
+// file bytes to V8 and resolves those aliases the same way, so this runs the
+// exact compiled code the Metro transformer bundles.
 const fs = require("node:fs");
 const path = require("node:path");
 const { createRequire } = require("node:module");
@@ -48,8 +41,6 @@ function createUniwindCompilerLoader(uniwindPackageJson) {
       if (request.startsWith(".")) {
         return load(path.resolve(path.dirname(resolved), request));
       }
-      // uniwind's own dependencies (lightningcss, culori, ...) resolve through
-      // the package's dependency tree, like they do inside the Metro bundle.
       return uniwindRequire(request);
     };
 
@@ -88,7 +79,6 @@ async function main() {
   const tailwindCSS = await compiler.build(scanner.scan());
 
   const platforms = {};
-  // Every ios:/android: utility class Tailwind generated for the fixture.
   const compiledGuardedClasses = {};
   for (const match of tailwindCSS.matchAll(/\.(ios|android)\\:([^{ ,]+) \{/g)) {
     compiledGuardedClasses[`${match[1]}:${match[2]}`.replace(/\\(.)/g, "$1")] = true;
@@ -103,7 +93,6 @@ async function main() {
     androidUtilities: utilityCountIn(platformBlock("android")),
   };
   for (const platform of ["ios", "android"]) {
-    // Same config the app's withUniwindConfig produces (polyfills.rem: 14).
     const bundlerConfig = { platform, themes: ["light", "dark"], polyfills: { rem: 14 } };
     const processor = new ProcessorBuilder(bundlerConfig);
     processor.transform(tailwindCSS);
@@ -128,18 +117,12 @@ async function main() {
       payloadIncludesAllCompiled: Object.keys(compiled).every((className) =>
         payload.includes(`"${className}"`),
       ),
-      // A utility dropped from this platform's stylesheet must not appear
-      // anywhere in the payload the bundle embeds for this platform.
       payloadLeaks: Object.keys(compiledGuardedClasses)
         .filter((className) => compiled[className] === undefined)
         .filter((className) => payload.includes(`"${className}"`)),
     };
   }
 
-  // Exercise the real Metro transformer entry point (the shipped
-  // `dist/metro/transformer.cjs`, not a copy) with a stubbed downstream worker,
-  // to check what the global.css virtual module actually becomes — including
-  // the native styles fingerprint that lets dev reloads skip reinitializing.
   const transformerPath = path.join(uniwindRoot, "dist/metro/transformer.cjs");
   let reinitCode = "";
   const Module = require("node:module");

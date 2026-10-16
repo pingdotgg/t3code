@@ -17,7 +17,6 @@ import {
   type PullRequestListPages,
 } from "./pullRequestList";
 
-// Retain each environment's pages when moving between tabs or changing list scope.
 const pagesFamily = Atom.family((_key: string) =>
   Atom.make<PullRequestListPages | null>(null).pipe(Atom.setIdleTTL(5 * 60_000)),
 );

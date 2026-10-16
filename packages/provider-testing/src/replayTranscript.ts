@@ -69,10 +69,6 @@ function materializeWorkspacePlaceholder(value: unknown, workspace: string): unk
   );
 }
 
-/**
- * Resolves portable fixture placeholders before a replay driver sees the transcript.
- * The resulting outbound frames still use exact structural equality during replay.
- */
 export function materializeReplayTranscriptWorkspace(
   transcript: ProviderReplayTranscript,
   workspace: string,
@@ -164,7 +160,6 @@ export function decodeProviderReplayNdjson(
 }
 
 /**
- * Reads a provider replay transcript from a `file:` URL and decodes it.
  * Conversion goes through the `Path` service so drive-letter and UNC fixture
  * URLs resolve to native paths on Windows instead of `/C:/...` pathname strings.
  */

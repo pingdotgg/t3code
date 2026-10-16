@@ -1,5 +1,4 @@
 /**
- * True when running inside the Electron preload bridge, false in a regular browser.
  * The preload script sets window.desktopBridge via contextBridge before any web-app
  * code executes, so this is reliable at module load time.
  */

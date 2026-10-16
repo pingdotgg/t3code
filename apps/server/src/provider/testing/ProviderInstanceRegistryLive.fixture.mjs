@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
-// Opt-in: act like a `claude` wrapper that only runs inside one directory.
 const requiredCwd = process.env.T3_CLAUDE_REQUIRED_CWD;
 if (requiredCwd && process.cwd() !== NodeFS.realpathSync(requiredCwd)) {
   process.stderr.write(`claude: refusing to run outside ${requiredCwd}\n`);

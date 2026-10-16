@@ -18,7 +18,6 @@ export function resolveThreadQueueRowControls(input: {
   readonly canPromoteToSteer: boolean;
   readonly canReorder: boolean;
   readonly index: number;
-  /** This row's message is already open in the composer. */
   readonly isEditing?: boolean;
   readonly queuedCount: number;
   readonly text: string;
@@ -60,7 +59,6 @@ export function buildCancelQueuedRunCommand(input: {
   };
 }
 
-/** Find the insertion anchor using the rows' original, untransformed layout. */
 export function resolveQueueDragBeforeRunId(
   rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
   runId: RunId,
@@ -74,7 +72,6 @@ export function resolveQueueDragBeforeRunId(
   return remaining.find((row) => center < row.y! + row.height! / 2)?.id ?? null;
 }
 
-/** Return the insertion anchor after a drag, or undefined when the order is unchanged. */
 export function resolveQueueDropBeforeRunId(
   rows: ReadonlyArray<{ id: RunId; y?: number; height?: number }>,
   runId: RunId,

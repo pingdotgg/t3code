@@ -18,11 +18,6 @@ function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
 }
 
-/**
- * Pi's durable native thread id is its session file. After the idle release,
- * the respawned process must `switch_session` to the file the first turn
- * wrote, and the resumed model still sees the first exchange.
- */
 export function assertPiProviderThreadResumeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

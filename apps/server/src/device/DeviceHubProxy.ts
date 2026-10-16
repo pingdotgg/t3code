@@ -1,15 +1,8 @@
 /**
- * Same-origin proxy in front of expo-device-hub.
- *
- * The hub binds loopback and is never reachable directly: serve-sim exposes a
- * shell-exec route and serve-emu's action routes are unauthenticated, so the
- * only way to a device stream is through this route, which requires an
- * environment session with read scope (operate scope for input and tuning). Reusing the T3
- * origin is also what makes remote connections work unchanged — Tailscale and
- * T3 Connect already carry `/api/*` and WebSocket upgrades for the app itself.
- *
- * Only the routes the Device panel needs are forwarded. Anything under the
- * hub's dashboard, exec, or WebRTC surface is rejected here.
+ * The hub binds loopback and is never reachable directly: serve-sim exposes a shell-exec route
+ * and serve-emu's action routes are unauthenticated, so the only way to a device stream is
+ * through this route, which requires an environment session with read scope (operate scope for
+ * input and tuning).
  */
 import { AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -39,7 +32,6 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-emu\/health$/,
 ];
 
-/** Read paths are GET-only; only these accept other methods (screenshot captures, stream tuning). */
 const MUTABLE_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-sim\/api\/screenshot$/,
   /^\/vendor\/serve-emu\/api\/(screenshot|stream-mode|stream-settings)$/,
@@ -52,7 +44,6 @@ const ALLOWED_WS_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-emu\/ws$/,
 ];
 
-/** Hop-by-hop and origin headers that must not cross the proxy. */
 const DROPPED_REQUEST_HEADERS = new Set([
   "host",
   "connection",
@@ -82,10 +73,6 @@ const forwardHeaders = (request: HttpServerRequest.HttpServerRequest, origin: st
   return headers;
 };
 
-/**
- * Pipe a client WebSocket to the hub's with no framing changes. Frames are
- * opaque: H.264 access units one way, input packets the other.
- */
 const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
@@ -176,9 +163,6 @@ const handler = Effect.gen(function* () {
   if (!ready) {
     return HttpServerResponse.text("Device hub is not running", { status: 503 });
   }
-  // The hub runs in standalone mode at its origin root; the panel builds every
-  // stream and socket URL itself, so nothing depends on the hub knowing the
-  // T3 prefix.
   // The ticket authenticates here and must not travel on to the hub.
   const upstreamSearch = new URLSearchParams(url.value.search);
   upstreamSearch.delete("wsTicket");

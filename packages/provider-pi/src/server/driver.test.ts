@@ -46,7 +46,6 @@ const personalSkill = {
   sourceInfo: { scope: "user", path: "/home/.pi/agent/skills/personal/SKILL.md" },
 };
 
-// Respond through the real stdio transport, with a distinct command catalog for each cwd.
 const makePiSpawner = Effect.fnUntraced(function* (
   discovery: { readonly state?: unknown; readonly models?: ReadonlyArray<unknown> } = {},
 ) {

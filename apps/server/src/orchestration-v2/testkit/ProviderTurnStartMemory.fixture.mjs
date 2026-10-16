@@ -178,7 +178,6 @@ await Effect.runPromise(
     for (let i = 0; i < count; i++) {
       current = fixture(i);
       yield* service.start({ threadId: "thread", runId: "run:" + i });
-      // The run worker must keep checking current durable state, not its startup copy.
       const controls = liveRuns.at(-1);
       current = { ...current, turnItems: [] };
       NodeAssert.equal(yield* controls.shouldStartProviderTurn(), true);

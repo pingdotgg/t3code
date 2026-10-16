@@ -62,7 +62,7 @@ export function usePullRequestListActions(
       setBusyKey(scopedPullRequestListKey(entry));
       try {
         const target = pullRequestTarget(params(entry));
-        // List rows do not subscribe to expensive detail reads. Check fresh permissions on intent.
+        // List rows do not subscribe to expensive detail reads.
         const response = await executeAtomQuery(registry, composerPullRequests.detail(target), {
           refresh: true,
           reportFailure: false,

@@ -69,11 +69,6 @@ function normalizeThreadDeepLink(value: string): string | null {
   }
 }
 
-/**
- * The deep link a notification would have to carry to target the thread the
- * given route is showing, including its nested screens such as the file
- * inspector. Null when the route is not inside a thread.
- */
 export function threadDeepLinkOnScreen(pathname: string): string | null {
   const match = /^\/threads\/([^/]+)\/([^/]+)(?:\/|$)/.exec(pathname);
   if (!match?.[1] || !match[2]) {

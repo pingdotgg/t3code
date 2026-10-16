@@ -1086,10 +1086,6 @@ describe("rightPanelStore", () => {
   });
 
   it("keeps the page's panel tabs reachable when the set of connected servers changes", () => {
-    // The pull-requests page keys its one shared panel by a fixed sentinel environment, not by
-    // whichever capable server happens to sort first (see PULL_REQUESTS_PANEL_ENVIRONMENT_ID in
-    // _chat.pull-requests.tsx) — a server disconnecting must not move every open tab to a store
-    // key nobody wrote them under.
     const panelId = ThreadId.make("pull-requests-panel");
     const stableRef = scopeThreadRef("pull-requests-panel" as EnvironmentId, panelId);
     const fromServerA = {
@@ -1105,21 +1101,15 @@ describe("rightPanelStore", () => {
       number: 2,
     };
 
-    // Both servers connected: tabs from each open under the one stable ref.
     useRightPanelStore.getState().openPullRequest(stableRef, fromServerA);
     useRightPanelStore.getState().openPullRequest(stableRef, fromServerB);
 
-    // Server A disconnects. The stable ref does not depend on which servers remain connected, so
-    // the same lookup still finds both tabs.
     const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, stableRef);
     expect(state.surfaces.map((surface) => surface.id)).toEqual([
       pullRequestSurfaceId(fromServerA),
       pullRequestSurfaceId(fromServerB),
     ]);
 
-    // The bug this guards against: a ref keyed by the first capable environment instead of a
-    // fixed sentinel changes identity when that environment drops out, and a lookup under the new
-    // key finds nothing even though the tabs are still sitting under the old one.
     const refWhileBothConnected = scopeThreadRef("server-a" as EnvironmentId, panelId);
     const refAfterServerADisconnects = scopeThreadRef("server-b" as EnvironmentId, panelId);
     expect(refWhileBothConnected).not.toEqual(refAfterServerADisconnects);
@@ -1331,7 +1321,6 @@ describe("rightPanelStore", () => {
 
     store.reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
     expect(surfaceIds()).toEqual(["browser:tab-a", "terminal:term-1", "diff", "browser:tab-b"]);
-    // Reordering is not a choice about what the panel shows.
     expect(store.getUserActionRevision(refA)).toBe(revision);
   });
 });

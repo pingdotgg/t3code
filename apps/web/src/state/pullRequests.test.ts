@@ -45,9 +45,7 @@ describe("pull request summary cache", () => {
       checksState: "failing",
       observedAt: 300,
     });
-    // An older filtered or server-cached response finishing last must not roll status back.
     expect(newestPullRequestObservation(held, stale)).toBe(held);
-    // The same read seen again is not a new observation.
     expect(newestPullRequestObservation(held, { ...held, observedAt: 900 })).toBe(held);
   });
 
@@ -56,7 +54,6 @@ describe("pull request summary cache", () => {
     const later = observed(summary({ checksState: "failing" }), 200);
     expect(newestPullRequestObservation(first, later)).toMatchObject({ observedAt: 200 });
     expect(newestPullRequestObservation(later, first)).toBe(later);
-    // A stamped read beats an unstamped one regardless of which arrived last.
     const stamped = observed(summary({ observedAt: 50 }), 1);
     expect(newestPullRequestObservation(later, stamped)?.summary.observedAt).toBe(50);
     expect(newestPullRequestObservation(stamped, later)).toBe(stamped);

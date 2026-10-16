@@ -14,7 +14,6 @@ interface ThreadFindRange {
   readonly range: Range;
 }
 
-/** Collects visible occurrences without modifying rendered markdown. */
 export function collectThreadFindRanges(container: HTMLElement, query: string): ThreadFindRange[] {
   if (query.length === 0) return [];
 
@@ -29,7 +28,6 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     let text = "";
     let nodes: { node: Node; start: number; end: number }[] = [];
     const flush = () => {
-      // Offsets ascend, so both node cursors only move forward: linear in text nodes.
       let startIndex = 0;
       let endIndex = 0;
       for (const offset of findThreadSearchOccurrences(text, query)) {
@@ -74,10 +72,8 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
   return ranges;
 }
 
-/** Ancestors that hide (`hidden`) or clip (`data-thread-find-fold`) text until find opens them. */
 const FOLD_SELECTOR = "[hidden], [data-thread-find-fold]";
 
-/** Folds around the range that currently keep it out of sight, innermost first. */
 function foldsHiding(range: Range, container: HTMLElement): Element[] {
   const folds: Element[] = [];
   for (
@@ -85,7 +81,6 @@ function foldsHiding(range: Range, container: HTMLElement): Element[] {
     fold && container.contains(fold);
     fold = fold.parentElement?.closest(FOLD_SELECTOR)
   ) {
-    // A clipped body still shows its first lines; only text past the cutoff is folded.
     if (
       fold.hasAttribute("hidden") ||
       range.getBoundingClientRect().bottom > fold.getBoundingClientRect().bottom
@@ -95,7 +90,6 @@ function foldsHiding(range: Range, container: HTMLElement): Element[] {
   return folds;
 }
 
-/** Dispatches `beforematch` on each fold hiding the range; returns whether any existed. */
 function revealFolded(range: Range, container: HTMLElement): boolean {
   const folds = foldsHiding(range, container);
   for (const fold of folds) fold.dispatchEvent(new Event("beforematch"));
@@ -107,7 +101,6 @@ function affectsSearchableText(record: MutationRecord): boolean {
   const target =
     record.target.nodeType === 1 ? (record.target as Element) : record.target.parentElement;
   if (target?.closest(THREAD_FIND_TEXT_SELECTOR)) return true;
-  // Rows mounting or unmounting add or remove whole searchable scopes.
   const touchesScope = (node: Node) =>
     node.nodeType === 1 &&
     ((node as Element).matches(THREAD_FIND_TEXT_SELECTOR) ||
@@ -147,8 +140,6 @@ export function useThreadFindHighlights(input: {
       return;
     }
 
-    // Selection changes reuse ranges. Only changed or newly mounted rows
-    // need their text walked again; removed rows release their DOM references.
     const cache = new Map<Element, readonly ThreadFindRange[]>();
     const paint = makeThreadFindHighlightPainter(container);
     paintRef.current = paint;
@@ -222,7 +213,6 @@ export function useThreadFindHighlights(input: {
   }, [activeOccurrence, activeRowId, onActiveRange]);
 }
 
-/** Selection changes touch only the old and new match; layout checks run once per DOM scan. */
 function makeThreadFindHighlightPainter(container: HTMLElement) {
   let previousRanges: readonly ThreadFindRange[] | null = null;
   const rangesByRow = new Map<string, Range[]>();

@@ -9,9 +9,7 @@ import type {
 
 type NotificationOutcome = OrchestrationV2Notification["outcome"];
 
-/** A piece of background work an adapter can name, by kind. */
 export type BackgroundWork = {
-  /** Subagent title, command, or monitor description. */
   readonly label?: string | undefined;
 } & (
   | { readonly kind: "subagent"; readonly childThreadId?: ThreadId | undefined }
@@ -20,7 +18,6 @@ export type BackgroundWork = {
   | { readonly kind: "background_task" }
 );
 
-/** Background work an adapter saw finish or report, as the user should read it. */
 export type BackgroundWorkReport = BackgroundWork & { readonly outcome: NotificationOutcome };
 
 const LABEL_MAX_LENGTH = 80;
@@ -107,7 +104,6 @@ function reportsSummary(
   return `${joinNames(reports.map((report, index) => namedReport(report, index === 0)))} ${verb}`;
 }
 
-/** Reports of one kind share it; mixed kinds are generic background work. */
 function reportsSource(
   reports: readonly [BackgroundWorkReport, ...ReadonlyArray<BackgroundWorkReport>],
 ): OrchestrationV2NotificationSource {
@@ -115,7 +111,6 @@ function reportsSource(
   if (rest.some((report) => report.kind !== first.kind)) return { kind: "background_task" };
   switch (first.kind) {
     case "subagent":
-      // One subagent is the thing the row opens; several open nothing.
       return rest.length === 0 && first.childThreadId !== undefined
         ? { kind: "subagent", childThreadId: first.childThreadId }
         : { kind: "subagent" };
@@ -126,10 +121,6 @@ function reportsSource(
   }
 }
 
-/**
- * A notification that says which background work a provider reported. Null
- * when nothing is known, so the caller keeps its generic notification.
- */
 export function backgroundWorkNotification(
   reports: readonly [BackgroundWorkReport, ...ReadonlyArray<BackgroundWorkReport>],
 ): OrchestrationV2Notification;
@@ -162,14 +153,12 @@ function delegatedTaskReport(
           : "unknown";
   return {
     kind: "subagent",
-    // Delegated tasks are titled by their prompt unless the caller named them.
     label: task?.title?.trim() || task?.prompt,
     outcome,
     ...(task?.childThreadId == null ? {} : { childThreadId: task.childThreadId }),
   };
 }
 
-/** Summarizes the delegated tasks one completion delivery reports, out of all its parent run delegated. */
 function delegatedCompletionNotification(
   completion: NonNullable<OrchestrationV2ConversationMessage["delegatedCompletion"]>,
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
@@ -208,7 +197,6 @@ function delegatedCompletionNotification(
   };
 }
 
-/** Keep the delivery message intact while projecting its trigger as an activity. */
 export function notificationTurnItem(
   item: OrchestrationV2TurnItem,
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,

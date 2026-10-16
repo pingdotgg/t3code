@@ -150,9 +150,6 @@ function instanceModels(
   return names.map((name) => ({ driverKind, providerDisplayName, name }));
 }
 
-// Each provider lists its models newest first, as the picker receives them.
-// Claude, Codex, and Antigravity mirror apps/server/src/provider/model-manifest.json;
-// Grok and OpenCode report their catalogs at runtime.
 const catalog: CatalogModel[] = [
   ...instanceModels("claudeAgent", "Claude", [
     "Claude Opus 5.5",
@@ -265,7 +262,6 @@ describe("rankModelPickerSearch", () => {
     ],
     ["kimi", ["Kimi K3", "Kimi K2.5", "Kimi K2"]],
   ])("lists equally good matches for %j newest first", (query, expected) => {
-    // Loose fuzzy matches from other families may follow; they rank last.
     expect(search(query).slice(0, expected.length)).toEqual(expected);
   });
 
@@ -276,7 +272,6 @@ describe("rankModelPickerSearch", () => {
       "Claude Opus 4.6",
       "Claude Opus 4.5",
     ]);
-    // "5" only appears mid-version in 4.5, a weaker match.
     expect(search("opus 5")).toEqual(["Claude Opus 5.5", "Claude Opus 5", "Claude Opus 4.5"]);
     expect(search("opus 5.")).toEqual(["Claude Opus 5.5"]);
   });

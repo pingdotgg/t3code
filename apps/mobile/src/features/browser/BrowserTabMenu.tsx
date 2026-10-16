@@ -22,7 +22,6 @@ const APPEARANCES = [
   { id: "dark", title: "Dark" },
 ] as const;
 
-/** One preset per kind of screen; the web's device toolbar offers the full list. */
 const VIEWPORTS = [
   { id: "fill", title: "Fit to screen", setting: FILL_PREVIEW_VIEWPORT },
   ...(["Phone", "Tablet", "Desktop"] as const).flatMap((category) => {
@@ -38,11 +37,6 @@ const VIEWPORTS = [
   }),
 ];
 
-/**
- * The browser tab's menu: appearance, zoom, viewport, a hard reload, and its
- * profile's site data. Each runs through the environment, as on web and
- * desktop, so every client and agent sees the same tab. None need control.
- */
 export function BrowserTabMenu({
   environmentId,
   tab,

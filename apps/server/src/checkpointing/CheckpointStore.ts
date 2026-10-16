@@ -1,18 +1,3 @@
-/**
- * CheckpointStore - Repository interface for filesystem-backed workspace checkpoints.
- *
- * Owns hidden Git-ref checkpoint capture/restore and diff computation for a
- * workspace thread timeline. It does not store user-facing checkpoint metadata
- * and does not coordinate provider conversation rollback.
- *
- * The live adapter resolves the active VCS driver once per checkpoint operation
- * and delegates to the driver's optional checkpoint capability.
- *
- * Uses Effect `Context.Service` for dependency injection and exposes typed
- * domain errors for checkpoint storage operations.
- *
- * @module CheckpointStore
- */
 import { VcsUnsupportedOperationError, type CheckpointRef } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -55,52 +40,28 @@ export interface DeleteCheckpointRefsInput {
   readonly checkpointRefs: ReadonlyArray<CheckpointRef>;
 }
 
-/** Service tag for checkpoint persistence and restore operations. */
 export class CheckpointStore extends Context.Service<
   CheckpointStore,
   {
-    /** Check whether cwd is inside a Git worktree. */
     readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
 
-    /**
-     * Capture a checkpoint commit and store it at the provided checkpoint ref.
-     *
-     * Uses an isolated temporary Git index and writes a hidden ref.
-     */
     readonly captureCheckpoint: (
       input: CaptureCheckpointInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
 
-    /** Check whether a checkpoint ref exists. */
     readonly hasCheckpointRef: (
       input: Omit<RestoreCheckpointInput, "fallbackToHead">,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
-    /**
-     * Restore workspace and staging state to a checkpoint.
-     *
-     * Optionally falls back to current `HEAD` when the checkpoint ref is missing.
-     */
     readonly restoreCheckpoint: (
       input: RestoreCheckpointInput,
     ) => Effect.Effect<boolean, CheckpointStoreError>;
 
-    /**
-     * Compute a diff between two checkpoint refs. Defaults to a full patch.
-     *
-     * Numstat output has NUL-delimited paths for file summaries.
-     * Can optionally treat a missing "from" ref as `HEAD`.
-     */
     readonly diffCheckpoints: (
       input: DiffCheckpointsInput,
     ) => Effect.Effect<string, CheckpointStoreError>;
 
     /**
-     * List paths changed by work done after the "from" checkpoint: uncommitted
-     * edits at either checkpoint, commits made after "from", and commits that
-     * left HEAD. Commits a pull, merge, or rebase brought in are older than
-     * "from", so their paths are not listed.
-     *
      * Returns null when HEAD did not move or a checkpoint does not record HEAD.
      * Then every changed path belongs to the turn.
      */
@@ -108,11 +69,6 @@ export class CheckpointStore extends Context.Service<
       input: ListAuthoredPathsInput,
     ) => Effect.Effect<ReadonlySet<string> | null, CheckpointStoreError>;
 
-    /**
-     * Delete the provided checkpoint refs.
-     *
-     * Best-effort delete: missing refs are tolerated.
-     */
     readonly deleteCheckpointRefs: (
       input: DeleteCheckpointRefsInput,
     ) => Effect.Effect<void, CheckpointStoreError>;

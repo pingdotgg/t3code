@@ -124,8 +124,6 @@ describe("DesktopBackendPool", () => {
       assert.equal(yield* Option.getOrThrow(fetchedWsl).label, "WSL (Ubuntu)");
       assert.isTrue(Option.isNone(fetchedMissing));
       assert.lengthOf(all, 2);
-      // First instance becomes primary in layerTest so single-instance
-      // stubs don't have to wire an explicit primary.
       assert.equal(resolvedPrimary.id, DesktopBackendPool.PRIMARY_INSTANCE_ID);
     }).pipe(
       Effect.provide(

@@ -42,11 +42,6 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-/**
- * Rows for the settings a project may override. The same rows edit
- * environment defaults at an environment scope and project overrides at a
- * project or checkout scope; the scoped hooks route the write.
- */
 const WORKTREE_SUBMODULES_OPTIONS = ["recursive", "top-level", "none"] as const;
 function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules {
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
@@ -89,11 +84,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-  // File-backed keys show their effective value; the target already carries
-  // the checkout's t3.json, and a null file here only fills the built-in.
-  // The reset arrow beside the title clears the tier (SettingsRow handles a
-  // project override, the environment value is cleared here), so the picker
-  // has no "inherit" item.
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
     : null;

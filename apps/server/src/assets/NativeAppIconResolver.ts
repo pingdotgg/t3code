@@ -24,11 +24,9 @@ const COMMAND_TIMEOUT = "5 seconds";
 const RESOLUTION_CACHE_TTL = Duration.hours(1);
 const RESOLUTION_CACHE_MAX_ENTRIES = 256;
 
-/** Resolves and caches macOS application icons without exposing host paths to clients. */
 export class NativeAppIconResolver extends Context.Service<
   NativeAppIconResolver,
   {
-    /** Returns a cached PNG path for the application, or `null` when no icon is available. */
     readonly resolve: (app: ToolActivityNativeAppReference) => Effect.Effect<string | null>;
   }
 >()("t3/assets/NativeAppIconResolver") {}

@@ -1,18 +1,8 @@
-/**
- * Pure URL helpers shared between the preview server, desktop main process,
- * and web renderer. Centralising these guarantees the four call sites agree
- * on what counts as "loopback" and how to normalise a free-form URL string.
- */
-
 import * as Schema from "effect/Schema";
 
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
 
-/**
- * Generate a fresh preview tab id. Lives in shared (not contracts) because
- * the contracts package is schema-only — runtime helpers belong here.
- */
 export function newPreviewTabId(): string {
   nextPreviewTabSequence += 1;
   return `${TAB_ID_PREFIX}${nextPreviewTabSequence.toString(36)}`;
@@ -20,7 +10,6 @@ export function newPreviewTabId(): string {
 
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
 
-/** Internal — used by `lsof` parsing where the host string is wire-formatted. */
 export const LSOF_LOCAL_HOST_TOKENS: ReadonlySet<string> = new Set([
   ...LOOPBACK_HOSTS,
   "*",
@@ -58,13 +47,8 @@ function previewUrlProtocol(rawUrl: string): string | undefined {
 }
 
 const SEARCH_URL = "https://duckduckgo.com/?q=";
-/** A bare host that is always an address: localhost, an IPv4 literal, or a bracketed IPv6 one. */
 const ADDRESS_HOST_PATTERN = /^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[\da-f:.]+\])$/i;
 const BARE_HOST_PORT_PATTERN = /^[^/?#:@]+:\d+(?:[/?#]|$)/;
-/**
- * Registered schemes that are never a bare host, so `ftp:21` or `tel:5551234`
- * is rejected rather than read as host and port.
- */
 const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
   "about:",
   "blob:",
@@ -82,13 +66,6 @@ const KNOWN_NON_WEB_SCHEMES: ReadonlySet<string> = new Set([
   "wss:",
 ]);
 
-/**
- * Turns what a user typed in an address bar into the URL to open: an address
- * as `normalizePreviewUrl` reads it, or else a web search for the text. Text
- * is an address when it has a scheme, or no spaces and a host that has a dot,
- * a port, or is localhost or an IP. Throws only for empty input or an
- * explicit unsupported scheme (`ftp://`, `mailto:`, `data:`).
- */
 export function resolveAddressBarInput(rawInput: string): string {
   const trimmed = rawInput.trim();
   if (/^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) || trimmed.length === 0)
@@ -117,24 +94,12 @@ export function resolveAddressBarInput(rawInput: string): string {
     if (hasPort || ADDRESS_HOST_PATTERN.test(host) || /^[^.]+(?:\.[^.]+)+\.?$/.test(host)) {
       try {
         return normalizePreviewUrl(trimmed);
-      } catch {
-        // Not a usable address after all; search for it.
-      }
+      } catch {}
     }
   }
   return `${SEARCH_URL}${encodeURIComponent(trimmed)}`;
 }
 
-/**
- * Normalise a free-form URL string into a fully-qualified `http(s)://` URL.
- *
- * - Bare loopback hosts (`localhost`, `localhost:5173`) become `http://...`.
- * - Bare public hosts (`example.com`) become `https://...`.
- * - Already-qualified URLs are validated and returned as `URL.href`.
- *
- * Throws `PreviewUrlNormalizationError` for empty, unparseable, or
- * unsupported-protocol inputs.
- */
 export function normalizePreviewUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
   if (trimmed.length === 0) {

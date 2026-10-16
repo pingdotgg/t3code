@@ -66,13 +66,6 @@ export const layer: Layer.Layer<
     const eventStore = yield* EventStore.EventStoreV2;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
 
-    /**
-     * EventSink commits the event, its projection updates, and projection metadata in one SQL
-     * transaction. Startup verification therefore checks that transaction boundary and that every
-     * stored projection can be decoded. It intentionally does not replay domain events through a
-     * second projector: doing so creates another implementation of projection semantics that must
-     * evolve in lockstep with ProjectionStore.
-     */
     const verify = Effect.gen(function* () {
       const expectedThreadRows = yield* sql<{ readonly thread_id: string }>`
         SELECT DISTINCT stream_id AS thread_id
@@ -202,8 +195,6 @@ export const layer: Layer.Layer<
           Effect.mapError((cause) => new ProjectionMaintenanceError({ operation, cause })),
         );
 
-    // Thread-state events whose payload is the complete thread: only the
-    // newest per thread can influence a replay or an afterSequence catch-up.
     // thread.created stays out — verify derives the expected thread set from
     // it, and it anchors replay ordering. thread.deleted stays out too: clients
     // and waitForThread switch on the event type, not just the payload.
@@ -363,8 +354,6 @@ export const layer: Layer.Layer<
         if (rows.length < COMPACTION_PAGE_SIZE) break;
       }
 
-      // Legacy receipts are removable only after their thread's v1 import finishes.
-      // Page by rowid before checking eligibility, as with event discovery above.
       while (throughReceiptRowId > 0) {
         const rows = yield* sql<{
           readonly row_id: number;

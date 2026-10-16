@@ -22,7 +22,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
       encoding: "utf8",
     });
     const [pid, score, ...args] = child.stdout.trimEnd().split("\n");
-    // The command runs as the spawned process, so signals and PIDs still reach it.
     expect(Number(pid)).toBe(child.pid);
     expect(Number(score)).toBe(AGENT_OOM_SCORE_ADJ);
     expect(args).toEqual(["a b", "$HOME"]);

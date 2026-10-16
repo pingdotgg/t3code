@@ -1,6 +1,5 @@
 import { defineConfig, type CodeRabbitContext } from "@coderabbitai/config";
 
-// Org members and collaborators can approve their own pull requests.
 const UNGATED_AUTHORS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const isGated = ({ pr }: CodeRabbitContext) => !UNGATED_AUTHORS.has(pr?.authorAssociation ?? "");
 
@@ -17,11 +16,7 @@ export default defineConfig((ctx) => ({
       docstrings: { mode: "off" },
       override_requested_reviewers_only: isGated(ctx),
     },
-    path_filters: [
-      // Vendored read-only reference checkouts of upstream Effect and Alchemy
-      // (see scripts/lib/reference-repos.ts). Nothing imports from them.
-      "!.repos/**",
-    ],
+    path_filters: ["!.repos/**"],
     path_instructions: [
       {
         path: "{apps,packages,infra}/**/*.ts",

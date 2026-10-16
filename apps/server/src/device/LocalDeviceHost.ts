@@ -1,13 +1,6 @@
 import { pruneLocalDeviceTools } from "./deviceToolMaintenance.ts";
 import { deviceToolInstallMessage } from "@t3tools/contracts";
 /**
- * The device host that is this machine.
- *
- * Runs expo-device-hub as a supervised child on a loopback port and starts the
- * agent-device daemon in HTTP mode under a T3-owned state directory. Both are
- * lazy: the device service requires explicit setup consent before it calls
- * ensureReady to install tools or start helper processes.
- *
  * The hub runs in its standalone mode (origin root). The T3 proxy strips its
  * own prefix, and the Device panel derives stream and socket URLs from the
  * prefix itself rather than from anything the hub prints.
@@ -66,9 +59,8 @@ const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
 /**
  * Written beside the agent-device state so a server that dies without running
- * its finalizers (SIGKILL, dev-runner restarts) does not leave a hub bound to
- * a loopback port forever. The next start reads it, kills only a process that
- * is still that hub, and replaces the file.
+ * its finalizers (SIGKILL, dev-runner restarts) does not leave a hub bound to a
+ * loopback port forever.
  */
 const HubStateFile = Schema.Struct({
   pid: Schema.Int,
@@ -137,7 +129,6 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   return null;
 });
 
-/** Resolve the SDK once for both diagnostics and the environment passed to helpers. */
 const androidSdk = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -347,9 +338,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         yield* Effect.sync(() => {
           try {
             process.kill(previous.value.pid, "SIGTERM");
-          } catch {
-            // Already gone.
-          }
+          } catch {}
         });
       }
     }
@@ -461,10 +450,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.ignoreCause,
     );
 
-  /**
-   * Restart the hub when it dies under us, with the same doubling backoff the
-   * relay connector uses so a hub that crashes on boot cannot spin.
-   */
   const superviseHub = (hub: HubProcess, hubTool: DeviceToolPaths): Effect.Effect<void> =>
     Effect.gen(function* () {
       yield* Effect.result(hub.child.exitCode);
@@ -501,11 +486,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     return yield* decodeDaemonFile(raw);
   });
 
-  /**
-   * agent-device auto-starts its daemon on any command. A trivial `devices`
-   * call in HTTP mode is the documented way to bring it up; its output is the
-   * daemon.json this reads back.
-   */
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: DeviceToolPaths,
     nodePath: string,
@@ -672,8 +652,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     );
     yield* onPhase("starting");
     const hub = yield* spawnHub(hubTool, nodePath);
-    // Until the hub is in runningRef, nothing else stops it, so publishing it
-    // is part of the guarded step.
     const next = yield* Effect.gen(function* () {
       yield* pruneLocalDeviceTools(config.baseDir, nodePath, "hub").pipe(
         Effect.provideService(Path.Path, path),
@@ -826,7 +804,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }),
   );
 
-  // Never leave the hub or daemon behind when the server's scope closes.
   yield* Effect.addFinalizer(() => stop);
 
   const host: DeviceHost.DeviceHost["Service"] = {
@@ -844,7 +821,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
 export const layer = Layer.effect(DeviceHost.DeviceHost, make());
 
-/** Exposed for tests. */
 export const __testing = {
   AgentDeviceDaemonFile,
   androidSdk,

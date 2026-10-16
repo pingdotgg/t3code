@@ -38,8 +38,6 @@ describe("resolveLinkTarget", () => {
   });
 
   it("falls back to the system browser where there is no in-app browser", () => {
-    // The hosted web app and mobile have nowhere to open a tab, so the
-    // preference cannot be honoured there and the link still has to open.
     expect(
       resolveLinkTarget({
         url: "https://example.com/",

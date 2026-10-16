@@ -249,7 +249,6 @@ describe("handoff budget", () => {
           ...base,
           tokenCap: 64_000,
           modelContextWindow: 1_000_000,
-          // The history byte cap is independent of both current text and image payloads.
           userText: "x".repeat(70_000),
           attachments,
           providerThread: {
@@ -516,7 +515,6 @@ describe("handoff delivery", () => {
       assert.equal(first.context, "");
       assert.deepEqual(statuses, ["pending", "injected"]);
       assert.lengthOf(history, 3);
-      // No turn has started. Reconstruct from the durable projection as a retry would.
       const second = yield* deliverContextHandoffs({ ...input, handoffs: [durable] });
       assert.equal(second.context, "");
       assert.lengthOf(history, 3);

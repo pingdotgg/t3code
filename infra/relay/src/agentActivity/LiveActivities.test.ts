@@ -225,9 +225,6 @@ describe("LiveActivities", () => {
       yield* mark("live_activity_update");
       yield* mark("live_activity_end");
 
-      // A start begins a new activity generation and an end retires the
-      // current one; both must drop the stored update token so later
-      // deliveries can't route to the dead activity. Plain updates keep it.
       expect(conflictConfigs[0]?.set).toEqual(
         expect.objectContaining({
           activityPushToken: null,

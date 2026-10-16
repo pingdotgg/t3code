@@ -117,7 +117,6 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     }),
     (db) =>
       readPersistedServerRuntimeState(statePath).pipe(
-        // Only remove discovery this owner published.
         Effect.flatMap((state) =>
           Option.isSome(state) && state.value.ownerId === ownerId
             ? clearPersistedServerRuntimeState(statePath)
@@ -128,7 +127,6 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
       ),
   );
 
-  // An unreadable record cannot name a live owner; this server replaces it.
   const previous = yield* readPersistedServerRuntimeState(statePath).pipe(
     Effect.orElseSucceed(() => Option.none<PersistedServerRuntimeState>()),
   );

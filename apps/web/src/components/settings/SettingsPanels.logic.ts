@@ -46,9 +46,7 @@ export function rememberEnabledProjectGroupingMode(mode: SidebarProjectGroupingM
   if (mode === "separate") return;
   try {
     localStorage.setItem(LAST_ENABLED_PROJECT_GROUPING_MODE_KEY, mode);
-  } catch {
-    // Storage can be unavailable in restricted browser contexts.
-  }
+  } catch {}
 }
 
 export function hasChangedBackgroundActivitySettings(
@@ -86,7 +84,6 @@ type TypographySettings = Pick<
   | "fontSizeTerminal"
 >;
 
-/** Labels the font rows whose family or size differs from the defaults. */
 export function getChangedTypographySettingLabels(settings: TypographySettings): string[] {
   return [
     ...(settings.fontFamilySans !== DEFAULT_UNIFIED_SETTINGS.fontFamilySans ||
@@ -121,13 +118,6 @@ export type BrowserDefaultSettings = Pick<
   | "pullRequestLinksOpenInApp"
 >;
 
-/**
- * True when two viewport settings describe the same viewport.
- *
- * The setting is a tagged union rather than a scalar, so identity comparison
- * reports every stored viewport as changed — including one that matches the
- * default.
- */
 function isSamePreviewViewport(
   left: PreviewViewportSetting,
   right: PreviewViewportSetting,
@@ -140,7 +130,6 @@ function isSamePreviewViewport(
     : true;
 }
 
-/** Labels the browser-default rows that differ from the defaults. */
 export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings): string[] {
   return [
     ...(isSamePreviewViewport(
@@ -275,10 +264,6 @@ export function buildProviderInstanceUpdatePatch(input: {
       : {}),
   };
 }
-
-// ── Background-activity interval helpers ─────────────────────────────
-// Shared by the General panel's interval rows and the Providers panel's
-// health-check row.
 
 export const PROVIDER_HEALTH_INTERVAL_STEP_SECONDS = 30;
 

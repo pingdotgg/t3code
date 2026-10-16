@@ -37,8 +37,6 @@ export function projectThreadContentPresentation(input: {
     input.connectionState === "connecting" ||
     input.connectionState === "reconnecting"
   ) {
-    // Messages will arrive once the (re)connection completes — present as
-    // loading; the composer's connection pill reports the connection phase.
     return { kind: "loading" };
   }
   return {

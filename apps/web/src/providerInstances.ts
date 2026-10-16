@@ -1,17 +1,3 @@
-/**
- * Instance-aware view over the wire `ServerProvider[]`.
- *
- * The wire carries one `ServerProvider` per *configured instance* — the
- * default built-in codex instance, a user-authored `codex_personal`, an
- * unavailable shadow for a fork driver, etc. Legacy UI code collapsed these
- * into a single bucket per built-in driver via `.find((p) => p.driver === kind)`,
- * which silently dropped every custom instance after the first. This module
- * replaces that pattern with `ProviderInstanceEntry[]`, keyed on
- * `ProviderInstanceId`, so the model picker, settings list, and composer
- * can treat built-in and custom instances uniformly.
- *
- * @module providerInstances
- */
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -43,32 +29,18 @@ export const NO_PROVIDER_MODEL_SELECTION: ModelSelection = {
   model: "",
 };
 
-/**
- * UI-facing projection of one configured provider instance. Carries the
- * snapshot verbatim for callers that need server-side fields we don't
- * hoist here, plus the precomputed `instanceId` / `driverKind` /
- * `displayName` used by every picker and settings view.
- */
 export interface ProviderInstanceEntry {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
-  /** Registry identity used to resolve the official icon for generic ACP instances. */
   readonly acpRegistryAgentId?: string | undefined;
-  /** Catalog-advertised icon URL. The renderer still applies the official-CDN allowlist. */
   readonly acpRegistryIconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
   readonly status: ServerProviderState;
-  /**
-   * True when this entry is the default instance for its driver kind —
-   * i.e. its instance id equals `defaultInstanceIdForDriver(driverKind)`.
-   * The settings panel and picker sort defaults before customs.
-   */
   readonly isDefault: boolean;
-  /** True when `availability === "unavailable"` is absent or "available". */
   readonly isAvailable: boolean;
   readonly snapshot: ServerProvider;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -77,10 +49,9 @@ export interface ProviderInstanceEntry {
 export type ProviderCatalogAvailability = "loading" | "ready" | "unavailable" | "unconfigured";
 
 /**
- * Keep a provider catalogue that has not arrived yet distinct from a loaded
- * catalogue with no usable entries. Environment config streams are reactive:
- * treating their initial `null` as a final empty list strands otherwise
- * recoverable threads behind a misleading "no providers" state.
+ * Environment config streams are reactive: treating their initial `null` as a
+ * final empty list strands otherwise recoverable threads behind a misleading
+ * "no providers" state.
  */
 export function resolveProviderCatalogAvailability(input: {
   readonly catalogLoaded: boolean;
@@ -93,27 +64,17 @@ export function resolveProviderCatalogAvailability(input: {
 }
 
 /**
- * Whether an instance can currently contribute models to an interactive picker.
- *
- * Disabling an instance updates `enabled` independently, while its previous
- * `ready` probe status can remain in the streamed snapshot until reconciliation.
+ * Disabling an instance updates `enabled` independently, while its previous `ready` probe
+ * status can remain in the streamed snapshot until reconciliation.
  */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
-/** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;
 }
 
-/**
- * Project the wire `ServerProvider[]` into instance entries, one per
- * configured instance. Preserves the server's ordering (which sources
- * from `deriveProviderInstanceConfigMap` — explicit `providerInstances.*`
- * first, synthesized defaults after) so callers that want "default first"
- * should sort with `sortProviderInstanceEntries` below.
- */
 export function deriveProviderInstanceEntries(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ProviderInstanceEntry> {
@@ -143,14 +104,10 @@ export function deriveProviderInstanceEntries(
 }
 
 /**
- * Project several environments' `ServerProvider[]` into a nested
- * `environmentId → instanceId → entry` lookup.
- *
- * Instance ids are per-environment routing keys, and `defaultInstanceIdForDriver`
- * makes the default id literally the driver slug, so every environment running
- * the same driver reports the same id. Flattening across environments would
- * clobber entries and mis-resolve accent colors; lookups must stay scoped to
- * the thread's own environment.
+ * Instance ids are per-environment routing keys, and `defaultInstanceIdForDriver` makes the
+ * default id literally the driver slug, so every environment running the same driver reports
+ * the same id. Flattening across environments would clobber entries and mis-resolve accent
+ * colors; lookups must stay scoped to the thread's own environment.
  */
 export function deriveProviderEntriesByEnvironment(
   providersByEnvironment: Iterable<
@@ -176,23 +133,11 @@ export function deriveProviderEntriesByEnvironment(
 }
 
 /**
- * Overlay the current settings configuration onto streamed provider snapshots.
- * Provider probes can briefly retain their previous `enabled` value after a
- * settings write, so picker visibility must follow settings rather than waiting
- * for probe reconciliation.
- *
- * A built-in default instance without a `providerInstances` entry keeps its
- * streamed state, since the server runs it with default config. Any other
- * instance missing from `providerInstances` is stale (for example
- * immediately after deletion) and is treated as disabled.
- *
- * `projectId` folds in that project's `providerInstances[id].enabled` override
- * (enable or disable in either direction over the machine value); `null`
- * resolves the machine value only. It has no default: a caller that renders
- * for a single project but forgets to pass it would silently show the
- * machine's enablement instead of that project's, so passing `null` for a
- * surface that isn't project-aware must be a deliberate choice, not an
- * omission.
+ * `projectId` folds in that project's `providerInstances[id].enabled` override (enable or
+ * disable in either direction over the machine value); `null` resolves the machine value only.
+ * It has no default: a caller that renders for a single project but forgets to pass it would
+ * silently show the machine's enablement instead of that project's, so passing `null` for a
+ * surface that isn't project-aware must be a deliberate choice, not an omission.
  */
 export function applyProviderInstanceSettings(
   entries: ReadonlyArray<ProviderInstanceEntry>,
@@ -229,20 +174,9 @@ export function applyProviderInstanceSettings(
   });
 }
 
-/**
- * Sort instance entries so the default instance of each driver kind appears
- * before any custom instances of the same kind. Within a kind, custom
- * instances keep their settings-author order (which is how the server
- * emits them). Stable across kinds: entries retain the server's
- * cross-driver ordering.
- */
 export function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<ProviderInstanceEntry> {
-  // Group by driver kind preserving first-appearance order, then emit
-  // default-first within each kind. Using a Map keeps the "first-seen"
-  // semantics for kinds whose default instance is absent (unusual but
-  // possible during the migration).
   const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();
   for (const entry of entries) {
     const bucket = byKind.get(entry.driverKind);
@@ -261,10 +195,6 @@ export function sortProviderInstanceEntries(
   return sorted;
 }
 
-/**
- * Look up a single instance entry by exact `instanceId`. Missing snapshots
- * are not inferred from driver kind in UI routing code.
- */
 export function getProviderInstanceEntry(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
@@ -272,13 +202,6 @@ export function getProviderInstanceEntry(
   return deriveProviderInstanceEntries(providers).find((entry) => entry.instanceId === instanceId);
 }
 
-/**
- * Default model slug for a specific instance: its declared built-in default,
- * then its first built-in model, then any model it reports, then the driver-level default. Custom
- * instances can serve a different model list than the default instance of
- * the same driver kind, so the lookup must be instance-scoped rather than
- * kind-scoped.
- */
 export function getDefaultProviderInstanceModel(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId,
@@ -296,13 +219,6 @@ export function getDefaultProviderInstanceModel(
 const isSelectableProviderInstanceEntry = (entry: ProviderInstanceEntry): boolean =>
   entry.enabled && entry.isAvailable;
 
-/**
- * Resolve an exact stored instance when it remains enabled and available.
- * Otherwise choose a deterministic fallback that can plausibly start now:
- * ready first, then a non-error probe result. An errored provider is retained
- * only when it was explicitly requested; it is never invented as a new-user
- * default.
- */
 export function resolveSelectableProviderInstanceEntry(
   entries: ReadonlyArray<ProviderInstanceEntry>,
   instanceId: ProviderInstanceId | undefined,
@@ -319,12 +235,6 @@ export function resolveSelectableProviderInstanceEntry(
   );
 }
 
-/**
- * Resolve the routing key for a selection that may reference an instance
- * id that no longer exists (e.g. a persisted thread selection after the
- * user deleted the custom instance). Returns a ready or non-error fallback,
- * or `undefined` when no provider can safely become a new selection.
- */
 export function resolveSelectableProviderInstance(
   providers: ReadonlyArray<ServerProvider>,
   instanceId: ProviderInstanceId | undefined,
@@ -333,12 +243,6 @@ export function resolveSelectableProviderInstance(
   return resolveSelectableProviderInstanceEntry(entries, instanceId)?.instanceId;
 }
 
-/**
- * Resolve the model selection persisted for a project or new thread. A valid
- * stored selection is preserved byte-for-byte. Falling back to another
- * instance also resets the model to that instance's own default, avoiding
- * cross-provider instance/model pairs.
- */
 export function resolveDefaultProviderModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection | null | undefined,

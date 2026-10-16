@@ -39,7 +39,6 @@ describe("mobile worktree setup handoff", () => {
         followUpSent: false,
       }),
     ).toBeNull();
-    // Closing the live query must not lose the handoff anchor.
     expect(resolveWorktreeSetupSnapshot(threadId, undefined, held)).toBe(done);
   });
 

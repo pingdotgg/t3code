@@ -1,9 +1,6 @@
 /**
- * The order voice input picks a microphone in. An entry is either a kind,
- * which covers every connected microphone of that kind not listed by name, or
- * a device remembered the first time dictation saw it connected. iOS lists
- * only connected inputs, and only while a recording session is set up, so a
- * device cannot be listed before then.
+ * iOS lists only connected inputs, and only while a recording session is set up, so a device
+ * cannot be listed before then.
  */
 export const MICROPHONE_KINDS = ["wired", "bluetooth", "builtIn", "carPlay"] as const;
 
@@ -24,8 +21,7 @@ interface MicrophoneInput {
   readonly type: string;
 }
 
-// Raw values of AVAudioSession.Port. A car without CarPlay connects as a
-// Bluetooth headset, so it is a Bluetooth device.
+// A car without CarPlay connects as a Bluetooth headset, so it is a Bluetooth device.
 const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   MicrophoneWired: "wired",
   USBAudio: "wired",
@@ -36,8 +32,6 @@ const KIND_BY_PORT_TYPE: Readonly<Record<string, MicrophoneKind>> = {
   CarAudio: "carPlay",
 };
 
-// Built-in and CarPlay are listed only as kinds: a phone has one built-in
-// microphone, and CarPlay is the car.
 const DEVICE_KINDS: ReadonlySet<MicrophoneKind> = new Set(["wired", "bluetooth"]);
 
 const rank = (kind: MicrophoneKind) => MICROPHONE_KINDS.indexOf(kind);
@@ -54,11 +48,6 @@ export function microphoneEntryKey(entry: MicrophoneEntry): string {
   return isMicrophoneDevice(entry) ? entry.uid : `kind:${entry.kind}`;
 }
 
-/**
- * The saved order with each kind listed once. A missing kind goes after the
- * devices of that kind, else above the first kind ranked below it by default,
- * which puts CarPlay below the built-in microphone.
- */
 export function microphoneOrder(
   saved: ReadonlyArray<MicrophoneEntry> = [],
 ): ReadonlyArray<MicrophoneEntry> {
@@ -85,11 +74,6 @@ export function microphoneOrder(
   return order;
 }
 
-/**
- * Lists connected wired and Bluetooth microphones by name and refreshes
- * renamed ones. A new device goes just above its kind, keeping the rank it had
- * while unlisted. Returns `order` itself when nothing changed.
- */
 export function rememberMicrophones(
   order: ReadonlyArray<MicrophoneEntry>,
   inputs: ReadonlyArray<MicrophoneInput>,

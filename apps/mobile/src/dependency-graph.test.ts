@@ -3,32 +3,14 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 /**
- * Dependency-graph guards for the mobile source tree (audit #13).
- *
- * 1. No circular imports, checked once per platform the way Metro resolves
- *    modules (`<name>.<platform>.*` before `<name>.native.*` before the
- *    generic file). A cycle can hide behind platform resolution: a `.tsx`
- *    base importing a component whose `.android.tsx` variant type-imports
- *    back into the base is acyclic on iOS but circular on Android.
  *    Dynamic `import("...")` calls are excluded from this rule on purpose:
  *    they are the deliberate async escape hatch (e.g. composer-draft cleanup
  *    reaching `lib/attachmentUpload`), and Metro resolves them after both
  *    modules have initialized, so they cannot create an initialization cycle.
- *
- * 2. Cross-layer edges are ceilinged, not yet banned. `state`, `lib`,
- *    `native`, and `components` still reach upward into `features` at known
- *    sites (the app composition root `lib/runtime.ts` legitimately wires
- *    feature layers). Ceilings count unique `from -> to` module pairs across
- *    all platforms, including dynamic imports, and may only shrink: when you
- *    remove one of these imports, lower the constant in the same PR.
- *
- * Runs in CI as part of the `Test` job (`vp run --filter '!t3' test` picks up
- * the `@t3tools/mobile` package test task).
  */
 
 const SOURCE_ROOT = __dirname;
 
-/** Metro candidate order per platform (platform, then native, then generic). */
 const PLATFORM_EXTENSION_ORDER = {
   android: [".android.ts", ".android.tsx", ".native.ts", ".native.tsx", ".ts", ".tsx"],
   ios: [".ios.ts", ".ios.tsx", ".native.ts", ".native.tsx", ".ts", ".tsx"],
@@ -44,7 +26,6 @@ const isGraphFile = (filePath: string): boolean =>
   !filePath.includes("test-support") &&
   !filePath.endsWith(".d.ts");
 
-/** Files Metro would not even bundle for the other platform. */
 function isRelevantForPlatform(filePath: string, platform: Platform): boolean {
   const name = NodePath.basename(filePath);
   if (platform === "android") {
@@ -81,9 +62,7 @@ function resolveRelative(
           const resolved = NodePath.resolve(candidate);
           return resolved.startsWith(SOURCE_ROOT + NodePath.sep) ? resolved : null;
         }
-      } catch {
-        // Candidate does not exist; try the next one.
-      }
+      } catch {}
     }
   }
   return null;
@@ -124,9 +103,7 @@ function layerOf(relativePath: string): Layer {
 interface PlatformGraph {
   readonly platform: Platform;
   readonly files: ReadonlyArray<string>;
-  /** Static (type or value) import edges keyed by source file. */
   readonly staticEdges: ReadonlyMap<string, ReadonlyArray<string>>;
-  /** Unique cross-layer edges, static and dynamic, as "fromRel -> toRel". */
   readonly crossLayerEdges: ReadonlySet<string>;
 }
 
@@ -166,7 +143,6 @@ function buildPlatformGraph(platform: Platform): PlatformGraph {
   return { platform, files, staticEdges, crossLayerEdges };
 }
 
-/** Tarjan strongly-connected components, iterative to bound stack depth. */
 function findCycles(graph: PlatformGraph): ReadonlyArray<ReadonlyArray<string>> {
   const index = new Map<string, number>();
   const low = new Map<string, number>();
@@ -229,7 +205,6 @@ function findCycles(graph: PlatformGraph): ReadonlyArray<ReadonlyArray<string>> 
 
 const graphs = PLATFORMS.map(buildPlatformGraph);
 
-/** Unique upward edge pairs across every platform, sorted for stable diffs. */
 function upwardEdges(): string[] {
   const union = new Set<string>();
   for (const graph of graphs) {
@@ -243,8 +218,6 @@ function upwardEdges(): string[] {
 describe("mobile dependency graph", () => {
   it.each(PLATFORMS)("has no circular imports under %s resolution", (platform) => {
     const graph = graphs.find((candidate) => candidate.platform === platform)!;
-    // The graph must see real files; a resolution regression here would make
-    // both rules vacuously pass.
     expect(graph.files.length).toBeGreaterThan(500);
     expect(findCycles(graph)).toEqual([]);
   });
@@ -258,22 +231,13 @@ describe("mobile dependency graph", () => {
       });
 
     const ceilings: ReadonlyArray<readonly [Layer, Layer, number, string]> = [
-      // state -> features: thread ordering reaching the thread-list model,
-      // the incoming-share store, the connection controller hook, the
-      // terminal launch context, and the pending message feed.
-      // (legacy-plan-mode was pure model logic and moved into state/.)
       ["state", "features", 6, "state must not add imports from features"],
-      // lib -> features: lib/runtime.ts is the app composition root and
-      // legitimately wires cloud/observability features; the appearance
-      // helpers and terminal preferences still need untangling.
       ["lib", "features", 7, "lib must not add imports from features"],
       // components -> features: mostly the appearance preferences provider
       // and the layout toolbar bridges.
       ["components", "features", 30, "components must not add imports from features"],
       // native -> features: native glue reading appearance/keyboard/review features.
       ["native", "features", 8, "native must not add imports from features"],
-      // lib -> state: attachment/session plumbing that predates the cycle
-      // cleanup; each remaining edge needs a real owner-side seam.
       ["lib", "state", 10, "lib must not add imports from state"],
     ];
 

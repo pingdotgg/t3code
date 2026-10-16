@@ -26,7 +26,6 @@ const image = ChatImageAttachment.make({
   sizeBytes: 456,
 });
 
-// Stands in for the host's resolver, which maps stored attachments to their files.
 const resolveAttachmentPath = (attachment: { readonly id: string; readonly name: string }) =>
   `/attachments/${attachment.id}${attachment.name.slice(attachment.name.lastIndexOf("."))}`;
 

@@ -22,8 +22,6 @@ describe("default theme adoption", () => {
     expect(defaultThemeToApply({ ...BASE, appliedGeneration: generation })).toBe(null);
   });
 
-  // `t3 theme set` of a theme this client already wears must still act, which
-  // is why the generation carries the set time and not just the value.
   it("applies the same theme again when the environment re-sets it", () => {
     const applied = defaultThemeGeneration(BASE.defaultTheme, "2026-08-28T00:00:00.000Z");
     const next = defaultThemeToApply({
@@ -35,7 +33,6 @@ describe("default theme adoption", () => {
     expect(next).not.toBe(applied);
   });
 
-  // Environments provisioned before the timestamp existed.
   it("falls back to once-per-value without a set time", () => {
     const generation = defaultThemeGeneration("nightfall", "");
     expect(defaultThemeToApply({ ...BASE, defaultThemeSetAt: "", appliedGeneration: null })).toBe(
@@ -46,7 +43,6 @@ describe("default theme adoption", () => {
     ).toBe(null);
   });
 
-  // The setting and the palette it names arrive independently.
   it("waits for a theme that has not arrived yet", () => {
     expect(defaultThemeToApply({ ...BASE, resolves: false })).toBe(null);
   });

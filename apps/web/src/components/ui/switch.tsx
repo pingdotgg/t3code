@@ -4,11 +4,6 @@ import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
 
 import { cn } from "~/lib/utils";
 
-/**
- * `mixed` renders the thumb centred on a muted track for a selection whose
- * targets disagree (the macOS mixed-state convention). It is presentational:
- * the caller still decides what a click sets, usually on for everyone.
- */
 function Switch({
   className,
   size = "default",

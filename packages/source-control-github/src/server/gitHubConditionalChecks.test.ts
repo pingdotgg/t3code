@@ -83,7 +83,7 @@ it.effect(
         );
       yield* poll();
       expect(reads).toBe(1);
-      // The fork's runs were just confirmed, so the read is handed them instead of listing them.
+
       expect(known[0]).toEqual({
         headSha: sha,
         runs: [{ id: 9, status: "completed", conclusion: "action_required" }],

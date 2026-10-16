@@ -10,12 +10,10 @@ export interface PreviewStreamConfiguration {
   readonly access: DeviceHubAccess;
   readonly threadId: string;
   readonly tabId: string;
-  /** Taps, scrolls, keys, and `resize` to the view size. The floating player only watches. */
   readonly interactive: boolean;
   readonly background: string;
 }
 
-/** Messages the WebView document posts to the native view. */
 export type PreviewStreamMessage =
   | ({ readonly type: "control" } & PreviewStreamControl)
   | {
@@ -38,7 +36,6 @@ export type PreviewStreamMessage =
     };
 
 export function previewStreamDocument(configuration: string, script: string) {
-  // Tickets and URLs are data, including any HTML delimiter characters.
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
   const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:"Browser viewer stopped unexpectedly."}));`;
@@ -76,7 +73,6 @@ export function previewStreamDocument(configuration: string, script: string) {
 
 export function previewStreamMessage(data: string): PreviewStreamMessage | null {
   try {
-    // Only our bundled viewer runs in this WebView; the remote page never does.
     return JSON.parse(data) as PreviewStreamMessage;
   } catch {
     return null;

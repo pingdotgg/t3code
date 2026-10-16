@@ -30,21 +30,19 @@ export const SAFE_IMAGE_FILE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-// Whether `code` is a character the base64 payload may contain, aside from
-// the whitespace handled separately below.
 function isBase64Char(code: number): boolean {
   return (
-    (code >= 0x61 && code <= 0x7a) || // a-z
-    (code >= 0x41 && code <= 0x5a) || // A-Z
-    (code >= 0x30 && code <= 0x39) || // 0-9
-    code === 0x2b || // +
-    code === 0x2f || // /
-    code === 0x3d // =
+    (code >= 0x61 && code <= 0x7a) ||
+    (code >= 0x41 && code <= 0x5a) ||
+    (code >= 0x30 && code <= 0x39) ||
+    code === 0x2b ||
+    code === 0x2f ||
+    code === 0x3d
   );
 }
 
 function isBase64Whitespace(code: number): boolean {
-  return code === 0x0d || code === 0x0a || code === 0x20; // \r \n space
+  return code === 0x0d || code === 0x0a || code === 0x20;
 }
 
 // Data URLs carry the full image payload, so this parser must never run a
@@ -122,7 +120,6 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
     return fromMime;
   }
 
-  // The registry returns bare extensions ("png"); the safe list is dotted.
   const fromMimeExtension = Option.map(Mime.getExtension(input.mimeType), (ext) => `.${ext}`);
   if (Option.isSome(fromMimeExtension) && SAFE_IMAGE_FILE_EXTENSIONS.has(fromMimeExtension.value)) {
     return fromMimeExtension.value;

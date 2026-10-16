@@ -5,7 +5,6 @@ import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts
 import { assertSemanticProjectionIntegrity, projectionFor } from "../shared.ts";
 import { CLAUDE_COMPACT_FIRST_PROMPT } from "./input.ts";
 
-/** Each run in order: its prompt, author, status, replies and compactions. */
 export function claudeCompactRuns(projection: OrchestrationV2ThreadProjection) {
   return projection.runs.map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
@@ -24,9 +23,6 @@ export function claudeCompactRuns(projection: OrchestrationV2ThreadProjection) {
   });
 }
 
-// The peer turn's result names no prompt but this process echoes, so it is
-// another turn's: its reply goes to a continuation run, and `/compact` ends
-// on its own result with the compaction it ran.
 export function assertClaudeCompactAfterPeerTurnOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

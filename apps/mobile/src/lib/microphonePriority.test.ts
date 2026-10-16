@@ -69,7 +69,6 @@ describe("rememberMicrophones", () => {
 });
 
 describe("preferredMicrophoneInput", () => {
-  // Built-in, Bose, Wired, other Bluetooth, AirPods, CarPlay.
   const order: MicrophoneEntry[] = [
     { kind: "builtIn" },
     { kind: "bluetooth", uid: "bose", name: bose.name },

@@ -61,8 +61,6 @@ export function hasDismissedResumeCompaction(
   });
 }
 
-/** True once a large Claude context's prompt cache has expired, so the next
-    turn would re-read all of it uncached. */
 export function shouldOfferResumeCompaction(input: {
   readonly provider: string | null | undefined;
   readonly usedTokens: number | null | undefined;
@@ -113,23 +111,10 @@ export function formatContextWindowCompactionMessage(
     : "Context compacts automatically when needed.";
 }
 
-/**
- * Whether the footer should hold the meter's slot before a snapshot exists.
- *
- * The snapshot comes from thread activities, which load after the shell.
- * Reserving the slot while the detail loads, for a started thread, keeps the
- * attach button still until the meter mounts. Once the detail is in, a
- * missing snapshot means there is no usage to show and nothing is reserved.
- *
- * The meter renders from stored activities whatever the provider's state, so
- * only a provider known not to stream usage skips the reservation. An unknown
- * provider (catalog still loading, or the thread's provider disabled) reserves.
- */
 export function shouldReserveContextWindowMeter(input: {
   readonly meterEnabled: boolean;
   readonly detailLoading: boolean;
   readonly threadStarted: boolean;
-  /** `null` while the thread's provider is not in the catalog. */
   readonly providerReportsContextWindow: boolean | null;
 }): boolean {
   return (

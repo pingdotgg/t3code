@@ -7,7 +7,7 @@ import { assertSemanticProjectionIntegrity, projectionFor } from "../shared.ts";
 /**
  * A native subagent's approval is asked on the parent thread, as Codex and
  * OpenCode ask theirs: Muse children have no provider session of their own to
- * answer from. The answer reaches Muse and the subagent finishes its work.
+ * answer from.
  */
 export function assertMuseSubagentApprovalOutput(
   result: OrchestratorV2ScenarioResult,

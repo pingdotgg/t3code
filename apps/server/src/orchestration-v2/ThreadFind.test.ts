@@ -123,7 +123,6 @@ function item(
     ordinal,
     status: "completed" as const,
     title: null,
-    // Creation time deliberately opposes the canonical item order.
     startedAt: at(100 - ordinal),
     completedAt: at(100 - ordinal),
     updatedAt: at(1),
@@ -436,7 +435,6 @@ describe("V2 thread find", () => {
       try {
         const first = yield* projection.searchThread({ threadId, query: "needle" });
         assert.equal(first.totalMatches, 8);
-        // Identical bodies share one parse.
         assert.equal(parse.mock.calls.length, 1);
         parse.mockClear();
         const next = yield* projection.searchThread({ threadId, query: "needle", index: 4 });
@@ -447,7 +445,6 @@ describe("V2 thread find", () => {
         const changed = yield* projection.searchThread({ threadId, query: "needle", index: 5 });
         assert.equal(changed.totalMatches, 9);
         assert.deepEqual(changed.match, { entryId: "large:4", runId, occurrence: 1 });
-        // Only the edited message is parsed again.
         assert.equal(parse.mock.calls.length, 1);
         parse.mockClear();
         const retyped = yield* projection.searchThread({ threadId, query: "large message" });
@@ -530,7 +527,6 @@ describe("V2 thread find", () => {
       };
       assert.equal((yield* projection.searchThread(input)).totalMatches, 1);
       assert.equal((yield* projection.searchThread({ ...input, skills: [] })).totalMatches, 0);
-      // Plans render `$skill` tokens literally, so they match as written, not by label.
       yield* putItems(
         [item("skill-plan", 2, "# Verify\nUse $test-t3-app now", "proposed_plan")],
         "plan",
@@ -540,7 +536,6 @@ describe("V2 thread find", () => {
         (yield* projection.searchThread({ ...input, query: "$test-t3-app" })).totalMatches,
         1,
       );
-      // The message label "T3 App Testing" plus the plan's literal "$test-t3-app".
       assert.equal((yield* projection.searchThread({ ...input, query: "App" })).totalMatches, 2);
     }).pipe(Effect.provide(layerTest)),
   );
@@ -734,7 +729,6 @@ describe("V2 thread find", () => {
         );
         assert.equal(history.items[0]?.sourceThreadId, parent);
         assert.equal(history.items.at(-1)?.item.type, "fork");
-        // Parent updates invalidate a child's cached inherited result too.
         yield* putItems(
           [{ ...item("inherited", 1, "gone", "assistant_message", parent), runId: parentRun }],
           "parent-update",

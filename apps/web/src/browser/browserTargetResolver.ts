@@ -80,11 +80,10 @@ export function resolveBrowserNavigationTarget(
 }
 
 /**
- * Whether a discovered loopback server is reachable as-is from this client's
- * own browser tabs. The desktop app draws tabs on the machine that runs its
- * primary backend and any desktop-local backend (WSL). Its connection URL can
- * still be a LAN address (WSL NAT mode binds the distro IP), but a dev server
- * bound to loopback only answers on `localhost` there.
+ * The desktop app draws tabs on the machine that runs its primary backend and
+ * any desktop-local backend (WSL). Its connection URL can still be a LAN
+ * address (WSL NAT mode binds the distro IP), but a dev server bound to
+ * loopback only answers on `localhost` there.
  */
 const reachesEnvironmentLoopback = (target: ConnectionTarget): boolean =>
   isElectron &&

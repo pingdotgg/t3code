@@ -2,11 +2,6 @@ import { PullRequestContextMetadata } from "@t3tools/contracts";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { Option, Schema } from "effect";
 
-/**
- * Drag payload type carrying a serialized composer mention. Set on drags that
- * start in the workspace file tree so the composer can tell them apart from
- * OS file drags and plain text selections.
- */
 export const COMPOSER_MENTION_DRAG_TYPE = "application/x-t3code-composer-mention";
 
 /**
@@ -49,11 +44,10 @@ export interface ComposerMentionDragEvent {
 }
 
 /**
- * What a mention drop is allowed to do to the composer. Deliberately narrow:
- * there is no way to focus the editor from here. Focusing it synchronously
- * during the drop makes the not-yet-reconciled editor sync its stale empty
- * state back over the inserted mention; the insert path already focuses on
- * the next frame, after the editor has caught up.
+ * Deliberately narrow: there is no way to focus the editor from here. Focusing
+ * it synchronously during the drop makes the not-yet-reconciled editor sync its
+ * stale empty state back over the inserted mention; the insert path already
+ * focuses on the next frame, after the editor has caught up.
  */
 export interface ComposerMentionDropHost {
   insertMentionAtEnd(text: string): boolean;

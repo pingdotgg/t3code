@@ -17,7 +17,6 @@ describe("groupModelsForDisplay", () => {
       modelOrder: ["d", "b"],
     });
 
-    // A custom model is never hidden, even if its slug is in the hidden set.
     expect(display.map((entry) => entry.slug)).toEqual(["c", "d", "b", "custom", "a"]);
   });
 });

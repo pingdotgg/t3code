@@ -201,7 +201,6 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface(props: ReadyTerm
     terminalDebugLog("native:surface", {
       terminalKey: props.terminalKey,
       native: hasNativeSurface,
-      // null = installed binary predates native hardware-key handling (rebuild needed).
       hardwareKeyRevision: getNativeTerminalHardwareKeyRevision(),
       bufferLen: props.buffer.length,
       isRunning: props.isRunning,

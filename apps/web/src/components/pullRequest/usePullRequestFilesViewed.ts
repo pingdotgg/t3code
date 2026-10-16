@@ -19,47 +19,25 @@ import {
   type FileViewedStates,
 } from "./pullRequestFilesViewed.logic";
 
-/**
- * How long presses gather before the host is told. Long enough that ticking down a file list
- * costs one request rather than one per file, short enough that a reader who ticks one file and
- * closes the tab has already been recorded.
- */
 const FLUSH_DELAY_MS = 400;
 
 const NO_OVERLAY: FileViewedOverlay = new Map();
 
 export interface PullRequestFilesViewedView {
-  /** Whether anything remembers this at all, which is what hides the whole control. */
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
-  /** This file has been pushed to since it was cleared. */
   readonly isStale: (path: string) => boolean;
   readonly setViewed: (path: string, viewed: boolean) => void;
-  /** How many of the files on screen are ticked off. */
   readonly viewedCount: number;
-  /** The host had more files than the read covered, so the count above may be short. */
   readonly truncated: boolean;
-  /**
-   * Why the marks could not be read, when they could not. The boxes fall back to the last answer
-   * there was, or to empty when there has not been one, and neither of those says so on its own:
-   * a reader who sees every box unticked has no way to tell a fresh review from a failed read.
-   */
   readonly error: string | null;
-  /** Re-ask the host, for the page's refresh button, which goes around the host's cache. */
   readonly refresh: () => void;
 }
 
-/**
- * Which files this reader has already cleared. The marks live on the server rather than in this
- * tab, so a review carried on from another machine picks up where it was left. Presses show
- * immediately and are held over the server's answer until a read that could have seen them comes
- * back, so the checkbox never waits on a round trip and never outlasts the record behind it.
- */
 export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
-  /** The paths on screen, which is what the counter counts. */
   readonly paths: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
   const { environmentId, reference, enabled, paths } = options;
@@ -67,9 +45,6 @@ export function usePullRequestFilesViewed(options: {
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
   );
   const refresh = query.refresh;
-  // `query.data` holds the last answer through a failure, so the boxes stay where the host last
-  // put them rather than emptying under the reader; the error travels with them, because ticks
-  // that stopped being refreshed look exactly like ticks that are current.
   const states = useMemo(() => toFileViewedStates(query.data), [query.data]);
   const truncated = query.data?.truncated === true;
   const error = query.error;
@@ -78,10 +53,6 @@ export function usePullRequestFilesViewed(options: {
     reportFailure: false,
   });
 
-  // Presses waiting for the next flush, and, for every path a request is already carrying, which
-  // request that is. A path pressed again while its request is out belongs to the later request
-  // from then on, and the earlier one stops answering for it. Both are refs rather than state:
-  // nothing on screen reads them, and the flush must see the latest.
   const queued = useRef<Map<string, boolean>>(new Map());
   const sentBy = useRef<Map<string, number>>(new Map());
   const requests = useRef(0);
@@ -124,17 +95,10 @@ export function usePullRequestFilesViewed(options: {
         .map((file) => file.path)
         .filter((path) => sentBy.current.get(path) === request);
       for (const path of mine) sentBy.current.delete(path);
-      // The reader has moved on, and what is on screen now has nothing to do with this answer.
       if (scope.current !== sentFrom) return;
       if (result._tag === "Failure") {
-        // The host never heard these, so the ticks go back to whatever it last said. Only the
-        // paths this request still answers for: one pressed again since is waiting on a request
-        // of its own, or on the next flush, and that press is the one on screen.
         const owned = new Set(mine.filter((path) => !queued.current.has(path)));
         setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
-        // Silent when nothing was still this request's to answer for, so nothing on screen went
-        // back, and when the connection went away mid-flight, which the reader is already being
-        // told about and which the host never refused.
         if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
           toastManager.add({ type: "error", title: "Could not update viewed files" });
         }
@@ -194,7 +158,6 @@ export function usePullRequestFilesViewed(options: {
     [overlay, paths, states],
   );
 
-  // One identity per change of what it says: the viewer keys every file it draws off this.
   return useMemo(
     () => ({
       enabled,

@@ -54,7 +54,6 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryStatus?: number;
     tokenStatus?: number;
     refreshToken?: string;
-    /** Google account id from userinfo; omit to make userinfo fail. */
     userId?: string;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "gemini-api-key";
@@ -153,7 +152,6 @@ describe("Antigravity subscription limits", () => {
       const first = yield* probe;
       yield* writeToken("refresh-b");
       const second = yield* probe;
-      // Without a readable Google account, the credential itself names the account.
       expect(second.credentialFingerprint).not.toBe(first.credentialFingerprint);
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
       yield* (yield* FileSystem.FileSystem).remove(tokenPath);

@@ -408,9 +408,6 @@ describe("web thread lineage ordering", () => {
       ],
     });
 
-    // The shell snapshot arrives ordered by `updated_at`, and a client-side
-    // `thread.updated` re-appends the shell it replaces, so both the input
-    // order and the mutable timestamps move under us while the panel is open.
     const after = orderedLineageIds({
       threads: [
         forkShell({
@@ -437,10 +434,6 @@ describe("web thread lineage ordering", () => {
   });
 
   it("pins the parent first and a distinct merge-back target second", () => {
-    // The panel keeps its two action rows in place regardless of creation time:
-    // parent first, then a merge-back target that is not the parent. The two
-    // diverge while a shell update and its projection disagree about the fork
-    // source, which is exactly when a moving row would misfire a merge.
     const parent = ThreadId.make("thread-parent");
     const mergeTarget = ThreadId.make("thread-merge-target");
     const newestFork = ThreadId.make("thread-newest-fork");

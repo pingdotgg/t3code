@@ -76,7 +76,6 @@ interface ExportedRequest {
   readonly body: string;
 }
 
-/** Answers every export with a 200 and keeps what was posted for assertions. */
 const layerCollector = (requests: Array<ExportedRequest>) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -415,8 +414,6 @@ describe("DesktopObservability", () => {
       assert.include(request?.body ?? "", "service.runtime");
       assert.strictEqual(request?.headers["x-scope"], "desktop");
 
-      // The log record is the export now, so the same message must not also
-      // ride along as an event on the span.
       const record = (yield* fileSystem.readFileString(tracePath))
         .trim()
         .split("\n")
@@ -601,8 +598,6 @@ describe("DesktopObservability", () => {
       yield* writeObservabilitySettings(layerEnvironment, {
         otlpTracesUrl: "https://settings.example.com/v1/traces",
         otlpLogsUrl: "https://settings.example.com/v1/logs",
-        // The main process records no metrics yet, so this endpoint must
-        // not produce a request.
         otlpMetricsUrl: "https://settings.example.com/v1/metrics",
       });
 

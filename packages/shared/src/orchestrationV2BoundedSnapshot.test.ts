@@ -64,7 +64,6 @@ function projection(input: {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
-/** Fork child: inherited parent rows, synthetic marker, local rows, retained interrupt request. */
 function forkWindow() {
   const inherited = [item(PARENT, "parent-1", 1), item(PARENT, "parent-2", 2)];
   const marker = item(PARENT, "fork-marker", 3, "fork");
@@ -90,7 +89,6 @@ describe("compact bounded snapshot turnItems", () => {
     const compact = omitLocalVisibleTurnItems(full);
 
     expect(compact).not.toBeNull();
-    // Inherited and synthetic rows never had turnItems; the retained request stays.
     expect(compact!.turnItems).toEqual([retainedRequest]);
     expect(compact!.visibleTurnItems).toBe(full.visibleTurnItems);
 
@@ -118,15 +116,12 @@ describe("compact bounded snapshot turnItems", () => {
   it("refuses shapes it cannot restore exactly", () => {
     const [first, second] = [item(CHILD, "a", 1), item(CHILD, "b", 2)];
     const visible = [row("local", CHILD, first), row("local", CHILD, second)];
-    // Different order than the visible rows.
     expect(omitLocalVisibleTurnItems(projection({ visible, turnItems: [second, first] }))).toBe(
       null,
     );
-    // Equal content but a different object: restoring would not be provably exact.
     expect(
       omitLocalVisibleTurnItems(projection({ visible, turnItems: [{ ...first }, second] })),
     ).toBe(null);
-    // A local row without its turn item.
     expect(omitLocalVisibleTurnItems(projection({ visible, turnItems: [first] }))).toBe(null);
   });
 

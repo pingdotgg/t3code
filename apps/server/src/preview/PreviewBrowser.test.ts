@@ -25,7 +25,6 @@ const executableName =
   hostPlatform === "win32" ? "chrome-headless-shell.exe" : "chrome-headless-shell";
 const ROOT = "chrome-headless-shell-fixture/";
 
-/** A stored ZIP whose entries carry Unix modes, like Chrome for Testing's archives. */
 const makeZip = (
   entries: ReadonlyArray<{ readonly name: string; readonly data?: string; readonly mode: number }>,
 ) => {
@@ -129,7 +128,6 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
     Effect.gen(function* () {
       const { browser, fs, path, installRoot, requests } = yield* makeHarness();
       yield* fs.makeDirectory(path.join(installRoot, "1.0.0"), { recursive: true });
-      // Another server's install in progress, and one abandoned two hours ago.
       const active = path.join(installRoot, ".install-other");
       const abandoned = path.join(installRoot, ".install-abandoned");
       yield* fs.makeDirectory(active);
@@ -150,7 +148,6 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
         expect(yield* mode("libEGL.so")).toBe(0o755);
         expect(yield* mode(path.join("locales", "en-US.pak"))).toBe(0o644);
       }
-      // The old build and stale staging directories are gone; a fresh one stays.
       expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual([
         ".install-other",
         "1.2.3",
@@ -235,7 +232,6 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
         });
       }
 
-      // The install belongs to the service, so it outlives the callers that gave up on it.
       yield* Deferred.succeed(finishDownload, undefined);
       expect(yield* browser.executable).toMatch(new RegExp(`${executableName}$`));
       expect(requests).toHaveLength(1);

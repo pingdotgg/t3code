@@ -35,7 +35,6 @@ const layerRelayClientAvailable = Layer.succeed(
   }),
 );
 
-// Only connectors that log a metrics address are polled for readiness.
 const unusedHttpClient = HttpClient.make(() => Effect.die("unused"));
 
 const runtimeDependencies = (
@@ -167,7 +166,6 @@ describe("CloudManagedEndpointRuntime", () => {
         "2026-06-17T02:00:00Z INF Starting metrics server",
       ),
     ).toBe("debug");
-    // FTL (fatal) and PNC (panic) are more severe than ERR and must surface.
     expect(
       ManagedEndpointRuntime.classifyRelayClientOutput(
         "2026-06-17T02:00:00Z FTL Cannot determine default origin certificate path",
@@ -194,7 +192,6 @@ describe("CloudManagedEndpointRuntime", () => {
         '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Invalid tunnel secret" connIndex=0',
       ),
     ).toBe(true);
-    // Seen in production on 2026-10-06 after the relay deleted an idle tunnel.
     expect(
       ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
         '2026-10-06T12:00:00Z ERR Register tunnel error from server side error="Unauthorized: Tunnel not found" connIndex=0 event=0 ip=198.41.200.23',
@@ -374,7 +371,6 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(yield* Queue.size(requests)).toBe(0);
       yield* TestClock.adjust(Duration.minutes(1));
       expect(yield* Queue.take(requests)).toEqual(config);
-      // Still unconnected, so it asks again.
       yield* TestClock.adjust(Duration.minutes(3));
       expect(yield* Queue.take(requests)).toEqual(config);
     }).pipe(Effect.provide(TestClock.layer())),
@@ -454,8 +450,6 @@ describe("CloudManagedEndpointRuntime", () => {
             return handle;
           }),
         );
-        // Each readiness check takes the next scripted answer, then 503. It
-        // records which connectors were killed before it was sent.
         const answers: Array<number | "refused"> = [];
         const checks = yield* Queue.unbounded<{ readonly url: string; readonly killed: string }>();
         const httpClient = HttpClient.make((request) => {
@@ -469,7 +463,6 @@ describe("CloudManagedEndpointRuntime", () => {
               )
             : Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status })));
         });
-        // Advances the test clock until the watchdog checks readiness again.
         const nextCheck = Effect.gen(function* () {
           for (let second = 0; second < 60; second += 1) {
             yield* TestClock.adjust(Duration.seconds(1));
@@ -489,8 +482,6 @@ describe("CloudManagedEndpointRuntime", () => {
           tunnelId: "tunnel-1",
         });
 
-        // Five 503s, a failed request that does not count, a ready answer that
-        // clears the streak, then six 503s in a row.
         answers.push(503, 503, 503, 503, 503, "refused", 200);
         for (let check = 0; check < 13; check += 1) {
           expect(yield* nextCheck).toEqual({ url: "http://127.0.0.1:40000/ready", killed: "" });
@@ -499,8 +490,6 @@ describe("CloudManagedEndpointRuntime", () => {
         expect(killed).toEqual([1000]);
         expect(spawned).toEqual([1000, 1001]);
 
-        // The replacement follows a restart that never got a ready answer, so
-        // it is killed only after twelve 503s.
         for (let check = 0; check < 12; check += 1) {
           expect(yield* nextCheck).toEqual({ url: "http://127.0.0.1:40001/ready", killed: "1000" });
         }
@@ -743,12 +732,10 @@ describe("CloudManagedEndpointRuntime", () => {
       });
       expect(spawned).toEqual([600]);
 
-      // The first crash restarts immediately.
       yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
       yield* Deferred.await(spawnSignals[1]!);
       expect(spawned).toEqual([600, 601]);
 
-      // The second rapid crash waits out the base delay before restarting.
       yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
       yield* TestClock.adjust(Duration.millis(999));
       expect(spawned).toEqual([600, 601]);
@@ -756,7 +743,6 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* Deferred.await(spawnSignals[2]!);
       expect(spawned).toEqual([600, 601, 602]);
 
-      // The third rapid crash doubles the delay.
       yield* Deferred.succeed(exits[2]!, ChildProcessSpawner.ExitCode(1));
       yield* TestClock.adjust(Duration.millis(1999));
       expect(spawned).toEqual([600, 601, 602]);
@@ -776,19 +762,15 @@ describe("CloudManagedEndpointRuntime", () => {
         connectorToken: "token",
       });
 
-      // One rapid crash arms the backoff.
       yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
       yield* Deferred.await(spawnSignals[1]!);
 
-      // The replacement stays up past the stable-uptime window, so its exit
-      // restarts immediately and the backoff starts over.
       yield* TestClock.adjust(Duration.millis(30_000));
       yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
       yield* Deferred.await(spawnSignals[2]!);
       yield* Deferred.succeed(exits[2]!, ChildProcessSpawner.ExitCode(1));
       yield* Deferred.await(spawnSignals[3]!);
 
-      // The next rapid crash waits the base delay again, not a doubled one.
       yield* Deferred.succeed(exits[3]!, ChildProcessSpawner.ExitCode(1));
       yield* TestClock.adjust(Duration.millis(999));
       expect(spawned).toEqual([700, 701, 702, 703]);
@@ -807,8 +789,6 @@ describe("CloudManagedEndpointRuntime", () => {
         connectorToken: "same-token",
         tunnelId: "same-tunnel",
       };
-      // The startup consumer re-applies whatever the relay hands back. When the
-      // relay confirms the current tunnel, that must not look like a config change.
       yield* runtime.recoveryRequests.pipe(
         Stream.runForEach((requested) => runtime.applyConfig(requested).pipe(Effect.asVoid)),
         Effect.forkChild,
@@ -819,7 +799,6 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* Deferred.await(spawnSignals[1]!);
       expect(spawned).toEqual([900, 901]);
 
-      // Second rapid crash still waits out the base delay.
       yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
       yield* TestClock.adjust(Duration.millis(999));
       expect(spawned).toEqual([900, 901]);
@@ -841,7 +820,6 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
       yield* Deferred.await(spawnSignals[1]!);
 
-      // Leave the supervisor sleeping on the base delay, then change config.
       yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
       const status = yield* runtime.applyConfig({
         providerKind: "cloudflare_tunnel",
@@ -850,7 +828,6 @@ describe("CloudManagedEndpointRuntime", () => {
       expect(status).toMatchObject({ status: "running", pid: 802 });
       expect(spawned).toEqual([800, 801, 802]);
 
-      // The preempted supervisor wakes later and must not spawn a duplicate.
       yield* TestClock.adjust(Duration.millis(60_000));
       expect(spawned).toEqual([800, 801, 802]);
     }).pipe(Effect.provide(TestClock.layer())),
@@ -1039,7 +1016,6 @@ describe("CloudManagedEndpointRuntime", () => {
 
         yield* Deferred.succeed(releaseInstall, undefined);
         expect(yield* Queue.take(spawned)).toBe(pinnedClient.executablePath);
-        // The older connector keeps serving until the pinned one registers.
         expect(Option.isNone(yield* Deferred.poll(olderStopped))).toBe(true);
 
         yield* Queue.offer(
@@ -1098,7 +1074,6 @@ describe("CloudManagedEndpointRuntime", () => {
         providerKind: "cloudflare_tunnel",
         connectorToken: "token",
       });
-      // The first attempt reports the gap; the install then starts the connector itself.
       expect(status).toMatchObject({ status: "failed", failure: "not-installed" });
       expect(yield* Deferred.await(spawned)).toBe(pinnedClient.executablePath);
     }),
@@ -1211,7 +1186,6 @@ describe("CloudManagedEndpointRuntime", () => {
             install: Effect.suspend(() => {
               installAttempts += 1;
               if (installAttempts === 1) {
-                // A real download fails some time after it starts.
                 return Effect.sleep(Duration.seconds(30)).pipe(
                   Effect.andThen(
                     Effect.fail(
@@ -1306,7 +1280,6 @@ describe("CloudManagedEndpointRuntime", () => {
 
       yield* Deferred.succeed(releaseInstall, undefined);
       yield* Deferred.await(pinnedAttempted);
-      // The failed swap leaves the older connector active and running.
       expect(yield* runtime.applyConfig(config)).toMatchObject({ status: "running", pid: 6 });
       expect(olderKilled).toBe(false);
     }),
@@ -1338,7 +1311,6 @@ describe("CloudManagedEndpointRuntime", () => {
               method: "spawn",
             });
           }
-          // The older connector has exited by the time the swap fails.
           const handle = makeHandle({ pid: 12, onKill: () => {}, isRunning: () => !installed });
           yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
           return handle;
@@ -1492,8 +1464,6 @@ describe("CloudManagedEndpointRuntime", () => {
         version: RelayClient.CLOUDFLARED_VERSION,
       } as const;
       let installed = false;
-      // The first resolve after the install misses the new binary, as when a
-      // scanner briefly holds it; later resolves see it.
       let missedProbes = 0;
       const spawned = yield* Queue.unbounded<string>();
       const spawner = ChildProcessSpawner.make((command) =>
@@ -1532,7 +1502,6 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* runtime.applyConfig({ providerKind: "cloudflare_tunnel", connectorToken: "token" });
       expect(yield* Queue.take(spawned)).toBe(olderClient.executablePath);
       yield* Effect.yieldNow;
-      // The missed probe kept the older connector running.
       expect(Option.isNone(yield* Queue.poll(spawned))).toBe(true);
 
       yield* TestClock.adjust(Duration.minutes(10));
@@ -1550,7 +1519,6 @@ describe("CloudManagedEndpointRuntime", () => {
       } as const;
       const missing = { status: "missing" as const, version: RelayClient.CLOUDFLARED_VERSION };
       let installed = false;
-      // The resolve right after the install misses the new binary.
       let missedProbes = 0;
       const spawned = yield* Deferred.make<string>();
       const spawner = ChildProcessSpawner.make((command) =>

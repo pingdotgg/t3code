@@ -2,10 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { embeddedScripts } from "./embeddedScripts";
 
-/** Each script's language, its text, and the part of the command that spells it. */
 function scriptsOf(command: string) {
   return embeddedScripts(command).map((script) => {
-    // Every character maps inside the command, in order.
     script.starts.forEach((start, index) => {
       expect(start).toBeLessThan(script.ends[index]!);
       if (index > 0) expect(start).toBeGreaterThanOrEqual(script.ends[index - 1]!);
@@ -29,8 +27,6 @@ for p in sorted(Path('.').glob('**/package.json')):
 
 describe("embeddedScripts", () => {
   it("finds the script inside a Codex login-shell wrapper and the script inside that", () => {
-    // Recorded in the turn_interrupt_mid_tool Codex transcript
-    // (apps/server/src/orchestration-v2/testkit/fixtures).
     const inner = `console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)`;
     const command = `/bin/bash -lc "node -e \\"${inner}\\""`;
     expect(scriptsOf(command)).toEqual([

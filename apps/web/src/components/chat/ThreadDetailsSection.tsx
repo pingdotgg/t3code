@@ -2,7 +2,6 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 
-/** Sections share header and content insets in both the sidebar and popover. */
 export function ThreadDetailsSection({
   headingId,
   title,

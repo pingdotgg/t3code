@@ -1050,7 +1050,6 @@ describe("buildThreadFeed", () => {
     ]);
     expect(visibleSubagentIds(live)).toEqual(["item-live"]);
 
-    // A launch batch stays whole while any member is live.
     const mixed = present([
       subagent("item-done", "2026-06-20T00:00:03.000Z", 2, "completed"),
       subagent("item-live", "2026-06-20T00:00:04.000Z", 3, "running"),
@@ -1113,8 +1112,6 @@ describe("buildThreadFeed", () => {
   });
 
   it("folds each run of a provider-native subagent thread like a normal turn", () => {
-    // A Claude subagent's child thread, as projected: no runs, and a user
-    // prompt for the launch and for a SendMessage resume.
     const runless = <T extends OrchestrationV2TurnItem>(item: T, id: string, ordinal: number) => ({
       ...item,
       id: TurnItemId.make(id),
@@ -1179,7 +1176,6 @@ describe("buildThreadFeed", () => {
       "assistant:resume-answer",
     ]);
 
-    // While the resume runs, only the settled launch folds.
     expect(
       shape(
         deriveThreadFeedPresentation(
@@ -1237,7 +1233,6 @@ describe("buildThreadFeed", () => {
         .slice(0, 4)
         .map((entry) => (entry.type === "message" ? entry.message.role : entry.type));
 
-    // A sent prompt and an automatic wake both start V2 work below the import.
     expect(
       presented({
         ...userMessage("2026-06-20T00:01:00.000Z"),
@@ -1288,9 +1283,6 @@ describe("buildThreadFeed", () => {
   });
 
   it("keeps a runless tail folded while a normal thread waits for its sent run", () => {
-    // Right after a send the local clock runs before the server creates the
-    // run, and the latest run may still be queued: neither is runless work,
-    // so the settled tail must not reopen and shift the feed.
     const startedAt = "2026-06-20T00:00:05.000Z";
     const feed = buildThreadFeed([
       projected({ ...userMessage(), runId: null }, 0),
@@ -2067,8 +2059,6 @@ const multiSelectQuestion = {
 } as const;
 
 describe("subagent continued by a later turn", () => {
-  // Stored shape from #15891: resuming a subagent moves its item to the
-  // resuming run, but the item keeps the ordinal from the turn that started it.
   const run2 = RunId.make("run-2");
   const at = (second: number) => `2026-10-09T10:00:${String(second).padStart(2, "0")}.000Z`;
   const item = (id: string, itemRunId: RunId, ordinal: number, second: number) => ({

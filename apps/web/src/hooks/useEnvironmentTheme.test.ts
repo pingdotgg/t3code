@@ -43,13 +43,9 @@ describe("environment themes", () => {
 
     expect(overridden.colors.terminalSelection).not.toBe(generated.colors.terminalSelection);
     expect(overridden.colors.error).not.toBe(generated.colors.error);
-    // Roles the machine did not publish keep the generated value.
     expect(overridden.colors.sidebar).toBe(generated.colors.sidebar);
   });
 
-  // The standard exported theme file — the Download button's output — is a
-  // valid published theme, so any shared theme can be dropped into the
-  // machine's themes directory as-is.
   it("renders an exported theme file on the stock defaults", () => {
     const theme = environmentThemeDefinition({
       id: "shared-light",
@@ -69,9 +65,6 @@ describe("environment themes", () => {
     }
   });
 
-  // The generator follows the seed canvas's luminance, so a dark theme's
-  // seeds must never produce its light variant: the variant builds on that
-  // appearance's stock defaults instead.
   it("builds a seeded theme's variant on the variant appearance's defaults", () => {
     const theme = environmentThemeDefinition({
       ...NIGHTFALL_THEME,
@@ -83,9 +76,6 @@ describe("environment themes", () => {
     expect(theme.variants?.light?.canvas).not.toBe(theme.colors.canvas);
   });
 
-  // A published `t3-iris.json` would show its palette on a card that applies
-  // the built-in, and a published `dark.json` would capture everyone whose
-  // stored preference is the stock "dark". Reserved ids never become cards.
   it("drops published themes with reserved ids", () => {
     const definitions = publishedThemeDefinitions([
       NIGHTFALL_THEME,
@@ -137,8 +127,6 @@ describe("environment themes", () => {
     ]);
   });
 
-  // A machine may publish roles a newer client added; an older one has to
-  // ignore them rather than render a broken palette.
   it("ignores published roles this build does not render", () => {
     const theme = environmentThemeDefinition({
       ...NIGHTFALL_THEME,
@@ -151,9 +139,6 @@ describe("environment themes", () => {
     }
   });
 
-  // ThemeEditorPanel opens Duplicate in the guided editor for managed themes,
-  // and the guided editor regenerates from canvas and accent -- which would
-  // discard any role the machine tuned by hand.
   it("marks only the pure seeded form as managed", () => {
     expect(environmentThemeDefinition(NIGHTFALL_THEME).managed).toBe(true);
     expect(
@@ -176,15 +161,10 @@ describe("environment themes", () => {
     setEnvironmentThemes([environmentThemeDefinition(NIGHTFALL_THEME)]);
     expect(getThemeDefinition("nightfall")?.label).toBe("Nightfall");
 
-    // The palettes are never saved, so they have to disappear with the
-    // machine that published them rather than linger as stale entries.
     setEnvironmentThemes([]);
     expect(getThemeDefinition("nightfall")).toBe(null);
   });
 
-  // Published ids share one namespace with the user's saved themes, and the
-  // user was here first: their theme keeps working even if the machine later
-  // publishes under the same id.
   it("lets a theme the user saved win an id collision", () => {
     const store = new Map<string, string>();
     vi.stubGlobal("window", {

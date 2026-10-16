@@ -152,11 +152,9 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
 
 interface DatabaseHandle {
   readonly get: Effect.Effect<IDBDatabase, ConnectionTransientError>;
-  /** Forget `database` if it is still the shared connection, so the next access reopens. */
   readonly invalidate: (database: IDBDatabase) => Effect.Effect<void>;
 }
 
-/** Share a connection until the browser closes it; the next access reopens it. */
 const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")(function* () {
   const lock = yield* Semaphore.make(1);
   let current: IDBDatabase | null = null;
@@ -195,16 +193,14 @@ const makeDatabaseHandle = Effect.fn("web.connectionStorage.makeDatabaseHandle")
 });
 
 /**
- * Runs `use` on the shared connection. A connection the browser already closed
- * throws InvalidStateError even when no close event reached this tab, so drop
- * it and retry once on a fresh one instead of failing every later operation.
+ * A connection the browser already closed throws InvalidStateError even when no
+ * close event reached this tab, so drop it and retry once on a fresh one
+ * instead of failing every later operation.
  */
 function withDatabase<A>(
   database: DatabaseHandle,
   use: (opened: IDBDatabase) => Effect.Effect<A, ConnectionTransientError>,
 ) {
-  // Only a connection that opened and then failed is stale; a failing open is
-  // storage being unavailable, which a retry would not fix.
   const closedConnection = Symbol("closedConnection");
   const attempt = Effect.flatMap(database.get, (opened) =>
     use(opened).pipe(

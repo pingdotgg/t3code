@@ -16,7 +16,6 @@ import * as Cause from "effect/Cause";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as Schema from "effect/Schema";
 
-/** Raised when portable history does not fit the target provider's context window. */
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
   "ContextHandoffBudgetError",
   {},
@@ -31,7 +30,6 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
-/** Translate known categories without exposing arbitrary provider defect text. */
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
   let message: string | undefined;
@@ -116,7 +114,6 @@ function replaceUnsafeControlCharacters(value: string): string {
   return sanitized.join("");
 }
 
-/** Removes common credential forms before provider text crosses a transport boundary. */
 function redactProviderFailureText(value: string): string {
   return replaceUnsafeControlCharacters(value)
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)

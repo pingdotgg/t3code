@@ -1,8 +1,3 @@
-/**
- * GitLab's client definition. Browser- and React Native-safe.
- *
- * @module source-control-gitlab/client/definition
- */
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   defineSourceControlClient,

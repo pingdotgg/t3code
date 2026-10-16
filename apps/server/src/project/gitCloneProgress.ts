@@ -3,7 +3,6 @@ import type { ProjectCloneStage } from "@t3tools/contracts";
 export interface GitCloneProgressLine {
   readonly stage: ProjectCloneStage;
   readonly percent: number | null;
-  /** Transfer detail after the count, e.g. `12.30 MiB | 5.00 MiB/s`. */
   readonly detail: string | null;
 }
 
@@ -20,10 +19,8 @@ const STAGE_PREFIXES: ReadonlyArray<readonly [RegExp, ProjectCloneStage]> = [
 const PERCENT = /:\s+(\d+)%\s+\((\d+)\/(\d+)\)(?:,\s*(.*?))?\s*(?:,\s*done\.)?\s*$/;
 
 /**
- * Parses one line of `git clone --progress` stderr. Git redraws each counter
- * with a bare `\r`, so callers hand over each redraw as its own line. Lines
- * that are not progress counters (hints, warnings, `Cloning into ...`) return
- * null and are left for the error surface.
+ * Git redraws each counter with a bare `\r`, so callers hand over each redraw
+ * as its own line.
  */
 export function parseGitCloneProgressLine(line: string): GitCloneProgressLine | null {
   const trimmed = line.trim();
@@ -34,7 +31,6 @@ export function parseGitCloneProgressLine(line: string): GitCloneProgressLine | 
   if (!match) return { stage, percent: null, detail: null };
   const percent = Number(match[1]);
   const rawDetail = match[4]?.trim() ?? "";
-  // The trailer of a finished line is "done." which carries no information.
   const detail = rawDetail.length > 0 && rawDetail !== "done." ? rawDetail : null;
   return {
     stage,

@@ -45,21 +45,15 @@ export type CommandAvailabilityChecker = (
 const WINDOWS_SHELL_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
 
 /**
- * Escapes a single argument for `cmd.exe` shell mode (`spawn(..., { shell: true })`
- * on Windows). Node hands the command string to `cmd.exe /d /s /c "<command>"`
- * without any quoting, so every dynamic argument must be escaped to survive both
- * cmd.exe parsing and the target program's `CommandLineToArgvW` parsing.
- * Mirrors cross-spawn's argument escaping.
+ * Node hands the command string to `cmd.exe /d /s /c "<command>"` without any
+ * quoting, so every dynamic argument must be escaped to survive both cmd.exe
+ * parsing and the target program's `CommandLineToArgvW` parsing.
  */
 function escapeWindowsShellArg(arg: string): string {
-  // Double up backslashes that precede a double quote, then escape the quote
-  // itself so it survives CommandLineToArgvW.
   let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
   // Double up trailing backslashes so the closing quote is not escaped away.
   escaped = escaped.replace(/(\\*)$/, "$1$1");
-  // Quote the whole argument so embedded whitespace is preserved.
   escaped = `"${escaped}"`;
-  // Escape cmd.exe metacharacters so cmd passes them through verbatim.
   return escaped.replace(WINDOWS_SHELL_META_CHARS, "^$1");
 }
 
@@ -458,17 +452,10 @@ function resolveCommandCandidates(
   return Array.from(new Set(candidates));
 }
 
-// Session bootstrap resolves the same commands over and over, each PATH scan
-// costing hundreds of 'shell.isExecutableFile' filesystem probes (tens of
-// thousands per connect). Memoize the scan outcome per
-// (platform, PATH, PATHEXT, command) for a short window: repeat scans hit the
-// cache while any change to the search environment invalidates immediately.
 // Explicit-path resolution is never cached - callers probe paths they have
 // just written (e.g. managed binary installs). A "not-found" outcome is also
 // cached for the TTL, so a just-installed binary can stay invisible for up to
 // 30s unless resolved by explicit path.
-// TTL expiry uses the monotonic clock (Clock.monotonicTimeNanos) so backward
-// wall-clock adjustments cannot keep expired entries alive.
 const COMMAND_RESOLUTION_CACHE_TTL_NANOS = 30_000_000_000n;
 const COMMAND_RESOLUTION_CACHE_MAX_ENTRIES = 512;
 const COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR = String.fromCharCode(0);
@@ -478,9 +465,6 @@ interface CommandResolutionCacheEntry {
   readonly expiresAtNanos: bigint;
 }
 
-// The cache lives in the Effect environment (like HostProcess.Platform above)
-// so tests and embedders can provide an isolated instance; the default is a
-// single process-wide map shared by all consumers.
 export const CommandResolutionCache = Context.Reference<Map<string, CommandResolutionCacheEntry>>(
   "@t3tools/shared/shell/CommandResolutionCache",
   {
@@ -493,7 +477,6 @@ interface PathDirectoryListing {
   readonly names: ReadonlySet<string> | undefined;
 }
 
-// mtime of a PATH directory; null when missing, undefined when unreadable.
 const directoryMtime = (directory: string) =>
   FileSystem.FileSystem.use((fileSystem) => fileSystem.stat(directory)).pipe(
     Effect.map((info) =>
@@ -519,11 +502,6 @@ const PathDirectoryListings = Context.Reference<
   Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
 >("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
 
-/**
- * Run a batch of command lookups (e.g. editor discovery) that lists each PATH
- * directory once, relisting it if its mtime changes, and probes only listed
- * names instead of every PATH x PATHEXT candidate per command.
- */
 export const withPathDirectoryListings = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
     const listings = yield* Cache.make({
@@ -564,7 +542,6 @@ function cacheCommandResolution(
   });
 }
 
-// Trace each command lookup, not every candidate file it probes.
 const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
   platform: NodeJS.Platform,
@@ -642,7 +619,6 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
       listing = yield* Cache.get(listings, pathEntry);
     }
     for (const candidate of commandCandidates) {
-      // The stat below still checks exact case and rejects non-files.
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
@@ -678,14 +654,11 @@ function isFileSync(filePath: string): boolean {
 }
 
 /**
- * Swaps Git for Windows' launcher (`<Git>\cmd\git.exe`, the only git its
- * installer puts on PATH, or the portable build's `<Git>\bin\git.exe`) for the
- * git.exe it starts. The launcher costs a second process on every git command,
- * and each launch leaks a kernel token reference that slows process creation
- * machine-wide until reboot. The real binary sets HOME itself, but adds its own
- * folders to PATH for hooks, ssh and credential helpers only when MSYSTEM is
- * unset, so the launcher stays when MSYSTEM is set. Anything else is returned
- * as is.
+ * The launcher costs a second process on every git command, and each launch
+ * leaks a kernel token reference that slows process creation machine-wide until
+ * reboot. The real binary sets HOME itself, but adds its own folders to PATH
+ * for hooks, ssh and credential helpers only when MSYSTEM is unset, so the
+ * launcher stays when MSYSTEM is set.
  */
 export function preferGitForWindowsBinary(
   executable: string,
@@ -706,7 +679,6 @@ export function preferGitForWindowsBinary(
   return executable;
 }
 
-// Untraced because it runs before most spawns and returns at once off Windows.
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -746,9 +718,6 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    // Cached with the scan: its file checks would otherwise run before every
-    // git launch. A Git upgrade that moves the real binary can fail git for up
-    // to the cache lifetime.
     const found = resolveExecutable(command, platform, env);
     resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
     if (!explicitPath && resolvedExecutable !== null) {
@@ -842,8 +811,6 @@ export const resolveWindowsEnvironment = Effect.fn("shell.resolveWindowsEnvironm
   }).PATH;
   const mergedPath = mergePathValues(shellPath, inheritedPath, "win32");
   const knownCliPath = resolveKnownWindowsCliDirs(env).join(WINDOWS_PATH_DELIMITER);
-  // Preserve the order a user's shell uses. These directories fill gaps when
-  // desktop apps launch without the full interactive-shell PATH.
   const baselinePath = mergePathValues(mergedPath, knownCliPath, "win32");
   const baselinePatch: Partial<NodeJS.ProcessEnv> = baselinePath ? { PATH: baselinePath } : {};
   const baselineEnv = mergeWindowsEnv(env, baselinePatch);

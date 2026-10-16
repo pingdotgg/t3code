@@ -40,7 +40,6 @@ import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visi
 const shellsAtom = Atom.make(0).pipe(Atom.keepAlive);
 let registry: AtomRegistry.AtomRegistry;
 let root: Root | null = null;
-// Value of every committed render, the work a shell update costs on device.
 let renders: Array<{ readonly visible: boolean; readonly value: number }> = [];
 
 function Probe() {

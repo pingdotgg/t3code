@@ -160,12 +160,7 @@ function layerFor(input: {
   >;
   readonly currentTargets?: ReadonlyArray<LiveActivities.TargetRow>;
   readonly config?: RelayConfiguration.RelayConfiguration["Service"];
-  // Live agent-activity rows returned by delivery-time state rechecks.
-  // Defaults to the fixture row so queued updates match unless a test is
-  // explicitly exercising stale-state behavior.
   readonly activityStates?: ReadonlyArray<RelayAgentActivityState>;
-  // Current per-thread rows used to reject queued updates/notifications that
-  // have been superseded before APNs delivery.
   readonly currentActivityStates?: ReadonlyArray<RelayAgentActivityState>;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
@@ -315,10 +310,6 @@ describe("ApnsDeliveries", () => {
         nowMs: 10_000,
       });
 
-      // Activities are armed by the app in the foreground; the relay never
-      // uses the push-to-start token, so the only fallback is the push
-      // notification channel (none here: the aggregate is not an attention
-      // phase).
       expect(result).toBeNull();
       expect(queuedJobs).toEqual([]);
       expect(queuedStarts).toEqual([]);
@@ -332,8 +323,6 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      // Within the freshly-armed grace window an empty aggregate delivers
-      // nothing: the environment's first publish may still be in flight.
       const graced = yield* deliveries.sendForTarget({
         target,
         aggregate: null,
@@ -347,9 +336,6 @@ describe("ApnsDeliveries", () => {
         nowMs: 5_000 + 3 * 60 * 1_000,
       });
 
-      // An armed card always shows content (live or recently finished work);
-      // once the aggregate is empty the card ends rather than rendering an
-      // empty state. The app re-arms on the next open with content.
       expect(result?.kind).toBe("live_activity_end");
       expect(result?.ok).toBe(true);
       expect(queuedJobs).toMatchObject([
@@ -556,8 +542,6 @@ describe("ApnsDeliveries", () => {
         const result = yield* deliveries.sendForTarget({
           target: {
             ...target,
-            // A registered alert token must not turn the suppressed Live
-            // Activity update into an alert push on every republish.
             push_token: "apns-device-token",
             last_aggregate_json: waitingAggregateJson,
             last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
@@ -936,8 +920,6 @@ describe("ApnsDeliveries", () => {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
       const result = yield* deliveries.processSignedJob(signed);
 
-      // The start was decided from an aggregate that a newer terminal publish
-      // has since invalidated; delivering it would birth an orphan activity.
       expect(result).toMatchObject({
         kind: "live_activity_start",
         ok: true,
@@ -1866,7 +1848,6 @@ describe("live activity alert decisions", () => {
         nowMs: 0,
       }),
     ).toEqual({ title: "Thread", body: "Done: Project" });
-    // The completion switch mutes it.
     expect(
       ApnsDeliveries.alertForNewlyTerminal({
         previousAggregate: aggregate,
@@ -1875,7 +1856,6 @@ describe("live activity alert decisions", () => {
         nowMs: 0,
       }),
     ).toBeNull();
-    // No baseline means no transition to ring on.
     expect(
       ApnsDeliveries.alertForNewlyTerminal({
         previousAggregate: null,
@@ -1884,7 +1864,6 @@ describe("live activity alert decisions", () => {
         nowMs: 0,
       }),
     ).toBeNull();
-    // A Done row that was already terminal (or absent) before stays silent.
     expect(
       ApnsDeliveries.alertForNewlyTerminal({
         previousAggregate: next,

@@ -44,7 +44,6 @@ function record(input: {
 const traceFilePath = "/tmp/server.trace.ndjson";
 const readAt = DateTime.makeUnsafe("2026-05-05T10:00:00.000Z");
 
-/** Aggregates whole lines in memory, the way diagnostics read traces before streaming. */
 function aggregateLines(lines: ReadonlyArray<string>) {
   const aggregator = TraceDiagnostics.makeTraceDiagnosticsAggregator();
   lines.forEach(aggregator.addLine);
@@ -55,7 +54,6 @@ function aggregateLines(lines: ReadonlyArray<string>) {
   });
 }
 
-/** Reads the trace file and one rotated backup through a fake file system. */
 function readTraces(fileSystem: Partial<FileSystem.FileSystem>) {
   return TraceDiagnostics.readTraceDiagnostics({ traceFilePath, maxFiles: 1, readAt }).pipe(
     Effect.provide(TraceDiagnostics.layer.pipe(Layer.provide(FileSystem.layerNoop(fileSystem)))),
@@ -156,8 +154,6 @@ describe("TraceDiagnostics", () => {
 
   it.effect("streams rotated files into the same result as reading them whole", () =>
     Effect.gen(function* () {
-      // CRLF and LF endings plus multi-byte text, served one byte per chunk so
-      // chunks split lines, line endings, and characters.
       const files = new Map([
         [
           `${traceFilePath}.1`,
@@ -312,7 +308,6 @@ describe("TraceDiagnostics", () => {
 
   it.effect("keeps only the top spans, failures, and warning logs from large inputs", () =>
     Effect.sync(() => {
-      // Shuffled, so some older records arrive after the lists are full.
       const indexes = Array.from({ length: 30 }, (_, step) => (step * 7) % 30);
       const diagnostics = aggregateLines(
         indexes.map((index) =>

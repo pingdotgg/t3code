@@ -6,10 +6,6 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-/**
- * Settings → `t3` command: puts the desktop app's bundled CLI on PATH, or takes
- * it off again. Hidden where the desktop build has no launcher to install.
- */
 export function CliCommandSettingsRow() {
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge?.cliCommand;
   const [state, setState] = useState<DesktopCliCommandState | null>(null);

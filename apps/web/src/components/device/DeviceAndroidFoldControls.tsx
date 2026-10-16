@@ -10,7 +10,6 @@ import {
 } from "./deviceFold";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 
-/** Capability comes from the emulator, not its AVD name or screen dimensions. */
 export function DeviceAndroidFoldControls(props: {
   readonly access: DeviceHubAccess;
   readonly deviceId: string;

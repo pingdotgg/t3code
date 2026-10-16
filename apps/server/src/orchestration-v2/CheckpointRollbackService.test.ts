@@ -36,7 +36,6 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
-// A root that does not exist never overlaps, so other owners decide isolation.
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
 } as never);
@@ -595,7 +594,6 @@ it.effect.each([
       },
       providerThreads: [providerThread],
       providerSessions: [],
-      // Turn 3 remains in the audit history after an earlier rollback.
       providerTurns: [
         ...(multipleTurns
           ? [
@@ -643,8 +641,6 @@ it.effect.each([
           Layer.mock(EventSink.EventSinkV2)({
             write: ({ events }) =>
               Effect.map(lockedThreads, (locked) => {
-                // A thread command that planned against the old provider thread
-                // must not commit after this and undo the rollback.
                 assert.include(locked, threadId);
                 assert.ok(
                   events.some(

@@ -59,7 +59,6 @@ type GitOverviewSheetProps = StaticScreenProps<{
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const { environmentId, threadId } = props.route.params;
-  // A hand-typed deep link can carry a blank ID, which the branded IDs reject.
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
   useEffect(() => {
     if (isBlankLink) navigation.goBack();
@@ -228,8 +227,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     ],
   );
 
-  // Status facts live on the relevant rows instead of crowding the header
-  // subtitle: files changed → Commit, ahead → Push, PR → View PR, behind → Pull.
   const rowStatusDetail = useCallback(
     (item: (typeof menuItems)[number]): string | undefined => {
       const status = gitStatus.data;
@@ -254,9 +251,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Deterministic refresh state. Tying RefreshControl to the query's
-  // isPending flag left the spinner stuck (the status query reports pending
-  // during quiet background refreshes too).
+  // Tying RefreshControl to the query's isPending flag left the spinner stuck
+  // (the status query reports pending during quiet background refreshes too).
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -442,9 +438,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   if (Platform.OS === "ios") {
     // Compact form sheet: a plain screen presented as formSheet never renders a
     // stack header, so — like the Settings sheet — the header must come from a
-    // nested native stack INSIDE the sheet. This reuses the exact structure of the
-    // inspector branch below: branch as the title, status summary as the native
-    // subtitle, and content that owns pull-to-refresh.
+    // nested native stack INSIDE the sheet.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>

@@ -33,7 +33,6 @@ describe("backgroundWorkHoldsCompletion", () => {
     ["a monitor", true, [task("watch", "monitor")]],
     ["a command and a monitor", true, [task("dev", "command"), task("watch", "monitor")]],
     ["a command and a subagent", true, [task("dev", "command"), task("review", "subagent")]],
-    // Also what an unknown or missing kind decodes to.
     ["work the provider cannot name", true, [task("opaque", "background_task")]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);

@@ -35,7 +35,6 @@ const previousReleaseId = "1".repeat(64);
 const previousVersion = "fixture-old";
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-// Small ZIPs made with Python's zipfile module. The unsafe entries are intentional.
 const zipFixtures = {
   complete:
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWzLyU9OzFHISCzKSy0u5gIAUEsBAhQDFAAAAAgAAAAiXXMTL+gUAAAAFAAAABIAAAAAAAAAAAAAAO2BAAAAAGFneV9hY3Bfc2VydmVyLnBhclBLAQIUAxQAAAAIAAAAIl1fcgMpEAAAAA4AAAAVAAAAAAAAAAAAAADtgUQAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxQSwUGAAAAAAIAAgCDAAAAhwAAAAAA",
@@ -404,7 +403,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           profiles.add(profile);
           const helper = command.args[0] === "-e";
           if (!helper) childProcessesRunning = true;
-          // The runtime unpacks straight into the disposable profile.
           if (!helper) {
             if (platform === "win32") {
               expect(command.options.env?.TEMP).toBe(profile);
@@ -586,7 +584,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     { name: "oversized member", archive: Buffer.from(zipFixtures.oversizedMember, "base64") },
   ])("rejects $name before runtime validation", ({ completeAsset, ...options }) =>
     Effect.gen(function* () {
-      // Pin the asset to the complete archive so the download itself is what disagrees.
       const asset =
         completeAsset === undefined ? undefined : { ...(yield* releaseAsset()), ...completeAsset };
       const { installation, validations, stagingReleased, fs, path } = yield* makeHarness({

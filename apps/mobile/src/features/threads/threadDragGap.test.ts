@@ -3,7 +3,6 @@ import { threadDragAction, threadOrderAfterMove } from "./threadOrder";
 import { threadDragGapOffset } from "./threadDragGap";
 
 describe("live thread insertion gap", () => {
-  // Header, pinned row, Active header, two active rows. Geometry stays fixed for hit testing.
   const offsets = [0, 48, 120, 168, 240];
   const shifts = (source: number, insertion: number) =>
     offsets.map((offset) => threadDragGapOffset(offset, source, 72, insertion));

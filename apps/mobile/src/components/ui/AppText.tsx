@@ -39,10 +39,6 @@ export type AppTextInputProps = Omit<RNTextInputProps, "placeholderTextColor"> &
   readonly ref?: React.Ref<TextInputInstance>;
 };
 
-/**
- * Thin wrapper around RN TextInput with default input styling.
- * Uses Uniwind className — no manual style parsing.
- */
 export function AppTextInput({ className, ref, ...props }: AppTextInputProps) {
   return (
     <RNTextInput

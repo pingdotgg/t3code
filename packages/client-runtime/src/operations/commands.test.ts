@@ -716,7 +716,6 @@ describe("V2 environment commands", () => {
             attachments: [{ id: "attachment-kept" }],
           },
         ]);
-        // A text-only edit must not send an attachments replacement list.
         expect(commands[5]).not.toHaveProperty("attachments");
       }).pipe(Effect.provide(layerTestCrypto)),
   );

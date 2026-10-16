@@ -21,11 +21,6 @@ export interface NativeLayoutMetrics {
   readonly reservedRegions: ReadonlyArray<ReservedRegion>;
 }
 
-/**
- * Keep bottom controls in one usable region. A book-like fold selects the
- * larger side; a horizontal fold leaves the controls on the lower display.
- * Text and other scrollable content can continue to use the full canvas.
- */
 export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
   if (!metrics) return { left: 0, right: 0, bottom: 0 };
   let left = metrics.safeArea.left;
@@ -41,7 +36,6 @@ export function deriveBottomControlInsets(metrics: NativeLayoutMetrics | null) {
       if (right - endX >= x - left) left = endX;
       else right = x;
     } else if (endY >= bottom - metrics.safeArea.bottom) {
-      // An occlusion at the bottom can also occupy just one corner.
       if (region.width >= right - left) bottom = y;
       else if (right - endX >= x - left) left = endX;
       else right = x;

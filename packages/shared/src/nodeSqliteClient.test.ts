@@ -18,9 +18,7 @@ import { vi } from "vite-plus/test";
 import * as SqliteClient from "./nodeSqliteClient.ts";
 
 const startedWorkers = vi.hoisted((): Array<NodeWorkerThreads.Worker> => []);
-// When on, workers run a script that never announces, like a worker stuck opening the file.
 const silentWorkers = vi.hoisted(() => ({ on: false, readyOnTerminate: false }));
-// When set, workers throw this at startup, like a checkpoint worker on SQLite before 3.51.
 const failingWorkers = vi.hoisted(() => ({ message: undefined as string | undefined }));
 
 vi.mock("node:worker_threads", async (importOriginal) => {
@@ -181,9 +179,7 @@ it.effect("keeps large text and blob parameters off cached statements", () =>
       }
     }
 
-    // Small parameters keep reusing the one cached statement for each query.
     assert.equal(cached.size, queries.length);
-    // Each large execution gets a statement that nothing holds on to afterwards.
     assert.equal(large.size, queries.length * 6);
     assert.isTrue(cached.isDisjointFrom(large));
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
@@ -221,7 +217,6 @@ it.effect("leaves a parameter it cannot measure for the statement to handle", ()
     const error = yield* sql.unsafe("SELECT length($value) AS size", [throwing]).pipe(Effect.flip);
     assert.equal(error.reason.operation, "execute");
 
-    // Only the statement reads a getter, so it runs once as it would natively.
     let reads = 0;
     const counting = {
       get $value(): number {
@@ -238,7 +233,6 @@ const makeTempDatabase = Effect.gen(function* () {
   const path = yield* Path.Path;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-transaction-" });
   const filename = path.join(directory, "state.sqlite");
-  // node:sqlite connections fail a busy statement at once unless given a timeout.
   const other = yield* Effect.acquireRelease(
     Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
     (database) => Effect.sync(() => database.close()),
@@ -360,7 +354,6 @@ it.effect("lets the writer commit while a read-only transaction is open", () =>
         )
         .pipe(SqliteClient.readOnly);
 
-      // The reader keeps the snapshot it began with, and later reads see the commit.
       assert.deepEqual(counts, { before: 1, after: 1 });
       assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 2);
     }),
@@ -405,7 +398,6 @@ it.effect("keeps read-only work inside a write transaction on the writer", () =>
     sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`INSERT INTO entries VALUES ('uncommitted')`;
-        // Only the writer can see its own uncommitted row.
         const count = yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
         assert.equal(count, 2);
       }),
@@ -432,7 +424,6 @@ it.effect("labels SQL spans with their connection and how long they waited for i
         ),
       );
       yield* Deferred.await(held);
-      // Each waiter runs until it blocks on the writer lock, before the clock moves.
       const statement = yield* Effect.forkChild(sql`SELECT 1`, { startImmediately: true });
       const transaction = yield* Effect.forkChild(sql.withTransaction(countEntries(sql)), {
         startImmediately: true,
@@ -445,12 +436,9 @@ it.effect("labels SQL spans with their connection and how long they waited for i
       yield* sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
     }),
   ).pipe(
-    // The server turns this on, so a statement's span is current while it waits.
     Effect.provideService(Statement.SpanPropagationEnabled, true),
     Effect.withTracer(tracer),
     Effect.map(() => {
-      // Statements inside a transaction reuse its connection, so only the
-      // statements and transactions that took a lock are labeled.
       const labeled = spans
         .filter((span) => span.attributes.has("db.connection"))
         .map((span) => [
@@ -481,9 +469,7 @@ it.effect("labels only the span of the statement or transaction that took the lo
     const sql = yield* SqlClient.SqlClient;
     const transaction = sql.withTransaction(sql`SELECT 1`);
     yield* transaction;
-    // Run again nested, the same Effect reuses the outer connection and takes no lock.
     yield* sql.withTransaction(transaction);
-    // With tracing off, Statement does not make its span current.
     yield* sql`SELECT 2`.pipe(Effect.withTracerEnabled(false));
   }).pipe(
     Effect.withSpan("caller"),
@@ -513,7 +499,6 @@ it.effect("keeps large parameters off the reader worker's cached statements", ()
         sql<{ size: number }>`SELECT length(${value}) AS size`.pipe(
           Effect.map((rows) => rows[0]?.size),
         );
-      // Start the worker so its requests can be recorded.
       yield* countEntries(sql).pipe(SqliteClient.readOnly);
       const worker = startedWorkers.at(-1)!;
       const cached: Array<boolean> = [];
@@ -585,8 +570,6 @@ it.effect("keeps a nested transaction inside a read-only transaction on the read
           Effect.andThen(sql`INSERT INTO entries VALUES ('second')`),
         ),
       );
-      // Callers wrap a store read that opens its own transaction, as the
-      // shell snapshot routes do around getShellSnapshot.
       const counts = yield* sql
         .withTransaction(
           Effect.gen(function* () {
@@ -626,7 +609,6 @@ it.effect("uses the writer when the reader cannot open the database", () =>
       yield* sql`PRAGMA journal_mode = WAL`;
       yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
       yield* sql`INSERT INTO entries VALUES ('kept')`;
-      // The writer keeps its open file; a read-only open of the path now fails.
       yield* (yield* FileSystem.FileSystem).remove(filename);
       const startedBefore = startedWorkers.length;
 
@@ -643,7 +625,6 @@ it.effect("uses the writer for a database that is not in WAL mode", () =>
       yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
       const startedBefore = startedWorkers.length;
 
-      // A write inside readOnly only succeeds on the writer: the reader is read-only.
       yield* sql
         .withTransaction(sql`INSERT INTO entries VALUES ('on the writer')`)
         .pipe(SqliteClient.readOnly);
@@ -710,13 +691,10 @@ it.effect("lets a read be cancelled while its worker is still starting", () =>
             sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
           );
           yield* Effect.yieldNow;
-          // Never returns if the wait for the worker were uninterruptible: the
-          // test clock has not moved, so the startup deadline cannot fire.
           yield* Fiber.interrupt(fiber);
         }),
       );
 
-      // The client stays usable: the next read waits out the deadline, then uses the writer.
       const next = yield* Effect.forkChild(
         sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly),
       );
@@ -765,8 +743,6 @@ it.effect("does not hand out a worker that reports ready after another read time
           yield* TestClock.adjust("5 seconds");
           const second = yield* Effect.forkChild(read());
           yield* Effect.yieldNow;
-          // The first read reaches its deadline and retires the worker; the second
-          // is still waiting when the worker's "ready" arrives, before it exits.
           silentWorkers.readyOnTerminate = true;
           yield* TestClock.adjust("5 seconds");
           return [yield* Fiber.join(first), yield* Fiber.join(second)];
@@ -796,8 +772,6 @@ const withCheckpointClient = <A, E>(
     }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-// Resolves once the worker has handled a request sent now, after every
-// statement so far. Earlier requests from the writer reply with null.
 const checkpointWorkerReply = (worker: NodeWorkerThreads.Worker) =>
   Effect.promise(
     () =>
@@ -824,7 +798,6 @@ it.effect("checkpoints the WAL on the worker instead of the writer", () =>
       const autocheckpoint = yield* sql<{
         readonly wal_autocheckpoint: number;
       }>`PRAGMA wal_autocheckpoint`;
-      // The writer leaves a WAL of this size to the worker.
       assert.equal(autocheckpoint[0]?.wal_autocheckpoint, 10_000);
 
       // About 1200 frames, past the 1000 that start a checkpoint.
@@ -841,8 +814,6 @@ it.effect("checkpoints the WAL on the worker instead of the writer", () =>
       assert.isAbove(wal[0]!.log, 1000);
       assert.equal(wal[0]!.checkpointed, wal[0]!.log);
 
-      // Every frame is in the database, so the next commit restarts the WAL and
-      // cuts the file back to the size limit.
       assert.isAbove(yield* walSize, limit);
       yield* sql`INSERT INTO pages(payload) VALUES (x'00')`;
       assert.isAtMost(yield* walSize, limit);
@@ -873,7 +844,6 @@ it.effect("warns once and hands checkpoints back when the worker fails at startu
       withCheckpointClient((sql) =>
         Effect.gen(function* () {
           const worker = startedWorkers.at(-1)!;
-          // threadId is -1 once the worker has exited and the client has seen "error" and "exit".
           if (worker.threadId !== -1) {
             yield* Effect.promise(() => new Promise((resolve) => worker.once("exit", resolve)));
           }

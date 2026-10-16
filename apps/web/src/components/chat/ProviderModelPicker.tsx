@@ -29,17 +29,12 @@ import { shortcutLabelForCommand } from "../../keybindings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
-  /**
-   * The instance currently selected in the composer. Drives the trigger
-   * icon, label and the default-highlighted combobox row.
-   */
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
-  /** Instance entries rendered in the sidebar + used to resolve display name. */
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
@@ -52,7 +47,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   terminalOpen?: boolean;
   open?: boolean;
   triggerClassName?: string;
-  /** Aggregate settings can show a neutral value without claiming one provider is selected. */
   triggerLabel?: string;
   triggerAriaLabel?: string;
   onOpenChange?: (open: boolean) => void;
@@ -65,9 +59,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const size = props.size ?? "sm";
 
-  // Resolve the active instance entry by exact routing key. The composer
-  // resolves fallbacks before rendering this component; if the selected
-  // instance disappears, do not infer a replacement from its driver kind.
   const activeEntry = useMemo(() => {
     return (
       props.instanceEntries.find((entry) => entry.instanceId === props.activeInstanceId) ?? null
@@ -76,7 +67,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   const activeInstanceId = props.activeInstanceId;
   const selectedInstanceOptions = props.modelOptionsByInstance.get(activeInstanceId) ?? [];
-  // Account-specific catalogs must keep the selected model label while unavailable.
   const selectedModel =
     resolveModelPickerSelectedModel({
       driverKind: activeEntry?.driverKind,

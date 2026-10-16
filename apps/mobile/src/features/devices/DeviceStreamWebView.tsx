@@ -104,7 +104,6 @@ function DeviceStreamDocumentView({
     setError(message);
     setStatus("error");
   };
-  // The shared transport owns video timeouts once the document acknowledges startup.
   const bootstrapTimedOut = useEffectEvent(() =>
     fail("Device viewer could not start. Reconnect to try again."),
   );

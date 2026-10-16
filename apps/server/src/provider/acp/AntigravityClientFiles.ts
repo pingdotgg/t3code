@@ -5,7 +5,6 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 /**
- * Workspace file access requested through the ACP client `fs` capability.
  * The agent gates each write behind `session/request_permission`, so only
  * path containment is checked here.
  */
@@ -17,11 +16,8 @@ function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean
 }
 
 /**
- * Resolves an agent-supplied path and rejects anything outside the session
- * roots. Symlinks resolve before the check, including the final component, so
- * a link inside the workspace cannot read or write through to a file outside
- * it. An entry that exists but cannot be resolved, like a dangling link, is
- * rejected rather than written through.
+ * Symlinks resolve before the check, including the final component, so a link
+ * inside the workspace cannot read or write through to a file outside it.
  */
 const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFilePath")(
   function* (input: {

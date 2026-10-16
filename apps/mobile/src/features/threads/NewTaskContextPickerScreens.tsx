@@ -385,7 +385,6 @@ export function NewTaskBranchPickerRouteScreen() {
   );
 }
 
-/** The searchable branch screen shared by new threads and scheduled tasks. */
 export function BranchPickerScreen(props: {
   readonly title: string;
   readonly project: EnvironmentProject | null;

@@ -14,7 +14,6 @@ const AUTOLINK_WORD_CHARACTER_PATTERN = /[A-Za-z0-9_]/u;
 const AUTOLINK_COMMIT_PREFIX_PATTERN = /[\s([{]/u;
 const AUTOLINK_IGNORED_TYPES = new Set(["link", "linkReference"]);
 
-/** GitHub-style same-repository references for pull request prose, never code or authored links. */
 export function remarkPullRequestAutolinks(options: { readonly repositoryUrl: string }) {
   const repositoryUrl = options.repositoryUrl.replace(/\/+$/u, "");
   return (tree: MarkdownNode) => {

@@ -1,12 +1,3 @@
-/**
- * WorkspacePaths - Effect service contract for workspace path handling.
- *
- * Owns normalization and validation of workspace roots plus safe resolution of
- * workspace-root-relative paths.
- *
- * @module WorkspacePaths
- */
-
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -89,11 +80,9 @@ export const WorkspacePathsError = Schema.Union([
 ]);
 export type WorkspacePathsError = typeof WorkspacePathsError.Type;
 
-/** Service tag for workspace path normalization and resolution. */
 export class WorkspacePaths extends Context.Service<
   WorkspacePaths,
   {
-    /** Normalize a user-provided workspace root and verify it exists as a directory. */
     readonly normalizeWorkspaceRoot: (
       workspaceRoot: string,
       options?: { readonly createIfMissing?: boolean },
@@ -104,11 +93,6 @@ export class WorkspacePaths extends Context.Service<
       | WorkspaceRootStatFailedError
       | WorkspaceRootNotDirectoryError
     >;
-    /**
-     * Resolve a relative path within a validated workspace root.
-     *
-     * Rejects absolute paths and traversal attempts outside the workspace root.
-     */
     readonly resolveRelativePathWithinRoot: (input: {
       workspaceRoot: string;
       relativePath: string;

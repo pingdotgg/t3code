@@ -71,7 +71,6 @@ it("keeps Up before the opening bold marker in a quote, including while typing",
     const markerRange = document.createRange();
     markerRange.selectNode(marker);
     expect(caret.compareBoundaryPoints(Range.START_TO_START, markerRange)).toBeLessThanOrEqual(0);
-    // A repeated Up stays at the outside stop, ready for native navigation.
     expect(press(editor, "ArrowUp")).toBe(false);
     editor.commands.insertContent("x");
   });

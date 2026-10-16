@@ -92,7 +92,7 @@ describe("PullRequestListResult", () => {
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema
-   * error. Building it here turns that into a test failure instead.
+   * error.
    */
   it("round-trips through the JSON codec the RPC serializes with", () => {
     const codec = Schema.toCodecJson(PullRequestListResult);
@@ -149,8 +149,6 @@ describe("PullRequestReviewerRequestInput", () => {
   const reviewer = { id: "octocat", kind: "user" };
 
   it("carries the same shape whichever direction the request goes", () => {
-    // One operation, turned around: `requested` is the whole difference between asking somebody
-    // for a review and taking the request back.
     for (const requested of [true, false]) {
       expect(decodeReviewerRequest({ ...ref, reviewers: [reviewer], requested }).requested).toBe(
         requested,
@@ -297,9 +295,6 @@ describe("naming the reader as the author to narrow by", () => {
 });
 
 describe("naming the file a tick belongs to", () => {
-  // A space on either end of a name is part of the name as far as git is concerned. The patch on
-  // screen and the environment's record of what was cleared are both keyed by it, so a path
-  // tidied in transit ticks a file that does not exist and leaves the one on screen unticked.
   it("keeps the spaces around a path being ticked", () => {
     expect(
       decodeSetFilesViewed({
@@ -332,9 +327,6 @@ describe("naming the file a tick belongs to", () => {
   });
 
   it("refuses a batch larger than a reader can press", () => {
-    // Every element of a batch is a statement of its own inside one transaction on an
-    // environment-kept host, or a field of its own in one GraphQL document on GitHub, so what a
-    // client may send has to be bounded rather than trusted to be a burst of presses.
     const press = (path: string) => ({ path, viewed: true });
     const batch = (count: number) => ({
       projectId: "p1",

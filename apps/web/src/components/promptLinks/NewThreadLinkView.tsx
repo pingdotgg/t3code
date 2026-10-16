@@ -49,19 +49,11 @@ type LinkState =
       readonly project: EnvironmentProject;
     };
 
-// A link opens once per history entry. Going back to it lands here again, and opening a
-// second draft for the same click would surprise more than it helps.
 const openedLinkKeys = new Set<string>();
 
-/**
- * The `/new` route: turns a prompt link into a draft holding its prompt, in the project the
- * link names (or "No project"), or into the thread behind a linked pull request. The user
- * still reads the prompt and presses Send.
- */
 export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const locationKey = useLocation({ select: (location) => location.state.__TSR_key ?? "" });
   const navigate = useNavigate();
-  // The link needs every reachable machine's projects and threads to find its repository.
   const ready = useAtomValue(allReachableShellsLiveAtom);
   const projects = useProjects();
   const threads = useThreadShells();
@@ -84,7 +76,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       "updated_at",
     );
 
-  /** The machine the user worked on last, scratch threads included. */
   const lastActiveEnvironmentId = () => {
     let latest: (typeof threads)[number] | undefined;
     for (const thread of threads) {
@@ -93,7 +84,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     return latest?.environmentId ?? primaryEnvironmentId;
   };
 
-  /** Opens a draft in the project with the link's prompt and, when it is available, model. */
   const openDraft = async (project: EnvironmentProject, extraPrompt?: string) => {
     const opened = await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
       replace: true,
@@ -135,13 +125,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     );
   };
 
-  /** "No project" on the machine the user last worked on. */
   const openWithoutProject = async () => {
     setState({ status: "opening" });
-    // The machine the user last worked on, or the only one that offers it.
     const environmentId =
       scratchEnvironmentId(lastActiveEnvironmentId()) ?? scratchEnvironmentId(null);
-    // Reports its own failure.
     const project = environmentId === null ? null : await openScratchProject(environmentId);
     if (project === null) {
       setState({
@@ -150,7 +137,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       });
       return;
     }
-    // Without its repository, a pull request link still says which one it meant.
     await openDraft(
       project,
       link.kind === "pull-request" ? promptLinkPullRequestUrl(link.pullRequest) : undefined,
@@ -199,8 +185,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "missing-repository", repository });
       return;
     }
-    // The server adds the project at once and clones behind it. The draft shows the clone's
-    // progress and holds Send until the code is there.
     const project = await waitForProject(scopeProjectRef(environmentId, projectId), 5_000).catch(
       () => null,
     );
@@ -208,7 +192,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({ status: "failed", message: "The clone started, but its project did not appear." });
       return;
     }
-    // A pull request checks out from the cloned repository, which is not there yet.
     if (link.kind === "pull-request") {
       setState({
         status: "failed",
@@ -255,7 +238,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     void openDraft(project);
   });
 
-  // Runs once per link, when the shells are in. Later shell updates must not open it again.
   useEffect(() => {
     if (ready && state.status === "opening") start();
   }, [ready, state.status]);
@@ -307,7 +289,6 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
 }
 
 /**
- * Asks, then checks the linked pull request out into its own worktree and opens a thread there.
  * The checkout runs the project's setup script on code from the pull request, so a link alone
  * never starts it.
  */
@@ -341,7 +322,6 @@ function PullRequestLinkCheckout({
       <Button
         size="sm"
         disabled={handoff !== null}
-        // The checkout reports its own progress and says the task is in the composer.
         onClick={() =>
           void startHandoff(
             "prompt-link",

@@ -30,7 +30,6 @@ it.layer(NodeServices.layer)("ACP sign-in confirmation", (it) => {
         settings: { ...settings, customModels: ["new-model"] },
       });
       assert.isTrue(yield* recreated.get);
-      // Both logout and an explicit authentication failure revoke confirmation.
       yield* recreated.set(false);
       const restarted = yield* makeAcpRegistryAuthenticationState(input);
       assert.isFalse(yield* restarted.get);

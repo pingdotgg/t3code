@@ -54,8 +54,6 @@ const modelSelection = {
   model: "claude-sonnet-4-6",
 };
 
-// Native frames match the captured Bash/status batch and tool_result_meta shape.
-// The external SDK boundary is replayed; the adapter and durable dispatch are real.
 function frame(value: unknown): SDKMessage {
   return value as SDKMessage;
 }
@@ -403,7 +401,6 @@ it.effect.each(deliveries)(
               event.payload.id === parent.id &&
               event.payload.status === "waiting",
           );
-          // Bash finishes before the pending status reads, as in the capture.
           yield* Queue.offer(sdkMessages, toolResult("build", false));
           for (const id of statusIds)
             yield* Queue.offer(sdkMessages, toolResult(id, batchAbort.signal.aborted));

@@ -1,10 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalFetch:off globalConsole:off preferSchemaOverJson:off - Host-side process verifier retains raw wire evidence and owns deadline timers.
-/**
- * Real server/provider conformance check. Run from the repository root:
- * node apps/server/scripts/verify-background-live.ts --model claude-sonnet-4-6
- * Uses existing provider CLI authentication, a fresh T3 home and a disposable Git
- * project. Evidence is retained in the printed directory, including on failure.
- */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -159,7 +153,6 @@ NodeFS.writeFileSync(
   ),
 );
 
-// This is a real external dependency of the child command, not a provider stub.
 const secret = `RESULT_${NodeCrypto.randomUUID()}`;
 const gatePath = `/${NodeCrypto.randomUUID()}`;
 let response: NodeHttp.ServerResponse | undefined;
@@ -196,8 +189,6 @@ await new Promise<void>((done) => gate.once("listening", done));
 const gateAddress = gate.address();
 NodeAssert.ok(gateAddress && typeof gateAddress !== "string");
 
-// Reserve an ephemeral port, then give it to the real server. A bind race fails
-// the check; it never falls back to an existing environment.
 const reservation = NodeHttp.createServer();
 reservation.listen(0, "127.0.0.1");
 await new Promise<void>((done) => reservation.once("listening", done));
@@ -486,7 +477,6 @@ try {
   }).pipe(Effect.scoped, Effect.provide(layerProtocol), Effect.timeout(timeoutMs));
   const finished = await Effect.runPromise(program, { signal: abort.signal });
   verdict = finished;
-  // Check persistence through an actual clean server restart on the same SQLite DB.
   await stopServer(server);
   ({ server, ready } = startServer());
   await ready;
@@ -559,7 +549,6 @@ async function stopServer(server: ReturnType<typeof NodeChildProcess.spawn>) {
     await stopped;
     clearTimeout(deadline);
   }
-  // Kill only the process group created above, including lingering provider pipes.
   if (server.pid) {
     try {
       process.kill(-server.pid, "SIGKILL");

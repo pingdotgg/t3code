@@ -94,7 +94,6 @@ describe("environmentToken", () => {
     expect(GitHubCredentials.environmentToken("acme.ghe.com", { GITHUB_TOKEN: "github" })).toBe(
       "github",
     );
-    // An enterprise token only goes to the host GH_HOST names, never to whatever a remote says.
     expect(GitHubCredentials.environmentToken("git.acme.internal", env)).toBeNull();
     expect(
       GitHubCredentials.environmentToken("git.acme.internal", {
@@ -159,7 +158,6 @@ describe("GitHubRest", () => {
       yield* TestClock.setTime(NOW);
       const api = yield* GitHubRest.GitHubRest;
       const read = { host: "github.com", operation: "sweep", path: "repos/acme/web/pulls" };
-      // The first answer leaves 499 of 5000, under the last tenth; the next background read waits.
       yield* api.rest(read);
       const refused = yield* Effect.flip(api.rest(read));
       expect(refused).toMatchObject({

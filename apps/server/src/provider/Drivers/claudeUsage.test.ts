@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 
 import { parseClaudeLine } from "./claudeUsage.ts";
 
-/** Shaped after a real Claude Code assistant record. */
 function claudeLine(overrides: {
   messageId: string;
   contentType: string;

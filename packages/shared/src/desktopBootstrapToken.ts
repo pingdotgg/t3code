@@ -2,16 +2,11 @@
 import * as NodeCrypto from "node:crypto";
 
 /**
- * The desktop app and the backends it launches share one secret, delivered
- * over the backend's bootstrap channel and never sent to the renderer. Both
- * sides derive the bootstrap token for a time window from it, so the token the
- * renderer holds rotates every window without the desktop having to reach a
- * running backend. A backend accepts the previous, current and next window's
- * token: the previous one so a token works for between one and two windows,
- * and the next one because a WSL backend's clock can trail the Windows clock
- * that derived the token, which would otherwise reject every fresh token for
- * a moment after each boundary. A token is still dead two windows after it
- * was issued.
+ * A backend accepts the previous, current and next window's token: the previous
+ * one so a token works for between one and two windows, and the next one
+ * because a WSL backend's clock can trail the Windows clock that derived the
+ * token, which would otherwise reject every fresh token for a moment after each
+ * boundary.
  */
 export const DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS = 12 * 60 * 60 * 1000;
 
@@ -25,12 +20,10 @@ function deriveToken(secret: string, window: number): string {
     .digest("hex");
 }
 
-/** The token the desktop hands out at `nowMs`. */
 export function currentDesktopBootstrapToken(secret: string, nowMs: number): string {
   return deriveToken(secret, windowIndex(nowMs));
 }
 
-/** Whether `token` is the previous, current or next window's token at `nowMs`. */
 export function isValidDesktopBootstrapToken(
   secret: string,
   token: string,

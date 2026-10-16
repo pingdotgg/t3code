@@ -73,13 +73,11 @@ export function PullRequestsScreen(
   const maintainVisiblePosition = useMemo(
     () => ({
       data: tab.searchMode === "resting",
-      // At the top, reveal new PRs without pushing the filter strip out of view.
       shouldRestorePosition: () => workspace.getScrollOffset("pullRequests") > 0,
     }),
     [tab.searchMode, workspace],
   );
   const debouncedQuery = useDebouncedValue(tab.query.trim(), 180);
-  // Dismissal must restore the cached unfiltered list before restoring its offset.
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const listControls = usePullRequestListControls();
   const selectedEnvironmentId = listControls.environmentId;
@@ -222,9 +220,7 @@ export function PullRequestsScreen(
         extraData={`${selectedKey}:${busyKey}`}
         keyExtractor={pullRequestKey}
         itemsAreEqual={pullRequestListRowsAreEqual}
-        // Default-size rows measure about 78pt with one title line and 98pt with two.
         estimatedItemSize={88}
-        // Build roughly a screen ahead so a fling reaches already-mounted rows.
         drawDistance={1_000}
         maintainVisibleContentPosition={result.continued ? maintainVisiblePosition : false}
         onEndReached={() => void result.loadMore()}
@@ -234,7 +230,6 @@ export function PullRequestsScreen(
           <RefreshControl
             refreshing={result.refreshing}
             onRefresh={() => void result.onRefresh()}
-            // Place the 60pt native refresh control in the revealed pull-down space.
             // The list already accounts for the navigation header in its content inset.
             progressViewOffset={Platform.OS === "ios" ? 60 : undefined}
           />

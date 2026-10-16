@@ -122,8 +122,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       );
       if (!saved) return;
       lastPersisted = snapshot;
-      // Only lifecycle flushes chase updates that arrived during an in-flight save.
-      // The regular worker leaves those updates for the next write window.
       if (!flush) return;
     }
   }, persistenceLock.withPermit);
@@ -180,12 +178,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // time, so neither can overwrite what the other wrote in between.
   const snapshotWriteLock = yield* Semaphore.make(1);
 
-  // Apply each received batch with one state write. The RPC client's bounded
-  // buffer can split a server chunk, so a bulk action can still need several
-  // writes, but each write includes every event in that batch.
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
-    // Ids of rows whose links will fill later; they are held out of saves before one queues.
     pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
     const initial = yield* SubscriptionRef.get(state);
@@ -248,14 +242,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
   }, snapshotWriteLock.withPermit);
 
-  // Rows can arrive before their pull request links (see DeferredShellSnapshot), so the list
-  // paints first. The links then fill into the rows that still hold the object they arrived
-  // with; a row the server has replaced since carries its own links.
-  // Captured so fills started from the subscription callback still end with this state.
   const stateScope = yield* Effect.scope;
   // Each full snapshot supersedes the previous one's fill; links from an older snapshot must
-  // not land on rows a newer snapshot reused. A cancelled fill's rows stay pending until the
-  // next snapshot replaces the pending set.
+  // not land on rows a newer snapshot reused.
+
   let activeFill: Fiber.Fiber<void> | undefined;
   const cancelActiveFill = Effect.suspend(() => {
     const fill = activeFill;
@@ -293,7 +283,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           const threads = snapshot.threads.map((thread) => {
             if (!arrivedRows.has(thread) || !arrivedIds.has(thread.id)) return thread;
             const links = linksByThreadId.get(thread.id);
-            // A reused row may already hold these links from an earlier fill.
             if (sameThreadPullRequests(thread.pullRequests, links)) return thread;
             changed = true;
             if (links === undefined) {
@@ -307,8 +296,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           return [Option.some(next), { ...current, snapshot: Option.some(next) }];
         },
       );
-      // Saves skipped while links were pending are queued again. Cached rows are never live:
-      // until a server snapshot arrives there is nothing new to save.
       pendingLinkRows = new Set();
       const live = yield* Ref.get(latestLiveSnapshot);
       if (Option.isNone(live)) return;
@@ -384,14 +371,10 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           }
         }
 
-        // If the authoritative refresh failed, omit the cached cursor so the
-        // socket fallback sends a complete snapshot for this new session.
         if (!canResume || Option.isNone(current.snapshot)) {
           return supportsCompletionMarker ? { requestCompletionMarker: true as const } : {};
         }
         if (!supportsCompletionMarker) {
-          // Without a completion marker there is no synchronized signal for a
-          // resumed subscription, so report live immediately, like threads.
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
             status: "live" as const,

@@ -19,12 +19,6 @@ const CHECK_TIMEOUT = "5 seconds";
 export class OtlpEndpointCheck extends Context.Service<
   OtlpEndpointCheck,
   {
-    /**
-     * Posts an empty export for the signal to `url` from this server, with the
-     * running signal's protocol. Credentials are used only for its exact
-     * running endpoint, and redirects are not followed. Receivers accept an
-     * empty export without storing anything.
-     */
     readonly check: (input: OtlpEndpointCheckInput) => Effect.Effect<OtlpEndpointCheckResult>;
   }
 >()("t3/observability/OtlpEndpointCheck") {}
@@ -58,7 +52,6 @@ const make = Effect.gen(function* () {
     url,
   }: OtlpEndpointCheckInput) {
     const { url: runningUrl, export: signalExport } = running[signal];
-    // Keep credentials paired with the running endpoint, regardless of source.
     const headers = url === runningUrl ? signalExport.headers : undefined;
     const body = yield* Effect.gen(function* () {
       const serialization = yield* OtlpSerialization.OtlpSerialization;

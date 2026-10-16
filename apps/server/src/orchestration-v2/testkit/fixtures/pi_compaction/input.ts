@@ -6,12 +6,9 @@ const PI_COMPACTION_RECALL_PROMPT =
   "Return the opaque marker I asked you to remember. Respond with only the marker.";
 
 /**
- * Two compactions against a real Pi. The first, with custom instructions,
- * comes after a single exchange, which Pi refuses as too small to compact. The
- * second is a bare `/compact`, routed through the adapter's compactThread,
- * after enough turns that Pi really summarizes. The recording workspace sets a
- * tiny `keepRecentTokens` so a short conversation is compactable, and the last
- * turn proves the summary kept the marker.
+ * The recording workspace sets a tiny `keepRecentTokens` so a short
+ * conversation is compactable, and the last turn proves the summary kept the
+ * marker.
  */
 export function piCompactionInput(): OrchestratorFixtureInput {
   return {

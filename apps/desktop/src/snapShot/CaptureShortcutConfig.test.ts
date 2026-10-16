@@ -245,7 +245,6 @@ it("the installed Niri parser accepts the generated edit and its relative includ
     }
     throw error;
   }
-  // No compositor is launched: validate only parses the temporary fixture.
   await NodeFSP.appendFile(path, 'include "keys.kdl"\n');
   await NodeFSP.writeFile(
     NodePath.join(directory, "keys.kdl"),

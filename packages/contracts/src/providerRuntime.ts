@@ -202,9 +202,6 @@ const RuntimeErrorType = Schema.Literal("runtime.error");
 const ProviderRuntimeEventBase = Schema.Struct({
   eventId: EventId,
   provider: ProviderDriverKind,
-  // Optional during the driver/instance migration. See providerInstance.ts
-  // for the routing-key-vs-driver-id distinction. Once every emitter
-  // populates it (post-slice-4), routing flips to instance-id-only.
   providerInstanceId: Schema.optional(ProviderInstanceId),
   threadId: ThreadId,
   createdAt: IsoDateTime,
@@ -323,10 +320,8 @@ const TurnStartedPayload = Schema.Struct({
 export type TurnStartedPayload = typeof TurnStartedPayload.Type;
 
 /**
- * Normalized main-agent usage for one turn. Input includes cache reads and
- * writes. Output includes reasoning, and reasoningTokens is an optional subset.
- * Complete means the provider supplied full input and output totals. Partial
- * means every included count is valid, but the full turn total is not known.
+ * Input includes cache reads and writes. Output includes reasoning, and
+ * reasoningTokens is an optional subset.
  */
 const TurnTokenUsageCommonFields = {
   usageScope: Schema.Literal("main_agent"),
@@ -444,11 +439,6 @@ export const ItemLifecyclePayload = Schema.Struct({
   toolIcon: Schema.optional(ToolActivityIcon),
   toolSource: Schema.optional(ToolActivitySource),
   data: Schema.optional(Schema.Unknown),
-  /**
-   * Owning agent when this item ran inside a subagent (resolved from the
-   * SDK's parent_tool_use_id). Clients re-home attributed items out of the
-   * main timeline and into the owning agent's Agents-surface row.
-   */
   agentId: Schema.optional(TrimmedNonEmptyStringSchema),
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -491,7 +481,6 @@ export const UserInputQuestion = Schema.Struct({
   question: TrimmedNonEmptyStringSchema,
   options: Schema.Array(UserInputQuestionOption),
   allowCustomAnswer: Schema.optional(Schema.Boolean),
-  /** Editable initial text. Answers preserve whitespace and allow an empty string when present. */
   initialAnswer: Schema.optional(Schema.String),
   multiSelect: Schema.optional(Schema.Boolean).pipe(
     Schema.withConstructorDefault(Effect.succeed(false)),
@@ -511,8 +500,6 @@ const UserInputResolvedPayload = Schema.Struct({
 export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
 
 /**
- * Typed per-task usage rollup. Field names match the orchestration-v2 subagent
- * usage vocabulary (#4779) so the eventual migration is a rename, not a remap.
  * Claude reports per-activation deltas; Codex reports cumulative totals — the
  * merge strategy is provider-specific and lives in client-runtime.
  */
@@ -543,31 +530,16 @@ export const TaskRunHandles = Schema.Struct({
 export type TaskRunHandles = typeof TaskRunHandles.Type;
 
 /**
- * Optional agent-identity linkage carried on every task lifecycle payload.
  * Repeated on progress and terminal rows (not just start) so client folds can
  * reconstruct an agent even when its start row aged out of activity retention.
- * All fields optional: old emitters and old rows decode unchanged.
  */
 const taskAgentLinkageFields = {
-  /** SDK task_type (subagent/shell/monitor/local_workflow/…), repeated on
-   * every row so folds can classify without the start row. */
   taskType: Schema.optional(TrimmedNonEmptyStringSchema),
-  /**
-   * Server-stamped classification, set at ingestion.
-   * Clients trust this stamp outright; rows without it (legacy, pre-stamp)
-   * fall back to client-side heuristics.
-   */
   agentKind: Schema.optional(Schema.Literals(["agent", "background"])),
-  /**
-   * Owning agent when the task itself was launched from inside a subagent
-   * (e.g. a subagent's background shell). Clients treat such tasks as
-   * agent-internal and keep them out of the parent work log.
-   */
   agentId: Schema.optional(TrimmedNonEmptyStringSchema),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   role: Schema.optional(TrimmedNonEmptyStringSchema),
   model: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Reasoning effort when known (e.g. "high"). Open string: provider vocabularies differ. */
   effort: Schema.optional(TrimmedNonEmptyStringSchema),
   toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
   parentAgentId: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -579,7 +551,6 @@ const taskAgentLinkageFields = {
   attempt: Schema.optional(NonNegativeInt),
   runHandles: Schema.optional(TaskRunHandles),
   outputFile: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Codex agent hierarchy path, e.g. "/root/marlow". */
   agentPath: Schema.optional(TrimmedNonEmptyStringSchema),
   /**
    * Set on provider-synthesized child-agent events (Codex) whose activity
@@ -617,18 +588,12 @@ const TaskProgressPayload = Schema.Struct({
   usage: Schema.optional(Schema.Unknown),
   typedUsage: Schema.optional(RuntimeTaskUsage),
   lastToolName: Schema.optional(TrimmedNonEmptyStringSchema),
-  /** Present on synthesized member/child progress rows that carry state. */
   status: Schema.optional(RuntimeTaskStatus),
   error: Schema.optional(TrimmedNonEmptyStringSchema),
   ...taskAgentLinkageFields,
 });
 export type TaskProgressPayload = typeof TaskProgressPayload.Type;
 
-/**
- * Non-terminal status patch (from the Claude SDK's task_updated, which main
- * previously dropped). killed→cancelled and paused→idle are mapped at the
- * adapter so the wire only carries the shared vocabulary.
- */
 const TaskUpdatedPayload = Schema.Struct({
   taskId: RuntimeTaskId,
   status: Schema.optional(RuntimeTaskStatus),
@@ -680,7 +645,6 @@ const ToolProgressPayload = Schema.Struct({
   toolName: Schema.optional(TrimmedNonEmptyStringSchema),
   summary: Schema.optional(TrimmedNonEmptyStringSchema),
   elapsedSeconds: Schema.optional(Schema.Number),
-  /** Owning task/agent when the tool ran inside a subagent. */
   taskId: Schema.optional(RuntimeTaskId),
   parentToolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
 });
@@ -704,10 +668,6 @@ const AccountUpdatedPayload = Schema.Struct({
 });
 export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
-/**
- * Adapters normalise their native rate-limit payload at the boundary so the
- * consumer that folds it into the provider snapshot never sees driver shapes.
- */
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
   limits: ProviderUsageLimitsUpdate,
 });

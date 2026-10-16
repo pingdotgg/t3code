@@ -649,8 +649,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           useRegex: false,
         });
 
-        // "notes", "denote", and "footnote" are word-adjacent and excluded;
-        // ranges cover exactly the query, never boundary characters.
         expect(result.matches).toEqual([
           expect.objectContaining({
             path: "src/words.ts",
@@ -731,8 +729,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           useRegex: false,
         });
 
-        // Consuming-boundary regex would swallow the separating spaces and
-        // drop the middle occurrence; boundary post-filtering keeps all three.
         expect(result.matches).toHaveLength(1);
         expect(result.matches[0]).toMatchObject({
           path: "src/words.ts",
@@ -761,9 +757,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           useRegex: true,
         });
 
-        // wholeWord + useRegex must not silently drop non-word-edged patterns
-        // like "foo-", and "afoo-" is excluded because 'a'/'f' are both word
-        // characters at the match's left edge.
         expect(result.matches).toHaveLength(1);
         expect(result.matches[0]).toMatchObject({
           path: "src/words.ts",

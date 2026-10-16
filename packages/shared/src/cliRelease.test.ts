@@ -23,7 +23,6 @@ describe("cliRelease", () => {
     expect(cliArchivePlatformKey("darwin", "arm64")).toBe("darwin-arm64");
     expect(cliArchivePlatformKey("linux", "x64")).toBe("linux-x64");
     expect(cliArchivePlatformKey("win32", "x64")).toBe("win32-x64");
-    // Node single-executables are unsupported on x64 macOS.
     expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();
     expect(cliArchivePlatformKey("linux", "arm64")).toBe("linux-arm64");
     expect(cliArchivePlatformKey("win32", "arm64")).toBe("win32-arm64");
@@ -66,7 +65,6 @@ describe("cliRelease", () => {
     expect(cliReleaseChannelOf("1.2.3")).toBe("stable");
     expect(cliReleaseChannelOf("1.2.3-nightly.20260911.4")).toBe("nightly");
     expect(cliReleaseChannelOf("1.2.3-preview.20260911.4")).toBe("preview");
-    // A prerelease that is not one of our trains is not silently a nightly.
     expect(cliReleaseChannelOf("1.2.3-rc.1")).toBe("stable");
   });
 

@@ -221,7 +221,6 @@ describe("resolveUpdateRunMachineStatus", () => {
     expect(resolveUpdateRunMachineStatus(runMachine({ result: "failed" }), "servers", idle)).toBe(
       "failed",
     );
-    // After this app relaunched, a handed-off server has no live update state.
     expect(
       resolveUpdateRunMachineStatus(
         runMachine({ server: null, handedOffVersion: "0.0.50" }),

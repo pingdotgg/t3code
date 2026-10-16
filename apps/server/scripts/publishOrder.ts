@@ -2,11 +2,11 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
 /**
- * Publishes every platform package at once, then the launcher, which must
- * never be installable before the executables it points to. When one platform
- * fails, the other uploads still finish rather than being interrupted: npm
- * never accepts the same version twice, and an interrupted upload may already
- * be live. The launcher is then skipped and the first failure is returned.
+ * Publishes every platform package at once, then the launcher, which must never
+ * be installable before the executables it points to. When one platform fails,
+ * the other uploads still finish rather than being interrupted: npm never
+ * accepts the same version twice, and an interrupted upload may already be
+ * live.
  */
 export const publishPlatformsThenLauncher = <E, R>(input: {
   readonly platformTarballs: ReadonlyArray<string>;

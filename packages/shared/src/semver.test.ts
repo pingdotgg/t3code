@@ -31,8 +31,6 @@ describe("semver helpers", () => {
   });
 
   it("compares shorthand versions numerically instead of lexically", () => {
-    // Regression: "20" vs "9" previously fell back to string comparison, which
-    // ordered "20" before "9" ("2" < "9").
     expect(compareSemverVersions("20", "9")).toBeGreaterThan(0);
     expect(compareSemverVersions("18", "18.0.0")).toBe(0);
   });

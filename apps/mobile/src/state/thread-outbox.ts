@@ -11,10 +11,9 @@ export const threadOutboxManager = createThreadOutboxManager({
 });
 
 /**
- * Lands queued outbox mutations before the JS runtime is torn down (app update
- * restart). An enqueued message is published to the atom immediately but its
- * durable write waits behind the mutation queue, so draining only the writes
- * already mid-file would miss it.
+ * An enqueued message is published to the atom immediately but its durable
+ * write waits behind the mutation queue, so draining only the writes already
+ * mid-file would miss it.
  */
 export async function flushThreadOutbox(): Promise<void> {
   await threadOutboxManager.serialize(async () => {});
@@ -25,7 +24,6 @@ export function enqueueThreadOutboxMessage(message: QueuedThreadMessage): Promis
   return threadOutboxManager.enqueue(message);
 }
 
-/** Waits for pending writes to settle; false if the message was rolled back. */
 export function confirmThreadOutboxMessageQueued(message: QueuedThreadMessage): Promise<boolean> {
   return threadOutboxManager.confirmQueued(message);
 }
@@ -42,7 +40,6 @@ export function updateThreadOutboxMessage(
   return threadOutboxManager.update(message, expectedRevision);
 }
 
-/** Snapshot of a queued message's write revision, for update's CAS. */
 export function threadOutboxRevision(messageId: QueuedThreadMessage["messageId"]): number {
   return threadOutboxManager.revisionOf(messageId);
 }

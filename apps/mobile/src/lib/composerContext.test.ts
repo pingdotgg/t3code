@@ -280,7 +280,6 @@ describe("host context compatibility", () => {
     };
     const context: OrchestrationMessageContext = { version: 1, records: [terminal, review, pr] };
     const text = context.records.map(formatComposerContextReference).join(" ");
-    // Missing capability on an old host is treated like false by both dispatch paths.
     const wire = serializeComposerMessageForServer(text, context, false);
     const message =
       path === "existing-thread"

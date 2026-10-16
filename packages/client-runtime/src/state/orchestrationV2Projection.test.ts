@@ -346,8 +346,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       }) as OrchestrationV2DomainEvent;
 
     it("shows a queued run that starts after a newer steer raised the watermark", () => {
-      // Run 2 was queued first, run 3 was steered in and ran first. Its items
-      // sit in run 3's band and already raised the watermark past run 2's band.
       const steerItems = [
         runItem("item-steer-user", steerRunId, 3_000_001),
         runItem("item-steer-reply", steerRunId, 3_000_002),
@@ -357,8 +355,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
         steerItems,
       );
       let latestLocalTurnOrdinal = 3_000_002;
-      // Same order the orchestrator commits a queued start: the user message
-      // lands while the run is still queued, then the run starts and replies.
       const queuedUser = runItem("item-queued-user", queuedRunId, 2_000_001);
       const queuedReply = runItem("item-queued-reply", queuedRunId, 2_000_002);
       for (const event of [
@@ -385,8 +381,6 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     });
 
     it("keeps a running run's item when the window starts after its earlier items", () => {
-      // The bounded window begins inside run 3; run 2 started and kept going,
-      // but none of its rows made it into the window.
       const runningRun = { ...queuedRun, status: "running" } as const;
       const steerItems = [
         runItem("item-steer-user", steerRunId, 3_000_001),

@@ -4,8 +4,7 @@ import * as Path from "effect/Path";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 
 /**
- * Replaces a file's contents via a sibling temp file and rename. A symlinked
- * target is resolved first so the link survives and its destination is
+ * A symlinked target is resolved first so the link survives and its destination is
  * rewritten, since renaming over the link itself would swap it for a regular file.
  */
 export const writeFileStringAtomically = (input: {

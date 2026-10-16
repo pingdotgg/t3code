@@ -25,10 +25,8 @@ import {
 /**
  * Width the feed lays markdown out in. The feed already knows this from its
  * viewport, so an image can size its frame on the first render instead of
- * waiting for its own onLayout, which would change the row's height once
- * more after the list has positioned the rows below it. It is an upper
- * bound: a list item or blockquote indents its column, and the measured
- * width takes over once it is known.
+ * waiting for its own onLayout, which would change the row's height once more
+ * after the list has positioned the rows below it.
  */
 export const MarkdownImageAvailableWidthContext = createContext(0);
 
@@ -36,10 +34,8 @@ export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
   readonly unavailable: boolean;
-  /** Why the image is unavailable, when the cause is known. */
   readonly unavailableDetail?: string | undefined;
   readonly alt: string | null;
-  /** Pixel size from the server, when it could read the header; the frame is final from the first render. */
   readonly knownSize?: { readonly width: number; readonly height: number } | undefined;
   readonly format?: "svg";
   readonly actionsSource?: MediaActionsSource;
@@ -65,8 +61,6 @@ export function ThreadMarkdownImageView(props: {
     setFailedUri(null);
   }, [props.uri]);
 
-  // The decoded size is what the platform actually drew, so it wins over the
-  // server's header hint once it exists.
   const sourceSize = decodedSize ?? props.knownSize ?? null;
   const displaySize: MarkdownImageDisplaySize | null =
     sourceSize === null || availableWidth <= 0
@@ -242,7 +236,6 @@ function ThreadMarkdownSvg(props: {
   return <SvgAst ast={ast} override={{ width: "100%", height: "100%", accessible: false }} />;
 }
 
-/** Environment-hosted image that loads through a signed asset URL. */
 export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<

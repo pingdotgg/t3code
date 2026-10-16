@@ -137,8 +137,6 @@ it("rechecks the target terminal grant when a retained surface callback reports 
     input: { threadId: threadRef.threadId, terminalId: "terminal-1", cols: 80, rows: 24 },
   });
 
-  // The connection updates before React commits its external-store update.
-  // Other environments retain access; only this terminal's target is revoked.
   state.allowed = false;
   onResize(120, 40);
   expect(state.resize).toHaveBeenCalledTimes(1);

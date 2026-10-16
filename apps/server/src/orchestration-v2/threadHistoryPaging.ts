@@ -7,8 +7,8 @@ import type {
 } from "@t3tools/contracts";
 
 /**
- * Match the V1 conversation windows. Item/byte budgets only apply to histories
- * without turn starts; tool activity must not split an ordinary conversation turn.
+ * Item/byte budgets only apply to histories without turn starts; tool activity
+ * must not split an ordinary conversation turn.
  */
 export const THREAD_HISTORY_PAGE_POLICY = {
   maxUserTurns: 10,
@@ -18,16 +18,13 @@ export const THREAD_HISTORY_PAGE_POLICY = {
 
 export const OLDER_THREAD_USER_TURN_LIMIT = 20;
 
-/** Load conversation rows before the bulk of a turn's folded tool activity. */
 export function isConversationHistoryItem(item: Pick<OrchestrationV2TurnItem, "type">): boolean {
   return !["command_execution", "reasoning", "file_change", "dynamic_tool"].includes(item.type);
 }
 export const THREAD_HISTORY_MAX_RAW_TURNS = 150;
 
-/** Extra rows let the projection query retain an inclusive cursor and prove another page exists. */
 export const THREAD_HISTORY_SNAPSHOT_ROW_LIMIT = THREAD_HISTORY_PAGE_POLICY.maxItems + 2;
 
-/** Reject absurd cursors before base64 work or JSON parse. */
 export const THREAD_HISTORY_CURSOR_MAX_LENGTH = 4_096;
 
 export type ThreadHistoryPagePolicy = {
@@ -66,7 +63,6 @@ export type BoundedProjectionResult = {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
-  /** Max ordinal across the authoritative full projection's local turnItems. */
   readonly latestLocalTurnOrdinal: number | null;
   readonly payloadBudgetExceeded: boolean;
 };
@@ -83,7 +79,6 @@ function bytesOfJson(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
-/** Ordinary history-page cost: one projected row (item is nested once). */
 export function projectedRowEncodedBytes(row: HistoryRow): number {
   return bytesOfJson(row);
 }
@@ -171,10 +166,8 @@ function isThreadHistoryTurnStart(item: HistoryRow["item"]): boolean {
 }
 
 /**
- * Marks the turn starts of a chronological timeline. A wake (PR watch, task
- * completion) starts its run with a notification instead of a user message, so
- * a notification starts a turn when it is its run's first input. One steered
- * into a running turn comes later. ProjectionStore's `run_starts` window query
+ * A wake (PR watch, task completion) starts its run with a notification instead of a user message, so a
+ * notification starts a turn when it is its run's first input. ProjectionStore's `run_starts` window query
  * applies the same rule.
  */
 export function threadHistoryTurnStarts(
@@ -189,7 +182,6 @@ export function threadHistoryTurnStarts(
   });
 }
 
-/** Steering belongs to its existing turn and must not consume another page slot. */
 export function isThreadHistoryUserTurn(item: HistoryRow["item"]): boolean {
   return (
     isThreadHistoryTurnStart(item) && item.type === "user_message" && item.createdBy === "user"
@@ -197,9 +189,8 @@ export function isThreadHistoryUserTurn(item: HistoryRow["item"]): boolean {
 }
 
 /**
- * Walk a chronological timeline backward from the exclusive end, collecting rows
- * through complete user turns. Histories without turn starts use row budgets
- * and always admit at least one row so oversized items cannot deadlock paging.
+ * Histories without turn starts use row budgets and always admit at least one
+ * row so oversized items cannot deadlock paging.
  */
 function selectOlderTimelinePage<Row extends HistoryRow>(input: {
   readonly items: ReadonlyArray<Row>;
@@ -292,11 +283,6 @@ function findCursorIndex(
   if (byIdentity !== -1) {
     return byIdentity;
   }
-  // Identity miss can happen if the cursor item was deleted; fall back to the
-  // recorded position clamped into the current timeline so pagination can
-  // continue from a stable-ish anchor rather than failing hard. Clamp to
-  // items.length (exclusive end) so a shrunken timeline never 400s forever.
-  // decodeThreadHistoryCursor already guarantees p is a non-negative integer.
   return Math.min(cursor.p, items.length);
 }
 
@@ -319,7 +305,6 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
       (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
     );
     if (targetIndex >= 0 && targetIndex < anchorIndex) {
-      // A search jump can combine two pages, but never grow into an unbounded read.
       const turns = input.items
         .slice(targetIndex, anchorIndex)
         .filter((row) => isThreadHistoryUserTurn(row.item)).length;
@@ -353,11 +338,10 @@ function isLocalProjectedRow(
 }
 
 /**
- * Visibility for superseded `run_interrupt_result` rows depends on a matching
- * `run_interrupt_request` in `turnItems`. Keep every small request item from the
- * full projection even when it sits outside the recent visible window, so a
- * later history page that introduces the matching result still has the request
- * available for live attempt/run reducers.
+ * Keep every small request item from the full projection even when it sits
+ * outside the recent visible window, so a later history page that introduces
+ * the matching result still has the request available for live attempt/run
+ * reducers.
  */
 function retainedInterruptRequestTurnItems(
   projection: OrchestrationV2ThreadProjection,
@@ -375,7 +359,6 @@ function retainedInterruptRequestTurnItems(
     if (item.type !== "run_interrupt_request") {
       continue;
     }
-    // Already covered by local turnItems for the visible window.
     if (visibleLocalIds.has(String(item.id))) {
       continue;
     }
@@ -439,7 +422,6 @@ function messagesForBoundedProjection(
 }
 
 /**
- * Max local turn ordinal over the authoritative full projection turnItems.
  * Used as a cheap partial-timeline watermark so old missing turn-item updates
  * cannot append newest when the bounded window has no local rows.
  */
@@ -455,10 +437,6 @@ export function computeLatestLocalTurnOrdinal(
   return latest;
 }
 
-/**
- * Encoded timeline contribution for a bounded snapshot: visible rows plus the
- * duplicated local turnItems and any retained interrupt-request dependencies.
- */
 export function boundedTimelineEncodedBytes(input: {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
@@ -473,10 +451,6 @@ export function boundedTimelineEncodedBytes(input: {
   return total;
 }
 
-/**
- * Builds a partial thread projection with full control-plane arrays and a
- * bounded recent timeline window plus matching local turnItems.
- */
 export function buildBoundedThreadProjection(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly snapshotSequence: number;
@@ -493,11 +467,7 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
-  // Reserve bytes for small interrupt-request dependencies that may sit outside
-  // the recent window but are required for visibility of results inside it.
   const dependencyReserve = (() => {
-    // Upper bound: all request items in the full projection. Window selection
-    // uses this reserve so the final contribution stays under the cap.
     let reserve = 0;
     for (const item of controlProjection.turnItems) {
       if (item.type === "run_interrupt_request") {
@@ -519,7 +489,6 @@ export function buildBoundedThreadProjection(input: {
   const windowPolicy: ThreadHistoryPagePolicy = {
     maxUserTurns: policy.maxUserTurns,
     maxItems: policy.maxItems,
-    // Zero still admits the first row via the at-least-one rule.
     maxEncodedBytes: windowBudget,
   };
 
@@ -586,11 +555,7 @@ export function buildBoundedThreadProjection(input: {
     projection,
     historyCursor: window.nextCursor,
     hasMoreHistory: window.hasMoreHistory,
-    // Always from the full projection so inherited-only windows still carry a
-    // watermark for partial live reducers.
     latestLocalTurnOrdinal,
-    // Adding timeline rows and historical summaries cannot shrink control state.
-    // Avoid serializing the whole timeline when control state already exceeds the cap.
     payloadBudgetExceeded:
       controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
   };

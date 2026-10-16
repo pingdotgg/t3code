@@ -32,7 +32,7 @@ export interface VcsDiffCheckpointsInput {
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
   readonly format?: "patch" | "numstat";
-  /** Limits the diff to these exact paths. An empty list yields an empty diff. */
+  /** An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
 }
 

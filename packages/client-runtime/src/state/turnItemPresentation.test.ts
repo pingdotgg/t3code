@@ -89,11 +89,8 @@ describe("workspacePreparationRetryRunIds", () => {
     expect([...workspacePreparationRetryRunIds([run("failed", worktree)], failure)]).toEqual([
       RunId.make("run-1"),
     ]);
-    // Retried: the run is preparing again and the old failure is cancelled.
     expect(workspacePreparationRetryRunIds([run("preparing", worktree)], failure).size).toBe(0);
-    // An older server records no preparation, so there is nothing to repeat.
     expect(workspacePreparationRetryRunIds([run("failed")], failure).size).toBe(0);
-    // A provider error on a run that did reach the provider is not a preparation failure.
     expect(
       workspacePreparationRetryRunIds(
         [run("failed", worktree)],

@@ -5,8 +5,6 @@ import { AppText as Text } from "../../../components/ui/AppText";
 import { Button } from "../../../components/ui/Button";
 import { cn } from "../../../lib/cn";
 
-/* ─── Shared sheet components ──────────────────────────────────────── */
-
 export function SheetActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly label: string;
@@ -123,8 +121,6 @@ export function SheetListRow(props: {
     </Pressable>
   );
 }
-
-/* ─── Shared utilities ──────────────────────────────────────────────── */
 
 export function menuItemIconName(
   icon: "commit" | "push" | "pr",

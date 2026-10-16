@@ -1,16 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-/**
- * Pins `./GitCafeSourceControlProvider.ts`, which pass 2 creates:
- *
- * - `discovery: SourceControlCliDiscoverySpec` — kind `"gitcafe"`, executable `"cafe"`,
- *   `authArgs` ending in `["auth", "status", "--json"]` against `https://git.cafe/api`, and a
- *   `parseAuth` that reads cafe's `{ schemaVersion: 1, data: { host, username } }` answer and its
- *   `{ schemaVersion: 1, error: { code, status, message } }` failure envelope.
- * - `make: Effect<SourceControlProvider["Service"], never, GitCafeApi | SourceControlHost>` with
- *   kind `"gitcafe"`, resolving the repository and host from the checkout's remote.
- *
- * Uses `./GitCafeApi.ts` and `./GitCafeCredentials.ts` as pinned in the sibling tests.
- */
 import { assert, describe, it } from "@effect/vitest";
 import { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -134,7 +122,6 @@ describe("GitCafeSourceControlProvider", () => {
       });
       return Effect.gen(function* () {
         const provider = yield* GitCafeSourceControlProvider.make;
-        // The checkout has no remote at all, as when a repository is about to be created.
         assert.deepStrictEqual(
           yield* provider.getRepositoryCloneUrls({ cwd: "/repo", repository: "team/project" }),
           {

@@ -30,8 +30,6 @@ export interface ShortcutMatchContext {
   previewOpen: boolean;
   isWeb: boolean;
   isDesktop: boolean;
-  /** A text field, textarea, select or rich-text editor owns the keyboard.
-      Optional: only chords that collide with native editing consult it. */
   editableFocus?: boolean;
   [key: string]: boolean;
 }
@@ -170,7 +168,6 @@ export function resolveShortcutCommand(
   return null;
 }
 
-/** App shortcuts use the primary environment; script shortcuts belong to the active project. */
 export function resolveChatShortcutCommand(
   event: ShortcutEventLike,
   primaryKeybindings: ResolvedKeybindingsConfig,
@@ -260,12 +257,9 @@ export function shouldShowThreadJumpHintsForModifiers(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  // The embedded terminal owns keystrokes while it has focus: the Ghostty
-  // surface encodes the keydown and can write the pressed key into the shell
-  // before our window-level shortcut handling ever runs, regardless of any
-  // configured `when` clause on the jump command. Advertising jump hints
-  // here would promise a shortcut that instead types into the terminal, so
-  // never show them while the terminal is focused.
+  // The embedded terminal owns keystrokes while it has focus: the Ghostty surface encodes the
+  // keydown and can write the pressed key into the shell before our window-level shortcut handling
+  // ever runs, regardless of any configured `when` clause on the jump command.
   if (resolveContext(options).terminalFocus) {
     return false;
   }

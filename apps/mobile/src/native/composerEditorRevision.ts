@@ -48,11 +48,9 @@ export function resolveComposerControlledEventCount(
 
 // A snapshot without a selection describes a state the editor applied itself
 // (an assumed controlled document, where the native side may have bounded the
-// caret). Revision stamping treats it as matching any controlled selection so
-// a parent caret move on the assumed value stays at the assumed revision and
-// passes the editor's staleness guard. Echo detection must not reuse this
-// wildcard: an echo payload serializes `selection: null`, which would drop
-// that caret move instead of applying it.
+// caret). Echo detection must not reuse this wildcard: an echo payload
+// serializes `selection: null`, which would drop that caret move instead of
+// applying it.
 function snapshotSelectionMatches(
   snapshot: ComposerNativeEventSnapshot,
   selection: ComposerEditorSelection,
@@ -87,10 +85,9 @@ export function isComposerNativeEcho(
 /**
  * Records that a parent-driven controlled document was handed to the native
  * editor. From that point the acknowledged snapshot history describes a
- * superseded native state, so it is replaced with the assumed applied state;
- * a later parent update back to a previously acknowledged value must classify
- * as a fresh edit, not as a native echo the editor would drop. Native events
- * that raced past the controlled revision stay authoritative and are kept.
+ * superseded native state, so it is replaced with the assumed applied state; a
+ * later parent update back to a previously acknowledged value must classify as
+ * a fresh edit, not as a native echo the editor would drop.
  */
 export function assumeComposerControlledState(
   snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,

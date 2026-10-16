@@ -52,7 +52,6 @@ export interface MergeProcessesInput {
   readonly previous: ReadonlyMap<string, ProcessState>;
   readonly counters: TelemetryCounters;
   readonly updatePrevious: boolean;
-  /** History replay needs process deltas, but does not publish lifetime group counters. */
   readonly accumulateCounters?: boolean;
 }
 

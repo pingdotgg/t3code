@@ -297,7 +297,6 @@ it("includes imported runless history when selecting fork context through a run"
   );
 });
 
-// Recovery records the work, then a run.updated snapshot taken before it lands.
 const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = yield* addRolledBackRecoveryCandidate("restart-cancelled-work-stale-update");
@@ -539,9 +538,6 @@ it.effect("memory recovery selects unfinished runless native subagents", () =>
   runlessNativeSubagentNeedsRecovery.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
-// Project A holds an active thread, an archived thread and a fork of a run in
-// an archived project B thread, so a project-scoped snapshot still has to load
-// a fork source that is outside the project and archived.
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
   suffix: string,
 ) {
@@ -710,7 +706,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const threadId = yield* addRolledBackRecoveryCandidate("restart-cancelled-work");
       const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
       const now = yield* DateTime.now;
-      // Recovery read the run as waiting; its checkpoint completed it before the commit.
       yield* store.apply({
         id: EventId.make("event:restart-cancelled-work:completed"),
         type: "run.updated",
@@ -971,7 +966,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               Effect.withTracer(tracer),
               Effect.tap(() =>
                 Effect.sync(() => {
-                  // Tool outputs must not be allocated again just to collect cohort IDs.
                   assert.lengthOf(
                     parse.mock.calls.filter(([input]) => input === lastToolPayload),
                     1,
@@ -981,9 +975,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             ),
         (parse) => Effect.sync(() => parse.mockRestore()),
       );
-      // Large threads blocked the server for over a second here. The boundary
-      // must come from the user-message index rather than a scan of every tool
-      // row, and payloads must not go through a sort after they are fetched.
       const windowStatement = statements.find((statement) => statement.includes("turn_anchors"));
       assert.isDefined(windowStatement);
       const windowPlan = yield* sql.unsafe<{ readonly parent: number; readonly detail: string }>(
@@ -1007,7 +998,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodePlan.map((row) => row.detail),
         "SEARCH orchestration_v2_projection_nodes USING INDEX orchestration_v2_projection_nodes_live_idx (thread_id=?)",
       );
-      // Only the selected turn cohort and two lookahead anchors are decoded.
       assert.lengthOf(initial.projection.turnItems, 12 * 102);
       const bounded = buildBoundedThreadProjection({
         projection: initial.projection,
@@ -1042,9 +1032,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
   it.effect("caps a SQL window by runs that a notification started", () =>
     Effect.gen(function* () {
-      // A thread woken by PR watches: 12 user turns, then 400 runs that a
-      // notification started, with a user turn every 50 runs. The user-turn
-      // window reached back to the 12th-newest user turn and read almost every row.
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
       const now = yield* DateTime.now;
@@ -1126,8 +1113,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         outcome: "completed",
         summary,
       });
-      // The newest run is a wake queued behind the last one. It has no items yet,
-      // like a run cancelled before it started.
       for (let run = 1; run <= startedRuns + 1; run += 1) {
         const runId = `run:notification-turn-pages:${run}`;
         const status = run > startedRuns ? "queued" : "completed";
@@ -1169,8 +1154,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
                 attachments: [],
               }
             : notification(`Wake ${run}`);
-        // A row of the run (a handoff) can come before its first input. A wake
-        // steered into the running turn follows it and starts no turn.
         const rows = [
           itemRow(runId, command),
           itemRow(runId, start),
@@ -1185,14 +1168,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const initial = yield* projectionStore
         .getThreadSnapshotWindow(threadId, { rowLimit: 77, userTurnLimit: 10 })
         .pipe(Effect.withTracer(tracer));
-      // The 152 newest turns are the 152 newest started runs, 261 to 412. Only
-      // three of them are user turns, short of the 12 the user-turn window needs.
       assert.deepEqual(
         initial.projection.turnItems.map((item) => String(item.id)),
         allIds.slice(allIds.indexOf(startIds[260]!)),
       );
-      // Each run's first input is read by run ID, newest run first, never by a
-      // walk over every turn item in the thread.
       const windowStatement = statements.find((statement) => statement.includes("run_starts"));
       assert.isDefined(windowStatement);
       const windowPlan = yield* sql.unsafe<{ readonly detail: string }>(
@@ -1223,7 +1202,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           anchorItemId: TurnItemId.make(anchor.si),
           anchorThreadId: ThreadId.make(anchor.st),
         });
-        // Older windows stay bounded too.
         assert.isAtMost(snapshot.projection.turnItems.length, 152 * 4 + 1);
         const page = selectHistoryPageFromCursor({
           items: snapshot.projection.visibleTurnItems,
@@ -1413,8 +1391,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const nodeLookups = nodePlan
           .map((row) => row.detail)
           .filter((detail) => detail.startsWith("SEARCH "));
-        // Cost must follow the retained cohort, even when the thread has
-        // thousands of completed nodes outside the requested window.
         assert.deepEqual(nodeLookups, [
           "SEARCH node USING INDEX sqlite_autoindex_orchestration_v2_projection_nodes_1 (node_id=?)",
         ]);
@@ -1445,8 +1421,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         const full = yield* projectionStore.getThreadSnapshot(threadId);
         assert.lengthOf(full.projection.nodes, 1003);
-        // Bounded reads keep the full read's payloads and ordering, including
-        // null start times and equal timestamps.
         assert.deepEqual(
           snapshot.projection.nodes,
           full.projection.nodes.filter((node) => retained.has(node.id)),
@@ -1610,7 +1584,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.strictEqual(older.projection.turnItems[0]?.ordinal, 850);
       assert.strictEqual(older.projection.turnItems.at(-1)?.ordinal, 925);
 
-      // A single item reads back with its full output, scoped to its thread.
       const itemId = TurnItemId.make("turn-item:bounded-sql-history:925");
       const stored = yield* projectionStore.getTurnItem({ threadId, itemId });
       assert.strictEqual(stored?.type === "command_execution" ? stored.output : undefined, "ok");
@@ -1659,7 +1632,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         Array.from({ length: 1_000 }, (_, index) => `turn-item:bounded-sql-history:${index + 1}`),
       );
 
-      // Physical insertion order must not change the ordinal/ID timeline order.
       const tiedIds = [
         TurnItemId.make("turn-item:bounded-sql-history:tie:b"),
         TurnItemId.make("turn-item:bounded-sql-history:tie:a"),
@@ -2235,8 +2207,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       const providerThreads = [
-        // The root Codex conversation, then a Claude subagent it delegated to
-        // (owned by a node, so not a handoff), then the handoff target.
         { suffix: "codex", instanceId: providerInstanceId, ownerNodeId: null, seconds: 0 },
         {
           suffix: "claude-subagent",
@@ -2245,7 +2215,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           seconds: 1,
         },
         { suffix: "claude", instanceId: claudeInstanceId, ownerNodeId: null, seconds: 2 },
-        // A second Codex conversation after handing back: no duplicate entry.
         { suffix: "codex-again", instanceId: providerInstanceId, ownerNodeId: null, seconds: 3 },
       ] as const;
       for (const providerThread of providerThreads) {
@@ -2355,7 +2324,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       yield* applyProviderThread("first", goal, 0);
       assert.deepEqual(yield* shellGoal, goal);
-      // A handoff moves the conversation; the previous provider's goal stays behind.
       yield* applyProviderThread("second", null, 1);
       assert.isNull(yield* shellGoal);
     }),
@@ -2405,8 +2373,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       yield* createThread(readThreadId);
       const decode = yield* sql.withTransaction(projectionStore.readShellSnapshot());
-      // Commits between the read and the decode, as another request can while
-      // the HTTP and WebSocket loaders decode outside their transaction.
       yield* createThread(laterThreadId);
 
       assert.deepEqual(shellIds(yield* decode), [readThreadId]);
@@ -2415,8 +2381,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         laterThreadId,
       ]);
 
-      // No decoding under the read transaction: a payload that cannot decode
-      // fails the returned step, not the read.
       const [stored] = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_v2_projection_threads
         WHERE thread_id = ${laterThreadId}
@@ -2442,8 +2406,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const { projectId, activeThreadId, forkThreadId, otherThreadId } =
         yield* assertProjectScopedShells("sql-project-shell");
 
-      // A thread in another project that cannot decode fails the unscoped
-      // snapshot, so a scoped snapshot that succeeds never read it.
       const [stored] = yield* sql<{ readonly payload_json: string }>`
         SELECT payload_json FROM orchestration_v2_projection_threads
         WHERE thread_id = ${otherThreadId}
@@ -2608,7 +2570,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         })
         .pipe(Effect.withTracer(tracer));
-      // The thread row is patched in place, never read back to be re-encoded.
       assert.isEmpty(
         statements.filter(
           (statement) =>
@@ -2921,8 +2882,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         }
       }
 
-      // A held queue waits for the user, so both shells present the run before
-      // it rather than reporting queued work.
       yield* projectionStore.apply({
         id: EventId.make("event:clock:newer:held"),
         type: "run.updated",
@@ -2951,7 +2910,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.equal(heldShell.status, "completed");
       }
 
-      // With only held runs, nothing has executed: both shells read idle.
       yield* projectionStore.apply({
         id: EventId.make("event:projection-shell-interruptible:held-first"),
         type: "run.updated",
@@ -2974,7 +2932,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.equal(onlyHeldShell.status, "idle");
       }
 
-      // A wake run counts from the start of the work it continues.
       yield* projectionStore.apply({
         id: EventId.make("event:projection-shell-interruptible:wake"),
         type: "run.updated",
@@ -3376,8 +3333,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
-      // A restart continuation ran ahead of the held queue and ended before the
-      // resumed failed run: the failure is still the latest executed run.
       const aheadRunId = RunId.make("run:limit-shell:ran-ahead");
       yield* store.apply({
         id: EventId.make("event:limit-shell:ran-ahead"),
@@ -3401,7 +3356,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
       const sql = yield* SqlClient.SqlClient;
-      // The rest of this case treats the failed run as the latest run.
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
       yield* assertSummary("Plan limit reached.", "usage_limit");
@@ -3447,7 +3401,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.limitRecovery', json(${encodeUnknownJsonString(recovery)}))
         WHERE thread_id = ${threadId}`;
-      // Armed future retries need no state decoding until they become due.
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates({ ...recoveryOptions, autoResume: true })).find(
           (row) => row.id === threadId,
@@ -3526,7 +3479,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: session,
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
-      // A failed child is visible in history but does not replace the root's reason.
       yield* store.apply({
         id: EventId.make("event:limit-shell:child-error"),
         type: "turn-item.updated",
@@ -3541,7 +3493,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
-      // A later ordinary root error replaces the limit classification.
       yield* store.apply({
         id: EventId.make("event:limit-shell:replacement"),
         type: "turn-item.updated",
@@ -3565,7 +3516,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* applyRun(status);
         yield* assertSummary(null, null);
       }
-      // A new attempt's root cannot inherit an earlier attempt's limit.
       yield* applyRun("failed", NodeId.make("new-attempt-root"));
       yield* assertSummary(null, null);
     }),
@@ -3769,8 +3719,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         retryable: null,
       };
       const threadId = yield* attachErroredSession("own", failure.message, now);
-      // The own session repeats the root turn's limit, so the thread stays a
-      // recovery candidate only while the lookup reads that session.
       const runId = RunId.make("run:projection-session-error-lookup:own");
       const rootNodeId = NodeId.make("node:projection-session-error-lookup:own");
       yield* projectionStore.apply({
@@ -3824,8 +3772,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           failure,
         },
       });
-      // Every thread on the provider instance has its own session, and these
-      // are newer. They must neither leak into the thread nor be walked for it.
       for (let index = 0; index < 24; index++) {
         yield* attachErroredSession(`other-${index}`, "other session failed", later);
       }
@@ -3839,7 +3785,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const candidates = yield* projectionStore
         .getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })
         .pipe(Effect.withTracer(tracer));
-      // Another thread's newer error would replace the limit and drop the candidate.
       const candidate = candidates.find((row) => row.id === threadId);
       assert.isDefined(candidate);
       assert.include(candidate, {
@@ -3849,8 +3794,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         latestRunId: runId,
       });
 
-      // One provider instance usually holds most sessions. Driving the lookup
-      // from sessions walks all of them for every thread in the snapshot.
       for (const marker of ["AS blocking_failure_payload_json", "AS failure_payload_json"]) {
         const statement = statements.find((query) => query.includes(marker));
         assert.isDefined(statement, marker);
@@ -3983,7 +3926,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             capturedAt: now,
           },
         });
-        // Old transcript shapes must not make a metadata-only diff unreadable.
         yield* sql`
         INSERT INTO orchestration_v2_projection_turn_items (
           turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
@@ -4754,9 +4696,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.lengthOf(projection.turnItems, 3);
       assert.lengthOf(projection.visibleTurnItems, 0);
 
-      // A rolled-back run's background item is abandoned, not pending. The
-      // shell must not report it as Waiting, or the sidebar shows Waiting for
-      // work nothing will ever finish.
       const shell = yield* projectionStore.getShellSnapshot();
       const rolledBackShellThread = shell.threads.find((entry) => entry.id === threadId);
       assert.isDefined(rolledBackShellThread);
@@ -4994,8 +4933,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (yield* projectionStore.getThreadProjection(sourceThreadId)).messages,
       );
       const targetAfterRollback = yield* projectionStore.getThreadProjection(targetThreadId);
-      // Both shell reads drop the rolled-back run from the source count, while
-      // the fork keeps the prefix it inherited.
       const shellSnapshot = yield* projectionStore.getShellSnapshot();
       for (const shell of [
         yield* projectionStore.getThreadShell(sourceThreadId),
@@ -5106,8 +5043,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const boundedFork = yield* projectionStore
         .getThreadSnapshotWindow(targetThreadId, { rowLimit: 2 })
         .pipe(Effect.withTracer(tracer));
-      // Only the target's control state is hydrated. Fork ancestors contribute
-      // timeline rows, runs and attempts, regardless of their own live work.
       assert.lengthOf(
         statements.filter((statement) => statement.includes("WITH RECURSIVE retained")),
         1,
@@ -5880,7 +5815,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         "running",
       );
 
-      // The monitor ends five minutes after the run: the push must not look stale.
       yield* store.apply({
         id: EventId.make("event:held-completion:monitor-ended"),
         type: "provider-thread.updated",
@@ -5896,7 +5830,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(state?.phase, "completed");
       assert.equal(state?.updatedAt, DateTime.formatIso(releasedAt));
 
-      // A later provider must not hide this owner's roster from restart recovery.
       yield* store.apply({
         id: EventId.make("event:held-completion:monitor-restarted"),
         type: "provider-thread.updated",

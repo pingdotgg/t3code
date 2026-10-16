@@ -112,7 +112,6 @@ describe("AttachmentClaims", () => {
       expect(parseThreadSegmentFromAttachmentId(attachment.id)).toBe("thread-claims-1");
       expect(claimed.claimedPaths).toHaveLength(1);
       expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(true);
-      // The pending copy stays behind as the retry source.
       const pendingFiles = NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("pending-"),
       );
@@ -181,7 +180,6 @@ describe("AttachmentClaims", () => {
         const error = result.cause;
         expect(String(error)).toContain("stored size does not match");
       }
-      // The successfully claimed first attachment was rolled back.
       const claimedFiles = NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("thread-claims-4-"),
       );
@@ -214,7 +212,6 @@ describe("AttachmentClaims", () => {
           entry.startsWith("thread-claims-dupe-"),
         ),
       ).toHaveLength(0);
-      // The pending source survives for a corrected retry.
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.startsWith("pending-")),
       ).toHaveLength(1);
@@ -251,11 +248,7 @@ describe("AttachmentClaims", () => {
       }).pipe(Effect.provideService(FileSystem.FileSystem, gatedFileSystem), Effect.forkChild);
 
       const [sourcePath, claimedPath] = yield* Deferred.await(copyArgs);
-      // Request the interrupt while the copy is in flight; the claim's
-      // uninterruptible copy region must wait for the write to settle.
       claimFiber.interruptUnsafe();
-      // Settle the gate on the writer's exit too: the claim's masked await
-      // cannot be unwound, so a failed write must still release it.
       const writer = yield* fileSystem
         .copyFile(sourcePath, claimedPath)
         .pipe(Effect.ensuring(Deferred.succeed(copyDone, undefined)), Effect.forkChild);
@@ -265,9 +258,7 @@ describe("AttachmentClaims", () => {
       expect(Exit.isSuccess(writerExit)).toBe(true);
 
       expect(Exit.hasInterrupts(exit)).toBe(true);
-      // Rollback removed the copy that landed after the interrupt...
       expect(NodeFS.existsSync(claimedPath)).toBe(false);
-      // ...and the pending source survived for a retry.
       expect(NodeFS.existsSync(sourcePath)).toBe(true);
       expect(
         NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.startsWith("pending-")),
@@ -289,15 +280,12 @@ describe("AttachmentClaims", () => {
       expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(true);
       yield* releaseClaimedAttachments(claimed.claimedPaths);
       expect(NodeFS.existsSync(claimed.claimedPaths[0]!)).toBe(false);
-      // Releasing again is a no-op, not an error.
       yield* releaseClaimedAttachments(claimed.claimedPaths);
     }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("treats malformed ids as non-pending and passes them through", () =>
     Effect.gen(function* () {
-      // Not a parseable pending ref: nothing to claim, so the ref flows
-      // through unchanged and downstream delivery decides what to do with it.
       const bogus: ChatAttachment = {
         type: "image",
         id: ChatAttachmentId.make("pending-not-a-uuid"),

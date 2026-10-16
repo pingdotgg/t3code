@@ -123,7 +123,6 @@ export function markdownHtmlContent(content: string): string {
   });
 }
 
-/** Convert parsed HTML fragments only, preserving Markdown code and source around them. */
 export function markdownWithHtml(markdown: string): string {
   if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];

@@ -45,10 +45,6 @@ import {
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 
 export const CLAUDE_AGENT_SDK_REPLAY_PROTOCOL = "claude-agent-sdk.query" as const;
-/**
- * Replay label of the result that ends the Nth (1-based) background wake turn
- * of a recording, so a replay gate can hold it.
- */
 export const claudeBackgroundWakeResultLabel = (wakeNumber: number) =>
   `result:background-wake:${wakeNumber}`;
 
@@ -737,7 +733,6 @@ function makeReplayQueryRunner(
     const expected = entry.frame;
     const expectedUuid = promptOfferUuid(expected);
     const actualUuid = promptOfferUuid(actual);
-    // Recordings made before prompts carried a uuid simply lack one.
     if (
       !sameFrame(withoutPromptOfferUuid(expected), withoutPromptOfferUuid(actual)) ||
       (expectedUuid !== undefined && actualUuid === undefined)
@@ -759,7 +754,6 @@ function makeReplayQueryRunner(
     advance();
   };
 
-  // The recorded reply to a one-shot session call (fork, subagent lookup).
   const assertNextReplyFrame = <Frame extends ClaudeSessionForkedFrame | ClaudeSubagentFoundFrame>(
     type: Frame["type"],
     isValid: (frame: object) => boolean,
@@ -977,7 +971,6 @@ function layerClaudeAgentSdkReplay(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: {
     readonly replayGate?: ProviderReplayGate;
-    // Shared across runtimes; its owner asserts completion.
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
 ): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
@@ -1235,8 +1228,6 @@ function sanitizeSdkMessageForReplay(input: {
   return message;
 }
 
-// Lets a recording wait a bounded time for the next frame without losing it
-// when the wait times out: the pending read is handed to the next reader.
 class RecordingMessageReader implements AsyncIterator<SDKMessage> {
   private pending: Promise<IteratorResult<SDKMessage>> | undefined;
   private readonly iterator: AsyncIterator<SDKMessage>;
@@ -1251,12 +1242,10 @@ class RecordingMessageReader implements AsyncIterator<SDKMessage> {
     return pending;
   }
 
-  // The next frame if it arrives within `ms`, left unread for next().
   async peekWithin(ms: number): Promise<SDKMessage | undefined> {
     const pending = this.pending ?? this.iterator.next();
     this.pending = pending;
     return Promise.race([
-      // A failed read stays pending for next() to surface.
       pending.then(
         (result) => (result.done === true ? undefined : result.value),
         () => undefined,
@@ -1451,7 +1440,6 @@ async function recordMessagesUntilIteratorDone(input: {
   }
 }
 
-// A queued wake turn starts right after the turn before it settles.
 const CLAUDE_RECORDING_WAKE_QUIET_MS = 5_000;
 
 function isSystemInitFrame(message: SDKMessage | undefined): boolean {
@@ -1482,7 +1470,6 @@ async function recordMessagesUntilToolUse(input: {
   readonly iterator: AsyncIterator<SDKMessage>;
   readonly entries: Array<ProviderReplayEntry>;
   readonly scenario: string;
-  // Returns after the assistant frame carrying this many root tool uses.
   readonly toolUseCount: number;
 }): Promise<void> {
   let toolUses = 0;
@@ -1560,13 +1547,7 @@ async function recordClaudeStreamingQuery(input: {
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
-  // Per prompt, how many turns Claude starts on its own for background work
-  // (task-notification-origin results) to wait for before the next prompt.
-  // Setting it also records any further wake turn that starts within a short
-  // quiet window, so the next prompt is not offered while one is queued.
   readonly backgroundWakeCounts?: ReadonlyArray<number>;
-  // Skip that quiet window: offer the next prompt while a wake may still be
-  // queued in the CLI, which then runs the wake turn first.
   readonly offerNextPromptImmediately?: boolean;
 }): Promise<void> {
   const promptQueue = new RecordingPromptQueue();
@@ -1630,7 +1611,6 @@ async function recordClaudeStreamingQuery(input: {
   });
   const iterator = new RecordingMessageReader(queryRuntime[Symbol.asyncIterator]());
   let wakeNumber = 0;
-  // Records one turn and labels it when Claude started it for background work.
   const recordTurn = async (promptNumber: number): Promise<"prompt" | "wake"> => {
     const completed = await recordMessagesUntilTurnResult({
       iterator,
@@ -1648,8 +1628,6 @@ async function recordClaudeStreamingQuery(input: {
       return "prompt";
     }
     wakeNumber += 1;
-    // A distinct label lets a replay gate hold the wake result until the
-    // continuation run that ingests it has started.
     input.entries[input.entries.length - 1] = {
       type: "emit_inbound",
       label: claudeBackgroundWakeResultLabel(wakeNumber),
@@ -1659,7 +1637,6 @@ async function recordClaudeStreamingQuery(input: {
   };
   try {
     for (const [index, prompt] of input.prompts.entries()) {
-      // Like the adapter, give each prompt a fresh uuid Claude echoes on its turn.
       const message = ClaudeAdapterV2.makeClaudeUserMessage({
         text: prompt,
         uuid: await Effect.runPromise(
@@ -2389,7 +2366,6 @@ async function recordInterruptedClaudeQuery(input: {
   readonly promptOfferLabel: string;
   readonly interruptLabel: string;
   readonly interruptAfter?: "prompt_offer" | "tool_use";
-  // With interruptAfter "tool_use": interrupt after this many root tool uses.
   readonly interruptAfterToolUses?: number;
   readonly enableTools?: boolean;
   readonly tools?: ClaudeAdapterV2.ClaudeAgentSdkQueryTools;
@@ -2915,10 +2891,6 @@ export const ClaudeOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarnes
     layerClaudeProviderAdapterRegistryReplay(transcript, options),
 };
 
-/**
- * Replays one transcript across several orchestrator runtimes, the way a
- * server restart reopens the same native session with a fresh adapter.
- */
 export function makeClaudeRestartReplayHarness(transcript: ClaudeAgentSdkReplayTranscript) {
   const queryRunner = makeReplayQueryRunner(transcript);
   return {

@@ -526,7 +526,6 @@ function assertProviderThreadResumeSemantics(transcript: ProviderReplayTranscrip
     startThreadId,
     "turn after resume must run on the resumed provider thread",
   );
-  // The adapter resumes with excludeTurns, so history reaches the model, not the response.
   assert.equal(readPath(resumeRequest, ["params", "excludeTurns"]), true);
   assert.lengthOf(readArray(resumedThreadFrame, ["result", "thread", "turns"]), 0);
   assert.equal(texts[0], PROVIDER_THREAD_RESUME_FIRST_FINAL);
@@ -701,11 +700,6 @@ function assertSiblingMergeBackSemantics(transcript: ProviderReplayTranscript) {
   assert.equal(finalText, THREAD_MERGE_BACK_SIBLINGS_RECALL);
 }
 
-/**
- * Codex announces a v2 child with the parent's `subAgentActivity(started)`
- * before the child's first `turn/started`; the adapter registers children
- * from that activity.
- */
 function assertSubagentActivityPrecedesChildTurns(transcript: ProviderReplayTranscript) {
   if (transcript.scenario !== "subagent_v2" && transcript.scenario !== "subagent_v2_nested") {
     return;

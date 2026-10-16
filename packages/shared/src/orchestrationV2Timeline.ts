@@ -72,7 +72,6 @@ export function isOrchestrationV2TurnItemVisible(input: {
   });
 }
 
-/** Index once when reconciling a whole timeline after run/attempt state changes. */
 export function createOrchestrationV2TurnItemVisibility(input: {
   readonly runs: ReadonlyArray<TimelineRun>;
   readonly attempts: ReadonlyArray<TimelineRunAttempt>;

@@ -11,7 +11,6 @@ import {
   reconcileStackScreens,
 } from "./workspace-stack-projection";
 
-// Load the same router as native navigation without importing React Native into Node.
 const requireNavigation = NodeModule.createRequire(
   NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
 );

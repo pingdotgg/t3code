@@ -15,8 +15,6 @@ const { clearRenderQueue } = (await import(/* @vite-ignore */ renderingManagerUr
   clearRenderQueue(): void;
 };
 
-// Layout measurements are controlled here. The real reconciler, document and
-// renderer calculate positions. This does not simulate native CSS wrapping.
 class MeasuredElement {
   static geometryReads = 0;
   children: MeasuredElement[] = [];
@@ -119,7 +117,6 @@ class LayoutVirtualizer extends Virtualizer {
 
 class MeasuredFile extends VirtualizedFile {
   override top = 0;
-  // Rows are measured by hand here; the virtualizer only needs to reconcile them.
   override onRender = () => false;
 
   override __attachEditor(editor: Parameters<VirtualizedFile["__attachEditor"]>[0]) {
@@ -440,7 +437,6 @@ describe("wrapped measurement widths", () => {
     const readsBeforeEdit = MeasuredElement.geometryReads;
     append();
     expect(MeasuredElement.geometryReads).toBe(readsBeforeEdit);
-    // No synchronous geometry read: the resize entry owns invalidation.
     expect(instance.getLineHeight(0)).toBe(80);
     deliverResize();
     drainRenderFrames();
@@ -540,8 +536,6 @@ describe("wrapped measurement widths", () => {
   });
 });
 
-// Supply inert DOM transport so public Editor edits execute its real tokenizer
-// and layout handoff. No native wrapping, observer delivery or scrolling is modeled.
 class EditorElement extends MeasuredElement {
   style: Record<string, string> = {};
   parentElement: EditorElement | null = null;

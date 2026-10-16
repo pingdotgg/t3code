@@ -16,12 +16,6 @@ import {
   withRecentThreadShortcut,
 } from "./appShortcuts";
 
-/**
- * Owns the launcher app shortcuts (Android long-press menu): keeps the
- * static "New task" entry plus the recently opened threads in sync, and
- * routes shortcut taps — cold start included — to their in-app screens.
- * Mounted once in the root stack layout.
- */
 export function useAppShortcuts(state: NavigationState): void {
   useShortcutNavigation();
   useRecentThreadShortcutSync(state);
@@ -108,8 +102,6 @@ function useRecentThreadShortcutSync(state: NavigationState): void {
       return;
     }
 
-    // withRecentThreadShortcut returns the same array when nothing changed,
-    // so React bails out and the persist effect below does not re-fire.
     setRecents((current) => {
       if (current === null) {
         return current;

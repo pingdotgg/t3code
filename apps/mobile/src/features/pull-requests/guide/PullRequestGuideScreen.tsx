@@ -111,9 +111,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           if (file.prevName) files.set(file.prevName, file);
         }
       }
-    } catch {
-      // An omitted or unparseable patch is shown as unavailable by the excerpt.
-    }
+    } catch {}
     return files;
   }, [diff.patch]);
   const wanted = useMemo(() => (stop ? stopFilePaths(stop) : []), [stop]);

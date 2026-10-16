@@ -4,7 +4,6 @@ import { AppText } from "./AppText";
 import { ListRowLayout, type ListRowContentProps } from "./ListRowLayout";
 import { ThemedSwitch } from "./ThemedSwitch";
 
-/** A null value means the selected environments disagree; activation sets them all on. */
 export function ListToggleRow(
   props: Omit<ListRowContentProps, "detail"> & {
     readonly value: boolean | null;

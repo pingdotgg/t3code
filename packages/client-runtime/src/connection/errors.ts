@@ -152,9 +152,6 @@ export function mapRemoteEnvironmentError(
         traceId: error.traceId,
       });
     case "EnvironmentResourceNotFoundError":
-      // Not expected during connection authorization, but the shared request
-      // error type now includes it (used by resource fetches like the thread
-      // snapshot). Treat it as a configuration issue with the endpoint.
       return new ConnectionBlockedError({
         reason: "configuration",
         detail: "The environment endpoint could not be found.",
@@ -186,11 +183,9 @@ export function mapRemoteEnvironmentError(
 }
 
 /**
- * Map an environment error from a request that used DPoP authentication. An
- * older environment server reports a DPoP clock failure as the same generic
- * invalid-credential response as other failures, so keep the compatibility
- * hint cautious when the server omits the category. Newer servers can identify
- * clock and non-clock proof failures precisely.
+ * An older environment server reports a DPoP clock failure as the same generic
+ * invalid-credential response as other failures, so keep the compatibility hint
+ * cautious when the server omits the category.
  */
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,

@@ -16,8 +16,6 @@ const yieldToHostTimer = Effect.callback<void>((resume) => {
   return Effect.sync(() => clearTimeout(timer));
 });
 
-// Rows go through the canonical row codec in chunks. The envelope codec then
-// validates and encodes everything else, passing the encoded rows through as-is.
 const encodeThreadChunk = Schema.encodeEffect(Schema.Array(OrchestrationV2ThreadShellJson));
 const EncodedRows = Schema.Array(Schema.Unknown);
 const encodeEnvelope = Schema.encodeEffect(
@@ -34,11 +32,6 @@ const encodeEnvelope = Schema.encodeEffect(
 );
 
 /**
- * Make an encoder for the shell cache payload that produces exactly what
- * `fromJsonString(StoredOrchestrationShellSnapshot)` would, yielding to the host
- * between bounded chunks of thread rows. The final envelope encode and JSON
- * stringify still run synchronously over the whole payload.
- *
  * Shell rows are immutable and the shell reducer keeps unchanged rows by
  * reference, so each encoder remembers the canonical encoding of rows it has
  * already encoded successfully and only runs the row codec for new rows.

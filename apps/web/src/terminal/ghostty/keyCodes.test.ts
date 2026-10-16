@@ -18,7 +18,6 @@ describe("ghosttyConsumedMods", () => {
     expect(ghosttyConsumedMods(shifted)).toBe(1);
     expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true })).toBe(0);
     expect(ghosttyConsumedMods({ ...shifted, key: "Tab" })).toBe(0);
-    // Deliberate: Shift+Space collapses to Space so it still types one.
     expect(ghosttyConsumedMods({ ...shifted, key: " " })).toBe(1);
   });
 });

@@ -28,10 +28,6 @@ import {
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
 
-/**
- * Names the read that produced unusable output, so a failure reports the call it came from
- * rather than borrowing another operation's message.
- */
 export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDevOpsPullRequestReadError>()(
   "AzureDevOpsPullRequestReadError",
   {
@@ -50,7 +46,6 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDev
   }
 }
 
-/** Not a decode failure: az answered, the account it answered for just has no name. */
 export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureDevOpsViewerUnavailableError>()(
   "AzureDevOpsViewerUnavailableError",
   {
@@ -67,10 +62,6 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   }
 }
 
-/**
- * Not a decode failure either: az answered with a well-formed pull request that simply carries
- * no branch or link, which is a response this cannot place rather than one it cannot read.
- */
 export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
@@ -88,11 +79,6 @@ export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<Az
   }
 }
 
-/**
- * Not a decode failure: the reader named a reviewer `az` would read as a flag of its own. The
- * reviewers travel as argv rather than in a request body — `az repos pr reviewer` takes them no
- * other way — so anything that could leave the value position is refused rather than sent.
- */
 export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOpsReviewerNameError>()(
   "AzureDevOpsReviewerNameError",
   {
@@ -116,14 +102,11 @@ export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsReviewerNameError
   | AzureDevOpsViewerUnavailableError;
 
-/** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /**
  * A full page of change entries is two thousand files, each carrying its path, its url and
- * several object ids, which is past the megabyte a read is given by default. Output cut at that
- * ceiling arrives here as JSON that will not parse, so a change large enough to be paged would
- * report itself as a host returning nonsense rather than as the ordinary page it is.
+ * several object ids, which is past the megabyte a read is given by default.
  */
 const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 /**
@@ -133,10 +116,8 @@ const CHANGE_ENTRIES_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
  */
 const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 /**
- * What a review's own history is given. Neither route pages, so each answers with the whole of it
- * at once and grows with how long the review ran rather than with how large the change is. Cut at
- * the default, both arrive as JSON that stops mid-string, and a long review would report its host
- * as answering with nonsense.
+ * Neither route pages, so each answers with the whole of it at once and grows with how
+ * long the review ran rather than with how large the change is.
  */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
@@ -146,13 +127,10 @@ const CHANGE_ENTRIES_PER_PAGE = 2000;
 /**
  * Where following the pages stops, counted in the entries Azure was asked to skip rather than in
  * the files that survived decoding: a page can be entirely folders and other entries a review has
- * nothing to show for, and bounding on what was kept would follow such a change forever. Every
- * page is an `az` process of its own, so the read gives up and reports itself incomplete rather
- * than presenting five pages as the whole change.
+ * nothing to show for, and bounding on what was kept would follow such a change forever.
  */
 const MAX_CHANGE_ENTRIES = 10_000;
 
-/** What an iteration changed, and whether following its pages reached the end of it. */
 export interface AzureDevOpsIterationChanges {
   readonly changes: ReadonlyArray<AzureDevOpsChangeEntry>;
   readonly truncated: boolean;
@@ -181,7 +159,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       {
         readonly items: ReadonlyArray<AzureDevOpsPullRequest>;
         readonly truncated: boolean;
-        /** Raw Azure rows consumed to produce this page, including malformed rows. */
         readonly cursorAdvance: number;
       },
       AzureDevOpsPullRequestCliError
@@ -200,8 +177,8 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
     /**
-     * The pushes a pull request has had, oldest first. Azure hangs the changed files off an
-     * iteration rather than off the pull request, so reading a diff starts here.
+     * Azure hangs the changed files off an iteration rather than off the pull
+     * request, so reading a diff starts here.
      */
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -238,7 +215,6 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly mergeMethod?: PullRequestMergeMethod;
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
-    /** Rewrites the pull request's own words, through the same command that moves it. */
     readonly updatePullRequest: (input: {
       readonly cwd: string;
       readonly number: number;
@@ -247,9 +223,8 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
     /**
-     * Adds reviewers to a pull request, or takes them off it. `az repos pr reviewer` is the whole
-     * of what Azure offers here: it adds and removes named identities, and has no counterpart that
-     * says who could be named.
+     * `az repos pr reviewer` is the whole of what Azure offers here: it adds and removes named
+     * identities, and has no counterpart that says who could be named.
      */
     readonly setPullRequestReviewers: (input: {
       readonly cwd: string;
@@ -287,11 +262,6 @@ function involvementArgs(input: {
   }
 }
 
-/**
- * Azure moves a pull request by setting its state rather than by named commands: completing it
- * is the merge, abandoning it is the close, and reactivating it is the reopen. Squashing is a
- * completion option rather than a strategy of its own.
- */
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
@@ -299,8 +269,6 @@ function actionArgs(
   switch (action) {
     case "merge":
       return ["--status", "completed", "--squash", mergeMethod === "squash" ? "true" : "false"];
-    // Auto-complete is Azure's own name for it: the pull request stays active and Azure completes
-    // it once its policies pass. The squash choice is stored with it, as it is for a merge now.
     case "enable-auto-merge":
       return [
         "--auto-complete",
@@ -317,12 +285,10 @@ function actionArgs(
       return ["--draft", "true"];
     case "close":
       return ["--status", "abandoned"];
-    // Never reached: this host does not declare the action, so nothing offers it.
     case "update-branch":
       return [];
     case "reopen":
       return ["--status", "active"];
-    // Never reached: this host does not declare the action, so the service refuses it first.
     case "revert":
     case "approve-workflows":
     case "delete-branch":
@@ -331,9 +297,8 @@ function actionArgs(
 }
 
 /**
- * A reviewer Azure could be given: an email address, a display name or an identity guid, and
- * nothing that starts with a dash. The dash is the whole point — these are argv, and a value that
- * looks like a flag stops being a value.
+ * The dash is the whole point — these are argv, and a value that looks like a
+ * flag stops being a value.
  */
 function isReviewerName(value: string): boolean {
   const name = value.trim();
@@ -344,9 +309,7 @@ function isReviewerName(value: string): boolean {
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
-  // Every command resolves the organization, project and repository from the checkout, which is
-  // what the rest of the Azure wrapper does. The remote takes three shapes and only `az` knows
-  // how to read all of them.
+  // The remote takes three shapes and only `az` knows how to read all of them.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
@@ -361,11 +324,10 @@ export const make = Effect.gen(function* () {
     });
 
   /**
-   * A REST route reached through `az devops invoke`, which addresses it by area, resource and
-   * route parameters rather than by URL. Used in place of `az rest` because it signs in the way
-   * the azure-devops extension does: `az rest` mints its own token against the tenant `az`
-   * defaults to, and an organisation in any other tenant answers that with a sign-in page, which
-   * arrives here as unreadable output rather than as a failure.
+   * Used in place of `az rest` because it signs in the way the azure-devops extension does: `az
+   * rest` mints its own token against the tenant `az` defaults to, and an organisation in any
+   * other tenant answers that with a sign-in page, which arrives here as unreadable output
+   * rather than as a failure.
    */
   const invoke = <A>(input: {
     readonly cwd: string;
@@ -467,7 +429,6 @@ export const make = Effect.gen(function* () {
         input.repository,
         ...statusArgs(input.state),
         ...involvementArgs(input),
-        // A web link per row, which is the only url that needs no assembling.
         "--include-links",
         ...(input.skip === 0 ? [] : ["--skip", String(input.skip)]),
         "--top",
@@ -500,7 +461,6 @@ export const make = Effect.gen(function* () {
           const consumed = lastItemIndex + 1;
           return Effect.succeed({
             items: [...input.items, ...decoded.success.items.slice(0, remaining)],
-            // A full raw response may have more rows even when malformed entries used the probe.
             truncated: consumed < decoded.success.rawCount || decoded.success.rawCount === top,
             cursorAdvance: input.cursorAdvance + consumed,
           });
@@ -528,8 +488,6 @@ export const make = Effect.gen(function* () {
     getViewer: (input) =>
       executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
         Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          // `--query user` narrows the payload to the account, so it is nested back under the
-          // key the decoder reads to keep one shape for the signed-in user.
           const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
           if (!Result.isSuccess(decoded)) {
             return Effect.fail(
@@ -547,8 +505,7 @@ export const make = Effect.gen(function* () {
         }),
         // `az devops login` signs in with a personal access token, which `az account show` knows
         // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
-        // by the extension itself, so the viewer's own pull request names them. Someone with none
-        // stays unnamed: `me` would read as nobody everywhere a row is compared with the viewer.
+        // by the extension itself, so the viewer's own pull request names them.
         Effect.catchIf(
           (error) => error._tag !== "AzureDevOpsCliUnavailableError",
           () =>
@@ -590,10 +547,6 @@ export const make = Effect.gen(function* () {
         involvement: input.involvement,
         viewer: input.viewer,
         limit: input.limit,
-        // Azure counts rather than filters, so a slice carries on by stepping over every raw row
-        // the prior slice consumed. That is an offset into a list that can shift underneath it:
-        // a pull request opened between two slices moves everything down one, and the row on the
-        // seam is the one that pays for it.
         skip: input.cursor?.delivered ?? 0,
         cursorAdvance: 0,
         items: [],
@@ -617,8 +570,6 @@ export const make = Effect.gen(function* () {
                 }),
               );
             }
-            // Null means Azure answered with too little to place the pull request. Nothing
-            // failed underneath it, so it is its own outcome rather than a decode failure.
             return decoded.success === null
               ? Effect.fail(
                   new AzureDevOpsPullRequestIncompleteError({
@@ -659,8 +610,6 @@ export const make = Effect.gen(function* () {
           operation: "listIterationChanges",
           resource: "pullRequestIterationChanges",
           routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
-          // Azure pages this route at 1000 entries by default; this is its own maximum per page,
-          // and it names where the next page starts rather than answering with the whole change.
           queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
           maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
           decode: decodeIterationChangesJson,
@@ -672,11 +621,7 @@ export const make = Effect.gen(function* () {
         page(skip).pipe(
           Effect.flatMap((answer) => {
             const changes = [...collected, ...answer.changes];
-            // The last page names no page after it, and only that is the end of the change.
             if (answer.nextSkip === null) return Effect.succeed({ changes, truncated: false });
-            // A page pointing at where the read already is would be followed forever, and one
-            // past the ceiling is a change nobody will read to the end of. Both stop the read
-            // and both say so, rather than presenting part of a change as the whole of it.
             return answer.nextSkip <= skip || answer.nextSkip >= MAX_CHANGE_ENTRIES
               ? Effect.succeed({ changes, truncated: true })
               : from(answer.nextSkip, changes);

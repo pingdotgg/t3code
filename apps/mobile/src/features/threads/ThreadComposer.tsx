@@ -131,16 +131,8 @@ import {
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
 
-/**
- * Height of the collapsed composer (pill + vertical padding, excluding safe-area inset).
- * Exported so the parent can compute feed overlap / content insets.
- */
 export const COMPOSER_COLLAPSED_CHROME = 60;
 
-/**
- * Height of the expanded composer (card + toolbar + vertical padding, excluding safe-area inset).
- * Used by the parent to compute the larger feed bottom inset when the composer is focused.
- */
 export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
@@ -152,11 +144,6 @@ export interface ThreadComposerProps {
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
   readonly environmentLabel: string | null;
-  /**
-   * Message sync phase for the selected thread (drives the status pill):
-   * "loading" = first fetch, nothing to show yet; "syncing" = cached messages
-   * are on screen while they reconcile with the server.
-   */
   readonly threadSyncPhase?: "loading" | "syncing" | null;
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
@@ -167,23 +154,14 @@ export interface ThreadComposerProps {
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
-  /** Why sending is blocked right now (shown as the send button's label), or null. */
   readonly sendBlockedReason?: string | null;
-  /** Where the composer's content lives. Defaults to this thread's own draft. */
   readonly draftKey?: string;
-  /**
-   * Set while a queued message is open for editing: the send button saves the
-   * edit instead of sending, and the message's server attachments stay visible
-   * above the composer so they can be removed.
-   */
   readonly queuedEdit?: {
     readonly existingAttachments: ReadonlyArray<ChatAttachment>;
     readonly saving: boolean;
     readonly onRemoveExistingAttachment: (attachmentId: string) => void;
   } | null;
-  /** The user's configured behavior for a message sent during a running turn. */
   readonly followUpBehavior: FollowUpBehavior;
-  /** Whether the live turn can actually be steered by this provider. */
   readonly canSteerActiveTurn: boolean;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -194,36 +172,21 @@ export interface ThreadComposerProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
-  /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
-  /**
-   * Whether the model picker may offer providers other than this thread's.
-   * False keeps the catalog on the instance the thread's session runs on.
-   */
   readonly canSwitchProvider: boolean;
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
-  /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
-/**
- * The pill / card container — renders with Expo's native GlassView on supported
- * iOS 26+ devices, with a frosted blur fallback where supported.
- * Exported so NewTaskDraftScreen can render the same composer chrome.
- */
-// The bottom-anchored dock position and clipped surface height use the same
-// transition so the card grows upward without exposing its final-size content.
-// Android gets NO layout transition: the composer rides the keyboard via
-// KeyboardStickyView (frame-synced to the IME), and a time-based morph
-// running alongside that translate reads as jitter. Snapping the layout and
-// letting the keyboard-synced slide be the only motion looks native there.
+// Android gets NO layout transition: the composer rides the keyboard via KeyboardStickyView
+// (frame-synced to the IME), and a time-based morph running alongside that translate reads as
+// jitter.
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
 // Side panes already animate the dock's width. Nested horizontal layout
 // transitions would leave the surface trailing its toolbar's new position.
-// Keep the vertical pill/card morph while horizontal layout follows the dock.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
   const timing = {
@@ -267,11 +230,6 @@ const FOLLOW_UP_ACTION_SUBTITLE = {
   restart: "Start the turn over with this message",
 } as const;
 
-/**
- * The composer's primary button. While a turn is running it also long-presses
- * into the two follow-up behaviors, which is mobile's stand-in for the Command
- * modifier a hardware keyboard has.
- */
 function SendActionButton(props: {
   readonly accessibilityLabel: string;
   readonly presentation: ComposerSendPresentation;
@@ -316,7 +274,6 @@ function SendActionButton(props: {
 export function ComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
-  /** Morphs between the compact and expanded composer layouts. */
   readonly animateLayout?: boolean;
 }) {
   const colors = useUniwindTheme();
@@ -357,8 +314,6 @@ export function ComposerSurface(props: {
         fallbackColor={colors["--color-composer-surface"]}
         fallbackClassName="border border-composer-border"
         glassEffectStyle="regular"
-        // The composer is a passive material containing interactive controls.
-        // Keep native glass out of the interactive content's layout path.
         pointerEvents="none"
         tintColor="transparent"
         layout={layoutTransition}
@@ -406,12 +361,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     props.draftMessage.trim().length > 0 ||
     props.draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  // Only media belongs above the composer; every other file reads as its inline chip.
   const stripAttachments = useMemo(
     () => composerStripAttachments(props.draftAttachments),
     [props.draftAttachments],
   );
-  // Stopping the agent is not what the send button means in edit mode.
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
 
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
@@ -423,8 +376,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
-  // Every send goes through the outbox; the label says whether it leaves now
-  // or waits (for the connection, an earlier queued message, or an upload).
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
     running: props.activeThreadBusy,
@@ -452,8 +403,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-  // Content lives under the edit's own draft while a queued message is open;
-  // the owner key still identifies this composer for settings and dictation.
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
@@ -468,8 +417,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     });
   };
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
-  // T3 owns /usage-limits only where Limits has data for the selected provider;
-  // elsewhere the name stays the provider's own and is sent through untouched.
   const usageLimitsOffered =
     selectedProviderStatus !== null &&
     hasProviderUsageLimits(
@@ -477,7 +424,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );
-  // Answered locally from the last Limits snapshot; the agent never sees it.
   const openUsageLimits = useCallback(() => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
@@ -513,7 +459,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         ? undefined
         : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
-    // With attachments aboard the pick just inserts the text, so it sends as a prompt.
     onUsageLimits:
       usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
@@ -531,7 +476,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  // An open draft stays visible; only a collapsed composer becomes a voice strip.
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
@@ -556,7 +500,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     sendBlockedReason === null &&
     !modelUnavailable;
 
-  // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
     onExpandedChange?.(isExpanded);
   }, [isExpanded, onExpandedChange]);
@@ -612,8 +555,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
       if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
-      // Typed out in full rather than picked from the menu. Attachments mean the
-      // user is sending a prompt, so those go through as usual.
       if (
         usageLimitsOffered &&
         isUsageLimitsCommand(props.draftMessage) &&
@@ -630,10 +571,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         if (messageId === null) {
           return;
         }
-        // Sending a prompt starts agent work: arm the lock-screen card while the
-        // app is foregrounded and the activity token can be registered. Armed
-        // after the send so its preference read and native Activity start don't
-        // contend with the queued-message feedback on the tap frame.
+        // Armed after the send so its preference read and native Activity start don't contend
+        // with the queued-message feedback on the tap frame.
         armAgentAwarenessLiveActivityForLocalWork({
           environmentId: props.environmentId,
           threadTitle: props.selectedThread.title,
@@ -658,9 +597,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ],
   );
 
-  // ── Model menu ───────────────────────────────────────────
-  // A session that hands the conversation to another provider lets the picker
-  // offer the whole catalog; one that can't stays on its own instance.
   const lockedProviderInstanceId = props.canSwitchProvider
     ? undefined
     : currentModelSelection.instanceId;
@@ -852,8 +788,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   paddingTop: 14,
                 }
               : {
-                  // Keep the numeric radius close to the expanded card so the
-                  // shape morph stays bounded while rendering as a capsule.
                   borderRadius: 27,
                   overflow: "hidden" as const,
                   paddingVertical: 2,
@@ -930,8 +864,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   });
                 }}
                 onOpenAttachment={openDraftDocument}
-                // A rested composer full of chips left almost nowhere to tap to start typing:
-                // every chip opened its file instead. Collapsed, they focus the editor.
                 chipsInert={!isExpanded}
                 onInertChipPress={() => inputRef.current?.focus()}
                 ref={inputRef}
@@ -1016,7 +948,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
-                // Command-Return sends the other way, matching web's Mod+Enter.
                 onSubmit={(alternate) =>
                   void handleSend(
                     alternate && sendPresentation.alternate !== null
@@ -1031,8 +962,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
                 }
                 scrollEnabled={isExpanded}
-                // Android: collapsed single line centers natively (gravity) in
-                // a pill-height box matching the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
                 contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
                 style={

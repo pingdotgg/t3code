@@ -84,7 +84,6 @@ function antigravitySecurityWarning(option: EffectAcpSchema.PermissionOption): s
     : text;
 }
 
-/** Only advertise decisions that the native request can honor. */
 export function antigravityApprovalOptions(
   request: EffectAcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<ProviderApprovalOption> {
@@ -154,7 +153,6 @@ export function extractAntigravityUserInputQuestion(
   };
 }
 
-/** Return undefined for an invalid answer so the adapter keeps the question open. */
 export function makeAntigravityUserInputResponse(
   request: EffectAcpSchema.RequestPermissionRequest,
   answers: ProviderUserInputAnswers,
@@ -230,12 +228,10 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
   return Object.fromEntries(entries);
 }
 
-/** Bound both retained raw events and display data before they enter the event stream. */
 export function sanitizeAntigravityToolPayload(payload: unknown): unknown {
   return sanitizeToolValue(payload, { nodes: 512, text: 64_000 }, 0);
 }
 
-/** The runtime uses this before it retains tool state or dispatches raw callbacks. */
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
@@ -346,15 +342,13 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   };
 }
 
-/** Only commands still running after end_turn become background tasks. */
 export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
   return toolCall.kind === "execute" && toolCall.status === "inProgress";
 }
 
 /**
  * ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs
- * or models. Reads the update's `_meta` from `data.meta`, or from the raw
- * notification when given.
+ * or models.
  */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,

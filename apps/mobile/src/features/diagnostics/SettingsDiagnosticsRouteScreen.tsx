@@ -37,11 +37,6 @@ function appIdentity() {
   };
 }
 
-/**
- * Startup crashes that TestFlight and the stores strip from their reports.
- * expo-updates' ErrorRecovery writes the JS error and component stack to its
- * own log before aborting the process, so the next launch can show it here.
- */
 export function SettingsDiagnosticsRouteScreen() {
   const insets = useSafeAreaInsets();
   const [state, setState] = useState<CrashLogState>(() =>

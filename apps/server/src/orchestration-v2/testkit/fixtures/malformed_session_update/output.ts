@@ -21,7 +21,6 @@ export function assertMalformedSessionUpdateOutput(
   assertSemanticProjectionIntegrity(projection);
   assertUserMessagesInclude(projection, [MALFORMED_SESSION_UPDATE_PROMPT]);
   assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
-  // The dropped update does not fail the turn.
   assert.notInclude(
     projection.turnItems.map((item) => item.type),
     "error",

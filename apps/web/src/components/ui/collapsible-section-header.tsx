@@ -9,7 +9,6 @@ const tones = {
   accent: { label: "text-primary", line: "bg-primary/50" },
 } as const;
 
-/** Callers own the section state and content; this owns all header geometry. */
 export function CollapsibleSectionHeader({
   children,
   expanded,

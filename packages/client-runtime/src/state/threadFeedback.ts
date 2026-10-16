@@ -53,7 +53,6 @@ export function beginCodexFeedbackSubmission(
   return () => submissionsInFlight.delete(threadKey);
 }
 
-/** A chat row that exists only on this client, such as a feedback exchange. */
 export interface LocalChatMessage {
   readonly id: MessageId;
   readonly role: "user" | "assistant";

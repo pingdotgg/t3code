@@ -49,7 +49,6 @@ describe("resolveAddressBarInput", () => {
     expect(() => resolveAddressBarInput("data:text/plain,hello")).toThrow(
       PreviewUrlNormalizationError,
     );
-    // A known scheme with a numeric payload is not a host and port.
     for (const input of ["ftp:21", "tel:5551234"]) {
       expect(() => resolveAddressBarInput(input)).toThrow(PreviewUrlNormalizationError);
     }

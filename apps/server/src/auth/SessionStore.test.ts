@@ -141,7 +141,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         yield* Fiber.join(first);
         yield* Fiber.join(second);
         expect(yield* Deferred.isDone(ownerInvalidated)).toBe(false);
-        // A connection whose upgrade authenticated just before revocation must also stop.
         yield* sessions.awaitInvalidation(client.sessionId);
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSessionStore(), TestClock.layer()))),
   );
@@ -350,7 +349,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       const secrets = yield* ServerSecretStore.ServerSecretStore;
       const legacyScopes = ["orchestration:read", "terminal:operate", "review:write"] as const;
       const issued = yield* sessions.issue({ subject: "one-time-token", scopes: legacyScopes });
-      // Accept prerelease v2 credentials without widening their recorded grant.
       const [encodedPayload] = issued.token.split(".");
       const currentClaims = base64UrlDecodeUtf8(encodedPayload!);
       expect(currentClaims).toContain('"v":1');
@@ -845,7 +843,6 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       });
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.2.0" });
 
-      // A partial report (old or minimal client) must not null out stored data.
       yield* sessions.recordClientConnection(issued.sessionId, { appVersion: "1.3.0" });
       expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
 

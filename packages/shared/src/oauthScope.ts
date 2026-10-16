@@ -15,10 +15,6 @@ export class OAuthScopeEncodingError extends Schema.TaggedError<OAuthScopeEncodi
   }
 }
 
-/**
- * Decodes an RFC 6749 `scope` value as a set while preserving its first-seen
- * order for canonical responses and logs.
- */
 export function parseOAuthScope(value: string): ReadonlyArray<string> | null {
   if (value.length === 0) {
     return null;

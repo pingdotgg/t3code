@@ -96,7 +96,6 @@ function quotaWindow(
   };
 }
 
-/** The summary names the actual shared buckets; Claude and GPT consume one allowance. */
 function summaryWindows(summary: typeof Summary.Type) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
@@ -158,7 +157,6 @@ function modelWindows(models: typeof Models.Type) {
   return [...windows.values()];
 }
 
-/** Reads this instance's Google profile, with a memory-only access token and no credential writes. */
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];

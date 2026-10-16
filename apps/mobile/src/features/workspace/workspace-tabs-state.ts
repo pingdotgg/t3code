@@ -34,7 +34,6 @@ export type WorkspaceTabsAction =
   | { readonly type: "cancel"; readonly tab?: WorkspaceTab }
   | { readonly type: "scroll"; readonly tab: WorkspaceTab; readonly offset: number };
 
-/** Each root retains its own search; leaving search restores the unfiltered list position. */
 export function workspaceTabsReducer(
   state: WorkspaceTabsState,
   action: WorkspaceTabsAction,

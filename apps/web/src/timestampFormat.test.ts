@@ -27,9 +27,6 @@ describe("resolveTimestampLocale", () => {
   });
 
   it("defers to the runtime default rather than throwing on an unusable tag", () => {
-    // The desktop bridge normalizes POSIX identifiers before reporting them, so
-    // anything Intl still rejects here falls back instead of breaking every
-    // timestamp in the UI.
     expect(resolveTimestampLocale("not a locale")).toBeUndefined();
     expect(resolveTimestampLocale("en_GB")).toBeUndefined();
   });

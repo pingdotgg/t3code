@@ -17,7 +17,6 @@ vi.mock("./useScopedSettings", () => ({
     ...DEFAULT_UNIFIED_SETTINGS,
     sourceControlWritingStyle: state.styles[0],
   }),
-  // Review guides stay off and agreed here, so their rows do not render beside the style's.
   useScopedSettingsMixed: (keys: ReadonlyArray<string>) =>
     !keys.includes("reviewGuidesEnabled") &&
     JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
@@ -216,8 +215,6 @@ describe("mixed source control instructions", () => {
       "Shared instructions",
       "Shared instructions",
     ]);
-    // Template preferences still differ, but that is the templates row's
-    // concern: the instructions editor is no longer a bulk draft.
     expect(button("Write custom instructions for all")).toBeUndefined();
     expect(renderer!.root.findByType("textarea").props.defaultValue).toBe("Shared instructions");
   });

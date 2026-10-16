@@ -42,7 +42,6 @@ function ImagePreviewHeader() {
   );
 }
 
-/** Android keeps media actions in its in-app image viewer. iOS uses Quick Look. */
 export function MediaImagePreview(props: MediaImagePreviewProps) {
   const gallery = props.source.gallery ?? [props.source];
   const [index, setIndex] = useState(() =>

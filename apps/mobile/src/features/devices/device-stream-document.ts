@@ -16,7 +16,6 @@ export interface DeviceStreamConfiguration {
 }
 
 export function deviceStreamDocument(configuration: string, script: string) {
-  // Tickets and device names are data, including any HTML delimiter characters.
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
   const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:"Device viewer stopped unexpectedly."}));`;
@@ -52,8 +51,6 @@ export function deviceStreamMessage(data: string) {
           "detail" in message && typeof message.detail === "string" ? message.detail : undefined,
       } as const;
     }
-  } catch {
-    // Ignore messages that are not part of the stream bridge.
-  }
+  } catch {}
   return null;
 }

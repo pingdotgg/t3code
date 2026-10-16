@@ -9,7 +9,6 @@ import {
   resolveFilesystemReadAccess,
 } from "./filesystem.ts";
 
-/** A server that already splits scopes; it never falls back to a parent grant. */
 const SPLIT_SCOPES_SERVER = { serverUpdateScope: "environment:maintain" } as const;
 
 describe("filesystem read access", () => {

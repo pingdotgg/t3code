@@ -51,12 +51,10 @@ describe("path helpers", () => {
   });
 
   it("normalizes a bare Windows drive root the same as one with a trailing separator", () => {
-    // `C:`, `C:\` and `C:/` all refer to the drive root and must compare equal.
     expect(normalizeProjectPathForDispatch("C:")).toBe("C:\\");
     expect(normalizeProjectPathForComparison("C:")).toBe("c:\\");
     expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:\\"));
     expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:/"));
-    // Non-root drive paths keep their trailing separator trimmed as before.
     expect(normalizeProjectPathForDispatch("C:\\repo\\")).toBe("C:\\repo");
   });
 
@@ -64,10 +62,8 @@ describe("path helpers", () => {
     expect(newProjectFolderName("Pinball Stats")).toBe("pinball-stats");
     expect(newProjectFolderName("  Café & Crème!  ")).toBe("cafe-creme");
     expect(newProjectFolderName("../../etc")).toBe("etc");
-    // Nothing usable left, so the server falls back to a fixed name.
     expect(newProjectFolderName("🎱🎱")).toBe("project");
     expect(newProjectFolderName(`${"a".repeat(63)} b`)).toBe("a".repeat(63));
-    // Windows cannot make folders with device names.
     expect(newProjectFolderName("Con")).toBe("con-project");
     expect(newProjectFolderName("LPT1")).toBe("lpt1-project");
     expect(newProjectFolderName("console")).toBe("console");

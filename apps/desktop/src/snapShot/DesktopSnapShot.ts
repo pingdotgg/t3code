@@ -187,7 +187,6 @@ export class DesktopSnapShot extends Context.Service<
       shortcut: SnapShotShortcut,
     ) => Effect.Effect<DesktopSnapShotShortcutAvailability>;
     readonly setShortcutSuppressed: (suppressed: boolean) => Effect.Effect<void>;
-    /** Capture the foreground window in place, including T3 Code itself. */
     readonly capture: Effect.Effect<void, DesktopSnapShotError>;
     readonly listPending: Effect.Effect<
       ReadonlyArray<DesktopPendingSnapShot>,
@@ -770,7 +769,6 @@ export const make = Effect.gen(function* () {
     path.join(__dirname, "snapShot", "RegionSnapShotWorker.cjs"),
   );
   let registeredAccelerator: string | undefined;
-  // False until the first applySettings; the first pass must always register.
   let initialized = false;
   let portalShortcut: PortalCaptureShortcut | undefined;
   let shortcutGeneration = 0;
@@ -925,7 +923,6 @@ export const make = Effect.gen(function* () {
       const appIconDataUrl = yield* Effect.promise(() =>
         iconDataUrl(source, active, environment.platform),
       );
-      // Native labels are unbounded; keep a valid screenshot when its metadata is too long.
       const appIdentifier = boundedSnapShotString(
         active?.platform === "macos" ? active.owner.bundleId : linuxWindow?.appIdentifier,
         255,
@@ -971,8 +968,6 @@ export const make = Effect.gen(function* () {
     if (!settings.snapShotEnabled) {
       return yield* new DesktopSnapShotError({ operation: "disabled" });
     }
-    // Only source acquisition and the initial handoff require exclusive access.
-    // Each captured image can finish its own accessibility read and persistence.
     const prepared = yield* prepareCapture(settings).pipe(
       Effect.tapError((error) =>
         (error.captureId ? discardCapture(error.captureId) : Effect.void).pipe(
@@ -1328,8 +1323,6 @@ export const make = Effect.gen(function* () {
     if (action === "test-mac-capture") {
       if (environment.platform !== "darwin")
         return yield* new DesktopSnapShotSetupError({ action, reason: "unsupported-session" });
-      // Exercise the real capture path during setup without attaching a snapshot
-      // or running capture feedback. The temporary image is discarded on failure too.
       yield* Effect.scoped(
         Effect.gen(function* () {
           const directory = yield* fileSystem.makeTempDirectoryScoped({
@@ -1540,9 +1533,6 @@ export const make = Effect.gen(function* () {
             )
           : environment.platform === "darwin"
             ? Effect.gen(function* () {
-                // Permissions can change in System Settings at any time. Surface a
-                // revocation on every read, and re-register the shortcut once a
-                // previously missing permission is granted again.
                 const settings = yield* Ref.get(settingsRef);
                 const macPermissions = currentMacPermissions();
                 const message = settings.snapShotEnabled
@@ -1564,7 +1554,6 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((state) =>
         Effect.gen(function* () {
-          // Keep the session identity available even when its capability probe fails.
           const linuxDesktop =
             state.mode === "portal"
               ? process.env.XDG_CURRENT_DESKTOP?.toLowerCase()

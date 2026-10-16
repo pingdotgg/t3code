@@ -9,8 +9,6 @@ const EDITABLE_SELECTOR = [
 ].join(",");
 
 /**
- * Whether a text-editing element owns the keyboard. Shortcuts that share
- * their chord with native editing (mod+z) must yield when this is true.
  * Focus inside an open shadow root counts: a key event's target is retargeted
  * to the shadow host, so the host's focused descendant is what is typed into.
  */

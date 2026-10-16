@@ -5,7 +5,6 @@ import { useThreadFindHighlights } from "./threadFindHighlights";
 
 const FIND_MATCH_VIEW_MARGIN = 96;
 
-/** Materializes missing results and otherwise scrolls only enough to reveal the active text. */
 export function useThreadFindNavigation({
   container,
   query,
@@ -194,7 +193,6 @@ export function useThreadFindNavigation({
       const rect = range.getBoundingClientRect();
       const viewport = container?.getBoundingClientRect();
       if (!viewport || rect.height === 0) return;
-      // Shrink the margin when the band above the composer is short, so the match stays inside it.
       const margin = Math.min(
         FIND_MATCH_VIEW_MARGIN,
         Math.max(0, (viewport.height - contentInsetEndAdjustment - rect.height) / 2),
@@ -221,7 +219,6 @@ export function useThreadFindNavigation({
         pagingPositionRef.current = { key: matchKey, entries, top: rect.top - delta };
       if (Math.abs(delta) >= 1 && typeof scroll === "number") {
         listRef.current?.scrollToOffset({ offset: scroll + delta, animated: false });
-        // Scrolling can mount rows whose measured heights move the selected text again.
         requestAnimationFrame(() => {
           if (currentMatchKeyRef.current !== matchKey) return;
           if (

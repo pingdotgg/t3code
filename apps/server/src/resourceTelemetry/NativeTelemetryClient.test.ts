@@ -97,7 +97,6 @@ describe("NativeTelemetryClient", () => {
   it.effect("asks the sidecar for timed samples only while a live subscriber exists", () =>
     Effect.gen(function* () {
       const commands = yield* Queue.unbounded<ResourceMonitorCommand>();
-      // A sidecar that says hello, stays alive, and records every command it receives.
       const spawner = ChildProcessSpawner.make(() =>
         Effect.succeed(
           ChildProcessSpawner.makeHandle({

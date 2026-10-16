@@ -64,7 +64,6 @@ function detail(id: string, status: Status, overrides: Partial<EnvironmentThread
 }
 
 function makeHarness() {
-  // Registry cleanup runs only on `flush`, like the real deferred task.
   const tasks: Array<() => void> = [];
   const registry = AtomRegistry.make({
     scheduleTask: (task) => {
@@ -81,8 +80,6 @@ function makeHarness() {
   const threads = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<ReadonlyArray<ReturnType<typeof shell>>>([]).pipe(Atom.keepAlive),
   );
-  // Stand-ins for the thread state atoms. Each one lives only while mounted,
-  // as the real stream does.
   const keys = new Set<string>();
   const states = Atom.family((_key: string) =>
     Atom.make<AsyncResult.AsyncResult<EnvironmentThreadState>>(
@@ -120,12 +117,10 @@ describe("createRunningThreadKeepAliveAtom", () => {
     h.registry.set(h.threads(REMOTE), [shell("d", "starting")]);
     expect(h.openStreams()).toEqual(["local:a", "remote:d"]);
 
-    // A thread view that comes and goes shares the kept stream.
     const live = detail("a", "running");
     h.registry.set(h.stateAtom(LOCAL, "a"), live);
     h.registry.mount(h.stateAtom(LOCAL, "a"))();
 
-    // A shell update that starts or stops nothing does not rebuild the set.
     const kept = h.registry.get(h.keepAlive);
     h.registry.set(h.threads(LOCAL), [shell("a", "running"), shell("b", "idle")]);
     expect(h.registry.get(h.keepAlive)).toBe(kept);
@@ -140,15 +135,12 @@ describe("createRunningThreadKeepAliveAtom", () => {
       shell("b", "running"),
       shell("c", "running"),
     ]);
-    // "b" has not loaded yet. "c" hit a stream error.
     h.registry.set(h.stateAtom(LOCAL, "a"), detail("a", "running"));
     h.registry.set(
       h.stateAtom(LOCAL, "c"),
       detail("c", "running", { status: "cached", error: Option.some("Could not sync.") }),
     );
 
-    // The shell reports the stops first. A failed stream cannot deliver its
-    // stop, so only it is released now.
     h.registry.set(h.threads(LOCAL), [shell("a", "idle"), shell("b", "idle"), shell("c", "idle")]);
     expect(h.openStreams()).toEqual(["local:a", "local:b"]);
 
@@ -174,7 +166,6 @@ describe("createRunningThreadKeepAliveAtom", () => {
     h.registry.set(h.environmentIds, [LOCAL, REMOTE]);
     expect(h.openStreams()).toEqual(["remote:d"]);
 
-    // Removal drops every mount, including one still waiting for its stop.
     h.registry.set(h.stateAtom(REMOTE, "d"), detail("d", "running"));
     h.registry.set(h.threads(REMOTE), [shell("d", "idle")]);
     expect(h.openStreams()).toEqual(["remote:d"]);

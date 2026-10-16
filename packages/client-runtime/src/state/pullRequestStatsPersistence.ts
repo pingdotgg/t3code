@@ -13,7 +13,6 @@ const requestKey = Schema.fromJsonString(Schema.Tuple([Schema.String, PullReques
 const statKey = (ref: PullRequestRef) =>
   JSON.stringify(["pull-request-stat", ref.projectId, ref.host ?? "", ref.repository, ref.number]);
 
-/** Visible rows are batched differently after a restart, so store their counts individually. */
 export function persistPullRequestStats(): QueryPersistence<PullRequestListStatsResult> {
   const row = persistQuery(PullRequestDiffStat);
   return {

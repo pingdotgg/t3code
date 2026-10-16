@@ -29,12 +29,6 @@ const EXTERNAL_LINK_CONTEXT_MENU_ITEMS = [
   { id: "copy-link", label: "Copy Link" },
 ] as const satisfies readonly ContextMenuItem<ExternalLinkContextMenuAction>[];
 
-/**
- * The integrated browser is not always there to offer — it needs a thread to open beside and a
- * runtime that can show it — but the other two answers hold wherever a link does. Dropping the
- * whole menu with the one item that cannot be honoured is what left a right-click on a link
- * showing the platform's cut-and-paste menu instead of a way to copy the link.
- */
 function externalLinkContextMenuItems(options: {
   readonly canOpenInPreview: boolean;
   readonly threadLinkAction?: "link-to-thread" | "unlink-from-thread" | undefined;
@@ -56,7 +50,6 @@ function externalLinkContextMenuItems(options: {
 interface ShowExternalLinkContextMenuOptions {
   readonly href: string;
   readonly position: { readonly x: number; readonly y: number };
-  /** Absent means yes, which is what every caller before the browser could be missing meant. */
   readonly canOpenInPreview?: boolean;
   readonly threadLinkAction?: "link-to-thread" | "unlink-from-thread" | undefined;
   readonly showContextMenu: (

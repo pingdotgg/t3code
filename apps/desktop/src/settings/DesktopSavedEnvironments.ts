@@ -130,7 +130,6 @@ export type DesktopSavedEnvironmentsGetSecretError =
   | DesktopSavedEnvironmentSecretDecodeError
   | DesktopSavedEnvironmentSecretProtectionError;
 
-/** Reads the previous registry for connection-catalog migration. */
 export class DesktopSavedEnvironments extends Context.Service<
   DesktopSavedEnvironments,
   {

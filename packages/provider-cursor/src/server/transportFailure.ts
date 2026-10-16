@@ -22,7 +22,6 @@ function consumeLine(state: ReplyState, line: string) {
   }
 }
 
-/** Tracks a standalone Cursor diagnostic without retaining an entire streamed answer. */
 export class CursorTransportFailure {
   private state: ReplyState = { disqualified: false, failure: undefined };
   private line = "";

@@ -179,8 +179,7 @@ describe("shortcutModifierState", () => {
 
   it("ignores poisoned modifier flags on non-modifier keys", () => {
     // A dictation paste (synthetic ⌘V) can leave the browser reporting
-    // metaKey=true on later real key events. Enter to submit must not
-    // re-mark ⌘ as held.
+    // metaKey=true on later real key events.
     const state = shortcutModifierStateAfterKeyboardEvent(
       emptyState(),
       keyboardEventLike("keydown", { key: "Enter", metaKey: true }),

@@ -179,8 +179,6 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({
         "relay.mobile.device_id": input.deviceId,
       });
-      // Same proxy-chain constraint as register above: db chains must be
-      // consumed via `yield*`, never passed to Effect.all.
       yield* db
         .delete(relayLiveActivities)
         .where(

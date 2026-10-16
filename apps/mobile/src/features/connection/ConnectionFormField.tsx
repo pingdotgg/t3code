@@ -8,7 +8,6 @@ type ConnectionFormFieldProps = Omit<AppTextInputProps, "accessibilityLabel" | "
   readonly className?: string;
 };
 
-/** Labeled connection input with a native wrapper retained inside form sheets. */
 export function ConnectionFormField({ label, className, ...inputProps }: ConnectionFormFieldProps) {
   return (
     <View collapsable={false} className={cn("gap-1.5", className)}>

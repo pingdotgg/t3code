@@ -71,7 +71,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
     }
     const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
     const params = url.value.searchParams;
-    // Watching needs read access; driving the page is a preview mutation.
     const canOperate =
       session.scopes.includes(AuthPreviewOperateScope) && params.get("interactive") !== "false";
     const threadId = params.get("threadId") ?? "";
@@ -108,7 +107,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         delete incoming.headers["sec-websocket-extensions"];
         const transport = incoming.socket;
         const socket = yield* request.upgrade;
-        // The reader performs the upgrade; writes wait for it.
         const reader = yield* socket.reader;
         const writer = yield* socket.writer;
         // A refused upgrade reads as an auth failure to ticket clients, so a
@@ -134,7 +132,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         const write = (data: Uint8Array | string) =>
           Effect.suspend(() => {
             const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
-            // Include the WebSocket frame header in the budget.
             if (transport.writableLength + bytes + 14 > MAX_SOCKET_BUFFER_BYTES) {
               return disconnectSlowViewer;
             }
@@ -195,12 +192,10 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             Effect.as(HttpServerResponse.text("Service Unavailable", { status: 503 })),
           ),
       }),
-      // A dropped socket is a normal end of viewing.
       Effect.catch(() => Effect.succeed(HttpServerResponse.empty())),
     );
   });
 
-/** Which host setup a launch failure is missing, and the command that fixes it. */
 const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
   isSandboxError(cause)
     ? { need: "sandbox", command: cause.setupCommand }
@@ -211,7 +206,6 @@ const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
 
-/** `GET /api/preview-stream/download?threadId&tabId&id`: a file a server tab downloaded. */
 const serveDownload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {
     yield* authenticateMediaRequest(AuthOrchestrationReadScope);
@@ -232,10 +226,6 @@ const serveDownload = (browser: ServerBrowser.ServerBrowser["Service"], params: 
 const UPLOAD_MAX_FILE_BYTES = 100 * 1024 * 1024;
 const UPLOAD_MAX_FILES = 20;
 
-/**
- * `POST /api/preview-stream/upload?threadId&tabId&chooser` with multipart `file`
- * parts: answers the page's open file picker. No parts cancels it.
- */
 const receiveUpload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {
     yield* authenticateMediaRequest(AuthPreviewOperateScope);
@@ -274,7 +264,6 @@ const receiveUpload = (browser: ServerBrowser.ServerBrowser["Service"], params: 
       : HttpServerResponse.text("The page's file picker is no longer open.", { status: 409 });
   }).pipe(Effect.scoped);
 
-// Capture the browser because handlers only see request-scoped services.
 export const routeLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const browser = yield* ServerBrowser.ServerBrowser;

@@ -53,7 +53,6 @@ export function FileMetadataThreadProvider(props: {
       for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
       for (const file of old?.files ?? []) paths.add(resolveWorkspaceFilePath(file.path, cwd));
     }
-    // Rewinds can remove checkpoints as well as add them.
     for (const checkpoint of oldById.values())
       for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
     if (paths.size > 0)

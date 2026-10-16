@@ -23,7 +23,6 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 const ROW_BOTTOM_MARGIN = 8;
 const FULL_SCREEN_GUTTER = 16;
 
-/** A render row is its frame's height plus spacing; the page's content never sizes it. */
 export function htmlRenderRowHeight(frameHeight: number) {
   return frameHeight + ROW_BOTTOM_MARGIN;
 }
@@ -52,8 +51,6 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
-// Reports which ways the page overflows its frame, so a feed row only takes
-// scroll gestures from a page that can use them.
 const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
@@ -80,14 +77,9 @@ function readOverflowMessage(data: string): Overflow | null {
 
 const withoutFragment = (url: string) => url.split("#", 1)[0];
 
-/**
- * An agent's HTML page, themed before first paint and kept in step with the app theme.
- * The page may move within its own document; links leave for the browser.
- */
 export function HtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
-  /** Inside the feed, the page takes scroll gestures only when it overflows its frame. */
   readonly nested: boolean;
   readonly onLoadError?: () => void;
 }) {
@@ -98,7 +90,6 @@ export function HtmlRenderWebView(props: {
   const [overflow, setOverflow] = useState(NO_OVERFLOW);
   const webView = useRef<WebView<object>>(null);
   const crashes = useRef(0);
-  // The theme the loaded document shows; null until it loads.
   const shownTheme = useRef<HtmlRenderTheme | null>(null);
   const source = useMemo(
     () => ({ uri: props.uri + htmlRenderThemeFragment(initialTheme) }),
@@ -110,7 +101,6 @@ export function HtmlRenderWebView(props: {
     postTheme(webView.current, theme);
   }, [theme]);
   const restart = () => {
-    // A page that keeps crashing its web process is not reloaded forever.
     crashes.current += 1;
     if (crashes.current > 1) {
       props.onLoadError?.();
@@ -122,8 +112,6 @@ export function HtmlRenderWebView(props: {
     setGeneration((value) => value + 1);
   };
   const scrollable = !props.nested || overflow.x || overflow.y;
-  // Pages have no horizontal padding of their own, so full screen adds the
-  // feed's gutter in the page's background color.
   return (
     <View
       style={
@@ -153,9 +141,6 @@ export function HtmlRenderWebView(props: {
         // that only overflows sideways leaves vertical drags to the feed.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
-        // Only the page itself loads here; other top-frame navigations are
-        // dropped. A link the reader taps opens as a new window, which the
-        // platform allows only from a tap, and goes to the browser.
         onShouldStartLoadWithRequest={(request) =>
           request.isTopFrame === false ||
           withoutFragment(request.url) === withoutFragment(props.uri)
@@ -192,12 +177,10 @@ export function HtmlRenderWebView(props: {
   );
 }
 
-/** A completed `html_render` call in the thread feed: the page itself, at a fixed height. */
 export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly render: HtmlRenderReference;
-  /** The feed's content width; the frame's height follows the page's measured height there. */
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
@@ -221,8 +204,6 @@ export function ThreadHtmlRender(props: {
   const [uri, setUri] = useState<string | null>(null);
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [failed, setFailed] = useState(false);
-  // A failed load retries once with a fresh URL, or remounts on the same one,
-  // since the failure may have been the connection rather than the URL.
   const [attempt, setAttempt] = useState(0);
   const retried = useRef(false);
   const handleLoadError = () => {

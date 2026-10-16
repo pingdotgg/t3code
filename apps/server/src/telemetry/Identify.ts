@@ -255,15 +255,6 @@ const upsertAnonymousId = Effect.gen(function* () {
   return anonymousId;
 });
 
-/**
- * getTelemetryIdentifier - Users are "identified" by finding the first match of the following, then hashing the value.
- * 1. ~/.codex/auth.json tokens.account_id
- * 2. ~/.claude.json userID
- * 3. ~/.t3/telemetry/anonymous-id
- *
- * A missing file or an API-key-only Codex auth.json falls through quietly. Only
- * unreadable or malformed files warn.
- */
 export const getTelemetryIdentifierForHome = Effect.fn("getTelemetryIdentifierForHome")(
   function* (homeDirectory: string) {
     const codexAccountId = yield* getCodexAccountId(homeDirectory).pipe(

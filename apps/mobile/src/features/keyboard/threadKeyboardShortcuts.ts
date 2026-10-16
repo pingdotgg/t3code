@@ -14,7 +14,6 @@ export function threadJumpIndex(command: HardwareKeyboardCommand) {
   return THREAD_JUMP_KEYBINDING_COMMANDS.findIndex((candidate) => candidate === command);
 }
 
-/** Uses the rendered list so filters and shelves keep their order. */
 export function threadJumpTarget(
   items: ReadonlyArray<ThreadShortcutListItem>,
   command: HardwareKeyboardCommand,

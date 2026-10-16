@@ -26,7 +26,6 @@ describe("WorktreeSetupTracker", () => {
       });
 
       const initial = yield* tracker.get(threadId);
-      // Stages are reordered into the canonical setup order.
       expect(initial?.stages.map((stage) => stage.id)).toEqual(["fetch", "checkout", "agent"]);
       expect(initial?.phase).toBe("running");
 
@@ -43,7 +42,6 @@ describe("WorktreeSetupTracker", () => {
       expect(fetch).toMatchObject({ status: "done", detail: "origin/main at abc1234" });
       expect(fetch?.startedAt).not.toBeNull();
       expect(fetch?.endedAt).not.toBeNull();
-      // A stage still running when the setup fails is marked failed.
       expect(checkout).toMatchObject({ status: "failed", percent: 42 });
       expect(agent?.status).toBe("pending");
       expect(final?.sequence).toBeGreaterThan(initial?.sequence ?? 0);
@@ -73,8 +71,6 @@ describe("WorktreeSetupTracker", () => {
       const snapshots = yield* Fiber.join(collected);
       const sequences = snapshots.map((snapshot) => snapshot?.sequence ?? -1);
       expect(sequences.at(-1)).toBe(2);
-      // Delivery is latest-value per subscriber, so intermediates may be
-      // skipped but never delivered out of order.
       expect(sequences).toEqual([...sequences].toSorted((a, b) => a - b));
       expect(snapshots.at(-1)?.stages[0]?.tail).toEqual(["line 1"]);
     }),
@@ -93,7 +89,6 @@ describe("WorktreeSetupTracker", () => {
       yield* tracker.stageStatus(threadId, "agent", "running");
       yield* tracker.stageStatus(threadId, "agent", "done");
 
-      // A late subscriber starts at sequence 2 and must never see 0 or 1.
       const collected = yield* tracker.stream(threadId).pipe(
         Stream.takeUntil((snapshot) => snapshot?.phase === "done"),
         Stream.runCollect,
@@ -122,7 +117,6 @@ describe("WorktreeSetupTracker", () => {
       yield* tracker.finish(threadId, "failed", "boom");
       const failedSequence = (yield* tracker.get(threadId))?.sequence ?? -1;
 
-      // A stream opened on the failed setup must still receive the next one.
       const collected = yield* tracker.stream(threadId).pipe(
         Stream.takeUntil((snapshot) => snapshot?.branch === "second"),
         Stream.runCollect,
@@ -174,7 +168,6 @@ describe("WorktreeSetupTracker", () => {
       yield* tracker.begin({ threadId, branch: null, baseRef: null, stages: ["agent"], fiber });
 
       expect(yield* tracker.cancel(threadId)).toBe(true);
-      // cancel returns only after the bootstrap fiber has unwound.
       const exit = yield* Fiber.await(fiber);
       expect(Exit.hasInterrupts(exit)).toBe(true);
 
@@ -219,7 +212,6 @@ describe("WorktreeSetupTracker", () => {
       expect(snapshot?.stages[1]?.detail?.length).toBe(200);
       expect(snapshot?.stages[1]?.tail[0]?.length).toBe(400);
       expect(snapshot?.error?.length).toBe(1000);
-      // The wire schema must accept what the tracker publishes.
       expect(Schema.is(WorktreeSetupSnapshot)(snapshot)).toBe(true);
     }),
   );

@@ -285,11 +285,9 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     });
     expect(named).toEqual(["Pinball Stats"]);
 
-    // A path still registers that folder, and never makes a named project.
     yield* handle({ title: "Existing", workspaceRoot: "/work/existing" });
     expect(registered).toEqual(["/work/existing"]);
 
-    // Fields this mode cannot apply are rejected, not dropped.
     for (const extra of [
       { scripts: [] },
       { defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" } },
@@ -308,9 +306,6 @@ const clientLaunchHarness = (input: {
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
-  // "claudeAgent" is the real default instance id for the Claude driver
-  // (see `defaultInstanceIdForDriver`), so it resolves as enabled by default
-  // under the project-scoped provider instance gate the launch path now runs.
   const modelSelection = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
     model: "claude-opus",
@@ -458,8 +453,6 @@ it.effect("a launch binds only an existing checkout that is one of the project's
       { type: "existing_worktree", worktreePath: repo },
     ]);
 
-    // A removed worktree stays listed as prunable until `git worktree prune`;
-    // whatever directory is later made at its path is not one of the project's.
     yield* fileSystem.remove(worktree, { recursive: true });
     yield* fileSystem.makeDirectory(worktree);
     expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({

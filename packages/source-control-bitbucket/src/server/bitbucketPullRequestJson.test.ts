@@ -13,7 +13,6 @@ import {
   decodeViewerJson,
 } from "./bitbucketPullRequestJson.ts";
 
-/** Shaped after a real api.bitbucket.org pull request, trimmed to the fields that are read. */
 function pullRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 897,
@@ -61,7 +60,6 @@ describe("decodePullRequestPageJson", () => {
       baseBranch: "master",
       state: "open",
       isDraft: false,
-      // Bitbucket says nothing about conflicts on the pull request itself.
       mergeability: "unknown",
     });
     expect(decoded.next).toBeNull();
@@ -160,7 +158,6 @@ describe("decodePullRequestJson", () => {
                 state: "approved",
                 participated_on: "2026-06-17T09:00:00+00:00",
               },
-              // Added as a reviewer but has not voted, so there is no verdict to show.
               {
                 user: { nickname: "sam", display_name: "Sam" },
                 role: "REVIEWER",
@@ -237,7 +234,6 @@ describe("decodeCommentsJson", () => {
     expect(decoded.comments[0]).toMatchObject({
       id: "797230941",
       kind: "issue-comment",
-      // An app account has no nickname, so its display name is the only handle it has.
       author: { login: "Release Bot" },
       createdAt: "2026-05-15T01:58:38.220Z",
     });
@@ -396,8 +392,6 @@ describe("repository permission decoding", () => {
   });
 
   it("grants write where Bitbucket named no permission at all", () => {
-    // An empty page is Bitbucket declining to say, which is an unknown standing rather than a
-    // refusal — and an unknown one is granted.
     expect(expectSuccess(decodeRepositoryPermissionJson(page([])))).toBe(true);
   });
 });

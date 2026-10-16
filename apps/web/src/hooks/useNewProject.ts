@@ -23,14 +23,6 @@ function errorMessage(error: unknown): string {
     : "An error occurred.";
 }
 
-/**
- * Starts a project from just a name. The server makes a folder under its
- * `newProjectsRoot` with a README, an icon, and a first commit; this then
- * opens a new thread draft in it. With `publishTo`, it also publishes the
- * repository as private on that host, without holding up the draft.
- *
- * Resolves to whether the project was created.
- */
 export function useNewProject() {
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
@@ -101,7 +93,6 @@ export function useNewProject() {
       }
 
       const { projectId, workspaceRoot, commitError } = result.value;
-      // The folder sits in T3 Code's data directory, so always say where.
       toastManager.add(
         stackedThreadToast(
           commitError === undefined

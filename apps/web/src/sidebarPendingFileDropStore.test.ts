@@ -98,22 +98,16 @@ describe("sidebarPendingFileDropStore", () => {
   });
 
   it("keeps a newer drop deliverable after the first navigation fails", () => {
-    // Mirrors handleThreadFileDrop: two drops queued for the same unopened
-    // thread, then the first navigation fails (or lands elsewhere) and cleans
-    // up by its own drop id. The newer drop must survive with its files
-    // intact so the thread opening still attaches them.
     const store = useSidebarPendingFileDropStore.getState();
     const firstId = store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("a.png")));
     const secondId = store.queuePendingFileDrop(makeEntry("env-1", "thread-1", makeFiles("b.png")));
 
-    // First navigation fails: handler clears only its own drop.
     useSidebarPendingFileDropStore.getState().clearPendingFileDrop(firstId);
     const remaining = useSidebarPendingFileDropStore.getState().pending;
     expect(remaining).toHaveLength(1);
     expect(remaining[0]?.id).toBe(secondId);
     expect(fileNames(remaining[0]?.files ?? [])).toEqual(["b.png"]);
 
-    // Thread opens: the surviving drop is still attached.
     expect(
       fileNames(
         useSidebarPendingFileDropStore

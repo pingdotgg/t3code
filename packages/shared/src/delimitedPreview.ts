@@ -1,4 +1,3 @@
-/** A table preview is bounded independently of the source preview's byte limit. */
 export function filePreviewDelimiter(file: { name: string; mimeType?: string }): "," | "\t" | null {
   const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase();
   if (mime === "text/csv") return ",";
@@ -9,7 +8,6 @@ export function filePreviewDelimiter(file: { name: string; mimeType?: string }):
   return null;
 }
 
-/** Preserve quoted delimiters, escaped quotes and multiline cells; raw mode retains all text. */
 export function parseDelimitedPreview(text: string, delimiter: "," | "\t") {
   const rows: string[][] = [];
   let row: string[] = [];

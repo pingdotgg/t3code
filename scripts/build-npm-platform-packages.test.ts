@@ -44,7 +44,6 @@ const run = Effect.fn("test.run")(function* (
   return { stdout, stderr, exitCode };
 });
 
-/** A tar.gz laid out like build-cli-archive.ts writes, with a stub `t3` that echoes its args. */
 const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -114,7 +113,6 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         version: VERSION,
         allowMissing: true,
       });
-      // Platform packages in CLI_ARCHIVE_PLATFORM_KEYS order, launcher last.
       assert.deepStrictEqual(
         outputs.map((output) => output.name),
         ["@t3code/t3-darwin-arm64", "@t3code/t3-linux-x64", "t3"],
@@ -140,16 +138,12 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       ]);
       assert.equal(linuxManifest.preferUnplugged, true);
       assert.isUndefined(linuxManifest.bin);
-      // The shipped node_modules is declared, or npm prunes it as extraneous
-      // on the next install in the same project and the executable breaks.
       assert.deepStrictEqual(linuxManifest.dependencies, {
         "@ff-labs/fff-node": "0.9.4",
         "node-pty": "1.1.0",
       });
       assert.deepStrictEqual(linuxManifest.bundleDependencies, ["@ff-labs/fff-node", "node-pty"]);
-      // Archive contents sit at the package root, not under the archive stem.
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "client/index.html")));
-      // A root README, or npm would display a bundled dependency's.
       assert.include(
         yield* fs.readFileString(path.join(linuxDir, "README.md")),
         "# @t3code/t3-linux-x64",
@@ -180,13 +174,9 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.isUndefined(launcherManifest.engines);
       assert.isTrue(yield* fs.exists(path.join(launcherDir, "bin/t3.js")));
 
-      // The scratch dirs must not be left behind next to the packages.
       const outputEntries = yield* fs.readDirectory(fixture.outputDir);
       assert.deepStrictEqual(outputEntries.sort(), ["@t3code", "t3", "t3.tgz"]);
 
-      // The tarball is what gets published: it must carry node_modules (which
-      // `npm publish <dir>` would strip) under npm's `package/` root, with the
-      // executable bit intact.
       const listing = yield* run(
         "tar",
         ["-tzvf", path.join(fixture.outputDir, "@t3code/t3-linux-x64.tgz")],
@@ -201,8 +191,6 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         listing.stdout,
       );
 
-      // NODE_PATH stands in for node_modules: require.resolve finds the
-      // platform package there exactly as it would after `npm install`.
       const hostPlatform = yield* HostProcess.Platform;
       const hostArch = yield* HostProcess.Architecture;
       const env = { ...process.env, NODE_PATH: fixture.outputDir } as Record<string, string>;
@@ -217,8 +205,6 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         );
         assert.equal(passthrough.exitCode, 7);
 
-        // Run the entry point used by already-installed service updaters from
-        // the published tarball, including their preflight arguments.
         const installedLauncher = path.join(fixture.root, "installed-launcher");
         yield* fs.makeDirectory(installedLauncher);
         const unpack = yield* run(

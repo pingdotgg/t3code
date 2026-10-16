@@ -449,7 +449,6 @@ describe("buildThreadListV2Items", () => {
         makeThread({
           id: ThreadId.make("woken"),
           title: "Woken",
-          // Wake time already passed: back in the active list.
           snoozedUntil: "2026-06-01T18:00:00.000Z",
           snoozedAt: "2026-06-01T12:00:00.000Z",
         }),
@@ -459,8 +458,6 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    // Same createdAt → static sort tiebreaks by id; the point is the woken
-    // thread is BACK in the card block and the snoozed one is gone.
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
   });
@@ -521,7 +518,6 @@ describe("buildThreadListV2Items", () => {
         makeThread({
           id: ThreadId.make("woken"),
           title: "Woken",
-          // Wake time already passed: back in the active list.
           snoozedUntil: "2026-06-01T18:00:00.000Z",
           snoozedAt: "2026-06-01T12:00:00.000Z",
         }),
@@ -531,8 +527,6 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    // Same createdAt → static sort tiebreaks by id; the point is the woken
-    // thread is BACK in the card block and the snoozed one is gone.
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
   });
@@ -545,7 +539,6 @@ describe("buildThreadListV2Items", () => {
           id: ThreadId.make("pinned-settled"),
           title: "Pinned while settled",
           pinnedAt: "2026-06-01T12:00:00.000Z",
-          // Stale settled state (the decider clears it on pin): the pin wins.
           settledOverride: "settled",
           settledAt: "2026-06-01T12:00:00.000Z",
         }),
@@ -555,8 +548,6 @@ describe("buildThreadListV2Items", () => {
       now: NOW,
     });
 
-    // Since #7969 a settled thread leaves the active block even while pinned;
-    // the pin re-applies when the thread is un-settled.
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-settled"]);
     expect(layout.items.map((item) => item.pinned)).toEqual([false, false]);
     expect(layout.settledCount).toBe(1);
@@ -578,12 +569,10 @@ describe("buildThreadListV2Items", () => {
       searchQuery: "",
     };
 
-    // Before the wake time: the snooze wins; the pin holds underneath.
     const whileSnoozed = buildThreadListV2Items({ ...snoozedInput, now: NOW });
     expect(whileSnoozed.items.map((item) => item.thread.id)).toEqual(["active"]);
     expect(whileSnoozed.snoozedCount).toBe(1);
 
-    // After the wake time: the thread returns pinned, back on top.
     const afterWake = buildThreadListV2Items({ ...snoozedInput, now: "2026-06-03T10:00:00.000Z" });
     expect(afterWake.items.map((item) => item.thread.id)).toEqual(["pinned-snoozed", "active"]);
     expect(afterWake.items[0]?.pinned).toBe(true);
@@ -596,8 +585,6 @@ describe("buildThreadListV2Items", () => {
         makeThread({
           id: ThreadId.make("just-woke"),
           title: "Just woke",
-          // Woke 30s ago: hidden under the minute-floored clock, visible
-          // under the precise one.
           snoozedUntil: "2026-06-02T00:00:30.000Z",
           snoozedAt: "2026-06-01T12:00:00.000Z",
         }),
@@ -814,7 +801,7 @@ describe("buildThreadListV2Items", () => {
           id: ThreadId.make("older-created"),
           title: "Older",
           createdAt: "2026-06-01T08:00:00.000Z",
-          updatedAt: NOW, // recent activity must NOT promote it
+          updatedAt: NOW,
         }),
         makeThread({
           id: ThreadId.make("newer-created"),
@@ -958,8 +945,6 @@ describe("buildThreadListV2Items settled paging", () => {
           settledOverride: "settled",
           settledAt: `2026-06-01T0${index}:10:00.000Z`,
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
-          // A turn adopted the message (same requestedAt): without it the
-          // thread reads as a queued turn start, which never settles.
           latestRun: {
             runId: RunId.make(`run-${index}`),
             status: "completed",
@@ -982,7 +967,6 @@ describe("buildThreadListV2Items settled paging", () => {
 
     expect(layout.hiddenSettledCount).toBe(2);
     expect(layout.items.filter((item) => item.variant === "slim")).toHaveLength(2);
-    // Most recent settled first — the hidden ones are the oldest.
     expect(layout.items.map((item) => item.thread.id)).toEqual([
       "active",
       "settled-3",
@@ -1071,8 +1055,6 @@ describe("buildThreadListV2Items settled sort reuse", () => {
   });
 
   it("re-sorts when the same settled rows arrive in a different order", () => {
-    // Same id and timestamp on two environments: only the stable input order
-    // breaks the tie, so a reordered input must not reuse the previous output.
     const first = makeSettled("twin", "2026-06-01T01:00:00.000Z");
     const second = makeSettled("twin", "2026-06-01T01:00:00.000Z", {
       environmentId: otherEnvironmentId,
@@ -1100,7 +1082,6 @@ describe("buildThreadListV2Items settled sort reuse", () => {
     });
 
     expect(order).toEqual(settled.toReversed().map((thread) => `${environmentId}:${thread.id}`));
-    // The settled sort parses every settled row at least once.
     expect(baseline - reused).toBeGreaterThanOrEqual(settled.length);
   });
 
@@ -1192,7 +1173,6 @@ describe("buildThreadListV2ListItems", () => {
               : "settled-shelf",
       ),
     ).toEqual(["active", "queued-1", "queued-2", "settled-shelf", "settled"]);
-    // Only the leading queued row labels the section, exactly like Settled.
     expect(
       items.filter((item) => item.type === "v2-pending" && item.showPendingDivider),
     ).toHaveLength(1);
@@ -1726,8 +1706,6 @@ it("excludes subagents from navigation, search and ordering while retaining user
   ).toEqual([fork.id, root.id]);
 });
 
-/* ─── Recycled-list equality + per-row clock scoping ─────────────────── */
-
 const BASE_MS = Date.parse(NOW);
 const isoAt = (ms: number) => new Date(ms).toISOString();
 const MINUTE_MS = 60_000;
@@ -1829,8 +1807,6 @@ describe("threadListV2ListItemsAreEqual", () => {
     searchQuery: "",
     now: NOW,
   });
-  // One queued task object shared across builds: identity, not content, is
-  // what the row equality compares (mirrors the store's stable references).
   const queued = makePendingTask("eq-queued");
   const build = () =>
     buildThreadListV2ListItems({
@@ -1916,8 +1892,6 @@ describe("threadListV2ListItemsAreEqual", () => {
     expect(threadListV2ListItemsAreEqual(shelf, { ...shelf })).toBe(true);
     expect(threadListV2ListItemsAreEqual(shelf, { ...shelf, count: 3 })).toBe(false);
     expect(threadListV2ListItemsAreEqual(shelf, { ...shelf, expanded: false })).toBe(false);
-    // A recycled cell ignores the render closure, so the shelf header's
-    // preference-loading disabled state has to ride on the item too.
     expect(threadListV2ListItemsAreEqual(shelf, { ...shelf, disabled: true })).toBe(false);
   });
 
@@ -1941,9 +1915,6 @@ describe("threadListV2ListItemsAreEqual", () => {
       pendingTasks: [],
       snoozeLabelNow: NOW,
     });
-    // The same shells with B settled: A now sits above the Settled section
-    // rule instead of another row, so A's hairline must flip through the
-    // recycled equality — its own shell reference never changed.
     const settledB = makeThread({
       id: ThreadId.make("flip-b"),
       title: "flip b",
@@ -1996,10 +1967,7 @@ describe("buildThreadListV2ListItems clock scoping", () => {
     const settled = byKey.get(`v2-thread:${environmentId}:tick-settled`)!;
     const snoozed = byKey.get(`v2-thread:${environmentId}:tick-snoozed`)!;
     expect(ready.type === "v2-thread" && ready.snoozePresetMinute).toBe(NOW);
-    // The swipe-revealed snooze action exists on slim rows too (the variant
-    // only swaps the primary action), so settled rows need the fresh clock.
     expect(settled.type === "v2-thread" && settled.snoozePresetMinute).toBe(NOW);
-    // Approval rows are never snoozable; snoozed rows only offer Wake.
     expect(approval.type === "v2-thread" && approval.snoozePresetMinute).toBeUndefined();
     expect(snoozed.type === "v2-thread" && snoozed.snoozePresetMinute).toBeUndefined();
   });
@@ -2034,9 +2002,6 @@ describe("buildThreadListV2ListItems clock scoping", () => {
         const item = byKey.get(key)!;
         return item.type === "v2-thread" ? item.timeLabel : "<shelf>";
       };
-      // Ready cards and settled/snoozed slim rows draw a time; the wake
-      // countdown outranks the time on snoozed rows; cards with a status
-      // label never draw one.
       expect(label(`v2-thread:${environmentId}:tick-ready`)).toBe("5m");
       expect(label(`v2-thread:${environmentId}:tick-working`)).toBe("");
       expect(label(`v2-thread:${environmentId}:tick-settled`)).toBe("3d");
@@ -2056,8 +2021,6 @@ describe("thread list v2 minute tick invalidation", () => {
       vi.setSystemTime(BASE_MS);
       const threads = buildTickThreads();
       const shellOrder = [threads.ready, threads.approval, threads.settled, threads.snoozed];
-      // One queued-task reference shared by both builds: the store hands the
-      // list the same pending-task objects between rebuilds.
       const pendingTasks = [makePendingTask("tick-queued")];
       const atStart = buildTickList(shellOrder, BASE_MS, pendingTasks);
       vi.setSystemTime(BASE_MS + MINUTE_MS);
@@ -2070,12 +2033,6 @@ describe("thread list v2 minute tick invalidation", () => {
           invalidated.push(atStart[index]!.key);
         }
       }
-      // The ready row draws a minute-granular time and carries the snooze
-      // menu, and the settled slim row's swipe-revealed snooze menu shows
-      // preset times too, so both rows' menu content moved. Every other row
-      // — the approval card (status label, never snoozable), the snoozed
-      // shelf row ("2h" unchanged, Wake only), the shelf headers, and the
-      // queued row — survives the tick untouched.
       expect(invalidated).toEqual([
         `v2-thread:${environmentId}:tick-ready`,
         `v2-thread:${environmentId}:tick-settled`,
@@ -2145,9 +2102,6 @@ describe("thread list v2 minute tick invalidation", () => {
       vi.setSystemTime(BASE_MS + MINUTE_MS);
       const stillTwoHours = buildTickList([snoozed], BASE_MS + MINUTE_MS, []);
       expect(threadListV2ListItemsAreEqual(wakeRow(atStart), wakeRow(stillTwoHours))).toBe(true);
-      // Minutes round up, so the countdown holds "2h" until the remaining
-      // time drops to the hour boundary — and only that row flips when it
-      // finally moves to minute granularity.
       vi.setSystemTime(BASE_MS + 61 * MINUTE_MS);
       const oneHour = buildTickList([snoozed], BASE_MS + 61 * MINUTE_MS, []);
       const oneHourRow = wakeRow(oneHour);
@@ -2178,9 +2132,6 @@ describe("buildThreadListV2ListItems trailing dividers", () => {
     const dividers = items.map((item) =>
       item.type === "v2-thread" || item.type === "v2-pending" ? item.showTrailingDivider : "n/a",
     );
-    // thread A | thread B | queued 1 | queued 2: consecutive threads keep
-    // their hairlines, the row before the Unsent section rule loses its own,
-    // queued rows divide each other, and the last row has nothing under it.
     expect(dividers).toEqual([true, false, true, false]);
   });
 });
@@ -2200,8 +2151,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
   const allEnvironments = new Set<EnvironmentId>([environmentId]);
 
   it("stamps queued outbox messages onto the matching row and notices removal", () => {
-    // An outbox write never touches the thread shell, so the queued icon has
-    // to ride on the item for the recycled cell to ever update it.
     const queued = buildTickList([readyThread, settledThread], BASE_MS, [], {
       queuedThreadKeys: new Set([`${environmentId}:stamp-ready`]),
       snoozeEnvironmentIds: allEnvironments,
@@ -2218,7 +2167,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     expect(readyQueued.type === "v2-thread" && readyQueued.hasQueuedMessages).toBe(true);
     expect(readyPlain.type === "v2-thread" && readyPlain.hasQueuedMessages).toBe(false);
     expect(threadListV2ListItemsAreEqual(readyQueued, readyPlain)).toBe(false);
-    // The neighbour row is untouched by the outbox change.
     expect(threadListV2ListItemsAreEqual(settledQueued, settledPlain)).toBe(true);
   });
 
@@ -2243,7 +2191,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     expect(readyOpen.type === "v2-thread" && readyOpen.canMoveUp).toBe(true);
     expect(readyClosed.type === "v2-thread" && readyClosed.canMoveUp).toBe(false);
     expect(threadListV2ListItemsAreEqual(readyOpen, readyClosed)).toBe(false);
-    // Slim rows never carry the move actions, so availability is inert there.
     const settledOpen = itemsByThreadKey(open).get(`v2-thread:${environmentId}:stamp-settled`)!;
     const settledClosed = itemsByThreadKey(closed).get(`v2-thread:${environmentId}:stamp-settled`)!;
     expect(settledOpen.type === "v2-thread" && settledOpen.canMoveUp).toBe(false);
@@ -2263,9 +2210,6 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
       });
       const rowAtStart = atStart.find((item) => item.type === "v2-thread")!;
       const rowAtNext = atNextMinute.find((item) => item.type === "v2-thread")!;
-      // The swipe-revealed secondary action carries the snooze preset menu on
-      // slim rows; its minute clock must move, or the displayed wake times
-      // drift while the row is recycled-stable.
       expect(rowAtStart.type === "v2-thread" && rowAtStart.item.variant).toBe("slim");
       expect(rowAtStart.type === "v2-thread" && rowAtStart.snoozePresetMinute).toBe(isoAt(BASE_MS));
       expect(rowAtNext.type === "v2-thread" && rowAtNext.snoozePresetMinute).toBe(

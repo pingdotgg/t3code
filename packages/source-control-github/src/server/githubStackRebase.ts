@@ -7,14 +7,12 @@ import * as Base64 from "effect/encoding/Base64";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
-/** One open layer of a stack, bottom to top, with the head the reader reviewed. */
 export interface CascadeLayer {
   readonly number: number;
   readonly headBranch: string;
   readonly headSha: string;
 }
 
-/** A layer's rebase hit a conflict; the layers below it are already rebased on GitHub. */
 export class GitHubStackRebaseConflictError extends Schema.TaggedError<GitHubStackRebaseConflictError>()(
   "GitHubStackRebaseConflictError",
   { number: Schema.Int, completed: Schema.Int },
@@ -24,7 +22,6 @@ export class GitHubStackRebaseConflictError extends Schema.TaggedError<GitHubSta
   }
 }
 
-/** Git failed for a reason other than a conflict: the fetch, or a push GitHub refused. */
 export class GitHubStackRebaseGitError extends Schema.TaggedError<GitHubStackRebaseGitError>()(
   "GitHubStackRebaseGitError",
   { step: Schema.String, number: Schema.Int, completed: Schema.Int, cause: Schema.Defect() },
@@ -34,27 +31,15 @@ export class GitHubStackRebaseGitError extends Schema.TaggedError<GitHubStackReb
   }
 }
 
-/** The git URL of a repository on a GitHub host, which is also where its token is good. */
 function remoteUrl(host: string, repository: string): string {
   return `https://${host.trim().toLowerCase()}/${repository}.git`;
 }
 
-/**
- * GitHub's own "Rebase stack": every open layer, bottom to top, onto the new head of the layer
- * below it (the bottom one onto the stack's base). Each layer moves only its own commits —
- * `git rebase --onto <new parent> <old parent>` — so a rebased lower layer is never replayed into
- * the one above it, which is what GitHub's per-PR "update branch" does and why it conflicts.
- *
- * It works in a throwaway clone, so the environment's checkout never moves, and pushes each
- * layer with a lease on the head that was reviewed, so a push that landed meanwhile is refused
- * rather than overwritten. The stacks API has no rebase endpoint to call instead.
- */
 export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (input: {
   readonly host: string;
   readonly repository: string;
   readonly base: string;
   readonly layers: ReadonlyArray<CascadeLayer>;
-  /** Where to fetch and push; the repository's own URL on its host unless a test points elsewhere. */
   readonly remote?: string;
 }) {
   const api = yield* GitHubRest.GitHubRest;

@@ -120,8 +120,6 @@ function nativeSelection(
 ) {
   let root = start[0];
   while (root.parentElement !== null) root = root.parentElement;
-  // Give every DOM boundary its own position, including element boundaries
-  // immediately before text offset 0 and after its final character.
   const positions = new Map<SelectionNode, number[]>();
   let position = 0;
   const index = (node: SelectionNode) => {

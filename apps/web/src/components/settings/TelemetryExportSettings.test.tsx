@@ -59,7 +59,6 @@ describe("TelemetryExportSettings", () => {
 
     await type("otlpTracesUrl", "http://draft/v1/traces");
     await type("otlpTracesUrl", "http://old/v1/traces");
-    // Another client saves a new traces endpoint.
     state.observability = { ...state.observability, otlpTracesUrl: "http://other/v1/traces" };
     await act(() => renderer!.update(<TelemetryExportSettings />));
     await type("otlpMetricsUrl", "http://new/v1/metrics");

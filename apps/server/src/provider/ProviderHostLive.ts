@@ -1,9 +1,3 @@
-/**
- * The server's implementation of `ProviderHost.ProviderHost`, the only server surface
- * provider drivers and adapters may use.
- *
- * @module provider/ProviderHostLive
- */
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
 import * as Crypto from "effect/Crypto";

@@ -33,9 +33,7 @@ const toBase64Url = (value: BufferSource) =>
   ).toString("base64url");
 
 /**
- * macOS passkeys through AuthenticationServices (`electron-webauthn`): the
- * system sheet offers iCloud Keychain, password managers, phones, and security
- * keys. Needs Apple's managed browser entitlement in the signed build.
+ * Needs Apple's managed browser entitlement in the signed build.
  */
 export const macPasskeyBackend: PasskeyBackend = {
   create: async (publicKey, context): Promise<PasskeyCeremonyResult> => {
@@ -63,8 +61,6 @@ export const macPasskeyBackend: PasskeyBackend = {
     const authData = authenticatorDataFromAttestation(
       Buffer.from(result.data.attestationObject, "base64url"),
     );
-    // Sites verify the new credential from its authenticator data; without it
-    // the passkey is unusable, so say so now rather than let sign-up fail later.
     if (!authData) return { success: false, error: "NotAllowedError" };
     return {
       success: true,

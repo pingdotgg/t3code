@@ -212,17 +212,11 @@ export function reduceDesktopUpdateStateOnInstallFailure(
   };
 }
 
-/** The install this app handed to the OS installer, saved right before it quits. */
 export interface DesktopUpdateInstallRecord {
   readonly fromVersion: string;
   readonly targetVersion: string;
 }
 
-/**
- * Read on the next start: the version an install did not apply, because the
- * app came back on the version it installed from. Null when the install
- * applied, or when the app now runs some other version.
- */
 export function resolveNotAppliedInstallVersion(
   record: DesktopUpdateInstallRecord,
   appVersion: string,

@@ -1,13 +1,3 @@
-/**
- * Preview - Schemas for the in-app browser preview surface.
- *
- * The preview is desktop-only (Chromium <webview>); the server tracks per-thread
- * tab metadata so it survives client reconnects and multi-window. The desktop
- * renderer mediates: it owns the actual <webview> and reports navigation back to
- * the server via these RPCs, the server fans events to all subscribers.
- *
- * @module Preview
- */
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BROWSER_PROFILE_MAX_COUNT, BrowserProfile, BrowserProfileId } from "./browserProfile.ts";
@@ -82,11 +72,6 @@ export const PREVIEW_VIEWPORT_PRESET_IDS = [
 export const PreviewViewportPresetId = Schema.Literals(PREVIEW_VIEWPORT_PRESET_IDS);
 export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type;
 
-/**
- * Preset IDs shipped before the Chrome-compatible catalog. Existing sessions
- * can still reconnect with these values, but new resize requests only expose
- * PREVIEW_VIEWPORT_PRESET_IDS.
- */
 const LEGACY_PREVIEW_VIEWPORT_PRESET_IDS = [
   "desktop-1920x1080",
   "desktop-1440x900",
@@ -120,9 +105,8 @@ export const FILL_PREVIEW_VIEWPORT = {
 } as const satisfies PreviewViewportSetting;
 
 /**
- * Discrete zoom levels mirroring Chrome's preset ladder. Zoom is applied by the
- * desktop main process to the Chromium guest, but the ladder lives here so the
- * settings UI can offer exactly the steps the zoom controls step through.
+ * Zoom is applied by the desktop main process to the Chromium guest, but the ladder lives here so
+ * the settings UI can offer exactly the steps the zoom controls step through.
  */
 export const PREVIEW_ZOOM_LEVELS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0,
@@ -133,17 +117,11 @@ export type PreviewZoomFactor = typeof PreviewZoomFactor.Type;
 
 export const DEFAULT_PREVIEW_ZOOM_FACTOR: PreviewZoomFactor = 1.0;
 
-/**
- * Preferred `prefers-color-scheme` for preview guests. `system` clears the
- * emulation override so the guest follows the OS. Structurally identical to
- * `DesktopPreviewColorScheme`, which is the IPC-layer spelling of the same set.
- */
 export const PreviewAppearancePreference = Schema.Literals(["system", "light", "dark"]);
 export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Type;
 
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = "system";
 
-/** A file a server tab downloaded, served by the tab's download route by this id. */
 const PreviewFileDownload = Schema.Struct({ id: Schema.String, fileName: Schema.String });
 
 export const PreviewNavStatus = Schema.Union([
@@ -161,34 +139,21 @@ export const PreviewNavStatus = Schema.Union([
     title: Title,
     code: Schema.Int,
     description: Schema.String,
-    /**
-     * Set when the address was a file the browser downloaded instead of a page
-     * it could show (a PDF in a server tab). The server tab's download route
-     * serves it by this id.
-     */
     download: Schema.optional(PreviewFileDownload),
   }),
 ]);
 export type PreviewNavStatus = typeof PreviewNavStatus.Type;
 
-/**
- * Where a tab's page runs. `desktop` is an Electron <webview> owned by one
- * desktop client; `server` is headless Chromium owned by the environment
- * server, viewed by any client through `/api/preview-stream` and driven by
- * agents with no client attached. Absent means `desktop`.
- */
 export const PreviewRuntime = Schema.Literals(["desktop", "server"]);
 export type PreviewRuntime = typeof PreviewRuntime.Type;
 
 /**
  * Host setup the server's browser is missing, sent as JSON in the reason when
- * the preview stream closes with code 4503. Fixing it needs the host's
- * operator, so viewers stop retrying and show `command`, the one line that
- * fixes it. Close reasons are capped at 123 bytes, which this fits.
+ * the preview stream closes with code 4503. Close reasons are capped at 123
+ * bytes, which this fits.
  */
 export const PreviewStreamHostSetup = Schema.Struct({
   need: Schema.Literals(["sandbox", "libraries"]),
-  /** For example `sudo npx t3 browser setup`, matching how the server was launched. */
   command: Schema.String,
 });
 export type PreviewStreamHostSetup = typeof PreviewStreamHostSetup.Type;
@@ -200,11 +165,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
   navStatus: PreviewNavStatus,
   canGoBack: Schema.Boolean,
   canGoForward: Schema.Boolean,
-  /** Missing snapshots from older servers are treated as fill-panel mode. */
   viewport: Schema.optional(PreviewViewportSetting),
-  /** Server tabs only; the desktop keeps its own tabs' appearance. Absent means `system`. */
   colorScheme: Schema.optional(PreviewAppearancePreference),
-  /** Server tabs only. Absent means 1. */
   zoomFactor: Schema.optional(PreviewZoomFactor),
   /**
    * Browser profile the tab's Chromium partition is derived from. Fixed at
@@ -213,11 +175,8 @@ export const PreviewSessionSnapshot = Schema.Struct({
    */
   profileId: Schema.optional(BrowserProfileId),
   runtime: Schema.optional(PreviewRuntime),
-  /** Authenticated provider session owning an isolated server tab. */
   automationOwner: Schema.optional(Schema.String),
-  /** An agent opened this tab and asked to show it, so viewers float it. */
   reveal: Schema.optional(Schema.Boolean),
-  /** A fresh presentation request, including whether it overrides automatic-floating settings. */
   revealRequest: Schema.optional(Schema.Struct({ id: Schema.String, force: Schema.Boolean })),
   updatedAt: Schema.String,
 });
@@ -225,20 +184,10 @@ export type PreviewSessionSnapshot = typeof PreviewSessionSnapshot.Type;
 
 export const PreviewOpenInput = Schema.Struct({
   threadId: ThreadId,
-  /** Omit to create an empty (Idle) tab the user can type into. */
   url: Schema.optional(Url),
-  /**
-   * Initial viewport for the new tab. Omitting it keeps the historical
-   * fill-panel behaviour; clients that have a configured default send it here
-   * so the session is born at the right size instead of being resized a frame
-   * later (which the user would see as a visible reflow).
-   */
   viewport: Schema.optional(PreviewViewportSetting),
-  /** Omit to open under the client's configured default profile. */
   profileId: Schema.optional(BrowserProfileId),
-  /** Omit for a desktop tab. `server` requires the `serverBrowser` capability. */
   runtime: Schema.optional(PreviewRuntime),
-  /** Set by agent opens that should float for viewers; see the snapshot field. */
   reveal: Schema.optional(Schema.Boolean),
 });
 export type PreviewOpenInput = typeof PreviewOpenInput.Type;
@@ -274,17 +223,14 @@ export const PreviewResizeInput = Schema.Struct({
 export type PreviewResizeInput = typeof PreviewResizeInput.Type;
 
 /**
- * Changes how a server tab renders, or clears its profile's site data, for any
- * client. Unlike page input, these need no control of the tab.
+ * Unlike page input, these need no control of the tab.
  */
 export const PreviewAdjustInput = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
   colorScheme: Schema.optional(PreviewAppearancePreference),
   zoomFactor: Schema.optional(PreviewZoomFactor),
-  /** Reloads the page past its cache, as Chrome's Shift+Reload does. */
   hardReload: Schema.optional(Schema.Boolean),
-  /** Clears the tab's profile's cookies or HTTP cache; its other storage stays. */
   clear: Schema.optional(Schema.Literals(["cookies", "cache"])),
 });
 export type PreviewAdjustInput = typeof PreviewAdjustInput.Type;
@@ -295,9 +241,7 @@ export const PreviewCloseInput = Schema.Struct({
 });
 export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 
-/** A client's browser profiles, which agents choose from when they open a tab. */
 export const PreviewReportProfilesInput = Schema.Struct({
-  /** The user's own profiles; the server adds the built-ins. */
   profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
   defaultProfileId: BrowserProfileId,
 });
@@ -317,7 +261,6 @@ export const PreviewListResult = Schema.Struct({
   sessions: Schema.Array(PreviewSessionSnapshot),
   /** Identifies the current server process so revision resets are safe. */
   serverEpoch: TrimmedNonEmptyString,
-  /** Monotonic server state revision used to reject stale list responses. */
   revision: NonNegativeInt,
 });
 export type PreviewListResult = typeof PreviewListResult.Type;
@@ -326,7 +269,6 @@ const PreviewEventBaseSchema = Schema.Struct({
   threadId: TrimmedNonEmptyString,
   tabId: PreviewTabId,
   createdAt: Schema.String,
-  /** Identifies the server process that emitted this event. */
   serverEpoch: TrimmedNonEmptyString,
   /** Monotonic server state revision shared with PreviewListResult. */
   revision: PositiveInt,
@@ -348,7 +290,6 @@ const PreviewResizedEvent = Schema.Struct({
   ...PreviewEventBaseSchema.fields,
   type: Schema.Literal("resized"),
   snapshot: PreviewSessionSnapshot,
-  /** A one-off action for the server's browser, such as a hard reload. */
   request: Schema.optional(
     Schema.Struct({
       hardReload: Schema.optional(Schema.Boolean),
@@ -381,10 +322,6 @@ export const PreviewEvent = Schema.Union([
 ]);
 export type PreviewEvent = typeof PreviewEvent.Type;
 
-/**
- * A localhost server detected by the port scanner. Used to populate the
- * "Local" recommendations in the empty-state of the preview panel.
- */
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
   port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),

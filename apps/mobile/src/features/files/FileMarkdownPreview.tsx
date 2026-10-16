@@ -91,7 +91,6 @@ export function FileMarkdownPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly markdown: string;
   readonly relativePath: string;
-  /** Absent for a file opened from a project draft, which has no thread yet. */
   readonly threadId: ThreadId | null;
   readonly onRefresh?: () => Promise<void> | void;
 }) {

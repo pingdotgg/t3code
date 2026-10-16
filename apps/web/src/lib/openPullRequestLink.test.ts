@@ -365,8 +365,6 @@ describe("findProjectForChangeRequest", () => {
     ({ id: "p1", repositoryIdentity: identity }) as never;
 
   it("matches a nested GitLab group by the whole path below the host", () => {
-    // The server identifies a repository by `displayName`, which keeps every group segment; the
-    // two-segment owner/name form would look for `t3tools/t3code` and find nothing.
     const projects = [
       project({
         canonicalKey: "gitlab.com/t3tools/platform/t3code",
@@ -407,9 +405,6 @@ describe("findProjectForChangeRequest", () => {
     // Azure alone addresses one repository under two names: `ssh.dev.azure.com` and `v3/...` over
     // SSH against `dev.azure.com` and `.../_git/...` everywhere a person sees it. The identity is
     // recorded in the spelling a link arrives in, so both halves of this comparison line up.
-    //
-    // Derived from the SSH remote the way the server derives it rather than written out, so the
-    // day that normalization stops reaching the web spelling this fails here too.
     const canonicalKey = normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code");
     const projects = [
       project({

@@ -6,7 +6,6 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-/** Largest context one app may keep for the agent, in UTF-8 bytes. */
 export const MCP_APP_MODEL_CONTEXT_MAX_BYTES = 16 * 1024;
 
 export class McpAppModelContextError extends Schema.TaggedError<McpAppModelContextError>()(
@@ -21,11 +20,6 @@ export interface McpAppModelContextEntry {
   readonly text: string;
 }
 
-/**
- * What each MCP App told the agent through `ui/update-model-context`. The spec
- * replaces an app's context on every update, so there is one entry per app (its
- * tool call); the thread's next turn carries the entries to the provider.
- */
 export class McpAppModelContext extends Context.Service<
   McpAppModelContext,
   {
@@ -72,8 +66,6 @@ export const layer = Layer.effect(
     });
 
     const forThread = Effect.fn("McpAppModelContext.forThread")(function* (threadId: ThreadId) {
-      // Only apps still in the thread's history count: an app whose item is
-      // gone, or whose run this thread rolled back, stops informing the agent.
       // The item can live in a thread this one was forked from, so it is
       // matched by id alone; that thread rolling the run back later leaves the
       // fork's copy in place.
@@ -98,7 +90,6 @@ export const layer = Layer.effect(
   }),
 );
 
-/** No app context: for code paths and tests with no MCP Apps. */
 export const layerEmpty = Layer.succeed(
   McpAppModelContext,
   McpAppModelContext.of({ set: () => Effect.void, forThread: () => Effect.succeed([]) }),

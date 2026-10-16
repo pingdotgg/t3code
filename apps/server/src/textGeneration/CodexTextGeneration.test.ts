@@ -40,14 +40,9 @@ interface FakeCodexInput {
   forbidArg?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
-  /** What `codex mcp list --json` answers; a number exits with that code instead. */
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
 }
 
-// The stub walks argv the way the shell script it replaced did: `--image`,
-// `--config key=value`, and `--output-last-message <path>` are consumed, the
-// prompt arrives on stdin, and each check exits with its own code so a
-// failing test names the assertion that tripped.
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
   const check = JSON.stringify({
     requireImage: input.requireImage ?? false,

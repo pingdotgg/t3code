@@ -33,11 +33,6 @@ export interface UsageChartWindow {
   readonly referenceTime: string | undefined;
 }
 
-/**
- * One model's usage in the current window, opened from the Breakdown list.
- * The trend and mixes come from the same merge as the page, narrowed to this
- * model's buckets.
- */
 export function UsageModelDialog({
   model,
   environments,
@@ -156,7 +151,6 @@ export function UsageModelDialog({
   );
 }
 
-/** What the faster speeds cost above standard rates, beside the speed bar. */
 export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
   return (
     <span className="text-xs text-muted-foreground">

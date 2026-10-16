@@ -176,7 +176,6 @@ export const layer: Layer.Layer<
               const targetAttempt = projection.attempts.find(
                 (attempt) => attempt.id === targetRun?.activeAttemptId,
               );
-              // A goal run can span several native turns; roll back to its last.
               const targetTurn =
                 latestProviderTurnForAttempt(projection.providerTurns, targetAttempt?.id) ??
                 projection.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
@@ -250,8 +249,6 @@ export const layer: Layer.Layer<
             }),
       });
 
-      // Stopped and failed runs after the target leave the provider
-      // conversation too, so they must not stay visible.
       const runsToRollback = projection.runs.filter(
         (run) =>
           run.ordinal > targetOrdinal &&

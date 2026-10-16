@@ -1,7 +1,3 @@
-/**
- * Responses recorded from `opencode serve` 1.18.32 and 2.0.18 on 2026-09-29, replayed by an
- * `HttpClient` so the version probe runs against real bytes.
- */
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -31,11 +27,6 @@ export const OPENCODE_2_RESPONSES = {
   },
 } satisfies Record<string, RecordedResponse>;
 
-/**
- * A 2.0.18 server's command and skill lists for a directory with one command
- * (`.opencode/command/bee.md`) and one skill (`.opencode/skills/plum`), live on
- * 2026-09-29. Skill contents are cut; machine-wide skills are dropped.
- */
 export const OPENCODE_2_WORKSPACE_RESPONSES = {
   "/api/command": {
     status: 200,
@@ -60,7 +51,6 @@ export const OPENCODE_1_RESPONSES = {
   unauthorized: { status: 401, body: "" },
 } satisfies Record<string, RecordedResponse>;
 
-/** Replays a recorded server; credentials other than `password` (none when empty) get its 401. */
 export function replayOpenCodeServer(
   responses:
     | typeof OPENCODE_1_RESPONSES

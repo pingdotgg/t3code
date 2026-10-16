@@ -37,10 +37,6 @@ export function capturePendingTaskEditorWriteBaseline(
   );
 }
 
-/**
- * Saves one dismissed editor after its captured predecessor. A true result
- * means both the outbox write and this editor's draft snapshot still match.
- */
 export function flushPendingTaskEditorWrite(input: {
   readonly message: QueuedThreadMessage;
   readonly baseline: Promise<number>;

@@ -250,9 +250,6 @@ function getThemeEditorColorFamily(role: ThemeColorRole): ThemeEditorColorFamily
 type ThemeEditorColors = ThemeColors;
 type ThemeEditorColorsByAppearance = Record<ThemeAppearance, ThemeEditorColors>;
 
-// A draft with no source theme starts as the standard T3 Code look — the
-// palette on screen when no theme is installed — so creating from the default
-// theme changes nothing until the user edits a color.
 function getThemeEditorDefaults(appearance: ThemeAppearance): ThemeEditorColors {
   return { ...getStandardThemeColors(appearance) };
 }
@@ -273,8 +270,6 @@ function getManagedEditorColors(
   colors: ThemeEditorColors,
 ): ThemeEditorColors {
   const defaults = getStandardThemeColors(appearance);
-  // The editor keeps the user's exact picks and derives the rest through the
-  // perceptual vivid engine, so a two-color theme carries its own identity.
   return createVividThemeColors(
     appearance,
     isThemeEditorColor(colors.canvas) ? colors.canvas : defaults.canvas,
@@ -298,18 +293,13 @@ export function ThemeEditorPanel({
     theme: ThemeDefinition,
     context: {
       created: boolean;
-      /** Set when a create merged its palette into an existing theme. */
       mergedAppearance?: ThemeAppearance;
     },
   ) => boolean;
   editingTheme: ThemeDefinition | null;
   initialAppearance: ThemeAppearance;
-  /** The theme a new theme starts from, so tuning what you already use is a
-   *  matter of editing rather than rebuilding. Null starts from the defaults. */
   seedTheme?: ThemeDefinition | null;
-  /** Prefilled name for an explicit duplicate; a plain create stays unnamed. */
   seedName?: string | undefined;
-  /** Reapplies the stored theme once the draft stops being previewed. */
   restoreTheme: () => void;
 }) {
   const isEditing = editingTheme !== null;
@@ -329,18 +319,13 @@ export function ThemeEditorPanel({
   const [isInspecting, setIsInspecting] = useState(false);
   const [selectedRole, setSelectedRole] = useState<ThemeColorRole | null>(null);
   const [usageCount, setUsageCount] = useState<number | null>(null);
-  // Null parks the panel at its default corner; a value is a dragged spot,
-  // kept clamped so the header can always be grabbed again.
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
-  // Null keeps the responsive default size; a value is a corner-grip resize.
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null);
   const resizeStartRef = useRef<{
     pointerX: number;
     pointerY: number;
-    // Where the panel's top-left sits: the grip only moves the opposite
-    // corner, so the room to grow is measured from here.
     left: number;
     top: number;
     width: number;
@@ -348,10 +333,6 @@ export function ThemeEditorPanel({
   } | null>(null);
   useEffect(() => {
     if (!open) return;
-    // A panel sized wider than the window can no longer be clamped back into
-    // view by position alone -- its right edge (close, minimize, the grip)
-    // stays off screen. So the size shrinks to fit first, then the position
-    // is re-clamped against the new size.
     const clamp = () => {
       const margin = 8;
       let clampedWidth: number | undefined;
@@ -365,11 +346,6 @@ export function ThemeEditorPanel({
       setPosition((current) => {
         if (!current) return current;
         const clamped = clampPosition(current.x, current.y, clampedWidth);
-        // Dragging may park the panel with only its header showing, but a
-        // window resize should pull the whole thing back into view when it
-        // fits -- otherwise the grip ends up below the fold. Minimized, the
-        // stored height is not applied (the panel hugs its header), so the
-        // rendered height is what has to fit.
         const height = isMinimized
           ? (panelRef.current?.offsetHeight ?? 0)
           : (clampedHeight ?? panelRef.current?.offsetHeight ?? 0);
@@ -389,9 +365,6 @@ export function ThemeEditorPanel({
 
   useEffect(() => {
     if (open && !previousOpenRef.current) {
-      // Editing works on the theme itself; creating starts from the theme
-      // that is currently in use, so tuning what you already run is an edit
-      // away instead of a rebuild from the defaults.
       const sourceTheme = editingTheme ?? seedTheme ?? null;
       const nextColors = getThemeEditorColorsByAppearance();
       const nextAppearance = sourceTheme
@@ -409,16 +382,11 @@ export function ThemeEditorPanel({
 
       setName(editingTheme?.label ?? seedName ?? "");
       setActiveAppearance(nextAppearance);
-      // Themes saved by the guided editor carry the managed flag; anything
-      // else (imports, hand-edited files, older saves) opens in advanced mode
-      // so guided regeneration cannot silently discard hand-tuned colors. A
-      // seeded new theme follows the same rule: its palette is only safe to
-      // regenerate when the guided editor produced it.
+      // Themes saved by the guided editor carry the managed flag; anything else
+      // (imports, hand-edited files, older saves) opens in advanced mode so
+      // guided regeneration cannot silently discard hand-tuned colors.
       setIsAdvanced(sourceTheme !== null && sourceTheme.managed !== true);
       setSimpleColorsDirtyByAppearance({ light: false, dark: false });
-      // An unmanaged palette needs conversion when the user opts into the
-      // guided editor. Merely revealing Advanced for a managed/default draft
-      // must stay read-only until a color changes.
       setShouldRegenerateGuidedColors(sourceTheme !== null && sourceTheme.managed !== true);
       setColorsByAppearance(nextColors);
       setSelectedRole(null);
@@ -431,12 +399,6 @@ export function ThemeEditorPanel({
     previousOpenRef.current = open;
   }, [editingTheme, initialAppearance, isDraftSeeded, open, seedName, seedTheme]);
 
-  // A name an installed theme already uses combines instead of failing:
-  // creating adds the new palette to that theme, and renaming an existing
-  // theme onto it folds the edited palette in and retires the old entry —
-  // light "My Theme" plus a dark "My Theme" become one theme with both modes.
-  // Labels are matched as well as derived ids: a rename keeps a theme's
-  // original id, so its label is the only name a user can see and retype.
   const nameTargetId = themeIdFromName(name);
   const normalizedName = name.trim().toLowerCase();
   const mergeTarget =
@@ -450,9 +412,6 @@ export function ThemeEditorPanel({
   const takenAppearances = mergeTarget ? getThemeModes(mergeTarget) : [];
   const editableAppearances = editingTheme ? getThemeModes(editingTheme) : null;
 
-  // The appearance a mode button would produce can be blocked two ways: the
-  // merge target already has that palette, or the theme being edited never
-  // had it (adding one is a create-with-same-name away).
   const appearanceLockReason = (appearance: ThemeAppearance): string | null => {
     if (editableAppearances && !editableAppearances.includes(appearance)) {
       return `“${editingTheme?.label}” has no ${appearance} palette. Create a theme with the same name to add one.`;
@@ -463,10 +422,6 @@ export function ThemeEditorPanel({
     return null;
   };
 
-  // Typing a name whose theme already owns the selected appearance flips the
-  // draft to the free side, so the merge affordance works without a manual
-  // toggle. Both sides taken leaves the selection alone; save is blocked with
-  // an explanation instead.
   const mergeTargetId = mergeTarget?.id ?? null;
   const takenAppearancesKey = takenAppearances.join(",");
   useEffect(() => {
@@ -479,9 +434,6 @@ export function ThemeEditorPanel({
     });
   }, [isEditing, mergeTargetId, takenAppearancesKey]);
 
-  // The whole app wears the draft while the editor is open, so a role change
-  // is judged on the real interface rather than a miniature. The stored theme
-  // comes back when the editor closes, including on cancel.
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
@@ -566,8 +518,6 @@ export function ThemeEditorPanel({
       setUsageCount(null);
       return;
     }
-    // Picking a new element needs the unobscured app, so suspend the existing
-    // spotlight while the picker is armed.
     if (isInspecting) return;
 
     const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
@@ -757,8 +707,6 @@ export function ThemeEditorPanel({
       }
       if (!shouldRegenerateGuidedColors) return;
 
-      // Regenerate every appearance the theme will save, not just the visible
-      // one, so the palettes shown after toggling match what gets saved.
       const managedAppearances: ReadonlyArray<ThemeAppearance> =
         editingTheme && getThemeModes(editingTheme).length > 1
           ? ["light", "dark"]
@@ -787,8 +735,6 @@ export function ThemeEditorPanel({
     }
 
     try {
-      // Only regenerate palettes the user actually touched in guided mode, so
-      // untouched appearances save exactly what the editor displayed.
       const colorsForSave = !isAdvanced
         ? {
             light: simpleColorsDirtyByAppearance.light
@@ -804,10 +750,6 @@ export function ThemeEditorPanel({
       let mergedAppearance: ThemeAppearance | null = null;
       let retiredTheme: ThemeDefinition | null = null;
       if (editingTheme && mergeTarget) {
-        // Renamed onto another installed theme: this theme's palettes fold
-        // into it and the edited entry retires, so both cards become one.
-        // Colliding palettes cannot merge — neither side should be silently
-        // overwritten.
         const editedModes = getThemeModes(editingTheme);
         const collision = editedModes.find((mode) => takenAppearances.includes(mode));
         if (collision) {
@@ -839,9 +781,7 @@ export function ThemeEditorPanel({
           // its pre-merge palettes before the failure surfaces.
           try {
             updateCustomTheme(mergeTarget);
-          } catch {
-            // Storage is failing wholesale; the rethrow below reports it.
-          }
+          } catch {}
           throw cause;
         }
       } else if (editingTheme) {
@@ -868,10 +808,6 @@ export function ThemeEditorPanel({
           );
           return;
         }
-        // The new palette joins the existing theme as its other mode; its
-        // stored palettes are untouched. The guided (managed) flag only
-        // survives when every palette in the theme came from the guided
-        // editor.
         mergedAppearance = activeAppearance;
         savedTheme = updateCustomTheme({
           ...parseThemeFile({
@@ -906,21 +842,14 @@ export function ThemeEditorPanel({
         })
       ) {
         if (!editingTheme && mergedAppearance === null) {
-          // Roll the install back so a retry can run it again instead of
-          // failing on the already-taken theme id.
           try {
             removeCustomTheme(savedTheme.id);
-          } catch {
-            // Storage is failing wholesale; the error below covers it.
-          }
+          } catch {}
         } else if (mergeTarget && mergedAppearance !== null) {
-          // Put the pre-merge definitions back for the same reason.
           try {
             updateCustomTheme(mergeTarget);
             if (retiredTheme) installCustomTheme(retiredTheme);
-          } catch {
-            // Storage is failing wholesale; the error below covers it.
-          }
+          } catch {}
         }
         setError("Theme saved, but it could not be made active. Try again.");
         return;
@@ -945,8 +874,6 @@ export function ThemeEditorPanel({
         size="sm"
         onChange={(event) => {
           setName(event.currentTarget.value);
-          // Most save failures are name collisions; retyping is the fix, so
-          // the stale message goes with the old name.
           setError(null);
         }}
         placeholder={isEditing ? "Theme name" : "e.g. Aurora"}
@@ -1096,13 +1023,11 @@ export function ThemeEditorPanel({
     const width = widthOverride ?? panel?.offsetWidth ?? 0;
     return {
       x: Math.min(Math.max(x, margin), Math.max(margin, window.innerWidth - width - margin)),
-      // Keep at least the header on screen even when dragged far down.
       y: Math.min(Math.max(y, margin), Math.max(margin, window.innerHeight - 48)),
     };
   };
 
   const handleDragPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    // Buttons in the header keep their own behavior.
     if ((event.target as HTMLElement).closest("button, input, a")) return;
     const rect = panelRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -1145,9 +1070,6 @@ export function ThemeEditorPanel({
     const margin = 8;
     const MIN_WIDTH = 280;
     const MIN_HEIGHT = 220;
-    // Grow only into the space right of and below the panel's own corner,
-    // otherwise a panel parked away from the top-left pushes its far edges
-    // (and this grip) off screen.
     const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - margin - start.left);
     const maxHeight = Math.max(MIN_HEIGHT, window.innerHeight - margin - start.top);
     setSize({
@@ -1177,8 +1099,6 @@ export function ThemeEditorPanel({
       style={{
         ...(position ? { left: position.x, top: position.y } : {}),
         ...(size ? { width: size.width } : {}),
-        // A chosen height only applies expanded; minimized keeps hugging the
-        // header. The viewport stays the ceiling either way.
         ...(size && !isMinimized ? { height: size.height, maxHeight: "calc(100dvh - 1rem)" } : {}),
       }}
     >
@@ -1250,8 +1170,6 @@ export function ThemeEditorPanel({
         <>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5">
             {renderNameField()}
-            {/* Inline and above the color list: the panel scrolls, and an
-                error parked below every role would go unseen. */}
             {error ? (
               <p aria-live="polite" className="text-sm text-destructive">
                 {error}

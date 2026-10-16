@@ -239,7 +239,6 @@ function ArchivedThreadRow(props: {
       </View>
     </View>
   );
-  // Keep the group's rounded corners on both interactive and read-only rows.
   const containerStyle = {
     borderTopLeftRadius: props.isFirst ? 20 : 0,
     borderTopRightRadius: props.isFirst ? 20 : 0,

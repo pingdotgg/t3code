@@ -13,7 +13,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/** OpenCode 2's renamed `read` and `shell` tools, run in one step, then a second step. */
 export function assertOpenCode2ToolCallOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -44,13 +43,11 @@ export function assertOpenCode2ToolCallOutput(
   assert.equal(shell?.status, "completed");
   assert.deepInclude(shell, { input: "echo TOOL_OK", output: "TOOL_OK\n", exitCode: 0 });
 
-  // Two steps: their usage adds up, and the last one is the live context size.
   const [providerTurn] = projection.providerTurns;
   assert.deepInclude(providerTurn?.turnTokenUsage, {
     usageStatus: "complete",
     inputTokens: 8767 + 487 + 45 + 9311,
     outputTokens: 59 + 33,
   });
-  // big-pickle lists a 200k context but takes 160k of input.
   assert.deepInclude(providerTurn?.tokenUsage, { usedTokens: 45 + 9311 + 33, maxTokens: 160000 });
 }

@@ -12,7 +12,6 @@ import { diffFileTreeEntries } from "./diffFileTree.logic";
 import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
 
 vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-// Tooltip positioning is unrelated to the tree's actual model and activation path.
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render }: { render: ReactNode }) => render,
@@ -67,9 +66,6 @@ describe("diff tree file activation", () => {
     });
   }
 
-  // Exercise T3's capture handler before the real Pierre model's selection transition.
-  // Only DOM hit testing is represented here; native pointer/keyboard dispatch and diff
-  // geometry are verified separately in the integrated client.
   async function activate(path: string, modifiers: Partial<MouseEvent<HTMLElement>> = {}) {
     const event = {
       button: 0,
@@ -116,7 +112,6 @@ describe("diff tree file activation", () => {
   });
 
   it("mounts a file-to-symlink type change as one tree row", async () => {
-    // Git carries a type change as a deletion and an addition of the same path.
     const typeChange = diffFileTreeEntries([
       { type: "deleted", name: "AGENTS.md", prevName: "AGENTS.md" } as FileDiffMetadata,
       { type: "new", name: "AGENTS.md", prevName: "AGENTS.md" } as FileDiffMetadata,

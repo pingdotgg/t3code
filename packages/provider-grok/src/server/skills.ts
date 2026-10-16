@@ -1,19 +1,7 @@
 /**
- * GrokSkills — skill discovery for the `$` picker via `grok inspect --json`.
- *
- * Unlike Claude Code, the Grok CLI reports its full skill catalog itself:
- * `grok inspect --json` returns `skills[]` with `name`, `description`,
- * `source.type` (`user` / `project` / `bundled` / `plugin`), `source.path`
- * (the absolute `SKILL.md` path), and `userInvocable`. Asking the CLI beats
- * scanning the filesystem because the catalog honors Grok's own skill config
- * (ignore lists, disabled skills) and includes plugin skills, which live
- * three levels deep under `~/.grok/installed-plugins/` where a flat scan
- * cannot see them. This mirrors how the Codex app-server reports skills over
- * `skills/list`. Probe failures stay typed so workspace snapshots do not
- * cache an empty catalog; machine-level discovery recovers them to an empty
- * list without degrading the provider.
- *
- * @module provider/Drivers/GrokSkills
+ * Asking the CLI beats scanning the filesystem because the catalog honors Grok's own skill
+ * config (ignore lists, disabled skills) and includes plugin skills, which live three levels
+ * deep under `~/.grok/installed-plugins/` where a flat scan cannot see them.
  */
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { GrokSettings } from "../settings.ts";
@@ -44,11 +32,6 @@ class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   }
 }
 
-/**
- * Map `grok inspect --json` output onto provider skills. Entries without a
- * name or a filesystem path are skipped; `userInvocable: false` skills are
- * kept but disabled so pickers that filter on `enabled` hide them.
- */
 function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSkill> | undefined {
   let parsed: unknown;
   try {
@@ -93,11 +76,6 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/**
- * Run `grok inspect --json` and map the reported catalog onto provider
- * skills. Callers that need best-effort discovery can recover this effect to
- * an empty list; workspace callers leave failures typed so they are not cached.
- */
 export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   grokSettings: Pick<GrokSettings, "binaryPath">,
   environment: NodeJS.ProcessEnv = process.env,

@@ -41,9 +41,6 @@ export function HomeHeader(props: HomeHeaderProps) {
     [navigation],
   );
   const iconColor = useUniwindTheme()["--color-icon"];
-  // The list uses a fixed creation order and ignores sort/group options, so
-  // the filter menu only carries the filters and the "customized" icon state
-  // keys off those alone.
   const hasCustomListOptions =
     props.selectedEnvironmentId !== null || props.selectedProjectKey !== null;
   const focusSearch = useCallback(() => {
@@ -67,8 +64,6 @@ export function HomeHeader(props: HomeHeaderProps) {
       <NativeStackScreenOptions
         optionsVersion={[filterMenu.items, showsCompactCompose]}
         options={{
-          // Static header config (glass, title, fonts) lives in Stack.tsx
-          // (GLASS_HEADER_OPTIONS). Only dynamic values are set here.
           headerTintColor: iconColor,
           unstable_headerRightItems: () =>
             sidebarHeader
@@ -147,8 +142,6 @@ export function HomeHeader(props: HomeHeaderProps) {
                   ],
                 }
               : {
-                  // Pre-Liquid-Glass iOS: standard pull-down search in the nav
-                  // bar; create + sort live in the plain bottom toolbar below.
                   headerSearchBarOptions: {
                     ref: searchBarRef,
                     autoCapitalize: "none" as const,

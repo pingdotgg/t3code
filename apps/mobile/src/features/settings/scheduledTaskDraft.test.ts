@@ -46,7 +46,6 @@ describe("scheduleDraftForTask", () => {
     });
     expect(draft.maxDeliveryAgeMinutes).toBe("45");
     expect(scheduleFromDraft(draft)).toMatchObject({ maxDeliveryAgeMinutes: 45 });
-    // An invalid limit is an invalid schedule, never a silently removed one.
     expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: "1.5" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: "0" })).toBeNull();
     expect(scheduleFromDraft({ ...draft, maxDeliveryAgeMinutes: "" })).toMatchObject({

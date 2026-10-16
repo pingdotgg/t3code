@@ -162,8 +162,6 @@ describe("effect-acp errors", () => {
     }),
   );
 
-  // The summary goes into logs, so it names where a payload broke its schema
-  // and never copies a value, including a record key the agent chose.
   it.effect("summarizes schema issues by path without payload values", () =>
     Effect.gen(function* () {
       const secret = "acp-summary-secret";

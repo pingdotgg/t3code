@@ -505,8 +505,6 @@ describe("mobile themes", () => {
 describe("flattenThemeColor", () => {
   it("composites a translucent border over its surface", async () => {
     const { flattenThemeColor } = await import("./mobileTheme");
-    // `--color-border` in the dark theme, over the surface a chip sits on. Native chip drawing
-    // parses opaque hex only, so this has to resolve before it crosses the bridge.
     expect(flattenThemeColor("rgba(255, 255, 255, 0.06)", "#171717")).toBe("#252525");
     expect(flattenThemeColor("rgba(0, 0, 0, 0.08)", "#ffffff")).toBe("#ebebeb");
   });

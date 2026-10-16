@@ -68,11 +68,9 @@ describe("serializeLegacyContextMessage", () => {
     const text = `Look at ${formatComposerContextReference(terminal)} please`;
     const legacy = serializeLegacyContextMessage({ text, records: [terminal] });
 
-    // An older server forwards text verbatim, so the payload has to be in it.
     expect(legacy).not.toContain("t3-context://");
     expect(legacy).toContain("boom");
 
-    // A newer client reading that message reconstructs the same excerpt.
     const upgraded = upgradeLegacyContextMessage(legacy);
     expect(upgraded.records).toHaveLength(1);
     expect(upgraded.records[0]).toMatchObject({

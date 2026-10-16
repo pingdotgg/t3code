@@ -4,9 +4,7 @@ import type * as NodeStream from "node:stream";
 import * as Yauzl from "yauzl";
 
 /**
- * Opens a local, already verified ZIP for lazy, one-entry-at-a-time reading.
- * `makeError` turns each failure into the caller's own error type. Close the
- * scope to close the archive.
+ * Close the scope to close the archive.
  */
 export const openZipArchive = Effect.fn("zipArchive.open")(function* <E>(
   archivePath: string,

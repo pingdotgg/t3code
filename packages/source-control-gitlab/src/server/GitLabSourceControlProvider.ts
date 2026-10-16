@@ -80,7 +80,6 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
-// What glab prints when it holds no login for the host, across its 1.x releases.
 const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
   /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
 

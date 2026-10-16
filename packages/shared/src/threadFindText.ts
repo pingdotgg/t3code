@@ -102,7 +102,6 @@ interface TextTree {
   readonly children?: ReadonlyArray<TextTree>;
 }
 
-/** Uses the renderer's Markdown transforms, without mounting folded/virtualized rows. */
 function markdownThreadFindText(
   markdown: string,
   userMessage = false,
@@ -139,7 +138,6 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
-      // Matches the citation chip, which shows its label instead of the link text.
       text += assistantCitationLabel(citation);
       return;
     }
@@ -169,7 +167,6 @@ function markdownThreadFindText(
     }
     const template = artifactTemplateFromHastProperties(node.properties);
     if (template) {
-      // Matches the card's visible text; its action button is not indexed.
       flush();
       segments.push(
         template.displayName,

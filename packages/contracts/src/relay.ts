@@ -50,10 +50,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   iosMajorVersion: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(18))),
   androidApiLevel: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(24))),
   appVersion: Schema.optional(TrimmedNonEmptyString),
-  // APNs routing for this install: the topic must match the app's bundle id
-  // (dev/preview/prod variants differ) and development-signed builds receive
-  // sandbox tokens. Optional so older app builds keep registering; the relay
-  // falls back to its configured defaults.
+  // APNs routing for this install: the topic must match the app's bundle id (dev/preview/prod
+  // variants differ) and development-signed builds receive sandbox tokens.
   bundleId: Schema.optional(TrimmedNonEmptyString),
   apsEnvironment: Schema.optional(RelayApnsEnvironment),
   pushToken: Schema.optional(TrimmedNonEmptyString),
@@ -413,7 +411,6 @@ export class RelayAuthInvalidError extends Schema.TaggedError<RelayAuthInvalidEr
   {
     code: Schema.Literal("auth_invalid"),
     reason: RelayAuthInvalidReason,
-    // Older relays do not send a DPoP failure category.
     dpopFailureReason: Schema.optionalKey(RelayDpopFailureReason),
     traceId: TrimmedNonEmptyString,
   },
@@ -468,8 +465,6 @@ export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErro
   "RelayEnvironmentConnectNotAuthorizedError",
   {
     code: Schema.Literal("environment_connect_not_authorized"),
-    // Optional so responses from relays deployed before the reason was
-    // threaded through still decode.
     reason: Schema.optional(RelayEnvironmentConnectNotAuthorizedReason),
     traceId: TrimmedNonEmptyString,
   },
@@ -823,11 +818,6 @@ export type RelayEnvironmentConnectResponse = typeof RelayEnvironmentConnectResp
 export const RelayEnvironmentStatusValue = Schema.Literals(["online", "offline"]);
 export type RelayEnvironmentStatusValue = typeof RelayEnvironmentStatusValue.Type;
 
-/**
- * Why an environment is offline, when the relay knows more than "the host
- * did not answer". `tunnel_released`: the relay deleted the environment's
- * idle tunnel, and the host needs a current T3 Code build to get a new one.
- */
 const RelayEnvironmentOfflineReason = Schema.Literals(["tunnel_released"]);
 type RelayEnvironmentOfflineReason = typeof RelayEnvironmentOfflineReason.Type;
 
@@ -1016,9 +1006,6 @@ export const RelayAgentActivitySnapshotResponse = Schema.Struct({
 });
 export type RelayAgentActivitySnapshotResponse = typeof RelayAgentActivitySnapshotResponse.Type;
 
-// Lets the app decide whether arming a Live Activity is worthwhile before
-// creating one (no empty lock-screen card when nothing is running) and seed
-// the card with the real aggregate instead of a placeholder.
 export const RelayAgentActivitySnapshotEndpoint = HttpApiEndpoint.get(
   "getAgentActivitySnapshot",
   "/v1/mobile/agent-activity",
@@ -1167,7 +1154,6 @@ export type RelayEnvironmentLinkPreferencesRequest =
   typeof RelayEnvironmentLinkPreferencesRequest.Type;
 
 export const RelayWakeHeldHooksResponse = Schema.Struct({
-  /** True when the relay was holding requests and has started delivering them. */
   pending: Schema.Boolean,
 });
 export type RelayWakeHeldHooksResponse = typeof RelayWakeHeldHooksResponse.Type;

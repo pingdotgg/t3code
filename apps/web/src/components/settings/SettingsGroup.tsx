@@ -2,7 +2,6 @@ import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/utils";
 
-/** Shared settings card surface, with optional separators between rows. */
 export function SettingsGroup({
   variant = "grouped",
   divided = true,

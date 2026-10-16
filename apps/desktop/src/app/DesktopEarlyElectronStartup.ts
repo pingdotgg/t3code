@@ -83,7 +83,6 @@ export function resolveEarlyLinuxPasswordStorePreference(
 
 const WAYLAND_COLOR_MANAGER_FEATURE = "WaylandWpColorManagerV1";
 
-// Chromium feature entries look like `*Name<Trial.Group:param/value`.
 const featureListNames = (value: string | null): ReadonlyArray<string> =>
   (value ?? "").split(",").flatMap((entry) => entry.trim().match(/^\*?([^<:]+)/)?.[1] ?? []);
 
@@ -129,14 +128,6 @@ const hasBrokenColorManager = (readHyprctlVersionJson: () => string): boolean =>
   }
 };
 
-/**
- * Returns the merged `--disable-features` value to apply before Electron is ready,
- * or null to leave the command line alone. `ozonePlatform` is the resolved
- * `--ozone-platform` value; Electron fills it in before app code runs.
- *
- * Color management stays on unless `hyprctl version -j` identifies a stock Hyprland
- * release known to kill the native Wayland connection right after the first window opens.
- */
 export function resolveLinuxDisableFeaturesSwitch(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly ozonePlatform: string | null;

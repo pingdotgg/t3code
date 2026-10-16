@@ -96,7 +96,6 @@ interface Harness {
   readonly allocation?: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
   readonly allow?: (key: string) => boolean;
   readonly allowEndpoint?: (endpointKey: string) => boolean;
-  /** Inbox capacity; hold reports full once this many requests are held. */
   readonly inboxCapacity?: number;
 }
 
@@ -247,9 +246,7 @@ describe("HookForwarder", () => {
       ]) {
         expect(sent.headers[dropped]).toBeUndefined();
       }
-      // Recomputed from the forwarded bytes, not copied from the sender.
       expect(sent.headers["content-length"]).toBe(String(body.length));
-      // The budget key is a hash, so the token never reaches the limiter.
       expect(harness.rateLimitKeys).toHaveLength(1);
       expect(harness.rateLimitKeys[0]).toMatch(/^[0-9a-f]{64}$/);
     }),
@@ -274,7 +271,6 @@ describe("HookForwarder", () => {
         audience: `t3-env:${environmentId}`,
         nowEpochSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
       });
-      // The proof names exactly the delivery the environment receives.
       expect(payload).toMatchObject({
         environmentId,
         hookId: "hook-1",
@@ -304,7 +300,6 @@ describe("HookForwarder", () => {
       expect(response.headers["content-type"]).toBe("application/json");
       expect(response.headers["set-cookie"]).toBeUndefined();
       expect(response.headers["access-control-allow-origin"]).toBeUndefined();
-      // Served from the relay's origin, so it may never render or run there.
       expect(response.headers["x-content-type-options"]).toBe("nosniff");
       expect(response.headers["content-security-policy"]).toBe("sandbox; default-src 'none'");
       expect(new TextDecoder().decode(yield* readBody(response))).toBe('{"error":"bad_signature"}');
@@ -393,8 +388,6 @@ describe("HookForwarder", () => {
 
   it.effect("forwards only to the link that owns the endpoint key", () =>
     Effect.gen(function* () {
-      // Another account linked the same environment id under its own key; its
-      // link must not receive this endpoint's hooks, whatever order rows come in.
       const intruder = {
         ...managedLink,
         userId: "user_attacker",
@@ -408,7 +401,6 @@ describe("HookForwarder", () => {
         "env.example.test",
       ]);
 
-      // Without the owner's link, the key resolves to nothing at all.
       const orphaned = makeHarness({ links: [intruder] });
       const orphanedResponse = yield* orphaned.send(
         new Request(hookUrl(), { method: "POST", body: "{}" }),
@@ -510,7 +502,6 @@ describe("HookForwarder", () => {
     Effect.gen(function* () {
       const harness = makeHarness();
       const response = yield* harness.send(new Request(hookUrl(), { method: "OPTIONS" }));
-      // No hook endpoint accepts OPTIONS, so it falls through to the 404 route.
       expect(response.status).toBe(404);
       expect(response.headers["access-control-allow-origin"]).toBeUndefined();
       expect(response.headers["access-control-allow-methods"]).toBeUndefined();
@@ -680,7 +671,6 @@ describe("HookForwarder", () => {
               HttpServerRequest.fromWeb(
                 new Request(hookUrl(), {
                   method: "POST",
-                  // A sender's own trace context never reaches the environment.
                   headers: {
                     traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
                     "x-b3-traceid": "33333333333333333333333333333333",
@@ -702,7 +692,6 @@ describe("HookForwarder", () => {
       expect(sent.headers.traceparent).not.toContain("1111111111");
       expect(sent.headers["x-b3-traceid"]).toBeUndefined();
 
-      // Only a plain outcome name is recorded.
       spans.length = 0;
       yield* forward(respondWith("<script>alert(1)</script>"));
       yield* Effect.yieldNow;
@@ -771,9 +760,7 @@ describe("HookForwarder", () => {
         expect(hook?.query).toBe("a=1");
         expect([...(hook?.body ?? [])]).toEqual([0, 255, 10]);
         expect(hook?.headers["x-sig"]).toBe("s");
-        // Every spelling of the hook id shares one per-hook cap.
         expect(hook?.hookKey).toBe("hook-1");
-        // The sender cannot choose the delivery id.
         expect(hook?.headers["x-t3-relay-delivery-id"]).toBeUndefined();
         expect(hook?.id).not.toBe("forged");
       }),

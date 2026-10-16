@@ -58,9 +58,7 @@ export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
-  /** Profile to open under; omit for the configured default. */
   readonly profileId?: PreviewOpenInput["profileId"];
-  /** Open the tab without switching the thread to it. */
   readonly background?: boolean;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const defaults = await resolveBrowserDefaults().catch(
@@ -82,9 +80,6 @@ export async function openUrlInPreview<E>(input: {
     input: {
       threadId: input.threadRef.threadId,
       url: input.url,
-      // Built here rather than via `openPreviewSession` because this path
-      // maps the result differently, so the configured defaults have to be
-      // applied explicitly or file/link opens would ignore them.
       viewport: browserDefaultOpenViewport(defaults),
       profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
       ...(runtime === undefined ? {} : { runtime }),
@@ -110,10 +105,6 @@ export async function openUrlInPreview<E>(input: {
   });
 }
 
-/**
- * Opens a browser document in the integrated browser. Inside the workspace the
- * page may load sibling assets; a file outside it is served on its own.
- */
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly filePath: string;

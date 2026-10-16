@@ -6,15 +6,6 @@ import { useTheme } from "../../hooks/useTheme";
 import { MarkdownCodeBlockFrame } from "../ChatMarkdown";
 import { ComposerCodeBlockLanguagePicker } from "./ComposerCodeBlockLanguagePicker";
 
-/**
- * Draws a composer fence in the chat view's own code block frame, so a draft
- * looks like the message it is about to become, with the language title
- * swapped for a picker that rewrites the fence's language in place.
- *
- * The chrome stops at the language. Chat's wrap and copy buttons act on text
- * the reader cannot change; here the text is the draft, and both are already
- * a selection away.
- */
 export function ComposerCodeBlockNodeView({
   node,
   editor,
@@ -27,7 +18,6 @@ export function ComposerCodeBlockNodeView({
 
   const changeLanguage = (next: string) => {
     updateAttributes({ language: withInfoStringLanguage(info, next) });
-    // Back into the code, at its end, the way a picker hands focus back.
     const position = getPos();
     if (typeof position === "number") {
       editor

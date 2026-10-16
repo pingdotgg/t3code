@@ -602,7 +602,6 @@ describe("shared device stream readiness and recovery", () => {
     expect(socket.send).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1_000);
     expect(videoBodies).toHaveLength(2);
-    // The old feed never produces another IDR. Only a fresh subscription can recover.
     videoBodies[1]!.enqueue(
       new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [4])]),
     );

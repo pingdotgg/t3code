@@ -9,7 +9,6 @@ import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 
-// Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
 const layerSetup = Layer.effectDiscard(
@@ -33,15 +32,11 @@ const layerSetup = Layer.effectDiscard(
     yield* sql`PRAGMA synchronous = NORMAL;`;
     // Checkpoints are now the only sync, and macOS fsync() does not flush the
     // drive cache. F_FULLFSYNC makes them reach disk; other platforms ignore it.
-    // Per-commit fullfsync stays off.
     yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
     // PASSIVE checkpoints never shrink the -wal file, so it otherwise keeps its
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
-    // Without sqlite_stat1 the planner guesses at index selectivity. 0x10012
-    // analyzes tables whose indexes lack stats or whose row count changed 10x,
-    // under a temporary analysis_limit. Otherwise it only checks table sizes.
     yield* sql`PRAGMA optimize = 0x10012;`;
   }),
 );

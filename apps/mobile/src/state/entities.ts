@@ -39,7 +39,6 @@ const EMPTY_THREAD_TITLES_ATOM = Atom.make(EMPTY_THREAD_TITLES).pipe(
   Atom.withLabel("mobile-thread-titles:empty"),
 );
 
-/** Thread titles in one environment. Emits when a title changes, not on every shell update. */
 const threadTitlesAtom = Atom.family((environmentId: EnvironmentId) => {
   let previous = EMPTY_THREAD_TITLES;
   return Atom.make((get) => {
@@ -54,7 +53,6 @@ const threadTitlesAtom = Atom.family((environmentId: EnvironmentId) => {
   }).pipe(Atom.withLabel(`mobile-thread-titles:${environmentId}`));
 });
 
-/** Resolves when the project event reaches the live client store. */
 export function waitForProject(
   ref: ScopedProjectRef,
   timeoutMs = 10_000,
@@ -105,7 +103,6 @@ export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
 }
 
-/** `markdown` with each thread link labeled by the thread's current title in `environmentId`. */
 export function useLiveThreadLinkLabels(markdown: string, environmentId: EnvironmentId): string {
   const titles = useAtomValue(
     hasThreadLinks(markdown) ? threadTitlesAtom(environmentId) : EMPTY_THREAD_TITLES_ATOM,

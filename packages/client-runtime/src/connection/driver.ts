@@ -32,13 +32,8 @@ export interface EnvironmentConnectionLease {
   readonly session: RpcSession.RpcSession;
 }
 
-/**
- * The result of an unauthenticated reachability check. T3 Connect and SSH
- * routes have no cheap check, so they are "unchecked".
- */
 export type RouteCheck = "answered" | "silent" | "unchecked";
 
-/** How long a direct route has to answer before it counts as unreachable from here. */
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 
 export class ConnectionDriver extends Context.Service<
@@ -48,16 +43,10 @@ export class ConnectionDriver extends Context.Service<
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
-    /** Whether a direct route answers as the entry's environment, without credentials. */
     readonly checkRoute: (
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
     ) => Effect.Effect<RouteCheck>;
-    /**
-     * Whether a direct route answers and accepts this client's credential,
-     * without opening a socket. Switching to a route that fails this would
-     * drop a working connection for nothing.
-     */
     readonly preflight: (
       entry: ConnectionCatalogEntry,
       route: ConnectionRoute,
@@ -65,20 +54,6 @@ export class ConnectionDriver extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/driver/ConnectionDriver") {}
 
-/**
- * Connects over the first route, in preference order, that is worth trying.
- * Every route is checked at once, but a route only waits for its own check,
- * so a reachable LAN address connects without waiting on a silent tailnet
- * one. A silent route is skipped on the first pass so a LAN address from
- * another network costs one short check, not a connection timeout. A route
- * that fails to connect moves on to the next: a signed-out T3 Connect must
- * not hide a working LAN. Silent routes are tried last, since a check is not
- * proof.
- *
- * The reported error is a transient one when any route failed transiently,
- * so the supervisor keeps retrying a route that may come back; a blocked
- * error is reported only when every attempted route was blocked.
- */
 export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")(function* <R>(
   entry: ConnectionCatalogEntry,
   checkRoute: (route: ConnectionRoute) => Effect.Effect<RouteCheck>,

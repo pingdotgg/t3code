@@ -90,7 +90,6 @@ export const layer = Layer.unwrap(
             resource,
           }).pipe(Layer.provide(SharedObservability.layerOtlpSerialization(metrics.protocol)));
 
-    // Logged once the server's loggers are installed, so the warnings use them.
     const layerOtelWarnings = Layer.effectDiscard(
       Effect.forEach(config.otelEnvironment.warnings, (warning) => Effect.logWarning(warning)),
     );

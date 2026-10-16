@@ -6,20 +6,12 @@ import { describePreviewError } from "./errorCodeMessages";
 
 interface Props {
   url: string;
-  /** Chromium net error code, e.g. -105. */
   code: number;
-  /** Stringified Chromium error, e.g. "ERR_NAME_NOT_RESOLVED". */
   description: string;
   onReload: () => void;
-  /** Reopens the page in a browser that may reach it, such as the environment's. */
   move?: { readonly label: string; readonly onMove: () => void };
 }
 
-/**
- * A server tab's address was a file its browser cannot show (a PDF), so the
- * browser downloaded it. Offers the address in the user's own browser, or the
- * file the server already saved.
- */
 export function PreviewFileNotShown({
   url,
   fileName,
@@ -59,7 +51,6 @@ export function PreviewFileNotShown({
   );
 }
 
-/** Theme-aware tailwind port of Chromium's "This site can't be reached" page. */
 export function PreviewUnreachable({ url, code, description, onReload, move }: Props) {
   const [showDetails, setShowDetails] = useState(false);
   const host = safeHost(url) ?? url;

@@ -230,7 +230,6 @@ it("tells a host glab has no login for apart from output that cannot say", () =>
       auth: { exitCode: ChildProcessSpawner.ExitCode(1), stdout: "", stderr },
     });
 
-  // A settled "no" is cached; anything else makes the next read ask glab again.
   assert.strictEqual(
     refine("x git.example.test has not been authenticated with glab. Run `glab auth login`"),
     null,

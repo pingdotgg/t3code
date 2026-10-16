@@ -69,16 +69,13 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(lint.changes, [{ kind: "checks-failed", failed: [check("lint", "failure")] }]);
     assert.deepEqual(evaluatePullRequestWatch(lint.next, first, noRemarks).changes, []);
 
-    // A different job failing later is news of its own.
     const second = detail({ checks: [check("lint", "failure"), check("test", "failure"), bot] });
     const test = evaluatePullRequestWatch(lint.next, second, noRemarks);
     assert.deepEqual(test.changes, [{ kind: "checks-failed", failed: [check("test", "failure")] }]);
 
-    // A rerun leaves the list while it runs, so failing again is reported again.
     const rerun = evaluatePullRequestWatch(test.next, first, noRemarks);
     assert.equal(evaluatePullRequestWatch(rerun.next, second, noRemarks).changes.length, 1);
 
-    // A push reports its failures, even ones that failed between two passes.
     const pushed = detail({ ...second, headSha: "bbbbbbbbbb" });
     assert.equal(evaluatePullRequestWatch(test.next, pushed, noRemarks).changes.length, 1);
   });
@@ -95,7 +92,6 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(passed.changes, [{ kind: "checks-passed", count: 2, required: true }]);
     assert.deepEqual(evaluatePullRequestWatch(passed.next, green, noRemarks).changes, []);
 
-    // Where nothing is marked required, every check has to pass.
     const plain = detail({ checks: [check("test", "success"), check("bot", "pending")] });
     assert.deepEqual(evaluatePullRequestWatch(watch(), plain, noRemarks).changes, []);
   });
@@ -111,7 +107,6 @@ describe("evaluatePullRequestWatch", () => {
     const first = evaluatePullRequestWatch(watch(), tests, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "checks-passed", count: 1, required: true }]);
 
-    // The gate job was created and finished between two passes, so it was never seen pending.
     const gated = detail({
       checks: [
         required("Tests", "success"),
@@ -123,7 +118,6 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(second.changes, [{ kind: "checks-passed", count: 2, required: true }]);
     assert.deepEqual(evaluatePullRequestWatch(second.next, gated, noRemarks).changes, []);
 
-    // Seen pending first, the gate is reported once it passes, as before.
     const pending = detail({
       checks: [required("Tests", "success"), required("Smoke Tests Gate", "pending")],
     });
@@ -207,7 +201,6 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watch(), contributor, [reply]).changes, [
       { kind: "remarks", remarks: [reply] },
     ]);
-    // Without a viewer, the author is taken to be the agent.
     const noViewer = detail({ viewer: undefined, author: contributor.author });
     assert.deepEqual(evaluatePullRequestWatch(watch(), noViewer, [reply]).changes, []);
   });
@@ -228,7 +221,6 @@ describe("evaluatePullRequestWatch", () => {
     const conflicting = detail({ mergeability: "conflicting" });
     const first = evaluatePullRequestWatch(watch(), conflicting, noRemarks);
     assert.deepEqual(first.changes, [{ kind: "conflicting" }]);
-    // GitHub answers "unknown" while it recomputes after a push; that is not a resolution.
     const recomputing = evaluatePullRequestWatch(
       first.next,
       detail({ mergeability: "unknown" }),

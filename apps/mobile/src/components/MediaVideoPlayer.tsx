@@ -13,7 +13,6 @@ import { type MediaActionsSource } from "../lib/mediaActionsSource";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../lib/videoAudioSession";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 
-/** Loads only after Play or opening the viewer. Source replacement never starts playback itself. */
 function LoadedMediaVideo(props: {
   readonly uri: string;
   readonly resolvePlaybackUri?: () => Promise<string | null>;

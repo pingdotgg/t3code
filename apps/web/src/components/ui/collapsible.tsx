@@ -23,8 +23,6 @@ function CollapsiblePanel({
   animate = true,
   ...props
 }: CollapsiblePrimitive.Panel.Props & { animate?: boolean }) {
-  // Reuses the local shadcn/Base UI panel; skip height travel for reduced motion.
-  // https://ui.shadcn.com/docs/components/base/collapsible
   return (
     <CollapsiblePrimitive.Panel
       className={cn(

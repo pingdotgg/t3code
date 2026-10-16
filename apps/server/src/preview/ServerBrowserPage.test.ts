@@ -205,7 +205,6 @@ describe("server browser element refs", () => {
     await ServerBrowserPage.click(page, { locator: "#target", clickCount: 2 });
     await ServerBrowserPage.hover(page, { locator: "#hover" });
     expect(await page.isVisible("#menu")).toBe(true);
-    // A visible label selects the same option as its value.
     expect(await ServerBrowserPage.select(page, { locator: "#size", values: ["Large"] })).toEqual({
       selected: ["l"],
     });
@@ -283,8 +282,6 @@ describe("server browser drag", () => {
     const timedOut = new Error("locator.dragTo: Timeout 30000ms exceeded.");
     const box = { x: 0, y: 0, width: 20, height: 20 };
     const targetBox = Promise.withResolvers<typeof box>();
-    // Only the calls `drag` makes. The drag fails at once; the target's position arrives only
-    // when the test hands it over, after the rejection has had a turn to go unobserved.
     const page = {
       locator: (selector: string) =>
         selector === "#card"
@@ -308,7 +305,6 @@ describe("server browser drag", () => {
       // Two macrotask turns: Node reports a rejection nobody observed after the first.
       await new Promise((resolve) => setImmediate(resolve));
       await new Promise((resolve) => setImmediate(resolve));
-      // The failed drag waits for the cursor to reach the target before it reports.
       expect(finished).toBe(false);
       targetBox.resolve(box);
 

@@ -13,36 +13,22 @@ export type NavigationWithFinishTransitioning = {
   readonly addListener: (type: "finishTransitioning", callback: () => void) => () => void;
 };
 
-/**
- * How long after the dismissal's state change the keyboard starts rising, so
- * its ~250ms show overlaps the tail of the sheet's ~500ms travel the way
- * UIKit apps choreograph it. This is aesthetics, not correctness: without
- * keepFocus-style inputView overrides a show started mid-dismissal completes
- * cleanly, so a slower device merely gets more overlap — no failure mode.
- * The navigator's `finishTransitioning` event (UIKit's real completion
- * callback, surfaced by the repo's native-stack patch) additionally bounds
- * the restore at the true landing moment should this timer ever lag it.
- */
 const SHEET_DISMISSAL_KEYBOARD_OVERLAP_MS = 300;
 
 /**
  * A JS-initiated dismissal pops state before its animation runs; a
  * gesture-driven one animates natively first and pops afterwards, with the
- * navigator's completion event landing a few dozen milliseconds before the
- * pop. A completion this fresh at pop time therefore means the sheet is
- * already gone and the keyboard should return immediately. The two orderings
- * are separated by the sheet's full ~500ms travel, so this window is a
- * classification with wide margin, not an animation race.
+ * navigator's completion event landing a few dozen milliseconds before the pop.
+ * A completion this fresh at pop time therefore means the sheet is already gone
+ * and the keyboard should return immediately.
  */
 const NATIVE_DISMISSAL_ECHO_WINDOW_MS = 150;
 
 /**
- * Keeps the custom native composer and the settings sheet from owning focus at
- * the same time. Opening resigns the editor cleanly; a dismissal re-focuses it
- * once the sheet has fully landed. A plain blur/focus pair costs one keyboard
- * animation each way — keepFocus-style inputView overrides are avoided because
- * removing them forces UIKit to reload input views, replaying the keyboard's
- * show as a visible collapse/re-open.
+ * A plain blur/focus pair costs one keyboard animation each way —
+ * keepFocus-style inputView overrides are avoided because removing them forces
+ * UIKit to reload input views, replaying the keyboard's show as a visible
+ * collapse/re-open.
  */
 export function useThreadSettingsSheetPresentation(input: {
   readonly editorRef: RefObject<ComposerEditorHandle | null>;
@@ -136,25 +122,18 @@ export function useThreadSettingsSheetPresentation(input: {
     requestAnimationFrame(restoreFocus);
   }, [input.editorRef]);
 
-  /** Runs the queued restore once — whichever completion signal arrives first. */
   const runPendingDismissalRestore = useCallback(() => {
     if (!restorePendingRef.current) {
       return;
     }
     restorePendingRef.current = false;
     clearDismissRestoreTimer();
-    // A reopened sheet owns focus again; drop the stale restore request.
     if (!isMountedRef.current || isActiveRef.current) {
       return;
     }
     restoreEditorFocus();
   }, [clearDismissRestoreTimer, restoreEditorFocus]);
 
-  /**
-   * Marks the sheet closed and queues the keyboard's return for the moment
-   * the dismissal transition actually completes: the sheet slides away over a
-   * resting composer, then the keyboard lifts it in one continuous motion.
-   */
   const onDismissed = useCallback(() => {
     isActiveRef.current = false;
 
@@ -170,9 +149,6 @@ export function useThreadSettingsSheetPresentation(input: {
     restorePendingRef.current = true;
     clearDismissRestoreTimer();
     if (Date.now() - lastStackTransitionFinishedAtRef.current <= NATIVE_DISMISSAL_ECHO_WINDOW_MS) {
-      // A stack transition finished just before this pop reached JS: the pop
-      // is the state echo of a gesture-driven dismissal whose animation has
-      // already completed. The sheet is gone — bring the keyboard back now.
       runPendingDismissalRestore();
       return;
     }
@@ -182,7 +158,6 @@ export function useThreadSettingsSheetPresentation(input: {
     }, SHEET_DISMISSAL_KEYBOARD_OVERLAP_MS);
   }, [clearDismissRestoreTimer, runPendingDismissalRestore]);
 
-  /** Wire to the navigator's `finishTransitioning` event. */
   const onStackTransitionsFinished = useCallback(() => {
     lastStackTransitionFinishedAtRef.current = Date.now();
     runPendingDismissalRestore();

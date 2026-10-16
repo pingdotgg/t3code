@@ -35,7 +35,6 @@ describe("classifyScope", () => {
     expect(classifyScope({ ...running, activeState: "failed", result: "oom-kill" })).toBe(
       "oom-killed",
     );
-    // The agent pipe can close before systemd handles the kill.
     expect(classifyScope({ ...running, oomKills: 1 })).toBe("stopping");
     expect(classifyScope({ ...running, populated: false })).toBe("stopping");
     expect(classifyScope({ ...running, activeState: "deactivating" })).toBe("stopping");
@@ -62,9 +61,6 @@ describe("agentSliceMemoryLimits", () => {
   });
 });
 
-// Runs the real service against a fake user manager. `units` holds the
-// ActiveState and Result that `systemctl show` reports for each scope or
-// slice, and `calls` records every command in order.
 const withFakeSystemd = <A, E>(
   body: (input: {
     readonly scope: Effect.Success<typeof make>;
@@ -137,16 +133,13 @@ describe("AgentScope service", () => {
         units.set(unitOf(first), { activeState: "failed", result: "oom-kill" });
         const second = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
         units.set(unitOf(second), { activeState: "active", result: "success" });
-        // The older scope was OOM-killed, but the newest one is still running.
         expect(yield* scope.oomKilled("a")).toBe(false);
 
         units.set(unitOf(second), { activeState: "failed", result: "oom-kill" });
         expect(yield* scope.oomKilled("a")).toBe(true);
-        // A retried failure reads the same, even after the failed unit is reset.
         units.delete(unitOf(second));
         expect(yield* scope.oomKilled("a")).toBe(true);
 
-        // The next session may run without a scope, for example on Cursor.
         yield* scope.clear("a");
         expect(yield* scope.oomKilled("a")).toBe(false);
       }),
@@ -174,9 +167,7 @@ describe("AgentScope service", () => {
         const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
         const stops = calls.filter(([, verb]) => verb === "stop");
         expect(stops).toEqual([["--user", "stop", ownedAgentSlice(stateDir)]]);
-        // Agents run in this server's own slice; terminals stay outside it.
         expect(sliceOf(agent)).toBe(ownedAgentSlice(stateDir));
-        // An agent that ignores SIGTERM is killed well inside the stop's wait.
         expect(agent.args).toContain("--property=TimeoutStopSec=10s");
         const terminal = yield* scope.wrap({
           command: "agent",
@@ -185,7 +176,6 @@ describe("AgentScope service", () => {
           survivesRestart: true,
         });
         expect(sliceOf(terminal)).toBe("app-t3code-agents.slice");
-        // Only the first launch looks for leftovers.
         expect(calls.filter(([, verb]) => verb === "stop")).toHaveLength(1);
       }),
     ),

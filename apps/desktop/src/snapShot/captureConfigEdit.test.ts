@@ -20,7 +20,6 @@ describe("Niri capture config edits", () => {
   });
   it("ignores commented, nested, and string-valued binds and braces", () => {
     const before = `// binds { fake\n/* binds { /* nested */ } */\n/- binds { Ctrl+Shift+2 { quit; } }\nrecent-windows { binds { Alt+Tab { next-window; } }; }\nspawn-at-startup "echo" r#"binds { }"#\n"binds" {\n    Mod+Q { spawn "a } \\" b"; }\n}\n`;
-    // A quoted brace in a valid shell argument must not close the binds section.
     const valid = before.replace('"a } \\" b"', '"a } b"');
     const result = editCaptureConfig(valid, "niri", app, "install");
     expect(result.after).toContain(`    ${binding}\n}\n`);

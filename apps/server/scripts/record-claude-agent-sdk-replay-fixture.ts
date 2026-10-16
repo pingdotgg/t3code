@@ -219,9 +219,6 @@ const CLAUDE_RECORDINGS = {
     enableTools: true,
     backgroundWakeCounts: [1, 0, 1, 0],
   },
-  // Each prompt is offered as soon as its turn and the wakes counted here
-  // settle, so a wake queued during a turn (Agent B's "stopped" notice) is
-  // still pending in the CLI when the next prompt arrives, and runs first.
   claude_background_wake_before_queued_prompt: {
     prompts: [
       CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT,
@@ -482,10 +479,6 @@ const shouldRemoveCwd = process.env.T3_CLAUDE_REPLAY_CWD === undefined;
 const expectedAbsentWorkspacePaths =
   "expectedAbsentWorkspacePaths" in recording ? recording.expectedAbsentWorkspacePaths : [];
 
-// Scenarios that deny a tool call prove the denial by checking the real
-// recording workspace, not just the transcript: the target must be absent
-// before and after the turn, and the verified paths are preserved in the
-// transcript metadata before the temporary workspace is removed.
 async function assertWorkspacePathsAbsent(phase: "before" | "after"): Promise<void> {
   const presentPaths = await runFileSystem(
     Effect.gen(function* () {

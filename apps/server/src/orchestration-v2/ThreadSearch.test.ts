@@ -175,7 +175,6 @@ it.layer(layerTest)("ThreadSearch", (it) => {
         ],
       );
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
-      // LIKE wildcards in the query match literally.
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
     }),
   );
@@ -232,8 +231,6 @@ it.effect("searches on the reader worker while the writer is busy", () =>
         { discard: true },
       );
 
-      // A write transaction holds the writer connection. A search on the writer would queue
-      // behind it and never finish; one on the reader worker does not wait.
       const writerHeld = yield* Deferred.make<void>();
       const releaseWriter = yield* Deferred.make<void>();
       const writer = yield* Effect.forkChild(

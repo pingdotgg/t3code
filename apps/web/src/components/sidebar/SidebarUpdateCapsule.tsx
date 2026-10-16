@@ -22,8 +22,6 @@ import {
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
 
-/** The current time, rounded down to `intervalMs` so it changes once per
-    interval. With null it is read only when something else renders. */
 function useNow(intervalMs: number | null): number {
   const step = intervalMs ?? 60_000;
   const subscribe = useCallback(
@@ -66,13 +64,6 @@ function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, 
   return "restarts after the servers";
 }
 
-/**
- * The sidebar update button while an "update everything" pass runs. It grows
- * left into the free footer space and names the most urgent thing: this
- * app's restart countdown, a slow machine, progress, or a failure. Click it
- * for every machine. Time labels change once a second only during the
- * countdown, and otherwise once every 30 seconds.
- */
 export function SidebarUpdateCapsule({
   run,
   local,
@@ -82,7 +73,6 @@ export function SidebarUpdateCapsule({
   readonly run: UpdateEverythingRun;
   readonly local: UpdateRunLocalState;
   readonly icon: ReactNode;
-  /** Installs this app's downloaded update after the user postponed it. */
   readonly onRestart?: () => Promise<void>;
 }) {
   const machines = useUpdateRunMachineViews(run);
@@ -129,7 +119,6 @@ export function SidebarUpdateCapsule({
             <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
           ) : null}
         </span>
-        {/* The footer leaves little room, so an action takes the icon's place. */}
         {view.action !== null ? (
           <button
             type="button"

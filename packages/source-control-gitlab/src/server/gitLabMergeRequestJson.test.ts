@@ -200,10 +200,8 @@ describe("decodeMergeRequestDetailJson", () => {
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).autoMergeEnabled;
 
     expect(armed({ merge_when_pipeline_succeeds: true })).toBe(true);
-    // The newer name for the same fact, which older GitLab installs do not send.
     expect(armed({ auto_merge_enabled: true })).toBe(true);
     expect(armed({ merge_when_pipeline_succeeds: false })).toBe(false);
-    // Absent is GitLab not saying, which the page must not read as "not armed".
     expect(armed({})).toBeUndefined();
   });
 
@@ -234,10 +232,7 @@ describe("decodeMergeRequestDetailJson", () => {
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).divergedCommits;
 
     expect(behind({ diverged_commits_count: 3 })).toBe(3);
-    // Counted and found level, which is the one answer that entitles the page to say so.
     expect(behind({ diverged_commits_count: 0 })).toBe(0);
-    // An install that does not answer, and a null where the answer would have gone, are both
-    // silence: reading either as zero would tell a stale branch it is current.
     expect(behind({})).toBeUndefined();
     expect(behind({ diverged_commits_count: null })).toBeUndefined();
   });
@@ -289,7 +284,6 @@ describe("decodeNotesJson", () => {
       kind: "issue-comment",
       body: "Looks good.",
     });
-    // The raw count keeps the dropped notes visible to the caller, which needs them to page.
     expect(notes.rawCount).toBe(3);
   });
 
@@ -561,8 +555,6 @@ describe("merge request viewer fields", () => {
   });
 
   it("leaves merging permitted where GitLab answered without the field", () => {
-    // Only the single-merge-request endpoint carries `user`, and an install that answers without
-    // it has said nothing about the viewer rather than said no.
     expect(expectSuccess(decodeMergeRequestDetailJson(detailJson({}))).viewerCanMerge).toBe(true);
     expect(
       expectSuccess(decodeMergeRequestDetailJson(detailJson({ user: null }))).viewerCanMerge,
@@ -594,7 +586,6 @@ describe("decodeAwardEmojiJson", () => {
                     },
                     {
                       id: "gid://gitlab/Note/7",
-                      // Not one of the eight the contract carries.
                       awardEmoji: {
                         nodes: [{ name: "partyparrot", user: { username: "bilal" } }],
                       },
@@ -608,14 +599,9 @@ describe("decodeAwardEmojiJson", () => {
       ),
     );
 
-    // `bilal` is `currentUser`, so the group they are in reads back as reacted, but their own
-    // username is left out of `actors` — the page names them "You" instead — while `count` still
-    // counts them; `julius` alone does not turn a group's own `viewerHasReacted` on.
     expect(result.reactions).toEqual([
       { content: "thumbs-up", count: 2, actors: ["julius"], viewerHasReacted: true },
     ]);
-    // Note 7's only award named nobody the eight recognise, so it carries no reactions and is
-    // left out of the map rather than kept empty.
     expect([...result.reactionsByNoteId]).toEqual([
       ["42", [{ content: "heart", count: 1, actors: ["julius"], viewerHasReacted: false }]],
     ]);
@@ -698,7 +684,6 @@ describe("gitLabAwardName", () => {
 });
 
 describe("decodeRepositoryBlobsJson", () => {
-  /** Null is the query going unanswered, which these cases are not about. */
   function expectBlobs(result: Result.Result<ReadonlyMap<string, string> | null, unknown>) {
     const blobs = expectSuccess(result);
     expect(blobs).not.toBe(null);
@@ -758,9 +743,6 @@ describe("decodeRepositoryBlobsJson", () => {
   });
 
   it("keys a blob by the path the host spelled, spaces and all", () => {
-    // A leading or trailing space is a legal part of a file's name. Trimmed here, the id lands
-    // under a key the asked-for path is not spelled with, and the caller fills that path in as
-    // the empty revision: a mark on the file then never compares against the real head blob.
     const blobs = expectBlobs(
       decodeRepositoryBlobsJson(
         JSON.stringify({
@@ -785,14 +767,11 @@ describe("decodeRepositoryBlobsJson", () => {
     expect([...blobs]).toEqual([
       [" leading.ts", "aaa111"],
       ["trailing.ts ", "bbb222"],
-      // A name that is only spaces is one Git carries too, so it is a path like any other.
       ["   ", "ccc333"],
     ]);
   });
 
   it("tells a project the reader cannot see from a revision with none of the files", () => {
-    // Null is the query going unanswered. Read as an empty answer it would say the head has none
-    // of the asked-for files, which reports every file a reader has cleared as changed.
     expect(
       expectSuccess(decodeRepositoryBlobsJson(JSON.stringify({ data: { project: null } }))),
     ).toBe(null);

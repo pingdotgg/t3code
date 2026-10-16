@@ -185,15 +185,9 @@ function providerEnvironmentDetail(environment: EnvironmentPresentation): string
   return environment.displayUrl ?? "Remote device";
 }
 
-// Shared by the editor grid and the placeholder states so switching devices
-// never changes the card's footprint.
 const providerCardHeightClassName =
   "@min-[48rem]/providers:h-[min(44rem,calc(100dvh-11rem))] @min-[48rem]/providers:min-h-[32rem]";
 
-/**
- * Same chrome as the provider editor (section heading, floating device tabs,
- * tall card) for states that cannot render provider settings yet.
- */
 function ProviderSettingsPlaceholder({
   deviceTabs,
   icon,
@@ -247,8 +241,6 @@ function EnvironmentUnavailablePlaceholder({
     : access.kind === "error"
       ? "Could not connect to this device"
       : "Provider settings are unavailable";
-  // Keep the description to a short status; the raw failure can be a
-  // multi-paragraph CLI dump, so it goes below, clamped and expandable.
   const description = isLoading
     ? access.reason === "permissions"
       ? "Checking what this session is allowed to change."
@@ -282,10 +274,6 @@ interface ProviderSettingsTarget {
   readonly instanceId?: ProviderInstanceId;
   readonly scoped?: boolean;
   readonly environmentIds?: readonly EnvironmentId[];
-  /**
-   * The project's checkouts on the selected environment, if a project is in
-   * scope. The enable toggle writes each one's override so they never diverge.
-   */
   readonly projectIds?: readonly ProjectId[];
 }
 
@@ -309,9 +297,6 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       buildProviderEnvironmentOptions(environments, primaryEnvironmentId, target.environmentIds),
     [environments, primaryEnvironmentId, target.environmentIds],
   );
-  // Raw user intent; the effective selection is re-derived every render so a
-  // device that drops out of the catalog falls back without erasing the pick —
-  // if it reappears (e.g. after a reconnect) the selection is restored.
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
     target.environmentId ?? primaryEnvironmentId,
   );
@@ -565,14 +550,7 @@ export function EnvironmentProviderSettings({
   readonly environmentLabel: string;
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
-  /** The project's checkouts on this environment, if a project is in scope. */
   readonly projectIds?: readonly ProjectId[];
-  /**
-   * Grey out and freeze every write control when this session's credential
-   * lacks `providers:manage` on the environment. Selecting providers
-   * still works so the real configuration stays readable; switches, forms,
-   * are inert so no write is offered and then rejected.
-   */
   readonly readOnly?: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
@@ -782,10 +760,8 @@ export function EnvironmentProviderSettings({
     const driver = providerSettings.provider;
     const defaultInstanceId = defaultInstanceIdForDriver(driver);
     const explicitInstance = settings.providerInstances?.[defaultInstanceId];
-    // An unconfigured default slot runs with the driver's default config.
     const effectiveInstance: ProviderInstanceConfig = explicitInstance ?? { driver };
     const isDirty = explicitInstance !== undefined;
-    // Drivers without a default instance list only their configured instances.
     const hasDefaultSlot = providerSettings.hasDefaultInstance || explicitInstance !== undefined;
     if (
       hasDefaultSlot &&

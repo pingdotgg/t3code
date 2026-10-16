@@ -37,8 +37,6 @@ export function usePendingTaskListActions(): {
           text: "Discard",
           style: "destructive",
           onPress: () => {
-            // Same reset a submit performs: the next task in this project
-            // re-resolves project defaults instead of inheriting the pick.
             clearComposerDraftContent(pendingTask.draftKey, {
               clearModelSelection: true,
               clearWorkspaceSelection: true,

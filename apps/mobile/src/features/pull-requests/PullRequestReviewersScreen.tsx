@@ -91,7 +91,6 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   }, [result.data, query]);
   useEffect(() => {
     if (candidates.length === 0) return;
-    // Filtering must reveal the first match below the translucent native header.
     listRef.current?.scrollToOffset({
       offset: Platform.OS === "ios" ? -insets.top : 0,
       animated: false,

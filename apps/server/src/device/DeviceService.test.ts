@@ -555,7 +555,6 @@ it.effect.each([
     Effect.gen(function* () {
       const deviceId = DeviceId.make("22222222-2222-2222-2222-222222222222");
       const paths: string[] = [];
-      // The device list is stale until shutdown re-reads it from the hub.
       let listed: "booted" | "off" | "missing" = "booted";
       const ready: DeviceHost.DeviceHostReady = {
         nodePath: process.execPath,
@@ -602,7 +601,6 @@ it.effect.each([
                           booted: listed === "booted",
                         },
                       ],
-                // A partial listing still decodes; it must not read as "off".
                 errors: listed === "missing" ? [{ message: "simctl list failed" }] : [],
               }),
             );

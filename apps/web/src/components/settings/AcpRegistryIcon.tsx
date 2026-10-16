@@ -26,7 +26,6 @@ async function checkedIconBlob(response: Response): Promise<Blob> {
   return new Blob([bytes], { type: contentType });
 }
 
-/** Fetches an official icon once, then serves it from persistent browser cache. */
 export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
   if (resolveOfficialAcpRegistryIconUrl(iconUrl) !== iconUrl) {
     return Promise.reject(new Error("ACP registry icon URL was not allowed."));
@@ -47,9 +46,7 @@ export function loadCachedAcpRegistryIcon(iconUrl: string): Promise<Blob> {
       try {
         const cached = await cache.match(iconUrl);
         if (cached) return await checkedIconBlob(cached);
-      } catch {
-        // Ignore unreadable or invalid cache entries and repair from network.
-      }
+      } catch {}
     }
 
     const response = await fetch(iconUrl, {
@@ -124,7 +121,7 @@ export function AcpRegistryAgentIcon({
         className,
       )}
     >
-      {/* Registry glyphs are monochrome. Recolor their alpha rather than
+      {/* Recolor their alpha rather than
           inverting RGB values; external images cannot inherit currentColor.
           A local SVG filter also works when CDN CORS prevents CSS masks. */}
       <svg aria-hidden className="pointer-events-none absolute size-0" focusable="false">

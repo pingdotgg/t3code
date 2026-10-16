@@ -337,9 +337,6 @@ it.effect("implements a proposed plan that the command projection leaves out", (
   }).pipe(Effect.provide(layerTest)),
 );
 
-// Stop's settle follow-up runs after the provider interrupt returns, possibly
-// long after the Stop (retries) or again (an effect replayed after a crash).
-// A later run's background work is not that Stop's to end.
 it.effect("settles only the stopped run's background work, once", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -480,8 +477,6 @@ it.effect("settles only the stopped run's background work, once", () =>
         .flatMap((item) => (item.type === "command_execution" ? [`${item.id}:${item.status}`] : []))
         .toSorted(),
     );
-    // The settle that followed a Stop of run 1's turn, dispatched only after
-    // run 2 had settled with work of its own.
     const settle = {
       type: "thread.background-work.settle",
       commandId: CommandId.make("stop-run-1:background-work-settled"),
@@ -495,8 +490,6 @@ it.effect("settles only the stopped run's background work, once", () =>
       `${commandItem(2)}:running`,
     ]);
 
-    // A settle that found nothing to end replays as a no-op, even after work
-    // it would match appears: its receipt is recorded with no events.
     const emptySettle = {
       ...settle,
       commandId: CommandId.make("stop-run-1-again:background-work-settled"),

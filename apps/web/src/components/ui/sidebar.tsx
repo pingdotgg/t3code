@@ -114,8 +114,6 @@ function SidebarProvider({
     setMobileSheetMounted(element !== null);
   }, []);
 
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
   const setOpen = React.useCallback(
@@ -127,7 +125,6 @@ function SidebarProvider({
         _setOpen(openState);
       }
 
-      // This sets the cookie to keep the sidebar state.
       await cookieStore.set({
         expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
         name: SIDEBAR_COOKIE_NAME,
@@ -138,13 +135,10 @@ function SidebarProvider({
     [setOpenProp, open],
   );
 
-  // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
   }, [isMobile, setOpen]);
 
-  // We add a state so that we can do data-state="expanded" or "collapsed".
-  // This makes it easier to style the sidebar with Tailwind classes.
   const state = resolveSidebarState({ isMobile, open, openMobile });
 
   const contextValue = React.useMemo<SidebarContextProps>(
@@ -174,7 +168,6 @@ function SidebarProvider({
   return (
     <SidebarContext value={contextValue}>
       <div
-        // Inset layouts opt into bg-sidebar through className.
         className={cn(
           "group/sidebar-wrapper flex min-h-svh w-full",
           SIDEBAR_TITLEBAR_CONTROL_SIZE,
@@ -301,7 +294,6 @@ function Sidebar({
         data-state={state}
         data-variant={variant}
       >
-        {/* This is what handles the sidebar gap on desktop */}
         <div
           className={cn(
             "relative w-(--sidebar-width) bg-transparent",
@@ -321,7 +313,6 @@ function Sidebar({
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-            // Adjust the padding for floating and inset variants.
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
@@ -467,12 +458,9 @@ function SidebarRail({
         });
       },
     };
-    // Toggling the sidebar cancels a drag so the inline width never pins a
-    // collapsed sidebar open.
   }, String(open));
   React.useLayoutEffect(() => {
     latestResizable.current = resolvedResizable;
-    // Bounds follow the window; keep an active drag's inline width inside them.
     resize.refresh();
   }, [resolvedResizable]);
 
@@ -510,8 +498,6 @@ function SidebarRail({
     }
     if (storedWidth === null) return;
     const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
-    // Hydrate the CSS variable before the browser paints so a restored sidebar
-    // never flashes at the default width first.
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);
   }, [resolvedResizable]);
@@ -568,7 +554,6 @@ function SidebarRail({
   );
 }
 
-/** A bare search or rename field that sits in a row of sidebar chrome. */
 function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
   return (
     <Input
@@ -628,8 +613,6 @@ function SidebarContent({
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      {/* Rows take focus on click. Scroll padding would make the browser nudge
-          the list whenever a focused row sits under the fade. */}
       <ScrollArea
         hideScrollbars
         scrollFade
@@ -641,10 +624,7 @@ function SidebarContent({
         className="h-auto min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:[--fade-size:0.75rem]"
       >
         <div
-          // Reordered rows must not pull the viewport to their new position.
           className={cn(
-            // Stacked groups share one inset between them instead of doubling
-            // it, including across the fixed header's boundary.
             "flex w-full min-w-0 flex-col [overflow-anchor:none] group-data-[collapsible=icon]:overflow-hidden [&>[data-sidebar=group]+[data-sidebar=group]]:pt-0",
             fixedHeader && "[&>[data-sidebar=group]:first-child]:pt-0",
             className,

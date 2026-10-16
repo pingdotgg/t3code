@@ -39,7 +39,6 @@ import {
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
-/** Stay in the PR's environment when entering a thread or creating its draft. */
 export function usePullRequestThreads(
   params: PullRequestParams,
   pr: PullRequestDetail | null,
@@ -68,7 +67,6 @@ export function usePullRequestThreads(
     (relations.data ?? (lastRelations.key === key ? lastRelations.data : null))?.threads ?? [];
   const connected = usePullRequestConnected(params.environmentId);
   const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
-  // Composing offline only writes a local draft. The outbox checks grants on delivery.
   const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
   const navigation = useNavigation();

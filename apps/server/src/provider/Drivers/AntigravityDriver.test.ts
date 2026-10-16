@@ -175,8 +175,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
         geminiApiKey: environment.GEMINI_API_KEY,
-        // Only the agent gets a per-process temp directory. Other launches
-        // inherit the host TMPDIR.
         tempDirectory:
           environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : environment.TMPDIR,
         handle,
@@ -216,7 +214,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   });
   const assertClosed = Effect.gen(function* () {
     for (const launch of launches) {
-      // Cancelled startup can report a signal instead of a numeric exit code.
       yield* launch.handle.exitCode.pipe(Effect.ignore);
       expect(yield* launch.handle.isRunning).toBe(false);
       if (launch.cwd) expect(yield* fs.exists(launch.cwd)).toBe(false);
@@ -514,7 +511,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           config.stateDir,
           instanceId,
         );
-        // Older builds unpacked inside the profile.
         const legacyRoot = path.join(directories.profile, "antigravity-acp", "tmp");
         for (const root of [directories.runtimeTemp, legacyRoot]) {
           const orphan = path.join(root, "run-orphan", "_MEI123", "google3");

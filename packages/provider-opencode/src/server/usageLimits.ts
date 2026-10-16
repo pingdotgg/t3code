@@ -103,9 +103,8 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       },
     ];
     const crypto = yield* Crypto.Crypto;
-    // Go's usage response has no account ID. An unkeyed hash matches across
-    // environments without a shared secret. It permits offline guesses, but
-    // Go keys are randomly generated.
+    // An unkeyed hash matches across environments without a shared secret. It
+    // permits offline guesses, but Go keys are randomly generated.
     const credentialFingerprint = yield* crypto
       .digest("SHA-256", new TextEncoder().encode(`opencode-go\0${apiKey}`))
       .pipe(Effect.map(Hex.encode), Effect.orDie);

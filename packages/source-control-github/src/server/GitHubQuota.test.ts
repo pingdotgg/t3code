@@ -20,7 +20,6 @@ describe("GitHubQuota", () => {
       yield* quota.observe("github.com", headers(499));
       const refused = yield* Effect.flip(quota.admit("github.com", "graphql"));
       assert.strictEqual(refused.retryAt, RESET);
-      // Another quota, another host and another account each have their own balance.
       yield* quota.admit("github.com", "core");
       yield* quota.admit("ghe.example", "graphql");
       yield* quota.admit("github.com", "graphql").pipe(Effect.provideService(CredentialScope, "b"));
@@ -38,10 +37,8 @@ describe("GitHubQuota", () => {
       yield* quota.admit("github.com", "graphql");
       yield* quota.observe("github.com", headers(400));
       yield* Effect.flip(quota.admit("github.com", "graphql"));
-      // An answer from an older window says nothing about this one.
       yield* quota.observe("github.com", headers(4000, "graphql", RESET - 3_600_000));
       yield* Effect.flip(quota.admit("github.com", "graphql"));
-      // A later window replaces it.
       yield* quota.observe("github.com", headers(4000, "graphql", RESET + 3_600_000));
       yield* quota.admit("github.com", "graphql");
     }).pipe(Effect.provide(GitHubQuota.layer)),

@@ -17,27 +17,17 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 /** OpenCode 2 accepts only HTTP Basic auth, always with this user name. */
 const OPENCODE_USERNAME = "opencode";
 
-/**
- * A session's execution ended, but this build could not decode the event (a
- * newer server added a field or a value). Only the type and session survive,
- * so the turn still ends.
- */
 export interface OpenCode2UnreadableTerminal {
   readonly type: "unreadable.execution.ended";
   readonly executionType: (typeof EXECUTION_ENDS)[number];
   readonly sessionID: string;
 }
 
-/**
- * A session's execution started, but this build could not decode the event.
- * It marks where a new execution begins and never ends a turn.
- */
 export interface OpenCode2UnreadableStart {
   readonly type: "unreadable.execution.started";
   readonly sessionID: string;
 }
 
-/** The events that end an execution; any other undecodable event is skipped. */
 const EXECUTION_ENDS = [
   "session.execution.succeeded",
   "session.execution.failed",
@@ -46,7 +36,6 @@ const EXECUTION_ENDS = [
 const isExecutionEnd = (type: string): type is (typeof EXECUTION_ENDS)[number] =>
   (EXECUTION_ENDS as ReadonlyArray<string>).includes(type);
 
-/** The server sent nothing, not even a heartbeat, for `SILENT_STREAM_TIMEOUT`. */
 export class OpenCode2SilentStreamError extends Schema.TaggedError<OpenCode2SilentStreamError>()(
   "OpenCode2SilentStreamError",
   {},
@@ -62,11 +51,6 @@ export type OpenCode2StreamEvent =
   | OpenCode2UnreadableStart;
 
 /**
- * An OpenCode 2 client plus a forward-compatible `/api/event` stream. The
- * client's own `event.subscribe` fails the whole stream on the first event a
- * newer server adds, so `events` decodes each frame on its own and skips the
- * ones this build does not know, except an execution's end or start, which it
- * keeps as an {@link OpenCode2UnreadableTerminal} or {@link OpenCode2UnreadableStart}.
  * `events` succeeds once the server accepted the subscription: the stream is
  * volatile, so callers subscribe before they start work whose events they need.
  */
@@ -81,7 +65,6 @@ export interface OpenCode2Api {
   >;
 }
 
-/** Builds clients for OpenCode 2 servers, one per base URL and password. */
 export class OpenCode2Client extends Context.Service<
   OpenCode2Client,
   {
@@ -99,7 +82,6 @@ export class OpenCode2Client extends Context.Service<
 const SILENT_STREAM_TIMEOUT = "45 seconds";
 
 const decodeEvent = Schema.decodeUnknownResult(Schema.fromJsonString(OpenCodeEvent));
-// Just enough of an event to route it, for frames the full schema rejects.
 const decodeEnvelope = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -138,7 +120,6 @@ const undecodable = (data: string) =>
     return Result.failVoid;
   });
 
-/** Subscribes to `/api/event`, then streams every frame this build can route. */
 const readEvents = HttpClient.get("/api/event", {
   headers: { accept: "text/event-stream" },
 }).pipe(
@@ -198,9 +179,9 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(OpenCode2Client, make);
 
 /**
- * Streams every item of a cursor-paged OpenCode 2 list. The first request
- * carries the caller's input (including `order`); later requests send only
- * the cursor, because OpenCode rejects a cursor combined with `order`.
+ * The first request carries the caller's input (including `order`); later
+ * requests send only the cursor, because OpenCode rejects a cursor combined
+ * with `order`.
  */
 export const paginate = <Input extends { readonly cursor?: unknown }, Item, E, R>(
   input: Input,

@@ -181,8 +181,6 @@ describe("openUrlInPreview from a link", () => {
 
     await openUrlInPreview({
       openPreview: async () => {
-        // The server activates the new tab, then the user selects another one
-        // before the open resolves.
         applyPreviewServerSnapshot(threadRef, snapshot);
         setActivePreviewTab(threadRef, "tab-other");
         return AsyncResult.success(snapshot);
@@ -201,7 +199,6 @@ describe("openUrlInPreview from a link", () => {
 
     await openUrlInPreview({
       openPreview: async () => {
-        // The server activates the new tab, then the user clicks that same tab.
         applyPreviewServerSnapshot(threadRef, snapshot);
         useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
         return AsyncResult.success(snapshot);

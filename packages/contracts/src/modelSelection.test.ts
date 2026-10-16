@@ -5,20 +5,6 @@ import * as Schema from "effect/Schema";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
-// ── ModelSelection: instance-keyed wire shape + legacy decoder ────────
-//
-// `ModelSelection` is routing-keyed on `instanceId` — never a driver kind.
-// Persisted and in-flight payloads from pre-instance builds carry a
-// `provider` field whose value was a driver kind; those payloads are migrated
-// at the wire boundary by
-// promoting `provider` to the default instance id for that driver
-// (built-in drivers use the driver kind slug as their default instance id, so
-// the migration is a 1:1 rename).
-//
-// These tests pin the rollback/fork tolerance invariant: legacy payloads
-// decode cleanly for fork-provided drivers, and the decoded form uses
-// `instanceId` uniformly regardless of origin.
-
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
 const encodeModelSelection = Schema.encodeUnknownEffect(ModelSelection);
 
@@ -90,7 +76,7 @@ it.effect("ModelSelection rejects malformed instance ids", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
       decodeModelSelection({
-        instanceId: "1invalid", // must start with a letter
+        instanceId: "1invalid",
         model: "x",
       }),
     );
@@ -108,7 +94,7 @@ it.effect(
         options: {
           effort: "max",
           fastMode: true,
-          // Falsy/garbage entries are dropped, matching migration 026.
+
           emptyStr: "   ",
           nullish: null,
           nested: { foo: 1 },

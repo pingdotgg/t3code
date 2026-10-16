@@ -38,12 +38,10 @@ export function openLinkPullRequestDialog(threadRef: ScopedThreadRef): void {
 interface LinkPullRequestDialogProps {
   open: boolean;
   threadRef: ScopedThreadRef;
-  /** The thread's own project: bare numbers resolve against its repository. */
   projectId: string | null;
   onOpenChange: (open: boolean) => void;
 }
 
-/** Mounted once per chat view; shows the dialog for whichever thread asked for it. */
 export function LinkPullRequestDialogHost() {
   const threadRef = useAtomValue(linkPullRequestDialogThreadAtom);
   const thread = useThreadShell(threadRef);
@@ -68,10 +66,6 @@ interface ResolvedLink {
   readonly url: string;
 }
 
-/**
- * Which pull request an input names, or why it cannot. A URL carries its own host and
- * repository; a bare `#123` can only mean the thread's own repository.
- */
 export function resolveLinkPullRequestInput(input: {
   readonly reference: string;
   readonly project: {

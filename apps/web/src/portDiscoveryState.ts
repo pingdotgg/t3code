@@ -36,9 +36,7 @@ export function boundConfiguredLocalServerUrls(
       seen.add(resourceUrl.href);
       bounded.push(url.href);
       if (bounded.length >= CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS) break;
-    } catch {
-      // Invalid and non-local project preview URLs are not discovery candidates.
-    }
+    } catch {}
   }
   return bounded;
 }

@@ -64,10 +64,6 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
 });
 
-// ---------------------------------------------------------------------------
-// build subcommand
-// ---------------------------------------------------------------------------
-
 const buildCmd = Command.make(
   "build",
   {
@@ -102,10 +98,6 @@ const buildCmd = Command.make(
       }
     }),
 ).pipe(Command.withDescription("Build the server package (tsdown + bundle web client)."));
-
-// ---------------------------------------------------------------------------
-// build-exe subcommand
-// ---------------------------------------------------------------------------
 
 const buildExeCmd = Command.make(
   "build-exe",
@@ -162,10 +154,6 @@ const buildExeCmd = Command.make(
   ),
 );
 
-// ---------------------------------------------------------------------------
-// publish subcommand
-// ---------------------------------------------------------------------------
-
 /**
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
  * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
@@ -189,8 +177,6 @@ const publishCmd = Command.make(
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      // npm runs with cwd set to the packages dir below, so tarball paths are
-      // resolved once here rather than joined twice.
       const packagesDir = path.resolve(config.packagesDir);
       const scopeDir = path.join(packagesDir, "@t3code");
       const launcherTarball = path.join(packagesDir, "t3.tgz");
@@ -226,7 +212,6 @@ const publishCmd = Command.make(
         );
       });
 
-      // Each publish takes about 17s, so the platform packages go at once.
       yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
     }),
 ).pipe(
@@ -234,10 +219,6 @@ const publishCmd = Command.make(
     "Publish the @t3code/t3-<platform> tarballs and then the t3 launcher to npm.",
   ),
 );
-
-// ---------------------------------------------------------------------------
-// root command
-// ---------------------------------------------------------------------------
 
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),

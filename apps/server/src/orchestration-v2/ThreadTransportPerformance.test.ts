@@ -27,18 +27,11 @@ const NOW = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const THREAD_ID = ThreadId.make("thread-perf");
 const PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 
-// Recorded before bounded WebSocket fallback at 91b193653ec. Keep this number
-// here so later transport changes retain a direct, reproducible comparison.
 const HISTORICAL_FULL_SNAPSHOT_APPLICATION_BYTES = 10_375_079;
-// Contract encoding plus the Effect RPC Chunk envelope adds 42 bytes to both
-// snapshot variants. WebSocket framing and compression are intentionally out
-// of scope for this deterministic pre-compression measurement.
 const FULL_SNAPSHOT_RPC_JSON_BYTES = 10_375_121;
 const PRE_OMISSION_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 1_038_647;
-// The first payload-omitting projection measured 67,412 bytes.
 const MAX_PROJECTED_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 131_072;
 const PRE_OMISSION_COMMAND_EVENT_RPC_JSON_BYTES = 8_790;
-// The first payload-omitting projection measured 586 bytes.
 const MAX_PROJECTED_COMMAND_EVENT_RPC_JSON_BYTES = 1_024;
 
 const encodeThreadStreamItem = Schema.encodeSync(

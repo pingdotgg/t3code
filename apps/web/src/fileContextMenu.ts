@@ -1,10 +1,3 @@
-/**
- * Right-click actions for a workspace file: reveal it in the environment's
- * file manager and open it in an editor. Reuse the chat file-chip menu's
- * machinery: reveal rides `shell.openInEditor` with `reveal: true`, which the
- * server only honors when its `shellRevealInFileManager` config flag is set,
- * so both actions work for every client and connection mode.
- */
 import {
   EDITORS,
   type ContextMenuItem,
@@ -41,13 +34,6 @@ export interface FileContextMenuTarget {
   readonly repositoryRoot?: string | undefined;
 }
 
-/** Absolute path on the environment host, or null when it cannot be resolved. */
-/**
- * Absolute path on the environment host for a diff-style target, resolving
- * repo-relative paths through the workspace root like every other diff
- * surface. Returns null when the path cannot be resolved, which callers must
- * treat as "no file actions available".
- */
 export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget): string | null {
   const workspaceFilePath = resolveDiffPathForWorkspace({
     filePath: target.filePath,
@@ -71,16 +57,10 @@ export interface FileContextMenuCapabilities {
   readonly editorIds: ReadonlyArray<EditorId>;
 }
 
-/**
- * Menu items for a resolved file, offering only what the environment's config
- * advertises: default-app open, reveal (with server-provided wording), and an
- * "Open with" submenu of detected editors. Empty when nothing can act.
- */
 export function buildFileContextMenuItems(input: {
   readonly hasAbsolutePath: boolean;
   readonly capabilities: FileContextMenuCapabilities;
 }): readonly ContextMenuItem<FileContextMenuAction>[] {
-  // Without a resolvable absolute path nothing here can act on the file.
   if (!input.hasAbsolutePath) return [];
   const items: ContextMenuItem<FileContextMenuAction>[] = [];
   if (input.capabilities.canOpenDefault) {
@@ -107,12 +87,6 @@ export function buildFileContextMenuItems(input: {
   return items;
 }
 
-/**
- * Context-menu actions for files. The environment id is fixed per component
- * (a thread's environment, a file browser's environment), so capabilities
- * resolve once per hook call.
- */
-/** Builds and dispatches the file context menu for one environment's files. */
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -193,8 +167,6 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   }, [environmentId, openInEditor, serverConfig]);
 }
 
-/** Convenience callback for onContextMenu handlers. */
-/** Returns an onContextMenu callback that shows the menu at the pointer. */
 export function useFileContextMenuHandler(environmentId: EnvironmentId | null) {
   const contextMenu = useFileContextMenu(environmentId);
   return useCallback(

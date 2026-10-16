@@ -4,7 +4,6 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import { DEFAULT_BASE_FONT_SIZE } from "../../lib/appearancePreferences";
 import { resolveAndroidControlSizing } from "../../lib/androidControlSizing";
 
-/** Shared layouts keep their existing dimensions on iOS. */
 export function useAndroidControlSizing() {
   const { appearance } = useAppearancePreferences();
   return resolveAndroidControlSizing(

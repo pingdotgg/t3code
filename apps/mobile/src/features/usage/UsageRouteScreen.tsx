@@ -63,8 +63,6 @@ const TAB_OPTIONS = [
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageTab; label: string }[];
 
-// Labels are abbreviated to share a row with the metric toggle; screen
-// readers get the full phrase.
 const WINDOW_OPTIONS = [
   { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
@@ -81,16 +79,10 @@ const CHART_HEIGHT = 180;
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_LABEL[provider];
 const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
 
-/**
- * Two tabs over one screen. Usage is the transcript-derived spend for a
- * period; Limits is the live subscription quota, which has no period. Both
- * pull to refresh, each refreshing its own data.
- */
 export function UsageRouteScreen() {
   const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  // Preserve the Limits default while honoring explicit widget/navigation links.
   const [selection, setSelection] = useState(() => ({
     params: route.params,
     tab: (route.params?.tab === "usage" ? "usage" : "limits") as UsageTab,
@@ -306,8 +298,6 @@ export function UsageRouteScreen() {
             />
           ) : (
             <>
-              {/* Period and metric together: neither applies to Limits, and
-                both change every number below, so they share one bar. */}
               <View className="gap-3 ios:flex-row ios:items-center">
                 <SegmentedControl
                   options={WINDOW_OPTIONS}
@@ -342,8 +332,6 @@ export function UsageRouteScreen() {
                     : "Select an environment to see usage."}
                 </Text>
               ) : !canReadDiagnostics ? (
-                // Each environment explains itself: a denied grant and a failed
-                // access check are different problems.
                 <View className="gap-2 py-16">
                   {selectedEnvironments.map((environment) => (
                     <Text
@@ -394,11 +382,6 @@ export function UsageRouteScreen() {
   );
 }
 
-/**
- * Dims totals that are about to change and says what is still updating. The
- * status overlays the first child's top-right corner, the chart card's label
- * row, so appearing never moves anything.
- */
 function UsageUpdating({
   dimmed,
   label,
@@ -410,7 +393,6 @@ function UsageUpdating({
 }) {
   const opacity = useSharedValue(1);
   useLayoutEffect(() => {
-    // The delay keeps a quick cached answer from flashing the dim.
     opacity.set(
       dimmed
         ? withDelay(150, withTiming(0.5, { duration: 150, reduceMotion: ReduceMotion.System }))
@@ -545,7 +527,6 @@ function CursorEnableLimits({
   );
 }
 
-/** Headline figure, the animated daily chart, and its legend, in one card. */
 function ChartCard(props: {
   readonly merged: MergedUsage;
   readonly days: readonly string[];
@@ -629,7 +610,6 @@ function ProviderSection(props: {
   const colors = useProviderColors();
   if (merged.providers.length === 0 && props.cursorAccessEnvironments.length === 0) return null;
 
-  // Ranked by whatever the toggle is showing, so the rows always descend.
   // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
   const ordered = [...merged.providers].sort((a, b) =>
     metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
@@ -797,7 +777,6 @@ function CostSection(props: { readonly merged: MergedUsage }) {
   );
 }
 
-/** One part-to-whole cost bar with its legend. Empty segments are left out. */
 function ShareBar(props: {
   readonly label: string;
   readonly segments: readonly { label: string; value: number; color: string }[];
@@ -855,8 +834,7 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
   const colors = useProviderColors();
   if (merged.models.length === 0) return null;
 
-  // Ranked like the provider rows. .sort() on a copy, not .toSorted(): Hermes
-  // doesn't ship the ES2023 method.
+  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023 method.
   const ordered = [...merged.models].sort((a, b) =>
     metric === "cost"
       ? b.costUsd - a.costUsd || b.totalTokens - a.totalTokens
@@ -905,11 +883,6 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
   );
 }
 
-/**
- * Says plainly when the totals are incomplete: an environment still answering,
- * one that failed, or one whose transcripts another environment already
- * reported.
- */
 function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing: boolean): string {
   if (
     environment.summary &&
@@ -922,7 +895,6 @@ function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing:
           : "clientBehind",
     });
   }
-  // The reason matters: a denied grant and a failed scan need different fixes.
   if (environment.error)
     return environment.summary ? `${environment.error} Showing saved totals.` : environment.error;
   if (!environment.isConnected)

@@ -8,7 +8,6 @@ import { useProjects, useThreadShells } from "../state/entities";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
 
-/** The sidebar's project groups, in the order the sidebar shows them. */
 export function useSidebarProjectGroups() {
   const projects = useProjects();
   const threads = useThreadShells();

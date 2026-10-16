@@ -9,7 +9,6 @@ export interface AntigravityPendingCallback {
   readonly state: string;
 }
 
-/** Only the callback advertised by this running ACP process may receive a request. */
 export const validateAntigravityCallbackUrl = Effect.fn("validateAntigravityCallbackUrl")(
   function* (
     instanceId: ProviderInstanceId,
@@ -62,7 +61,6 @@ export const validateAntigravityCallbackUrl = Effect.fn("validateAntigravityCall
   },
 );
 
-/** Sends one callback, without proxies, redirects, readiness probes, or response logging. */
 export const forwardAntigravityCallback = (
   instanceId: ProviderInstanceId,
   callback: URL,

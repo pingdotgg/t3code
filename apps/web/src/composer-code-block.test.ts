@@ -52,7 +52,6 @@ describe("outdentLine", () => {
     expect(outdentLine("    deep")).toBe("  deep");
   });
 
-  /** Hand-indented lines should still outdent rather than refuse to move. */
   it("falls back to a single space or tab", () => {
     expect(outdentLine(" odd")).toBe("odd");
     expect(outdentLine("\ttabbed")).toBe("tabbed");
@@ -71,7 +70,6 @@ describe("indentLines", () => {
     ]);
   });
 
-  /** Indenting a blank line would leave whitespace the user cannot see. */
   it("leaves blank lines alone", () => {
     expect(indentLines(["a", "", "b"], "in")).toEqual([
       `${CODE_BLOCK_INDENT}a`,
@@ -85,7 +83,6 @@ describe("indentLines", () => {
   });
 });
 
-/** Builds an editor holding a single fenced block, with the caret placed by offset. */
 function codeEditor(code: string, at?: { from: number; to?: number }) {
   const editor = new Editor({
     extensions,
@@ -113,10 +110,6 @@ describe("indentedNewlineInCodeBlock", () => {
     expect(textOf(editor)).toBe("function f() {\n  body()\n  ");
   });
 
-  /**
-   * With no indent to carry there is nothing to add, so the default newline
-   * should handle it and stay a single undo step.
-   */
   it("declines an unindented line", () => {
     const editor = codeEditor("flush()");
     expect(indentedNewlineInCodeBlock(editor.state, (tr) => editor.view.dispatch(tr))).toBe(false);
@@ -147,7 +140,6 @@ describe("indentedNewlineInCodeBlock", () => {
   });
 });
 
-/** Enter inside a fence, in the order the composer's key handler tries it. */
 function pressEnter(editor: Editor) {
   const dispatch = (tr: Parameters<typeof editor.view.dispatch>[0]) => editor.view.dispatch(tr);
   return (
@@ -168,7 +160,6 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
   });
 
-  /** Enter carries indentation, so the blank lines after nested code are not empty. */
   it("counts lines holding only carried indentation as blank", () => {
     const editor = codeEditor("  nested()");
     pressEnter(editor);
@@ -179,7 +170,6 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
     expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
   });
 
-  /** An unclosed fence runs to the end of the draft, so leaving it must close it. */
   it("closes an unclosed fence on the way out", () => {
     const editor = codeEditor("flush()");
     editor.view.dispatch(editor.state.tr.setNodeAttribute(0, "close", ""));
@@ -238,7 +228,6 @@ describe("indentCodeBlock", () => {
     expect(textOf(editor)).toBe("  one\n  two\n  three");
   });
 
-  /** A selection of whole lines ends at the start of the next one, which it does not touch. */
   it("leaves the line a selection ends at the start of", () => {
     const editor = codeEditor("one\ntwo", { from: 0, to: 4 });
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
@@ -251,7 +240,6 @@ describe("indentCodeBlock", () => {
     expect(textOf(editor)).toBe("one\ntwo");
   });
 
-  /** Repeated Tab presses should keep working on the same block. */
   it("keeps the selection across the shifted lines", () => {
     const editor = codeEditor("one\ntwo", { from: 0, to: 7 });
     indentCodeBlock(editor.state, "in", (tr) => editor.view.dispatch(tr));
@@ -278,11 +266,9 @@ describe("indentCodeBlock", () => {
 });
 
 describe("selections across two identical fences", () => {
-  /** Two structurally equal code blocks; the selection spans from one into the other. */
   function twoBlockEditor() {
     const block = { type: "codeBlock", content: [{ type: "text", text: "  a" }] };
     const editor = new Editor({ extensions, content: { type: "doc", content: [block, block] } });
-    // First block: 1..4 (text "  a" occupies 1..4); second block starts at 5.
     editor.view.dispatch(
       editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 2, 7)),
     );
@@ -299,7 +285,6 @@ describe("selections across two identical fences", () => {
 });
 
 describe("convertCodeFenceOnEnter", () => {
-  /** Builds an editor holding one paragraph with the caret at its end. */
   function paragraphEditor(text: string) {
     const editor = new Editor({
       extensions,
@@ -325,7 +310,6 @@ describe("convertCodeFenceOnEnter", () => {
     expect(block.type.name).toBe("codeBlock");
     expect(block.attrs).toMatchObject({ fence, language, close: `\n${fence}` });
     expect(block.textContent).toBe("");
-    // The caret belongs inside the new block, ready for the first line.
     expect(editor.state.selection.from).toBe(1);
   });
 
@@ -353,7 +337,6 @@ describe("convertCodeFenceOnEnter", () => {
         ],
       },
     });
-    // Inside listItem > paragraph: position 3 is the paragraph start.
     editor.view.dispatch(
       editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 3 + text.length)),
     );

@@ -33,7 +33,6 @@ function errorDetails(error: unknown, componentStack?: string): string {
   return componentStack ? `${description}\nComponent stack:\n${componentStack}` : description;
 }
 
-/** A failed subtree remounts on retry or when its identifying inputs change. */
 export class RenderErrorBoundary extends Component<
   RenderErrorBoundaryProps,
   RenderErrorBoundaryState

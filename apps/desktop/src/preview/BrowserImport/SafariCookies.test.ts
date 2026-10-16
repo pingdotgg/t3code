@@ -23,11 +23,9 @@ interface FixtureCookie {
   readonly path: string;
   readonly value: string;
   readonly flags: number;
-  /** Seconds since 2001-01-01, as Safari stores them. */
   readonly expiry: number;
 }
 
-/** Encodes one cookie exactly as Safari lays it out. */
 function encodeCookie(cookie: FixtureCookie): Buffer {
   const strings = [cookie.domain, cookie.name, cookie.path, cookie.value];
   const headerSize = 56;
@@ -58,7 +56,6 @@ function encodeCookie(cookie: FixtureCookie): Buffer {
   return buffer;
 }
 
-/** Builds a single-page `Cookies.binarycookies` file. */
 function encodeBinaryCookies(cookies: ReadonlyArray<FixtureCookie>): Buffer {
   const encoded = cookies.map(encodeCookie);
   const headerSize = 12 + encoded.length * 4;
@@ -90,7 +87,6 @@ describe("parseBinaryCookies", () => {
         name: "session",
         path: "/",
         value: "abc",
-        // secure | httpOnly
         flags: 0x1 | 0x4,
         expiry: 800_000_000,
       },
@@ -113,17 +109,13 @@ describe("parseBinaryCookies", () => {
         path: "/",
         secure: true,
         httpOnly: true,
-        // Safari counts from 2001-01-01, Electron from 1970.
         expirationDate: 800_000_000 + APPLE_EPOCH_OFFSET_SECONDS,
-        // The format predates SameSite; Lax is the safe modern default.
         sameSite: "lax",
       },
       {
         url: "http://example.test/app",
         name: "plain",
         value: "v",
-        // Host-only: no leading dot in the jar, so no `domain` for Electron,
-        // which would otherwise re-add the dot and widen it to subdomains.
         domain: undefined,
         path: "/app",
         secure: false,
@@ -158,15 +150,12 @@ describe("parseBinaryCookies", () => {
   });
 
   it("reads cookies spread across multiple pages", () => {
-    // Safari pages its cookie file, and a single-page reader would silently
-    // return only the first slice.
     const first = encodeBinaryCookies([
       { domain: "a.test", name: "one", path: "/", value: "1", flags: 0, expiry: 1 },
     ]);
     const second = encodeBinaryCookies([
       { domain: "b.test", name: "two", path: "/", value: "2", flags: 0, expiry: 1 },
     ]);
-    // Splice the two single-page files into one two-page file.
     const firstPage = first.subarray(12);
     const secondPage = second.subarray(12);
     const header = Buffer.alloc(16);
@@ -183,7 +172,6 @@ describe("parseBinaryCookies", () => {
   it("rejects a page that runs past the end of the file", () => {
     // `Buffer.subarray` clamps rather than throwing, so an overlong first page
     // swallows the second one's bytes and advances the cursor past the end.
-    // Every cookie after the boundary then vanishes from a "successful" import.
     const first = encodeBinaryCookies([
       { domain: "a.test", name: "one", path: "/", value: "1", flags: 0, expiry: 1 },
     ]);
@@ -195,7 +183,6 @@ describe("parseBinaryCookies", () => {
     const header = Buffer.alloc(16);
     header.write("cook", 0, "latin1");
     header.writeUInt32BE(2, 4);
-    // Declares more bytes for page one than the file holds in total.
     header.writeUInt32BE(firstPage.length + secondPage.length + 32, 8);
     header.writeUInt32BE(secondPage.length, 12);
 
@@ -208,8 +195,6 @@ describe("parseBinaryCookies", () => {
     const valid = encodeBinaryCookies([
       { domain: "a.test", name: "n", path: "/", value: "v", expiry: 1_000, flags: 0 },
     ]);
-    // The record's own length is what bounds its string offsets; an inflated
-    // one lets them read the following record's bytes as this cookie's value.
     const pageStart = 8 + 4;
     const recordStart = pageStart + valid.readUInt32LE(pageStart + 8);
     const corrupt = Buffer.from(valid);
@@ -242,18 +227,14 @@ describe("parseBinaryCookies", () => {
     const pageStart = 8 + 4;
     const firstRecord = valid.readUInt32LE(pageStart + 8);
 
-    // Pointing the second offset at the page's offset table would let those
-    // table bytes parse as a fabricated record.
     const intoTable = Buffer.from(valid);
     intoTable.writeUInt32LE(4, pageStart + 12);
     expect(() => parseBinaryCookies(intoTable)).toThrow(SafariCookieReadError);
 
-    // Pointing it back at the first record makes the same bytes count twice.
     const overlapping = Buffer.from(valid);
     overlapping.writeUInt32LE(firstRecord, pageStart + 12);
     expect(() => parseBinaryCookies(overlapping)).toThrow(SafariCookieReadError);
 
-    // And a well-formed two-record page still parses.
     expect(parseBinaryCookies(valid)).toHaveLength(2);
   });
 
@@ -287,9 +268,6 @@ describe("parseBinaryCookies", () => {
   });
 
   it("rejects a jar whose page table stops short of its contents", () => {
-    // A second, undeclared page after the first would be silently dropped —
-    // the cookies it holds vanish from the import with no error — so a file
-    // the header does not fully describe is refused instead.
     const first = encodeBinaryCookies([
       { domain: "a.test", name: "c", path: "/", value: "v", flags: 0, expiry: 0 },
     ]);
@@ -300,7 +278,6 @@ describe("parseBinaryCookies", () => {
     expect(() => parseBinaryCookies(Buffer.concat([first, extraPage]))).toThrow(
       SafariCookieReadError,
     );
-    // A trailer that claims a property list it doesn't contain is refused too.
     const badLength = Buffer.alloc(4);
     badLength.writeUInt32BE(99, 0);
     expect(() =>
@@ -335,9 +312,7 @@ describe("readSafariCookies", () => {
     Effect.gen(function* () {
       // What Full Disk Access actually looks like: the file is there, the read
       // is refused with EPERM. Effect tags that `Unknown`, not
-      // `PermissionDenied`, so the reader has to look at the errno. Reporting
-      // it as a generic failure would send the user looking for a missing
-      // browser instead of a checkbox.
+      // `PermissionDenied`, so the reader has to look at the errno.
       const denied = PlatformError.systemError({
         _tag: "Unknown",
         module: "FileSystem",
@@ -361,8 +336,6 @@ describe("readSafariCookies", () => {
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-safari-" });
       const jar = `${directory}/Cookies.binarycookies`;
       yield* fileSystem.writeFile(jar, new Uint8Array([0x63, 0x6f, 0x6f, 0x6b]));
-      // A mode-bits refusal is EACCES: granting Full Disk Access cannot fix
-      // it, so it must not be routed to that grant.
       yield* fileSystem.chmod(jar, 0o000);
 
       const error = yield* readSafariCookies(jar).pipe(Effect.flip);
@@ -396,8 +369,6 @@ describe("safariAccessDenied", () => {
 
   it.effect("reports TCC's EPERM as a missing Full Disk Access grant", () =>
     Effect.gen(function* () {
-      // `stat` finds the jar without the grant, so only an open tells the
-      // listing whether the import would actually be allowed.
       assert.isTrue(
         yield* safariAccessDenied("/protected/Cookies.binarycookies").pipe(
           Effect.provide(denied(eperm)),
@@ -413,28 +384,20 @@ describe("safariAccessDenied", () => {
       const jar = `${directory}/Cookies.binarycookies`;
       yield* fileSystem.writeFile(jar, new Uint8Array([0x63, 0x6f, 0x6f, 0x6b]));
       assert.isFalse(yield* safariAccessDenied(jar));
-      // Missing entirely is "not installed", not "denied".
       assert.isFalse(yield* safariAccessDenied(`${directory}/absent.binarycookies`));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
 
 describe("isPermissionDenied", () => {
-  // Shapes taken from a real `FileSystem.readFile` failure on macOS — verified
-  // against Safari's TCC-protected jar, whose denial is EPERM, tagged
-  // `Unknown` rather than `PermissionDenied`.
   const platformError = (reasonTag: string, code: string): PlatformError.PlatformError =>
     ({ _tag: "PlatformError", reason: { _tag: reasonTag, cause: { code } } }) as never;
 
   it("treats a TCC EPERM denial as permission denied", () => {
-    // The regression: EPERM is tagged `Unknown`, so checking the tag alone
-    // reported Safari's Full Disk Access refusal as a generic read failure.
     expect(isPermissionDenied(platformError("Unknown", "EPERM"))).toBe(true);
   });
 
   it("does not send an ordinary EACCES failure to the Full Disk Access grant", () => {
-    // A POSIX permission or ACL refusal cannot be fixed by granting Full Disk
-    // Access, so it stays a plain read failure; only TCC's EPERM routes there.
     expect(isPermissionDenied(platformError("PermissionDenied", "EACCES"))).toBe(false);
   });
 

@@ -23,7 +23,6 @@ export const PullRequestMediaContext = createContext<{
   readonly cwd: string;
 } | null>(null);
 
-/** Only GitHub-hosted media needs the environment's authenticated asset path. */
 export function usePullRequestMediaUrl(url: string) {
   const context = useContext(PullRequestMediaContext);
   const fetchUrl = githubMediaFetchUrl(url);

@@ -41,11 +41,9 @@ describe("makeDrainableWorker", () => {
         yield* worker.enqueue("interrupt");
         yield* worker.enqueue("ok");
 
-        // A stopped worker never drains; its exit settles the race instead of a hang.
         yield* Effect.raceFirst(worker.drain, Fiber.await(yield* Deferred.await(workerFiber)));
 
         expect(processed).toEqual(["ok"]);
-        // The item that interrupted itself was cancelled, not failed.
         expect(loggedErrors).toEqual(["typed failure", "defect"]);
       }),
     ).pipe(Effect.provide(loggerLayer));
@@ -75,7 +73,6 @@ describe("makeDrainableWorker", () => {
       expect(processed).toEqual(["block"]);
       expect(loggedErrors).toEqual([]);
 
-      // Queued and late items are dropped with the queue, so drain resolves at once.
       yield* worker.enqueue("after close");
       const drained = yield* Effect.forkChild(worker.drain, { startImmediately: true });
       expect(drained.pollUnsafe()).toEqual(Exit.void);

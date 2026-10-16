@@ -18,7 +18,6 @@ import { useAtomCommand } from "./use-atom-command";
 export const ORCHESTRATION_OPERATE_DENIED_MESSAGE =
   "This connection cannot change threads or projects.";
 
-/** Recheck the target grant for every step of a thread or project mutation. */
 export function useOrchestrationCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
   command: AtomCommand<W, A, E>,
   options?: string | AtomCommandOptions,

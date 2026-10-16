@@ -7,10 +7,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
 
-/**
- * The composer is shared, so editing a queued message needs a visible way back
- * out. This is that way out, and the only place the edit announces itself.
- */
 export function ComposerQueuedEditBanner(props: {
   readonly saving: boolean;
   readonly onCancel: () => void;
@@ -35,11 +31,6 @@ export function ComposerQueuedEditBanner(props: {
   );
 }
 
-/**
- * Attachments already on the queued message. They live on the server rather
- * than in the draft, so they get their own row: removing one here drops it
- * from the replacement list the edit sends.
- */
 export function ComposerQueuedEditAttachments(props: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<ChatAttachment>;

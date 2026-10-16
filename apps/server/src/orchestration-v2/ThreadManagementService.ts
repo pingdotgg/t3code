@@ -141,7 +141,6 @@ export interface ThreadManagementSendResult {
   >;
   readonly message: OrchestrationV2ConversationMessage;
   readonly run: OrchestrationV2Run;
-  /** Null for queued sends: the user turn item materializes when the queued turn starts. */
   readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
   readonly delivery: "started" | "queued" | "steered" | "restarted";
 }
@@ -321,12 +320,6 @@ export interface ThreadManagementServiceShape {
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
-  /**
-   * The single chokepoint for commands that can start or wake provider work:
-   * `message.dispatch` and `delegated_task.request` are refused here when the
-   * resolved instance is off for the project, except a command id that
-   * already has a receipt, which only replays its recorded result.
-   */
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<
@@ -336,10 +329,6 @@ export interface ThreadManagementServiceShape {
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
-  /**
-   * One turn item with the input and output the thread stream withholds,
-   * bounded for the wire. Clients fetch it when a tool row is expanded.
-   */
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
@@ -387,37 +376,26 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
-  /**
-   * Refuses a new turn on an instance the project has effectively disabled.
-   * A command that already has a receipt was let through before, so its
-   * retry replays instead of being refused under newer settings.
-   */
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
     readonly instanceId: ProviderInstanceId;
   }) => Effect.Effect<void, ThreadManagementProviderInstanceDisabledError>;
-  /**
-   * Effective enablement for candidate selection, without the receipt-replay
-   * exemption `assertProviderInstanceEnabled` grants an accepted command.
-   */
   readonly isProviderInstanceEnabledForProject: (input: {
     readonly projectId: ProjectId;
     readonly instanceId: ProviderInstanceId;
   }) => Effect.Effect<boolean>;
   /**
-   * Whether `commandId` already has a receipt. A caller resolving a target
-   * ahead of a dispatch under this same command id can use it to skip
-   * project-enablement filtering: the dispatch will only replay the recorded
-   * result, never start anything new, so the filter would just refuse a
-   * retry the project's settings no longer allow fresh.
+   * A caller resolving a target ahead of a dispatch under this same command id
+   * can use it to skip project-enablement filtering: the dispatch will only
+   * replay the recorded result, never start anything new, so the filter would
+   * just refuse a retry the project's settings no longer allow fresh.
    */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
   /**
-   * Waits for `runId` to end, then settles the thread if the run completed.
    * Settling stops the provider session, so an agent that settles its own
    * thread uses this to wait for its turn to end. A run that ends any other
    * way leaves the thread active, as does anything `thread.settle` refuses
@@ -428,43 +406,26 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
   }) => Effect.Effect<void, ThreadManagementFailure>;
-  /**
-   * Settles a thread. When the thread's own agent asks, it is mid-turn, so
-   * the thread settles through `settleAfterRun` once that turn ends.
-   */
   readonly settleThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly byOwnAgent: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
-    // Dispatches thread.settle, a command the enablement chokepoint never
-    // gates; the type stays accurate anyway.
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
-  /**
-   * Asks the provider to stop a running workflow coordinator. The provider's
-   * own terminal notification then settles the coordinator and its members.
-   */
   readonly stopWorkflow: (
     input: OrchestrationV2StopWorkflowInput,
   ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
-  /**
-   * Sends `thread.stop` to every delegated task under a thread, depth first. Their command IDs
-   * derive from `commandId`, so a retry repeats nothing that already stopped. A task that
-   * cannot be stopped does not keep the others running: all are tried, then it fails.
-   */
   readonly stopDelegatedTasks: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly reason?: string | undefined;
   }) => Effect.Effect<
     void,
-    // Dispatches thread.stop, a command the enablement chokepoint never
-    // gates; the type stays accurate anyway.
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
@@ -507,7 +468,6 @@ export function latestRun(
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
 }
 
-/** The newest run in `run`'s restart continuation chain, or `run` itself. */
 function latestRestartContinuation(
   runs: ReadonlyArray<OrchestrationV2Run>,
   run: OrchestrationV2Run,
@@ -682,9 +642,6 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
-  // Every path that can start or wake a provider turn funnels through this
-  // dispatch, so resolving and checking the target instance here (instead of
-  // at each caller) is the one place "off" is enforced.
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
       case "message.dispatch":
@@ -853,10 +810,6 @@ const make = Effect.gen(function* () {
           ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
             candidate.type === "user_message" && candidate.messageId === input.messageId,
         ) ?? null;
-      // A queued message's user turn item is deliberately not emitted at
-      // dispatch time — it materializes when the queued turn actually starts,
-      // so it can map onto the provider turn. Every other dispatch mode still
-      // produces its turn item transactionally with the run.
       if (
         message === undefined ||
         run === undefined ||
@@ -927,11 +880,8 @@ const make = Effect.gen(function* () {
         return { threadId: input.threadId, run: initial.run, timedOut: false };
       }
 
-      // Re-read the runs only when the thread records an update to the waited
-      // run or a continuation, or its deletion, instead of polling the
-      // projection for up to an hour. Each stream keeps one event type, so
-      // transcript events never fill its buffer. A declined continuation
-      // records no event, so its effect settling wakes the wait too.
+      // A declined continuation records no event, so its effect settling wakes
+      // the wait too.
       const wait = Stream.merge(
         Stream.merge(
           orchestrator.streamStoredEventsFrom({
@@ -980,7 +930,6 @@ const make = Effect.gen(function* () {
   const settleAfterRun: ThreadManagementServiceShape["settleAfterRun"] = Effect.fn(
     "orchestrationV2.threadManagement.settleAfterRun",
   )(function* (input) {
-    // A turn that outlives this wait leaves its thread active.
     const { run } = yield* waitForThread({ ...input, timeoutMs: SETTLE_AFTER_RUN_WAIT_MS });
     if (run?.status !== "completed") return;
     yield* dispatch({

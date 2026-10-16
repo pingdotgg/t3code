@@ -15,10 +15,6 @@ import {
   TURN_INTERRUPT_MID_TOOL_PROMPT,
 } from "../shared.ts";
 
-/**
- * The stopped run gets its own rollback point, so the message after it can be
- * edited. Codex reverts only the turn after the stop and keeps the stop.
- */
 export function assertThreadRollbackToStoppedTurnOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -57,7 +53,6 @@ export function assertThreadRollbackToStoppedTurnOutput(
   ]);
   assertVisibleUserMessagesExclude(projection, [THREAD_ROLLBACK_SECOND_PROMPT]);
 
-  // Codex's context keeps the stopped turn and drops the reverted one.
   const recall = projection.turnItems.findLast((item) => item.type === "assistant_message");
   const recallText = recall?.type === "assistant_message" ? recall.text : "";
   assert.include(recallText, "rollback fixture first turn complete");

@@ -25,7 +25,6 @@ interface AccessibilityTreeNode {
 const MAX_ACCESSIBILITY_TREE_NODES = 10_000;
 const WINDOW_BLUR_TIMEOUT_MS = 1_000;
 
-/** Win32 virtual-key codes for the left and right key of each modifier pair. */
 export const WINDOWS_MODIFIER_PAIR_VIRTUAL_KEYS: Record<
   SnapShotModifier,
   readonly [number, number]
@@ -536,7 +535,6 @@ const ELECTRON_KEY_NAMES: Readonly<Record<string, string>> = {
   Escape: "Esc",
 };
 
-/** Two shortcuts are the same when they would register the same listener. */
 export function sameSnapShotShortcut(left: SnapShotShortcut, right: SnapShotShortcut): boolean {
   if (isModifierPairShortcut(left) || isModifierPairShortcut(right)) {
     return (

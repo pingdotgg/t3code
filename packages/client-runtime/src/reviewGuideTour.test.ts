@@ -109,8 +109,6 @@ describe("rowsToPatch", () => {
 });
 
 describe("excerptExpansionOldContents", () => {
-  // The new file behind PATCH: lines 1-9, the hunk at 10-15, then lines up to 41-42 around the
-  // second hunk, which removed a line.
   const newFile = Array.from({ length: 50 }, (_, index) => `line ${index + 1}\n`);
   newFile.splice(
     9,
@@ -130,12 +128,9 @@ describe("excerptExpansionOldContents", () => {
     const old = excerptExpansionOldContents(newContents, shown);
     if (old === null) throw new Error("expected contents");
     const oldLines = old.split("\n");
-    // The excerpt's old side sits at its real old line.
     expect(oldLines[10]).toBe("const size = pick();");
-    // Around it, the new file's lines, so the two sides agree outside the excerpt.
     expect(oldLines[9]).toBe("const a = 1;");
     expect(oldLines[11]).toBe("const b = 2;");
-    // One line replaced by two: the old side is a line shorter, everything after lines up.
     expect(oldLines.length).toBe(newContents.split("\n").length - 1);
   });
 

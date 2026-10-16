@@ -10,8 +10,6 @@ import {
 } from "../shared.ts";
 import { STOP_BACKGROUND_WORK_AFTER_FAILED_TURN_PROMPT } from "./input.ts";
 
-// The adapter has no per-thread pending-work probe, so Stop used to stop at
-// the control service and the thread kept showing the command forever.
 export function assertStopBackgroundWorkAfterFailedTurnOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -35,7 +33,6 @@ export function assertStopBackgroundWorkAfterFailedTurnOutput(
   assert.isNotNull(command?.completedAt);
   const shell = result.shellSnapshot.threads.find((thread) => thread.id === projection.thread.id);
   assert.deepEqual(shell?.pendingBackgroundTasks ?? [], []);
-  // Stop records the request, and never rewrites how the turn itself ended.
   assert.include(
     projection.turnItems.map((item) => item.type),
     "run_interrupt_request",

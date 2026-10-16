@@ -7,7 +7,6 @@ import { useContext, useMemo } from "react";
 import { agentSessionScan } from "../state/agentSessions";
 import { formatEnvironmentQueryError } from "../state/query";
 
-/** Subscribe to each selected computer without coupling their failures or refreshes. */
 export function useProjectScans(environmentIds: readonly EnvironmentId[]) {
   const registry = useContext(RegistryContext);
   const scansAtom = useMemo(

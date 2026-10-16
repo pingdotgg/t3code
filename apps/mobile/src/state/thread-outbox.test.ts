@@ -162,7 +162,6 @@ describe("thread outbox", () => {
         messageId: "message-2",
         createdAt: "2026-06-08T10:00:02.000Z",
       });
-      // Put the unreadable record first to check that later records still load.
       outboxFiles.set(
         "message-2.json",
         failure === "read"
@@ -203,8 +202,6 @@ describe("thread outbox", () => {
       expect(outboxFiles.get("message-2.json")).toBe(unreadable);
       expect(outboxFiles.has("message-1.json")).toBe(true);
 
-      // A delivered readable message can leave the queue while the failed
-      // record stays intact. Its attachment cleanup has a separate guard.
       await expect(manager.remove(edited)).resolves.toBe(edited);
       expect(outboxFiles.has("message-1.json")).toBe(false);
 
@@ -301,7 +298,6 @@ describe("thread outbox", () => {
     await expect(manager.confirmQueued(edited)).resolves.toBe(true);
 
     await manager.remove(edited);
-    // A later repaired record can contain a stale copy of a removed message.
     await expect(manager.load()).resolves.toBe(true);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
     expect(load).toHaveBeenCalledTimes(2);
@@ -744,9 +740,6 @@ describe("thread outbox", () => {
       createdAt: "2026-06-08T10:00:01.000Z",
     });
 
-    // A concurrent update losing its race can compensate-write this payload
-    // to disk before this write fails; rollback must clear that copy or a
-    // restart resurrects the message.
     await expect(manager.enqueue(message)).rejects.toBeInstanceOf(ThreadOutboxManagerError);
     expect(removed).toEqual(["message-1"]);
     registry.dispose();
@@ -785,7 +778,6 @@ describe("thread outbox", () => {
     await expect(first).rejects.toBeInstanceOf(ThreadOutboxManagerError);
     await second;
 
-    // The failed first attempt must not roll back the retry that replaced it.
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [retried],
     });
@@ -872,15 +864,12 @@ describe("thread outbox", () => {
     const edited = { ...original, text: "keep my changes" };
 
     await manager.enqueue(original);
-    // Revision captured before slow work (an attachment upload) starts.
     const revision = manager.revisionOf(original.messageId);
     await manager.update(edited);
 
     await expect(manager.update({ ...original, text: "stale upload" }, revision)).resolves.toBe(
       false,
     );
-    // The losing writer was rejected before persisting: no stale payload can
-    // sit on disk waiting to resurrect on the next load.
     expect(writes).toEqual([original.text, "keep my changes"]);
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
       "environment-1:thread-1": [edited],
@@ -929,9 +918,6 @@ describe("thread outbox", () => {
     resumeWrite();
 
     await expect(update).resolves.toBe(false);
-    // The losing update re-writes the winning payload inside its own
-    // mutation, before the replacement's serialized write lands, so a crash
-    // between the two cannot leave the stale payload on disk.
     expect(writes).toEqual([original.text, "stale upload", "newer edit", "newer edit"]);
     await enqueue;
     expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
@@ -962,8 +948,6 @@ describe("thread outbox", () => {
     const edited = { ...original, text: "edited while restoring" };
 
     await manager.enqueue(original);
-    // Revision captured when restore-to-composer read the payload it intends
-    // to remove; the edit accepted afterwards must survive the removal.
     const revision = manager.revisionOf(original.messageId);
     await manager.update(edited);
 
@@ -1018,13 +1002,10 @@ describe("thread outbox", () => {
       removalSettled = true;
     });
     await removeStarted.promise;
-    // Published synchronously while the durable remove is still in flight.
     const enqueue = manager.enqueue(retried);
     removeBarrier.resolve();
     await replacementWriteStarted.promise;
 
-    // The canceled removal itself restores the durable winner. The queued
-    // enqueue write has not had a chance to run yet.
     expect(removalSettled).toBe(false);
     replacementWriteBarrier.resolve();
     await expect(removal).resolves.toBe(null);
@@ -1226,10 +1207,6 @@ describe("thread outbox", () => {
   });
 
   it("removes an already-created pending task before the file-capability gate runs", () => {
-    // The creation's startTurn already made the thread, so the resolver wants
-    // the queued message removed. A missing server config (or missing file
-    // support) must not turn that into a restore, which would duplicate the
-    // task as a draft.
     const fileAttachments = [{ name: "report.pdf", sizeBytes: 42 }];
     expect(
       resolveThreadOutboxDispatchStep({
@@ -1359,8 +1336,6 @@ describe("thread outbox", () => {
         threadBusy: false,
       }),
     ).toBe("wait");
-    // Connected but not yet synchronized: a previously delivered creation may
-    // simply not be visible yet — sending now could duplicate the thread.
     expect(
       resolveThreadOutboxDeliveryAction({
         isCreation: true,
@@ -1477,10 +1452,6 @@ describe("thread outbox", () => {
     ).toBe(false);
   });
 
-  // A pending task created offline drains the moment the phone reconnects,
-  // which is exactly when the socket is most likely to drop again. Every way a
-  // request can fail in flight must retry; a restore turns the pending task
-  // into a draft and it disappears from the list.
   it("retries every in-flight transport failure by tag, not by message text", () => {
     const socketReasons = [
       new Socket.SocketReadError({ cause: new Error("The network connection was lost.") }),

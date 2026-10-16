@@ -29,7 +29,6 @@ describe("video audio session", () => {
     vi.advanceTimersByTime(1_000);
     expect(mocks.release).not.toHaveBeenCalled();
 
-    // A player starting inside the deferral window keeps the session.
     session.mediaPlaybackStopped();
     session.mediaPlaybackStarted();
     vi.advanceTimersByTime(1_000);

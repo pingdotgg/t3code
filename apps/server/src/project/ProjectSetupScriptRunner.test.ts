@@ -140,8 +140,6 @@ it.effect("resolves setup scripts through the standalone project service", () =>
     assert.match(settleTerminalId, /^settle-clean-/);
     assert.equal(write.mock.calls.at(-1)?.[0].data, "cargo clean\r");
 
-    // A clean run closes its shell once the prompt is back, not at the
-    // sentinel, so the prompt redraw is not taken for new activity.
     const observedSettle = yield* runner.runForThread({
       threadId: "thread-1",
       projectId,
@@ -150,7 +148,6 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       observeCompletion: {},
     });
     const observedTerminalId = observedSettle.status === "started" ? observedSettle.terminalId : "";
-    // Each settle gets its own shell, so a busy one is never typed into.
     assert.notEqual(observedTerminalId, settleTerminalId);
     const token = /__T3_SETUP_DONE___(\w+):/.exec(write.mock.calls.at(-1)?.[0].data ?? "")?.[1];
     const settleListener = listeners.at(-1)!;

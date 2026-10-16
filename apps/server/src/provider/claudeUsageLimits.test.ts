@@ -151,7 +151,6 @@ describe("claudeRateLimitEventToUpdate", () => {
       rateLimitType: "seven_day_overage_included" as never,
       utilization: 0.4,
     } as const;
-    // No probe has named the bucket yet: guessing would open a stray row.
     expect(claudeRateLimitEventToUpdate(event, noNames)).toBeUndefined();
     expect(claudeRateLimitEventToUpdate(event, { overageIncluded: "Fable" })).toEqual({
       windows: [

@@ -209,7 +209,6 @@ function renderFileCitation(node: MarkdownAstNode, source: string, insideLink: b
   delete node.value;
 }
 
-/** Shows only the label. T3 has no suggestion UI, so the hidden prompt is not shown. */
 function renderFollowUp(node: MarkdownAstNode, source: string): void {
   if (!node.attributes?.prompt?.trim() || !textContent(node).trim()) {
     restoreTextDirective(node, source);
@@ -267,7 +266,6 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
   }
 }
 
-/** Adds grammar only for the directives emitted by Codex, then renders them as mdast. */
 function attachCodexDirectives(this: Processor) {
   const data = this.data();
   const micromarkExtensions = data.micromarkExtensions ?? (data.micromarkExtensions = []);
@@ -338,7 +336,6 @@ function renderDirectiveMatches(
   return rendered;
 }
 
-/** Native Markdown renderers use this adapter because they cannot consume a Remark tree. */
 export function renderCodexInlineDirectivesAsMarkdown(markdown: string): string {
   if (
     !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
@@ -350,7 +347,6 @@ export function renderCodexInlineDirectivesAsMarkdown(markdown: string): string 
   return renderDirectiveMatches(markdown, (match) => match.markdown);
 }
 
-/** Matches the Markdown emitted when users copy rendered Codex directive UI. */
 export function renderCodexDirectivesForCopy(markdown: string): string {
   if (
     !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
@@ -367,7 +363,6 @@ export function renderCodexDirectivesForCopy(markdown: string): string {
   });
 }
 
-/** Native renderers split cards out because they cannot host a view inside Markdown text. */
 export function splitCodexArtifactTemplateMarkdown(
   markdown: string,
 ): ReadonlyArray<CodexArtifactTemplateMarkdownSegment> {

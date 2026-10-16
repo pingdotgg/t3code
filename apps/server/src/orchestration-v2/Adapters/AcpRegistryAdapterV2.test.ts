@@ -84,7 +84,6 @@ const layerRegistry = Layer.succeed(
   ),
 );
 
-// Adapters given an explicit runtime never resolve through the catalog.
 const layerInjectedRuntimeCatalog = Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
   resolve: () => Effect.die("the runtime is injected"),
 });
@@ -160,9 +159,6 @@ describe("AcpRegistryAdapterV2", () => {
       options: ["ask", "auto"].map((value) => ({ value, name: value })),
     });
 
-    // A scripted ACP v1 agent: initialize, session/new answered with `setup`,
-    // then the frames T3 must send (and the agent's answers) to apply the
-    // user's stored pick from the agent's mode picker.
     const openWithStoredModePick = Effect.fn("openWithStoredModePick")(function* (input: {
       readonly setup: unknown;
       readonly modeFrames: ReadonlyArray<Frame>;
@@ -230,8 +226,6 @@ describe("AcpRegistryAdapterV2", () => {
           }),
         })
         .pipe(Effect.scoped);
-      // Closing the session stops the agent, which writes its replay status in
-      // the same tick as its last answer. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
     });
 

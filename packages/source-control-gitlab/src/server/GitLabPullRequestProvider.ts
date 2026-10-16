@@ -20,18 +20,14 @@ const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
   actions: [...definition.changeRequestActions],
-  // GitLab offers all three, though a project settles on one; `mergeCapabilities` narrows it.
   mergeMethods: ["merge", "squash", "rebase"],
   // Rebase alone: GitLab moves a stale branch onto its target by replaying it, and has nothing
-  // that merges the target back in the way GitHub's update button can. Declaring only what it
-  // does is what lets a request to merge the target in be refused instead of quietly rebasing.
+  // that merges the target back in the way GitHub's update button can.
   updateMethods: ["rebase"],
   search: true,
   reactions: true,
   // GitLab keeps a reader's viewed files in one browser's local storage, where nothing outside
-  // that browser can read or write them. So the marks made here are this environment's own: they
-  // follow the reader between the clients connected to it, but they are not the ones gitlab.com
-  // shows, and the surface says so rather than implying a review can be carried on from there.
+  // that browser can read or write them.
   viewedFiles: "environment",
   review: {
     inlineComment: true,
@@ -58,25 +54,14 @@ const MERGE_ACTIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * What the signed-in account may do here. GitLab answers exactly one of these questions per
- * viewer, on the merge request itself: `user.can_merge`, which is why merging is the only thing
- * narrowed.
- *
- * The rest stay granted. GitLab's REST API reports the viewer's role on the project but never
- * whether they opened this merge request — and its author may close it, reopen it and move it in
- * and out of draft whatever their role, just as the author of a note may resolve the discussion
- * it started. Withholding those controls from the one person entitled to them is the worse of the
- * two mistakes, so they are offered and GitLab explains any refusal itself.
- *
- * Asking for a review is granted for the same reason: GitLab takes a reviewer set from the author
- * and from anyone with the Developer role, and states neither of those two facts here.
+ * GitLab's REST API reports the viewer's role on the project but never whether they opened this
+ * merge request — and its author may close it, reopen it and move it in and out of draft
+ * whatever their role, just as the author of a note may resolve the discussion it started.
  */
 export function gitLabViewerPermissions(input: {
   readonly viewerCanMerge: boolean;
 }): PullRequestViewerPermissions {
   return {
-    // Arming the merge and taking the arming back are the merge, deferred, so they answer to
-    // the same `can_merge` the merge itself does.
     actions: CAPABILITIES.actions.filter(
       (action) => !MERGE_ACTIONS.has(action) || input.viewerCanMerge,
     ),
@@ -88,7 +73,6 @@ export function gitLabViewerPermissions(input: {
   };
 }
 
-/** The CLI tags that mean the tool itself is unusable, rather than one request failing. */
 export function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
 ): PullRequestProviderFailure {
@@ -132,8 +116,6 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
-          // GitLab is asked for its merge requests by update, newest first, whether or not it is
-          // being carried on from — so every page it answers is one a cursor can continue.
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
@@ -180,8 +162,6 @@ export const make = Effect.gen(function* () {
           cli
             .listDiscussions(input)
             .pipe(Effect.orElseSucceed(() => ({ threads: [], truncated: true }))),
-          // The notes endpoint carries no award of any kind, so they are read alongside it. A
-          // failed read costs the conversation its reactions rather than its words.
           cli.listReactions(input).pipe(
             Effect.orElseSucceed(() => ({
               reactions: [] as ReadonlyArray<PullRequestReaction>,
@@ -198,9 +178,6 @@ export const make = Effect.gen(function* () {
             ...comment,
             reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
           })),
-          // GitLab reports no count of its own, so the walk's own total is the host's: the
-          // notes endpoint carries every comment on the merge request, including the ones
-          // written under a discussion, and it is read until GitLab runs out.
           commentCount: notes.comments.length,
           commentsTruncated: notes.truncated || discussions.truncated,
           reviewThreads: discussions.threads.map((thread) => ({
@@ -214,8 +191,6 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
-    // request, so there is no cheaper thing to ask GitLab.
     getViewerPermissions: (input) =>
       cli
         .getMergeRequestDetail(input)
@@ -226,9 +201,8 @@ export const make = Effect.gen(function* () {
     getDiffFileContents: (input) =>
       cli.getMergeRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
 
-    // What each marked file is at the head, which is what tells a mark that still stands from one
-    // the branch has moved past. GitLab's own local-storage marks are keyed on the blob id too,
-    // so this stales at the same moment its web UI would.
+    // GitLab's own local-storage marks are keyed on the blob id too, so this stales at the same
+    // moment its web UI would.
     getFileRevisions: (input) =>
       cli.getFileRevisions(input).pipe(
         Effect.mapError(fail("getFileRevisions")),
@@ -281,8 +255,6 @@ export const make = Effect.gen(function* () {
 
     comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
 
-    // The kind is not read: every comment this provider hands out, positioned or not, carries a
-    // plain REST note id, and one endpoint rewrites both.
     updateComment: (input) =>
       cli
         .updateNote({

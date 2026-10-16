@@ -61,7 +61,6 @@ beforeEach(async () => {
     else if (typeof request !== "string" && request.Action.ScreenshotWindow) {
       const screenshot = request.Action.ScreenshotWindow;
       capturePath = screenshot.path;
-      // Focus may change between discovery and capture. The request must keep the original ID.
       focused = { ...window, id: 99, title: "Another app" };
       await NodeFSP.writeFile(screenshot.path, png);
       for (const event of events) {

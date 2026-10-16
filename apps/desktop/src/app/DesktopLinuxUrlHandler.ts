@@ -17,10 +17,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // appimagekit_<hash>-….desktop) and its filename is not under our control.
 // Electron's app.setAsDefaultProtocolClient resolves the desktop id from
 // setDesktopName, which cannot match those files — so the browser keeps
-// prompting "Choose an application" for every OAuth callback. Instead, write
-// our own handler entry pointing at the current AppImage, refresh the desktop
-// MIME cache so desktop environments recognize that entry as a handler, and
-// use xdg-mime to record it as the scheme default in mimeapps.list.
+// prompting "Choose an application" for every OAuth callback.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
 
 export class DesktopLinuxUrlHandlerRegistrationError extends Schema.TaggedError<DesktopLinuxUrlHandlerRegistrationError>()(
@@ -67,10 +64,7 @@ const escapeDesktopEntryString = (value: string): string =>
 
 // Exec values are unescaped twice by implementations: first the general
 // string-value rules, then the Exec quoting rules — so writing composes the
-// layers in reverse. The argument is double-quoted with reserved characters
-// backslash-escaped and literal percent signs doubled (field codes), and the
-// general string escaping is applied on top: a literal backslash ends up as
-// four backslashes in the file, a quote as \\", a dollar sign as \\$.
+// layers in reverse.
 export function escapeDesktopEntryExecArgument(value: string): string {
   const quoted = value
     .replaceAll("\\", () => "\\\\")
@@ -255,8 +249,6 @@ export const make = Effect.gen(function* () {
     yield* setDefaultHandler;
     yield* logInfo("registered URL scheme handler", { scheme });
   }).pipe(
-    // Registration is best-effort: a missing xdg-mime or read-only home must
-    // never block startup — the OS chooser remains as fallback.
     Effect.catch((error) =>
       logWarning("URL scheme handler registration failed", {
         scheme,

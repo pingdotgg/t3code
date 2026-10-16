@@ -24,7 +24,6 @@ const NIGHTFALL_THEME: EnvironmentThemeFile = {
   accent: "#7aa2f7",
 };
 
-/** The standard exported form: a full palette, no seeds. */
 const SHARED_THEME: EnvironmentThemeFile = {
   version: 1,
   name: "Shared Light",
@@ -32,7 +31,6 @@ const SHARED_THEME: EnvironmentThemeFile = {
   colors: { canvas: "#eff1f5", accent: "#1e66f5" },
 };
 
-/** Seeds theme files before the service starts, as a real machine would. */
 const withEnvironmentThemes = <A, E>(
   seeds: Readonly<Record<string, string>>,
   body: Effect.Effect<
@@ -97,8 +95,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  // Read from disk rather than from the watcher's last observation, so a
-  // client connecting after a missed filesystem event still sees the truth.
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -122,11 +118,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  // One bad file must not take down the machine's other themes: a theme
-  // script that leaves a template placeholder unresolved, a half-written
-  // file, or a stray name are each that file's problem alone.
-  // The subscription is acquired before the current set is read, so nothing
-  // published while a client connects can fall between snapshot and stream.
   it.effect("streams the current set first", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -138,9 +129,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  // Subscribing happens before the snapshot read, so a publish landing in
-  // between is queued. It must not replay after the newer snapshot and walk
-  // clients back onto colors the machine has already moved past.
   it.effect("never replays a set older than the snapshot it started from", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -150,8 +138,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
 
-        // Advance the directory twice without the watcher running, so the
-        // second read is strictly newer than anything already observed.
         yield* fs.writeFileString(
           path.join(environmentThemesDir, "shared-light.json"),
           encodeThemeFile(SHARED_THEME),
@@ -187,8 +173,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  // A symlinked themes directory stays usable, but a symlinked file inside it
-  // must not publish whatever it points at.
   it.effect.skipIf(!symlinksSupported)("ignores a symlinked theme file", () =>
     withEnvironmentThemes(
       {},
@@ -204,9 +188,6 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
-  // The aggregate size cap charges only accepted themes, so a pile of
-  // malformed files cannot spend the budget and hide a valid theme sorted
-  // after them.
   it.effect("does not charge skipped files against the total size limit", () =>
     withEnvironmentThemes(
       {
@@ -225,10 +206,8 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
   );
 });
 
-// The feature's headline claim: rewrite a file and connected clients retint
-// without a restart. Live clock and a real filesystem event, so this proves
-// the watcher rather than a direct read. Kept outside the it.layer block above
-// because only the top-level `it` exposes `live`.
+// Kept outside the it.layer block above because only the top-level `it` exposes
+// `live`.
 describe("environment theme watching", () => {
   it.live("streams a set for every change to the directory", () =>
     Effect.gen(function* () {
@@ -245,10 +224,8 @@ describe("environment theme watching", () => {
           Queue.offer(seen, themes),
         ).pipe(Effect.forkScoped);
 
-        // Empty to start.
         assert.deepEqual(yield* Queue.take(seen), []);
 
-        // Published atomically, the way a theme hook writes it.
         const staging = path.join(baseDir, "staged.json");
         yield* fs.writeFileString(staging, encodeThemeFile(NIGHTFALL_THEME));
         yield* fs.rename(staging, path.join(themesDir, "nightfall.json"));
@@ -257,7 +234,6 @@ describe("environment theme watching", () => {
           ["nightfall"],
         );
 
-        // Removed again, and the set empties without a restart.
         yield* fs.remove(path.join(themesDir, "nightfall.json"));
         assert.deepEqual(yield* Queue.take(seen), []);
       }).pipe(

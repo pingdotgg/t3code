@@ -8,7 +8,6 @@ export interface AppBarAction {
   readonly icon: AppSymbolName;
   readonly onPress: () => void;
   readonly disabled?: boolean;
-  /** Shows a spinner in place of the icon while the action's work is pending. */
   readonly loading?: boolean;
   readonly selected?: boolean;
   readonly tintColor?: ColorValue;
@@ -70,9 +69,7 @@ export interface AppBarProps {
   };
   readonly hideBottomBorder?: boolean;
   readonly trailing?: ReactNode;
-  /** Search scenes use sheet colors on iOS and header colors on Android. */
   readonly matchSearchSurface?: boolean;
-  /** Custom native layouts can override options without duplicating the header renderer. */
   readonly options?: AppNativeStackNavigationOptions;
   readonly optionsVersion?: unknown;
 }

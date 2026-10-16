@@ -1,4 +1,3 @@
-// The bridge forwards opaque JSON-RPC values without interpreting their schemas.
 // @effect-diagnostics preferSchemaOverJson:off
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
@@ -79,7 +78,6 @@ export interface AcpMcpOverAcpBridge {
   readonly dispose: Effect.Effect<void>;
 }
 
-/** Bridges the unstable ACP transport to T3's authenticated streamable-HTTP MCP endpoint. */
 export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(function* (
   options: AcpMcpOverAcpBridgeOptions,
 ): Effect.fn.Return<AcpMcpOverAcpBridge> {

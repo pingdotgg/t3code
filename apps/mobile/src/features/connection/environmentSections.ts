@@ -13,10 +13,6 @@ export interface EnvironmentSections {
   readonly availableCloudEnvironments: ReadonlyArray<RelayClientEnvironmentRecord>;
 }
 
-/**
- * Ids of the environments that already occupy a T3 Connect slot. A backend saved directly is
- * not one of them, so it must not suppress the cloud environment that happens to share its id.
- */
 export function relayManagedEnvironmentIds(
   environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;

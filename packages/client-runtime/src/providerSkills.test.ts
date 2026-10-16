@@ -153,7 +153,6 @@ describe("getProviderSkillsForSlashMenu", () => {
         name: "deploy",
         path: "/Users/matt/.claude/skills/deploy/SKILL.md",
         enabled: true,
-        // Reserved for the user, not the agent: still a valid pick.
         userInvocationOnly: true,
       },
     ];

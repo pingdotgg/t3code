@@ -21,7 +21,6 @@ import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 
-/** Pinned so dev-mode cookie tests can assert the port-scoped name. */
 const TEST_SERVER_PORT = 13_773;
 const isPairingCredentialIssueError = Schema.is(PairingGrantStore.PairingCredentialIssueError);
 const isPersistenceSqlError = Schema.is(PersistenceErrors.PersistenceSqlError);
@@ -34,8 +33,6 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
       return {
         ...config,
         ...overrides,
-        // Keep the test server deterministic even when the default test layer
-        // changes its development port.
         port: TEST_SERVER_PORT,
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
@@ -638,7 +635,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
           headers: { host: "192.168.1.50:3773", ...headers },
         } as never);
 
-      // Same host, a proxy-reported host, a trusted app origin, or no browser at all.
       yield* upgrade({ origin: "http://192.168.1.50:3773" });
       yield* upgrade({
         origin: "https://box.tail1234.ts.net",
@@ -648,7 +644,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       yield* upgrade({ origin: "http://localhost:5733" });
       yield* upgrade({});
 
-      // Another port on the same machine is the same site but not the app.
       const otherPort = yield* Effect.flip(upgrade({ origin: "http://192.168.1.50:8080" }));
       expect(otherPort._tag).toBe("ServerAuthInvalidCredentialError");
       const opaque = yield* Effect.flip(upgrade({ origin: "null" }));
@@ -676,7 +671,6 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
           headers: { host: "localhost:13773", ...headers },
         } as never);
 
-      // The dev proxy rewrites Host, so a LAN page relies on the browser's own verdict.
       yield* post({ origin: "http://192.168.1.50:5733", "sec-fetch-site": "same-origin" });
       yield* post({ origin: "http://localhost:13773" });
 

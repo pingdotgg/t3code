@@ -13,16 +13,10 @@ import { Label } from "../ui/label";
 
 const DEFAULT_HOST = "github.com";
 
-/** Where to create a token for a host: GitHub's own page, or the same path on an Enterprise host. */
 function newTokenUrl(host: string): string {
   return `https://${host}/settings/personal-access-tokens/new`;
 }
 
-/**
- * A GitHub token for one host, kept in the server's secret store. It is used before
- * `GH_TOKEN` and the `gh` login, so it also works on a server without `gh` installed.
- * Write-only: the saved token is never shown, only whether one is set.
- */
 export function GitHubTokenSettings({
   environmentId,
   onSaved,

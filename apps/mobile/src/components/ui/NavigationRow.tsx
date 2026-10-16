@@ -34,7 +34,6 @@ export function NavigationRow({
       accessibilityRole="button"
       accessibilityLabel={[title, subtitle].filter(Boolean).join(", ")}
       android_ripple={{ color: themeVariables["--color-subtle-strong"] }}
-      // Give the scroll view time to claim drags before starting the ripple.
       unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
       {...props}
       className={cn(

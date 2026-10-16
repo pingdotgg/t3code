@@ -14,7 +14,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-/** Carries no query text: search input is user content. */
 export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
   "ThreadSearchError",
   {
@@ -44,7 +43,6 @@ function foldAsciiCase(value: string): string {
   return value.replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
-/** At most 240 characters, centred near the first match. */
 function buildSearchSnippet(text: string, query: string): string {
   const normalizedText = text.replace(/\s+/g, " ").trim();
   if (normalizedText.length <= 240) {
@@ -61,11 +59,6 @@ function buildSearchSnippet(text: string, query: string): string {
   }`;
 }
 
-/**
- * Searches the finished user and assistant messages of active V2 threads in
- * active projects. Legacy V1 transcripts that have not been imported yet are
- * not searched.
- */
 export class ThreadSearch extends Context.Service<
   ThreadSearch,
   {
@@ -79,8 +72,6 @@ export class ThreadSearch extends Context.Service<
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // One best match per thread: user messages outrank assistant ones, then the
-  // newest message wins. Threads order by match kind, then recency.
   const searchRows = SqlSchema.findAll({
     Request: SearchRequest,
     Result: SearchRow,

@@ -5,7 +5,6 @@ import { SymbolView } from "./AppSymbol";
 import { ListRowLayout, type ListRowContentProps } from "./ListRowLayout";
 import { RowPressable } from "./RowPressable";
 
-/** A navigation row owns its look; callers supply content and destination behavior. */
 export function ListRow(props: ListRowContentProps & { readonly onPress: () => void }) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
   return (

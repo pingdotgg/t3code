@@ -8,9 +8,7 @@ export function ScreenContent({
   fitToContents = false,
 }: {
   readonly children: ReactNode;
-  /** Match the master-list gutters for secondary panes, not full-width content. */
   readonly insetHorizontal?: boolean;
-  /** Allow native form sheets to measure their content instead of filling a fixed detent. */
   readonly fitToContents?: boolean;
 }) {
   if (Platform.OS !== "android") return children;

@@ -168,8 +168,6 @@ export function useRemoteConnections() {
           void controller.removeEnvironment(environmentId);
         },
       } as const;
-      // Removing a T3 Connect environment here leaves its account registration
-      // and host space, so point to where it can be deregistered.
       if (environment.isRelayManaged) {
         Dialog.alert(
           "Remove from this device?",

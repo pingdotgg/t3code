@@ -103,7 +103,6 @@ export function resolveSnapShotTargetOnce(
   return resolution;
 }
 
-// A capture keeps its destination even after its animation unmounts or the window blurs.
 export function resolveSnapShotDeliveryTarget(
   targets: Map<string, Promise<CaptureTarget | null>>,
   id: string,
@@ -339,7 +338,6 @@ export function SnapShotCoordinator() {
           const current = lastTargetRef.current;
           const target = current ? resolveExistingSnapShotTarget(current, routeThreadRef) : null;
           // Creating a new draft would navigate the renderer before a self-capture finishes.
-          // Pin existing drafts now; create a destination after acquisition when none exists.
           if (target) {
             void resolveSnapShotDeliveryTarget(captureTargetsRef.current, event.id, () =>
               Promise.resolve(target),

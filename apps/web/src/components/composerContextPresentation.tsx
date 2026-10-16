@@ -48,24 +48,18 @@ import {
   UnresolvedChip,
 } from "./contextChipParts";
 
-/**
- * Draft-side payload behind a context reference chip. Each kind keeps its existing draft
- * shape; the editor only needs a way to look one up by id.
- */
 export type ComposerDraftContextRecord =
   | { kind: "terminal"; record: TerminalContextDraft }
   | { kind: "review-comment"; record: ReviewCommentContext }
   | {
       kind: "preview-annotation";
       record: PreviewAnnotationPayload;
-      /** The crop, which the draft stores as an image sharing the annotation's id. */
       screenshot?: ComposerImageAttachment | undefined;
     }
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "thread"; record: ThreadContextRecord };
 
-/** What a chip can do beyond showing itself; the composer supplies the handlers. */
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
   cwd?: string | undefined;
@@ -308,7 +302,6 @@ function ComposerPreviewAnnotationDetails({
   screenshot: ComposerImageAttachment | undefined;
 }) {
   const summary = previewAnnotationTooltip(annotation);
-  // The draft drops the annotation's own data URL and keeps the crop as an image.
   const screenshotUrl = annotation.screenshot?.dataUrl || screenshot?.previewUrl;
   return (
     <div className="overflow-hidden rounded-lg border border-border/70 bg-background/70">
@@ -448,7 +441,6 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   fallback: (_kind, _entry, context) => <UnresolvedContextChip label={context.label} />,
 });
 
-/** Compact chip for one reference. Unknown kinds and missing records use the registry fallback. */
 export function ComposerContextReferenceChip(props: {
   kind: string;
   contextId: string;

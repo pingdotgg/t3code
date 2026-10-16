@@ -173,9 +173,6 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly setDiagnosticsDemand: (
       enabled: boolean,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
-    /** Asks the desktop app supervising this server to update itself. The
-        desktop answers with desktopUpdateStatus reports carrying the same
-        requestId. */
     readonly requestDesktopUpdate: (
       requestId: string,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
@@ -185,9 +182,6 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly cancelDesktopUpdate: (
       requestId: string,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
-    /** Latest desktop update state report plus subsequent reports. The
-        desktop replays its latest report when the backend attaches, so this
-        is populated shortly after startup on desktop-managed servers. */
     readonly desktopUpdates: Effect.Effect<
       {
         readonly latest: Option.Option<DesktopUpdateStatusReport>;
@@ -527,7 +521,6 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
           );
         }
 
-        // Not a resource sample: do not touch `latest` or sample health.
         if (message.type === "desktopUpdateStatus") {
           return recordContact.pipe(
             Effect.andThen(Ref.set(latestUpdateReport, Option.some(message))),

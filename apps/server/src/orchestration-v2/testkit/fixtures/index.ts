@@ -945,7 +945,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
     ],
   },
-  // OpenCode 2 runtime of the same driver, recorded against 2.0.18 over HTTP and SSE.
   {
     name: "opencode2_simple",
     buildInput: openCode2SimpleInput,
@@ -1145,7 +1144,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       },
     ],
   },
-  // Recorded live against 2.0.18 on OpenRouter with the workspace's own command and skill.
   ...(
     [
       ["opencode2_command", openCode2CommandInput, assertOpenCode2CommandOutput],
@@ -1754,13 +1752,3 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
 ];
-
-// TODO(claude-v2/context-transfer): add provider-switch handoff and return fixtures when portable
-// context handoff is implemented. Cross-reference docs/orchestration-v2/provider-switching-and-context.md
-// and docs/orchestration-v2/thread-lineage-and-context-transfer.md. The return fixture should
-// prefer a delta handoff into an existing Claude provider thread.
-
-// TODO(claude-v2/context-transfer-fixtures): register provider-switch, merge-back, and cross-provider
-// fork fixtures after each path has a real provider transcript. Cross-reference
-// docs/orchestration-v2/provider-switching-and-context.md and
-// docs/orchestration-v2/thread-lineage-and-context-transfer.md.

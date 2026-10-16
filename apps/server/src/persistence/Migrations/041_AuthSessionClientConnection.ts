@@ -1,9 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Client-declared surface (web/desktop/mobile) and app version, refreshed on
-// every WebSocket connect so the row tracks the client's current build instead
-// of freezing at session issuance. Nullable: old clients never report them.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = yield* sql<{ readonly name: string }>`

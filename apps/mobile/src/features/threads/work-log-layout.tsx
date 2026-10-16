@@ -28,7 +28,6 @@ export function WorkLogIconSlot({ children }: { children: ReactNode }) {
   return <View className="relative h-6 w-6 shrink-0 items-center justify-center">{children}</View>;
 }
 
-/** Consumers supply actions/content; sizing comes from the feed's accessibility-aware metrics. */
 export function WorkLogPressable({
   children,
   rowSizing,
@@ -49,7 +48,6 @@ export function WorkLogPressable({
   );
 }
 
-/** Headers stay one line; only the separate detail content can wrap. */
 export function WorkLogLabel({
   children,
   tone = "default",

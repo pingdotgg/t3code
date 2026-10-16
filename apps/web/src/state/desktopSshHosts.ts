@@ -5,7 +5,6 @@ import { Atom } from "effect/reactivity";
 
 type DesktopSshDiscoveryBridge = Pick<DesktopBridge, "discoverSshHosts">;
 
-/** Filters and ranks SSH host suggestions as the user types in the host field. */
 export function filterDiscoveredSshHosts(
   hosts: ReadonlyArray<DesktopDiscoveredSshHost>,
   query: string,

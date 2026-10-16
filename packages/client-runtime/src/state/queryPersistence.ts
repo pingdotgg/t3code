@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-/** Platforms opt in to storing selected query responses beside their other offline data. */
 export class EnvironmentQueryStore extends Context.Reference<{
   readonly load: (
     environmentId: EnvironmentId,

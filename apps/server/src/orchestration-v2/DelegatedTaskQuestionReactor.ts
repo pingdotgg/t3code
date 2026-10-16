@@ -17,12 +17,6 @@ import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-/**
- * Wakes the parent of an app-owned delegated task when the task asks a question. The question
- * blocks the task until someone answers it, and the user rarely watches child threads, so the
- * parent agent is told to answer it or to ask the user. Only questions are routed: approvals
- * cannot be answered through the pending request tools.
- */
 export class DelegatedTaskQuestionReactor extends Context.Service<
   DelegatedTaskQuestionReactor,
   {
@@ -112,7 +106,6 @@ const make = Effect.gen(function* () {
       const parentThreadId = child.lineage.parentThreadId;
       if (parentThreadId === null) return;
       const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
-      // Keyed by the request, so a request updated while still pending wakes the parent once.
       const key = `${parentThreadId}:${event.payload.id}`;
       const messageId = MessageId.make(`message:delegated-task-question:${key}`);
       if (event.payload.status !== "pending" || request?.status !== "pending") {

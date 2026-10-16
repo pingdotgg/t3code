@@ -60,12 +60,9 @@ export function isFirstRunWorkspaceProvenanceAuthoritative(input: {
   readonly welcomeReceived: boolean;
   readonly bootstrapStatus: "pending" | "complete" | null;
 }): boolean {
-  // An empty catalog is not final while cwd auto-bootstrap is pending. Older
-  // servers omit bootstrapStatus, so a received welcome with null stays valid.
   return input.welcomeReceived && input.bootstrapStatus !== "pending";
 }
 
-/** Keeps the authenticated app unmounted until workspace evidence settles. */
 export function transitionFirstRunGateState(
   state: FirstRunGateState,
   event: FirstRunGateEvent,
@@ -85,7 +82,6 @@ export function transitionFirstRunGateState(
   return { decision: event.decision, stalled: false };
 }
 
-/** Only a project and thread created by this startup count as a fresh nonempty workspace. */
 export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean {
   if (input.projects.length > 1 || input.threads.length > 1) {
     return false;
@@ -122,7 +118,6 @@ export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean
   );
 }
 
-/** Cached projects may open the app, but only live workspace data may complete onboarding. */
 export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
   readonly decision: FirstRunDecision;
   readonly persistCompletion: boolean;
@@ -162,7 +157,6 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
     : { decision: "app", persistCompletion: input.workspaceAuthoritative };
 }
 
-/** Hosted onboarding depends on saved environments because there is no primary server. */
 export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput): {
   readonly decision: FirstRunDecision;
   readonly persistCompletion: boolean;
@@ -179,8 +173,6 @@ export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput
     return { decision: "pending", persistCompletion: false };
   }
 
-  // An existing desktop may have disabled its server before onboarding existed.
-  // Keep Connections accessible so it can turn local execution back on.
   return input.environmentCount === 0 && !input.localEnvironmentDisabled
     ? { decision: "wizard", persistCompletion: false }
     : { decision: "app", persistCompletion: true };

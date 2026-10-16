@@ -68,7 +68,6 @@ describe("threadQueueControlPresentation", () => {
     expect(editing.isEditing).toBe(true);
     expect(editing.canEdit).toBe(false);
     expect(editing.canSteer).toBe(false);
-    // Reordering and removing a message stay available while it is edited.
     expect(editing.canMoveUp).toBe(true);
     expect(editing.canDismiss).toBe(true);
   });

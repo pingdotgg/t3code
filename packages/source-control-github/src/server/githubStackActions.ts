@@ -83,7 +83,6 @@ export class GitHubStackRebaseFailedError extends Schema.TaggedError<GitHubStack
   { ...stackErrorIdentity, completed: Schema.Int, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    // A conflict or a refused push already says which layer and what to do about it.
     return this.cause instanceof Error && this.cause.message !== ""
       ? this.cause.message
       : `Stack rebase stopped at PR #${this.number} after ${this.completed} layers. Earlier updates remain on GitHub; resolve the failing layer before retrying.`;
@@ -109,7 +108,6 @@ const MergeResponse = Schema.Struct({
 
 const decodeMergeResponse = Schema.decodeEffect(Schema.fromJsonString(MergeResponse));
 
-/** Remote-only updates: a stack rebase works in a scratch clone, never the environment's checkout. */
 export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* (input: {
   cwd: string;
   repository: string;

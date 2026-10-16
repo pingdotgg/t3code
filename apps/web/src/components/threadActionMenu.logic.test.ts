@@ -164,7 +164,6 @@ describe("buildThreadActionMenuItems", () => {
     ]);
     const off = find({ ...baseState, autoSettleEnabled: false });
     expect(off?.children?.map((child) => child.checked)).toEqual([false, true]);
-    // Sits with the per-thread settings after Mark unread, not the lifecycle verbs.
     const items = buildThreadActionMenuItems(baseState);
     expect(items[items.findIndex((item) => item.id === "mark-unread") + 1]?.id).toBe("auto-settle");
     expect(

@@ -373,7 +373,6 @@ describe("composeShellStreamWithEnrichment", () => {
           snapshot: initialSnapshot,
           resolvedRepositoryIdentityRoots: ["/workspace/a"],
         });
-        // Enrichment stream is fully ready before the composed stream is pulled.
         const enrichment = Stream.make(
           shellStreamItemFromEnrichmentRefresh({
             snapshot: enrichmentSnapshot,
@@ -612,7 +611,6 @@ describe("skipUnchangedThreadShells", () => {
         updated(3, shell("a", { updatedAt: at(200), itemCount: 2, visibleItemCount: 2 })),
         updated(4, shell("a", { updatedAt: at(300), itemCount: 2, visibleItemCount: 2 })),
         updated(5, shell("b")),
-        // The resend window is 5 s.
         { advanceMs: 5_000 },
         updated(6, shell("a", { updatedAt: at(5_300), itemCount: 2, visibleItemCount: 2 })),
       ]);

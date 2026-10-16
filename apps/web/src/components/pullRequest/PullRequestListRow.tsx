@@ -16,26 +16,12 @@ import {
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
 
-/**
- * The one row shape both pull request lists share: the full page and a thread's linked panel.
- * A status column, then two lines — number and title with the diff counts on the right;
- * author and whatever else the caller shows under them with the time on the right. The column
- * stacks the lifecycle glyph over the checks glyph, so what a pull request is and how it is
- * doing read top to bottom at the left edge, and the right edge is only numbers and time. The
- * page puts repository and labels there, the panel puts the branches there. The caller owns
- * the wrapper (a link on the panel, a button on the page) and hands in the slots.
- */
 export const PULL_REQUEST_ROW_CLASS =
   "group/pr-row flex w-full items-center gap-2 rounded-md py-1 pr-1 text-left";
 
 export const PULL_REQUEST_ROW_NUMBER_CLASS =
   "shrink-0 font-mono text-xs tabular-nums text-muted-foreground";
 
-/**
- * The conflict warning rides the corner of the lifecycle glyph, over the arrow's merge circle,
- * so the leading slot stays one icon wide and titles line up whether or not a row is blocked.
- * The background fill cuts it out of the glyph beneath.
- */
 export function PullRequestRowGlyph({
   state,
   isDraft,
@@ -48,7 +34,6 @@ export function PullRequestRowGlyph({
   isDraft: boolean;
   mergeability?: PullRequestMergeability | undefined;
   baseBranch?: string | undefined;
-  /** Under the lifecycle glyph, level with the second line: the checks glyph. */
   below?: ReactNode;
   className?: string;
 }) {
@@ -82,14 +67,10 @@ export function PullRequestRowLines({
   metaClassName,
   updatedAt,
 }: {
-  /** The `#n` reference, already wrapped in whatever tooltip or menu the caller wants on it. */
   number: ReactNode;
   title: ReactNode;
-  /** Right end of the first line: stack, diff counts. */
   status?: ReactNode;
-  /** Right after the title text: checks and review verdict glyphs. */
   signals?: ReactNode;
-  /** Left of the second line: author, then repository and labels or the branches. */
   meta?: ReactNode;
   metaClassName?: string;
   updatedAt?: string | null | undefined;
@@ -123,7 +104,6 @@ export function PullRequestRowLines({
   );
 }
 
-/** Avatar and login at the meta line's own size, with the actor's full name on hover. */
 export function PullRequestRowAuthor({
   actor,
   className,
@@ -149,11 +129,6 @@ export function PullRequestRowAuthor({
   );
 }
 
-/**
- * `head → base`, in the mono the branches are typed in, each cut in the middle when the row is
- * short of room. The base keeps its width up to a share of the line, so a long head cannot
- * squeeze a short `main` out; the arrow stays readable so the two are not read as one name.
- */
 export function PullRequestRowBranches({ head, base }: { head: string; base: string }) {
   return (
     <span className="flex min-w-0 items-center gap-1 font-mono">

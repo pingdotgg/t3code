@@ -1,7 +1,6 @@
 import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
 import type { MarkdownNode } from "../../lib/markdownDocument";
 
-/** Read media from the parsed document so code examples never become attachments. */
 export function pullRequestDescriptionContent(
   document: MarkdownNode,
   media: readonly PullRequestBodySegment[] = [],

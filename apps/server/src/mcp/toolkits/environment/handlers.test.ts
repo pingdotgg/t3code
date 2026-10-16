@@ -97,7 +97,6 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
   Effect.gen(function* () {
     const caller = yield* Ref.make<OrchestrationV2ThreadShell>(liveThreadShell(threadId));
     const updates = yield* Ref.make(0);
-    // Completes once the declaration's own check has read the caller.
     const checked = yield* Deferred.make<void>();
     const layerDependencies = Layer.mergeAll(
       ThreadCommandExecutor.layer,
@@ -137,7 +136,6 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
       const held = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
-      // A turn-completion command holds the thread's lock.
       const holder = yield* executor
         .withLock(
           threadId,
@@ -148,7 +146,6 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
       const update = yield* toolkit
         .handle("t3_environment_preferences_update", { newWorktreesStartFromOrigin: true })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.forkChild);
-      // The update passed its first check and waits for the lock; the turn then ends.
       yield* Deferred.await(checked);
       yield* Ref.update(caller, (shell) => ({ ...shell, activeRunId: null }));
       yield* Deferred.succeed(release, undefined);

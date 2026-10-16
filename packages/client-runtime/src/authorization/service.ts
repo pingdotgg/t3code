@@ -72,10 +72,9 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
     readonly authorizeDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
       /**
-       * Connect to this origin instead of the T3 Connect tunnel. The access
-       * token is not bound to an origin, and each proof is minted for the URL
-       * it signs, so a token from the relay also works on the environment's
-       * LAN or tailnet address.
+       * The access token is not bound to an origin, and each proof is minted
+       * for the URL it signs, so a token from the relay also works on the
+       * environment's LAN or tailnet address.
        */
       readonly directEndpoint?: { readonly httpBaseUrl: string; readonly wsBaseUrl: string };
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
@@ -140,9 +139,7 @@ export const make = Effect.gen(function* () {
   >(new Map());
 
   /**
-   * Confirms a direct address still serves the expected environment before a
-   * credential is sent there. A saved LAN address can belong to another
-   * machine on a different network.
+   * A saved LAN address can belong to another machine on a different network.
    */
   const verifyDirectEndpoint = Effect.fn("clientRuntime.connection.remote.verifyDirectEndpoint")(
     function* (input: {
@@ -518,7 +515,6 @@ export const make = Effect.gen(function* () {
       }
       // An unreachable direct address says nothing about the token, so keep
       // it for the T3 Connect route rather than forcing a relay round trip.
-      // A rejected token falls through and is replaced like on the tunnel.
       if (endpoint !== undefined && cachedSocket.failure._tag !== "EnvironmentAuthInvalidError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
@@ -531,7 +527,6 @@ export const make = Effect.gen(function* () {
       Effect.result,
     );
     if (Result.isFailure(socket)) {
-      // A direct address that refuses the socket says nothing about the token.
       if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
         yield* tokenLock.withPermits(1)(
           removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),

@@ -50,13 +50,6 @@ function delegatedCompletionRetryKey(
   return `${request.threadId}:${completion.parentRunId}:${completion.generation}:${completion.messageId}`;
 }
 
-/**
- * Drains ProviderContinuationRequests and dispatches an internal
- * message.dispatch per request so the wake turn buffered by the adapter is
- * ingested as a normal run. Delegated completions are durable mailbox offers:
- * the orchestrator selects native steering or queued delivery under its thread
- * lock. Adapter-buffered continuations still queue behind active work.
- */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const ids = yield* IdAllocator.IdAllocatorV2;
@@ -102,12 +95,9 @@ export const layer = Layer.effectDiscard(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
             );
           }
-          // No continuation turn will start to clear the adapter's sticky offer.
           if (request.clearIfCurrent !== undefined) {
             yield* request.clearIfCurrent();
           } else if (request.dispatchIfCurrent !== undefined) {
-            // Backward compatibility for request producers without an explicit
-            // drop callback.
             yield* request.dispatchIfCurrent(Effect.void);
           }
           return;
@@ -144,16 +134,6 @@ export const layer = Layer.effectDiscard(
               },
             })
             .pipe(
-              // The project turned the target instance off between the cohort
-              // read above and this dispatch. The finalize that claimed this
-              // delivery already wrote the children's results to the parent's
-              // history unconditionally, so nothing is lost: acknowledge each
-              // task administratively (observedByRunId: null, the same shape
-              // task_status uses when no run observed it) to consume this
-              // delivery instead of leaving it open to retry. The parent's
-              // next turn against an enabled instance reads those results from
-              // history the same way any turn does; nothing here re-offers
-              // this generation.
               Effect.catchTags({
                 ThreadManagementProviderInstanceDisabledError: (error) =>
                   Effect.logInfo(
@@ -200,8 +180,6 @@ export const layer = Layer.effectDiscard(
           yield* clearRetryAttempt(retryKey);
           return;
         }
-        // The ordinal is display metadata only: allocate.message appends a
-        // random UUID, so a stale projection read here cannot collide ids.
         const messageId =
           request.messageId ??
           (yield* ids.allocate.message({
@@ -229,14 +207,12 @@ export const layer = Layer.effectDiscard(
           // marker or the turn settles immediately having prompted nothing.
           creationSource: request.delivery === "message_text" ? "server" : "provider",
         });
-        // The adapter's buffered wake has nowhere else to go once the
-        // instance is off: drop it rather than warn, since nothing here
-        // retries it either way. This catch sits outside dispatchIfCurrent so
-        // an adapter that clears its own sticky offer flag on dispatch
-        // failure (inside dispatchIfCurrent) observes the raw failure first.
-        // Not every adapter self-clears that way, so the explicit callback is
-        // called here too; clearIfCurrent implementations are idempotent, so
-        // a source that already cleared is unaffected.
+        // This catch sits outside dispatchIfCurrent so an adapter that clears
+        // its own sticky offer flag on dispatch failure (inside
+        // dispatchIfCurrent) observes the raw failure first. Not every adapter
+        // self-clears that way, so the explicit callback is called here too;
+        // clearIfCurrent implementations are idempotent, so a source that
+        // already cleared is unaffected.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
         ) =>

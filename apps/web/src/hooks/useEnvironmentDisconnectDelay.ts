@@ -1,7 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
-/** Wait through brief outages before offering to switch off the active environment. */
 export function useEnvironmentDisconnectDelay(unavailableEnvironmentId: EnvironmentId | null) {
   const [delay, setDelay] = useState({ environmentId: unavailableEnvironmentId, elapsed: false });
   if (delay.environmentId !== unavailableEnvironmentId) {

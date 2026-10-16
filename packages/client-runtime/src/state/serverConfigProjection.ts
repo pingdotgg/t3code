@@ -8,10 +8,8 @@ export interface ServerConfigProjection {
 }
 
 /**
- * Cached config keeps the provider and model catalog available across reconnects.
  * Published themes and usage-limit sources are current machine state, so a
- * cache could restore a set the machine no longer reports. Replay sends both
- * as separate events.
+ * cache could restore a set the machine no longer reports.
  */
 export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
   if (config.environmentThemes === undefined && config.usageLimitSources === undefined) {

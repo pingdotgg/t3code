@@ -56,8 +56,6 @@ function report(
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly controlFd?: number | undefined;
-  /** Reports emitted for the run, given the requestId the service generated.
-      The stream ends after the last one unless `keepOpen` is set. */
   readonly reports?: (requestId: string) => readonly DesktopUpdateStatusReport[];
   readonly keepOpen?: boolean;
 }
@@ -128,7 +126,6 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
           report(requestId, makeState({ status: "checking" })),
           report(requestId, makeState({ status: "available", availableVersion: "1.2.4" })),
           report(requestId, makeState({ status: "downloading", downloadPercent: 40 })),
-          // Reports from another run must be ignored.
           report("other-run", makeState({ status: "error", message: "unrelated" })),
           report(requestId, makeState({ status: "downloaded", downloadedVersion: "1.2.4" }), {
             outcome: "ready-to-install",
@@ -142,13 +139,8 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
         method: "desktop-app",
         desktopUpdateToken: expect.any(String),
       });
-      // "downloading" is not repeated for every download report.
       expect(stages).toEqual(["downloading", "installing"]);
 
-      // Success releases the in-flight guard: if the desktop rejected the
-      // install after reporting, the server must accept a retry instead of
-      // refusing until restart. (The second run fails differently because
-      // the stub report stream is exhausted.)
       const retry = yield* service.run(() => Effect.void).pipe(Effect.flip);
       expect(retry.reason).not.toBe("A desktop app update is already in progress.");
     }),

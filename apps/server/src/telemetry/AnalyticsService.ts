@@ -1,12 +1,6 @@
 /**
- * Anonymous PostHog telemetry service.
- *
- * Persists an installation-scoped anonymous identifier, buffers events in
- * memory, and flushes batches over Effect's HTTP client. A failed batch is
- * retried with backoff and dropped after a few tries. Each event carries a
- * uuid, so PostHog can tell a retried copy from a new event.
- *
- * @module AnalyticsService
+ * Each event carries a uuid, so PostHog can tell a retried copy from a new
+ * event.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
@@ -39,13 +33,9 @@ interface BufferedAnalyticsEvent {
 }
 
 interface DeliveryState {
-  /** Batch that failed last. It is sent again before newer events. */
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
-  /** Failed sends of `failedBatch`. */
   readonly batchAttempts: number;
-  /** Failed sends since the last success. Sets the backoff delay. */
   readonly failures: number;
-  /** The background flush does not send before this time (epoch ms). */
   readonly retryAt: number;
 }
 
@@ -56,11 +46,7 @@ const MAX_BATCH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 2_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 
-/**
- * Delay before the next send after `failures` consecutive failed sends. The
- * ceiling doubles from 2s up to 5 minutes, and the delay is a random point in
- * its upper half. `random` is in [0, 1).
- */
+/** `random` is in [0, 1). */
 export function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
@@ -84,17 +70,14 @@ const TelemetryEnvConfig = Config.all({
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
-    /** Record an anonymous event for best-effort buffered delivery. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
     ) => Effect.Effect<void>;
 
-    /** Flush all currently queued telemetry events. */
     readonly flush: Effect.Effect<void>;
   }
 >()("t3/telemetry/AnalyticsService") {
-  /** No-op layer for callers that intentionally disable telemetry. */
   static readonly layerTest = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
@@ -119,6 +102,7 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
@@ -213,8 +197,6 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
-  // Sends batches until the buffer is empty or a send fails. A failed batch is
-  // kept for the next flush, and dropped after MAX_BATCH_ATTEMPTS failed sends.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
       const delivery = yield* Ref.get(deliveryRef);

@@ -40,11 +40,6 @@ export class GitWorkflowService extends Context.Service<
       readonly cwd: string;
       readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
-    /**
-     * Whether a ref in any namespace ends in this name: a local branch, a
-     * remote-tracking branch of any remote, a tag. Git falls back to these
-     * when a branch name is not a revision by itself.
-     */
     readonly hasRefNamed: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -163,7 +158,7 @@ function nonRepositoryListRefs(): VcsListRefsResult {
   };
 }
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;

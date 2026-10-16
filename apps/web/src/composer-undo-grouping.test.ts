@@ -13,11 +13,6 @@ import {
 
 const schema = getSchema([StarterKit]);
 
-/**
- * A composer-shaped editor state with the real history plugin, dispatching
- * through the same grouping rule the composer's extension applies. Keystrokes
- * land 80ms apart unless a gap says otherwise.
- */
 function composer(text = "") {
   let clock = 0;
   let previous: ComposerChangeKind | null = null;
@@ -62,14 +57,12 @@ function composer(text = "") {
       dispatch(markAsClipboardEdit(state.tr.insertText(s), "paste"));
       return api;
     },
-    /** The composer's cut handler: a plain delete of the selection, tagged. */
     cut: (n: number) => {
       clock += 80;
       const at = state.selection.from;
       dispatch(markAsClipboardEdit(state.tr.delete(at - n, at), "cut"));
       return api;
     },
-    /** A store-driven rewrite: autocomplete inserting a chip, list continuation. */
     rewrite: (next: string) => {
       clock += 80;
       dispatch(
@@ -82,7 +75,6 @@ function composer(text = "") {
       dispatch(state.tr.setSelection(TextSelection.atEnd(state.doc)));
       return api;
     },
-    /** IME input replaces its own range on every keystroke. */
     compose: (s: string) => {
       const start = state.selection.from;
       for (let i = 1; i <= s.length; i += 1) {

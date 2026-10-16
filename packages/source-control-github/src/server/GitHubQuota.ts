@@ -7,13 +7,8 @@ import * as Ref from "effect/Ref";
 
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
-/** The share of each quota a background read leaves for a user's next click. */
 const RESERVE_RATIO = 0.1;
 
-/**
- * GitHub's quotas: `core` for REST, `graphql` for GraphQL, and a few smaller ones (`search`, …).
- * Each is spent and reset on its own, so each is tracked on its own.
- */
 type GitHubQuotaResource = string;
 
 interface QuotaSnapshot {
@@ -22,10 +17,6 @@ interface QuotaSnapshot {
   readonly resetAtMs: number;
 }
 
-/**
- * What GitHub says is left of one quota, from the `x-ratelimit-*` headers every API answer
- * carries. Null when the answer named no quota, which an Enterprise host with limits off does.
- */
 function quotaFromHeaders(
   headers: Readonly<Record<string, string | undefined>>,
 ): (QuotaSnapshot & { readonly resource: GitHubQuotaResource }) | null {
@@ -47,16 +38,8 @@ function quotaFromHeaders(
 }
 
 /**
- * Keeps the last tenth of each GitHub quota for interactive requests. A background sweep that
- * would dip below it is refused until the quota resets, so a user's next click still has budget.
- *
- * The balance is GitHub's own count from the latest answer's headers, so it already includes
- * what anything else spent with the same token, such as an agent's `gh` commands. Requests in
- * flight together all see that one balance; the reserve absorbs what they spend before their
- * answers land. Nothing is debited locally, because a 304 or a request that never reached GitHub
- * spends nothing, and a local count would drift below GitHub's for the rest of the window.
- *
- * Interactive requests may spend the reserve, but not a quota GitHub already reported empty.
+ * Nothing is debited locally, because a 304 or a request that never reached GitHub spends
+ * nothing, and a local count would drift below GitHub's for the rest of the window.
  */
 export class GitHubQuota extends Context.Service<
   GitHubQuota,
@@ -101,10 +84,9 @@ const make = Effect.gen(function* () {
       const key = keyOf(host, quota.resource, yield* SourceControlRateLimit.CredentialScope);
       yield* Ref.update(snapshots, (current) => {
         const previous = current.get(key);
-        // The latest answer wins. GitHub serves requests from several regions, so a later answer
-        // can report more left in the same window, and keeping the lower one would hold
-        // background work at the reserve until the reset. An answer from an older window says
-        // nothing of this one.
+        // GitHub serves requests from several regions, so a later answer can report
+        // more left in the same window, and keeping the lower one would hold background
+        // work at the reserve until the reset.
         if (previous !== undefined && quota.resetAtMs < previous.resetAtMs) return current;
         const next = new Map(current);
         next.set(key, {

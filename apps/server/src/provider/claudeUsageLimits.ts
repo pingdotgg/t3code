@@ -1,15 +1,3 @@
-/**
- * Claude Code subscription usage. Both sources produce windows with the same
- * ids so a turn-driven `rate_limit_event` lands on the row the SDK's
- * `get_usage` read established:
- *
- * - `get_usage` (on demand, during the capabilities probe) reports every
- *   window at once as 0–100 percentages with ISO reset times.
- * - `rate_limit_event` (streamed during a turn) names one window at a time
- *   with a 0–1 utilization fraction and an epoch-seconds reset.
- *
- * @module provider/claudeUsageLimits
- */
 import type { SDKControlGetUsageResponse, SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ProviderUsageLimitsUpdate,
@@ -30,12 +18,6 @@ import {
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
 
-/**
- * The account-wide windows, keyed by the SDK's `rateLimitType`. Model-scoped
- * weeklies are additive on top of these: the CLI reports them under
- * `rate_limits.model_scoped[]` on `get_usage` and streams the overage-included
- * model bucket (Fable today) as `seven_day_overage_included`.
- */
 const WINDOWS: Readonly<
   Record<string, Pick<ServerProviderUsageWindow, "kind" | "label" | "windowDurationMins">>
 > = {
@@ -151,8 +133,7 @@ export function claudeRateLimitEventToUpdate(
 }
 
 /**
- * Percentages on the `get_usage` response are already 0–100. Also yields the
- * scoped-bucket names the response carried, for the event mapper to reuse.
+ * Percentages on the `get_usage` response are already 0–100.
  */
 export function claudeUsageResponseToLimits(input: {
   readonly response: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
@@ -179,8 +160,6 @@ export function claudeUsageResponseToLimits(input: {
     windows.push(
       scopedWindow(entry.display_name, entry.utilization, isoFromString(entry.resets_at)),
     );
-    // Only a bucket that drew a row may receive events; naming one that was
-    // skipped would let a mid-turn event open a row the probe never showed.
     overageIncluded ??= entry.display_name;
   }
   return {
@@ -189,7 +168,6 @@ export function claudeUsageResponseToLimits(input: {
   };
 }
 
-/** Probe-side helper: map the response and remember the scoped names for events. */
 export const recordClaudeUsageResponse = (
   namesRef: Ref.Ref<ClaudeScopedLimitNames>,
   input: Parameters<typeof claudeUsageResponseToLimits>[0],

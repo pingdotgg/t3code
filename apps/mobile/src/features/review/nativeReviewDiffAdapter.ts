@@ -25,7 +25,6 @@ const NATIVE_RGBA_COLOR =
 
 export const NATIVE_REVIEW_DIFF_CONTENT_WIDTH = 2_800;
 
-/** Render headerless selections without guessing file line numbers from selection indices. */
 export function buildNativeReviewSnippetRows(
   comment: Pick<ReviewInlineComment, "id" | "diff" | "fenceLanguage">,
 ): NativeReviewDiffRow[] {
@@ -63,7 +62,6 @@ function opaqueNativeHexColor(color: string, background: string): string {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** `wordWrap` wraps line rows at the view width instead of panning them horizontally. */
 export function createNativeReviewDiffStyle(
   codeSurface: ResolvedMobileCodeSurface,
   wordWrap: boolean,
@@ -187,7 +185,6 @@ export function createNativeReviewDiffTheme(
 
   if (scheme === "dark") {
     return {
-      // Code surfaces share the desktop palette rather than the sheet behind them.
       background,
       text: nativeColor(appTheme["--color-md-code-text"]),
       mutedText: nativeColor(appTheme["--color-foreground-muted"]),
@@ -601,11 +598,6 @@ export function buildNativeReviewDiffData(
   return buildCommentedNativeReviewDiffData(prepareNativeReviewDiffData(parsedDiff), comments);
 }
 
-/**
- * Prepares source rows once per parsed diff, including its section-specific IDs.
- * Comment edits reuse those rows, word ranges, and targets. Each file retains
- * only its latest comment overlay, and the weak key releases old parsed diffs.
- */
 export function getCachedNativeReviewDiffData(
   input: BuildNativeReviewDiffDataInput,
 ): NativeReviewDiffData {

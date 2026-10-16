@@ -26,8 +26,6 @@ describe("chartScale", () => {
 
 describe("niceScale", () => {
   it("never puts the peak above the top of the scale", () => {
-    // Regression: an earlier version stopped at the last step below the peak,
-    // so the tallest day was drawn past the plot and clipped.
     for (const peak of [1122.71, 999, 1, 0.04, 1_400_000_000, 37.5, 5000, 100.001]) {
       const { max } = niceScale(peak, 4);
       expect(max, `peak ${peak}`).toBeGreaterThanOrEqual(peak);
@@ -78,7 +76,6 @@ describe("buildPeriodColumns", () => {
         ]),
       },
     ],
-    // 2026-08-02 is deliberately absent: a day with no activity.
     [
       "2026-08-03",
       {
@@ -103,8 +100,6 @@ describe("buildPeriodColumns", () => {
   });
 
   it("keeps band values absolute rather than cumulative", () => {
-    // Regression: the bands were once stack offsets, which drew Claude Code
-    // permanently above Codex regardless of which provider spent more.
     const [first] = buildPeriodColumns(days, byDay, "cost");
 
     expect(first?.bands).toEqual([

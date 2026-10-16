@@ -44,7 +44,6 @@ export function ReviewGuideExcerpt({
     const parsed = buildNativeReviewDiffData(
       buildReviewParsedDiff(slice, `guide:${excerpt.path}:${excerpt.start}`),
     );
-    // The compact header and real line numbers provide context without file/hunk chrome.
     return {
       ...parsed,
       rows: parsed.rows.filter((row) => row.kind !== "file" && row.kind !== "hunk"),

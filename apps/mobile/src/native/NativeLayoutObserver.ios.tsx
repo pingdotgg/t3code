@@ -6,7 +6,6 @@ interface ObserverProps extends ViewProps {
   readonly onMetricsChange?: (event: NativeSyntheticEvent<NativeLayoutMetrics>) => void;
 }
 
-// An older development client can still run the compact app while it rebuilds.
 function resolveObserver() {
   try {
     const module = requireOptionalNativeModule<{

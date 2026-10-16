@@ -6,7 +6,6 @@ import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 
-/** Settings uses the same logical projects as the sidebar, sorted by display name. */
 export function useSettingsProjectGroups() {
   const projects = useProjects();
   const settings = useClientSettings(selectProjectGroupingSettings);

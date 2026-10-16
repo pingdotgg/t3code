@@ -1,11 +1,9 @@
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 
 /**
- * Desktop-oriented effort keywords that don't belong in the phone picker.
  * Prompt-injected values (ultrathink and friends) are filtered from the
- * descriptor metadata; ultracode is a real option but a workflow trigger, not
- * a reasoning level. A value set elsewhere still displays, it just isn't
- * offered.
+ * descriptor metadata; ultracode is a real option but a workflow trigger, not a
+ * reasoning level.
  */
 const HIDDEN_EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["ultracode"]);
 

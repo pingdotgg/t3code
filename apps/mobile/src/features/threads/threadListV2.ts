@@ -39,16 +39,8 @@ import {
 
 export { snoozeWakeLabel };
 
-/** Working section beta: when this device saw each thread leave the Working
-    shelf. One instance for Home and the iPad sidebar, so both lists order the
-    inbox the same way and the order survives screens that unmount. */
 export const threadListInboxReturns = createInboxReturnTracker();
 
-/**
- * Provider drivers for a row's trailing icon stack, back to front. Instances
- * missing from the environment's config are skipped, and an unresolved
- * current provider yields nothing so the row never draws a stale stack.
- */
 export function resolveThreadListV2ProviderDrivers(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
   providers: ReadonlyArray<ThreadListProvider> | undefined,
@@ -65,17 +57,6 @@ export function resolveThreadListV2ProviderDrivers(
   return currentDriver === undefined ? [] : drivers;
 }
 
-/**
- * Thread List v2 model, ported from the web sidebar v2
- * (apps/web/src/components/Sidebar.logic.ts + SidebarV2.tsx).
- *
- * Six visual states. Color distinguishes approval, input, active work, and
- * failures. Ready is the unlabeled resting state; waiting (runtime status "idle") is the agent
- * parked on open background tasks, grey like working rather than a false Done.
- * The orchestrator v2 presentation bridge parks runtime at idle when the
- * post-settlement background roster holds the run's completion (subagents,
- * monitors); commands left running, such as a dev server, read as ready.
- */
 export type ThreadListV2Status =
   | "approval"
   | "input"
@@ -115,7 +96,6 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
-  /** Row is on the snoozed shelf. */
   readonly snoozed?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
@@ -135,12 +115,6 @@ export function resolveThreadListV2SwipeActions(input: {
   };
 }
 
-/**
- * The point at which a queued-turn snooze guard expires on its own. Rows arm
- * a one-shot timer for this boundary so Snooze appears without waiting for an
- * unrelated render. User-blocked threads return null because only fresh
- * server data can make them snoozable.
- */
 export function resolveThreadListV2SnoozeGateExpiryMs(
   thread: Pick<
     EnvironmentThreadShell,
@@ -161,20 +135,9 @@ export function resolveThreadListV2SnoozeGateExpiryMs(
   return messageAtMs + QUEUED_TURN_START_GRACE_MS;
 }
 
-// Settled-tail paging: recent history is the common lookup; the deep tail
-// stays behind an explicit Show more. Shared by the compact Home list and
-// the iPad sidebar so both page identically.
 export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 
-/**
- * Completed-but-not-yet-seen, mirroring the web sidebar's
- * hasUnseenCompletion. The visited watermark is server state
- * (thread.lastVisitedAt), so the marker agrees across web and mobile.
- * Never-visited threads count as read — a fresh environment must not light
- * up its whole history — and pre-tracking servers (field absent) never
- * report unread.
- */
 export function threadHasUnseenCompletion(
   thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
 ): boolean {
@@ -215,15 +178,11 @@ export function resolveThreadListV2Status(
   return "ready";
 }
 
-/** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
-    poison the whole ordering, so it sinks to the epoch instead. */
 function parseTimestampMs(isoDate: string): number {
   const parsed = Date.parse(isoDate);
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-/** The active order shared by web and native: new/reopened rows, then the
-    saved arrangement. Activity does not move a thread. */
 export function sortThreadsForListV2<
   T extends {
     readonly id: string;
@@ -236,7 +195,6 @@ export function sortThreadsForListV2<
   return sortActiveThreadsByOrderKey(threads);
 }
 
-/** Canonical card section for Move up/down, independent of search or scope. */
 export function getThreadListV2OrderedSection(input: {
   readonly threads: readonly EnvironmentThreadShell[];
   readonly section: "pinned" | "active";
@@ -246,7 +204,6 @@ export function getThreadListV2OrderedSection(input: {
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
 }): EnvironmentThreadShell[] {
-  // An empty set is treated as absent so `?.` skips building the key.
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threads = input.threads.filter((thread) => {
     if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent")
@@ -280,33 +237,24 @@ export function getThreadListV2OrderedSection(input: {
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
-  /** Snoozed-shelf row: shows the wake countdown and offers Wake. */
   readonly snoozed: boolean;
-  /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
   readonly isLast: boolean;
 }
 
 export interface ThreadListV2Layout {
   readonly items: ThreadListV2Item[];
-  /** Settled threads beyond the render limit (behind "Show more"). */
   readonly hiddenSettledCount: number;
-  /** Working threads folded away by the Working section beta. */
   readonly workingCount: number;
-  /** Index in `items` where the Working shelf header belongs. */
   readonly workingShelfHeaderIndex: number | null;
-  /** Snoozed threads matching the current filters. */
   readonly snoozedCount: number;
-  /** Index in `items` where the Snoozed shelf header belongs. The header is
-      still rendered when the shelf is collapsed and no snoozed rows exist. */
   readonly snoozedShelfHeaderIndex: number | null;
-  /** Total settled threads in scope, including rows hidden by collapse/paging. */
   readonly settledCount: number;
-  /** Index in `items` where the Settled shelf header belongs. */
   readonly settledShelfHeaderIndex: number | null;
-  /** Soonest wake time among snoozed threads, or null. Callers arm
-      a timeout at this boundary so the list re-partitions the moment a
-      snooze expires instead of on the next minute tick. */
+  /**
+   * Callers arm a timeout at this boundary so the list re-partitions the moment
+   * a snooze expires instead of on the next minute tick.
+   */
   readonly nextSnoozeWakeAt: string | null;
 }
 
@@ -314,28 +262,16 @@ export interface ThreadListV2ThreadListItem {
   readonly type: "v2-thread";
   readonly key: string;
   readonly item: ThreadListV2Item;
-  /** Precomputed so recycled-list equality can see a minute-tick change. */
   readonly snoozeWakeLabelText: string | undefined;
-  /** Row timestamp precomputed against the parent clock so the recycler's
-      equality only sees a change on rows that actually draw a time. Blank
-      while the row renders a status label or the wake countdown instead. */
   readonly timeLabel: string;
-  /** Minute clock feeding the row's native snooze menu, carried only on rows
-      whose menu holds snooze presets (capability-gated cards the user may
-      snooze). Keeping it out of the list's `extraData` means the minute tick
-      re-renders just these rows instead of every visible one. */
   readonly snoozePresetMinute: string | undefined;
-  /** Inset hairline drawn under the row. Precomputed from the final order so
-      a neighbour change (e.g. the queued block appearing) updates the row
-      through recycled-list equality instead of leaving a stale divider. */
   readonly showTrailingDivider: boolean;
-  /** A message for this thread is waiting in the outbox. Carried on the item
-      so an outbox write (which never touches the thread shell) reaches the
-      row through recycled-list equality instead of leaving a stale icon. */
+  /**
+   * Carried on the item so an outbox write (which never touches the thread
+   * shell) reaches the row through recycled-list equality instead of leaving a
+   * stale icon.
+   */
   readonly hasQueuedMessages: boolean;
-  /** Move up/down availability in the row's card section. Carried on the item
-      for the same reason: a reorder in flight (or its commit) changes menu
-      availability without changing any shell. */
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
 }
@@ -344,10 +280,7 @@ export interface ThreadListV2PendingListItem {
   readonly type: "v2-pending";
   readonly key: string;
   readonly pendingTask: PendingNewTask;
-  /** First queued row after the active block draws the PENDING divider. */
   readonly showPendingDivider: boolean;
-  /** Same rule as the thread rows: a hairline unless the next row carries its
-      own section rule or none follows. */
   readonly showTrailingDivider: boolean;
 }
 
@@ -356,7 +289,6 @@ export interface ThreadListV2WorkingShelfListItem {
   readonly key: "v2-working-shelf";
   readonly count: number;
   readonly expanded: boolean;
-  /** See the snoozed shelf header's field. */
   readonly disabled: boolean;
 }
 
@@ -365,10 +297,11 @@ export interface ThreadListV2SnoozedShelfListItem {
   readonly key: "v2-snoozed-shelf";
   readonly count: number;
   readonly expanded: boolean;
-  /** Shelf preferences still loading: the toggle is disabled until they
-      arrive. Carried on the item because a recycled cell ignores the render
-      closure — without it the header would stay visibly disabled (or enabled
-      too early) after the preference load lands. */
+  /**
+   * Carried on the item because a recycled cell ignores the render closure —
+   * without it the header would stay visibly disabled (or enabled too early)
+   * after the preference load lands.
+   */
   readonly disabled: boolean;
 }
 
@@ -377,7 +310,6 @@ export interface ThreadListV2SettledShelfListItem {
   readonly key: "v2-settled-shelf";
   readonly count: number;
   readonly expanded: boolean;
-  /** See the snoozed shelf header's field. */
   readonly disabled: boolean;
 }
 
@@ -388,8 +320,6 @@ export type ThreadListV2ListItem =
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
 
-/** Narrows a wider list-item union (e.g. the sidebar's legacy + v2 mix) to
-    the v2 item kinds the shared equality understands. */
 export function isThreadListV2ListItem(value: {
   readonly type: string;
 }): value is ThreadListV2ListItem {
@@ -402,13 +332,11 @@ export function isThreadListV2ListItem(value: {
   );
 }
 
-/** Recycled-list equality for the flat v2 list (Home + iPad sidebar).
-    Item objects are rebuilt on every minute tick and every partition run;
-    without this the lists would consider every mounted row changed and
-    re-render all of them (each carrying a swipeable + a PR subscription).
-    The clock-derived fields are per-row precomputed text, so a minute tick
-    only flips equality on rows whose visible text (or snooze menu) actually
-    moved. Thread references are stable across rebuilds. */
+/**
+ * Item objects are rebuilt on every minute tick and every partition run;
+ * without this the lists would consider every mounted row changed and re-render
+ * all of them (each carrying a swipeable + a PR subscription).
+ */
 export function threadListV2ListItemsAreEqual(
   previous: ThreadListV2ListItem,
   item: ThreadListV2ListItem,
@@ -462,10 +390,6 @@ export function threadListV2ListItemsAreEqual(
   }
 }
 
-/** The timestamp a row renders when it shows no status label: the settle
-    stamp on settled slim rows, otherwise the latest activity. Blank for
-    status-labelled cards and snoozed rows with a wake countdown — those
-    never draw a time, so their minute tick must not invalidate the cell. */
 function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
@@ -484,12 +408,6 @@ function resolveThreadListV2ItemTimeLabel(
   );
 }
 
-/**
- * Builds the shared mobile order: active → pending → working shelf (beta) →
- * snoozed shelf → settled. Pending tasks are waiting rather than asking, and
- * busy or parked work remains reachable without competing with either the
- * inbox or settled history.
- */
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
@@ -503,24 +421,11 @@ export function buildThreadListV2ListItems(input: {
   readonly settledShelfExpanded?: boolean;
   readonly settledShelfHeaderIndex?: number | null;
   readonly snoozeLabelNow?: string;
-  /** Environments whose server supports thread.snooze. Rows on other
-      environments never carry the minute clock that feeds the snooze menu.
-      Absent = no gating (tests). */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  /** Thread keys (`environmentId:threadId`) with a message waiting in the
-      outbox; stamped onto the matching rows as `hasQueuedMessages`. */
   readonly queuedThreadKeys?: ReadonlySet<string>;
-  /** Menu availability for Move up/down, keyed by `environmentId:threadId`
-      (only consulted for card rows — slim menus omit the moves). Produced by
-      `computeThreadMoveAvailability` in one pass per section; a recycled cell
-      ignores the render closure, so the stamps ride on the item. Absent =
-      never available (tests). */
   readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
-  /** True while the shelf expansion preferences are still loading; stamped
-      onto both shelf headers so the disabled state reaches recycled cells. */
   readonly shelfPreferencesLoading?: boolean;
 }): ThreadListV2ListItem[] {
-  // An empty set is treated as absent so `?.` skips building the key.
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
@@ -529,9 +434,7 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     // The minute clock belongs on the item, not the list's extraData, so the
     // recycler's equality can confine the per-minute re-render to rows whose
-    // snooze menu actually shows preset times. The swipe-revealed snooze menu
-    // exists on slim rows too (the variant only swaps the primary action),
-    // so the gate follows actual snooze availability, not the variant.
+    // snooze menu actually shows preset times.
     const snoozePresetMinute =
       !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
@@ -605,8 +508,6 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
-  // Hairlines depend on the final neighbour, so they are stamped after the
-  // splice: a recycled cell only re-renders when its divider actually flips.
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
     const next = result[index + 1];
@@ -618,11 +519,8 @@ export function buildThreadListV2ListItems(input: {
   });
 }
 
-// Streams update a few unsettled rows, so most rebuilds classify the same
-// settled shells in the same order. Shells are immutable and the settled sort
-// reads only their own fields, so an element-identical input has an identical
-// output. One entry keeps memory bounded; callers with different scopes (Home
-// and the split-view sidebar) just recompute.
+// Shells are immutable and the settled sort reads only their own fields, so an
+// element-identical input has an identical output.
 let lastSettledInput: ReadonlyArray<EnvironmentThreadShell> = [];
 let lastSettledOutput: ReadonlyArray<EnvironmentThreadShell> = [];
 
@@ -644,10 +542,6 @@ function sortSettledThreadsReusingLast(
   return lastSettledOutput;
 }
 
-/**
- * Partitions visible threads into the active card block (saved order) and
- * the settled recency tail, matching the web v2 list.
- */
 export function buildThreadListV2Items(input: {
   readonly pendingOrder?: PendingThreadOrder | null;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -658,36 +552,16 @@ export function buildThreadListV2Items(input: {
   }> | null;
   readonly searchQuery: string;
   readonly matchedThreadKeys?: ReadonlySet<string>;
-  /** Environments whose server supports thread.settle/unsettle. Threads on
-      other environments never classify as settled — the user could neither
-      un-settle nor pin them. Absent = no gating (tests). */
   readonly settlementEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  /** Environments whose server supports thread.snooze/unsnooze. Same
-      contract as settlementEnvironmentIds. */
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
-  /** Max settled rows to render; the rest are counted, not built. */
   readonly settledLimit?: number;
-  /** Second-precise clock used for time-based classification. */
   readonly now: string;
-  /** Working section beta: unpinned working threads fold into the Working
-      shelf, and the inbox orders by when each thread came back to the user
-      instead of the saved arrangement. */
   readonly workingShelfEnabled?: boolean;
-  /** Expands the Working shelf into rows. Collapsed is the default. */
   readonly workingShelfExpanded?: boolean;
-  /** Returns this device observed but the server does not stamp, such as an
-      approval request mid-turn. Only read while the beta is on. */
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
-  /** Expands the snoozed shelf into rows. Collapsed is the default. */
   readonly snoozedShelfExpanded?: boolean;
-  /** Expands the settled shelf into rows. Expanded is the default. */
   readonly settledShelfExpanded?: boolean;
-  /** The selected thread remains visible on an otherwise collapsed shelf so
-      a split-view detail can never lose its navigation row. */
   readonly selectedThreadKey?: string | null;
-  /** Thread keys (`environmentId:threadId`) with a message waiting in the
-      outbox. Such a thread has work the user is waiting on, so it stays in
-      the active block even when the server has settled it. */
   readonly queuedThreadKeys?: ReadonlySet<string>;
 }): ThreadListV2Layout {
   const now = input.now;
@@ -714,11 +588,9 @@ export function buildThreadListV2Items(input: {
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
-  // An empty set is treated as absent so `?.` skips building the key.
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   for (const thread of input.threads) {
     if (thread.archivedAt !== null || thread.lineage.relationshipToParent === "subagent") continue;
-    // The server stamps settledOverride for the tail.
     if (input.environmentId !== null && thread.environmentId !== input.environmentId) continue;
     if (projectKeys !== null && !projectKeys.has(`${thread.environmentId}:${thread.projectId}`)) {
       continue;
@@ -740,7 +612,6 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    // Snooze outranks settlement and pinning until the thread wakes.
     if (supportsSnooze && effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
       if (
@@ -765,12 +636,9 @@ export function buildThreadListV2Items(input: {
     }
   }
 
-  // The beta inbox is time-ordered, so the saved arrangement (and any move in
-  // flight) is kept but not applied until the beta is off again.
   const orderedActive = workingShelfEnabled
     ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
     : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
-  // Newest send first; finishing and waking again do not move a row.
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>

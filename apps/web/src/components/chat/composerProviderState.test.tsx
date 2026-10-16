@@ -15,10 +15,6 @@ import {
   withImplicitFastModeDefault,
 } from "./composerProviderState";
 
-// Everything in composerProviderState is now data-driven by the model's
-// optionDescriptors, so these tests use a single synthetic provider/model and
-// vary only the descriptor shape per scenario.
-
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
 

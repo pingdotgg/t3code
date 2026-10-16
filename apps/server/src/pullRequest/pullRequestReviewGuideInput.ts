@@ -1,7 +1,6 @@
 import type { PullRequestActivity, PullRequestDetail } from "@t3tools/contracts";
 import type { ReviewGuideGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 
-/** Longest a settled remark is quoted. The guide needs what was raised, not the argument. */
 const SETTLED_REMARK_CHARS = 200;
 
 function oneLine(text: string): string {
@@ -12,11 +11,6 @@ function oneLine(text: string): string {
   return flat.length > SETTLED_REMARK_CHARS ? `${flat.slice(0, SETTLED_REMARK_CHARS)}…` : flat;
 }
 
-/**
- * What review already settled, one line per conversation: resolved threads, and threads whose
- * line a later push removed. These are the review loop's finished work; the guide is told about
- * them so it does not raise them again.
- */
 export function settledReviewSummary(activity: PullRequestActivity): string {
   return activity.reviewThreads
     .filter((thread) => thread.isResolved || thread.isOutdated)
@@ -30,7 +24,6 @@ export function settledReviewSummary(activity: PullRequestActivity): string {
     .join("\n");
 }
 
-/** The prompt input for a guide, minus the checkout and model the caller provides. */
 export function reviewGuideInputFromPullRequest(
   detail: PullRequestDetail,
   activity: PullRequestActivity,

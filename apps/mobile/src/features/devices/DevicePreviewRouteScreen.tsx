@@ -45,12 +45,10 @@ type DevicePreviewRouteScreenProps = StaticScreenProps<{
   readonly threadId: string;
 }>;
 
-/** Full-screen viewer; controls live in an overlay toggled by the handle or a shake. */
 export function DevicePreviewRouteScreen({ route }: DevicePreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
   const { environmentId, threadId } = route.params;
-  // A hand-typed deep link can carry a blank ID, which the branded IDs reject.
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
   useEffect(() => {
     if (isBlankLink) onClose();
@@ -94,7 +92,6 @@ function DevicePreviewScreen({
   const preview = selectedThreadDevicePreview(previews, selectedKey);
   const onInputConnected = useCallback(async (connected: boolean) => {
     setInputConnected(connected);
-    // Controls greet the user while connecting, then get out of the stream's way.
     if (connected) setControlsVisible(false);
   }, []);
   useEffect(() => {
@@ -117,7 +114,6 @@ function DevicePreviewScreen({
     });
     return () => subscription.remove();
   }, [focused, foreground]);
-  // Android back reveals the controls first, so leaving takes a deliberate second press.
   useEffect(() => {
     if (controlsVisible) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {

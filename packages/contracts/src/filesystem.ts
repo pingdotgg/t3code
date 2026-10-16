@@ -70,8 +70,6 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
-  // Structured diagnostics stay optional for rolling compatibility with legacy message-only
-  // payloads, while new call sites must provide the request context and failure classification.
   // @effect-diagnostics-next-line overriddenSchemaConstructor:off
   constructor(props: {
     readonly partialPath: string;

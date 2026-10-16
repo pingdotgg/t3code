@@ -405,9 +405,6 @@ it.effect.each(
   ),
 );
 
-// A changed selection the provider applies on its next turn waits there as the
-// thread's saved selection. That holds for a provider that can restart the
-// turn (Codex) too: restarting it would end the turn's native subagents.
 const runSelection = {
   instanceId,
   model: "test-model",
@@ -518,7 +515,6 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
     ProviderAdapterRegistry.layerSingle(adapter),
     { runEffectWorker: false },
   );
-  // Creates the thread and starts its first turn on `runSelection`.
   const startFirstTurn = Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -602,15 +598,12 @@ it.effect.each([{ canRestart: false }, { canRestart: true }])(
           assert.deepEqual(changed.runs[0]?.modelSelection, runSelection);
           assert.deepEqual(changed.thread.modelSelection, composerSelection);
 
-          // Choosing the running run's selection again replaces the saved choice.
           yield* steer("steer-reverted", runSelection);
           const reverted = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(steered, ["steer-changed", "steer-reverted"]);
           assert.lengthOf(reverted.attempts, 1);
           assert.deepEqual(reverted.thread.modelSelection, runSelection);
 
-          // The saved choice moves to another instance while the run keeps going.
-          // Steering with the run's selection brings the thread's instance back too.
           const otherSelection = {
             instanceId: ProviderInstanceId.make("codex-work"),
             model: "other",
@@ -665,8 +658,6 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
           createdBy: "user",
           creationSource: "web",
         });
-        // The turn ends before the worker delivers the steer, so the steer
-        // becomes a follow-up turn.
         const settled = yield* orchestrator.streamDomainEvents.pipe(
           Stream.filter(
             (event) =>

@@ -57,7 +57,6 @@ describe("composer focus state", () => {
     await act(() => composer.setIsComposerFocused(true));
     expect(isResting).toBe(false);
 
-    // A tool disclosure takes focus away from the editor.
     await act(() => composer.setIsComposerFocused(false));
     expect(isResting).toBe(false);
   });

@@ -5,7 +5,6 @@ import { GestureDetector } from "react-native-gesture-handler";
 import { cn } from "../../lib/cn";
 import { useHoverGesture } from "../../lib/useHoverGesture";
 
-/** Pointer feedback layered over selection. Touch-down may be the start of a scroll. */
 export function RowPressable({
   children,
   className,

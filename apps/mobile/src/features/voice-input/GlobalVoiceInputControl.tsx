@@ -25,7 +25,6 @@ import { resolveVoiceComposerPresentation } from "./voiceInputPresentation";
 const PILL_HEIGHT = 36;
 const COLLAPSED_WIDTH = 64;
 const EXPANDED_MAX_WIDTH = 280;
-// Clears Home's floating bottom toolbar (56) and a collapsed thread composer (60).
 const IOS_BOTTOM_CHROME_CLEARANCE = 64;
 const MORPH_TIMING = {
   duration: 260,
@@ -34,11 +33,6 @@ const MORPH_TIMING = {
 } as const;
 const ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 
-/**
- * Keeps an off-screen dictation reachable as a pill on the screen's trailing
- * edge. Wraps the app content so any touch that starts outside the pill,
- * including a scroll, collapses it without claiming the touch.
- */
 export function GlobalVoiceInputControl(props: { readonly children: ReactNode }) {
   const voice = useGlobalVoiceInput();
   const collapseRef = useRef<(() => void) | null>(null);
@@ -46,7 +40,6 @@ export function GlobalVoiceInputControl(props: { readonly children: ReactNode })
   const visible =
     presentation.statusLabel !== null &&
     !(voice.ownerKey && voice.focusedOwners.has(voice.ownerKey));
-  // Mounted only while visible, so each dictation starts collapsed.
   const pill = visible ? <EdgeDictationPill collapseRef={collapseRef} /> : null;
   return (
     <>
@@ -84,8 +77,6 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
   }, [collapseRef, expanded]);
 
   const expandedWidth = Math.min(width - insets.left - insets.right - 32, EXPANDED_MAX_WIDTH);
-  // Each face keeps its final width and stays pinned to the edge, so the
-  // morphing pill reveals the expanded row instead of reflowing it.
   const pillStyle = useAnimatedStyle(() => ({
     width: interpolate(progress.value, [0, 1], [COLLAPSED_WIDTH, expandedWidth]),
   }));
@@ -96,8 +87,6 @@ function EdgeDictationPill(props: { readonly collapseRef: RefObject<(() => void)
     opacity: interpolate(progress.value, [0.3, 1], [0, 1], Extrapolation.CLAMP),
   }));
 
-  // Sit just above the bottom chrome: the toolbar or composer on iOS, the
-  // new-thread FAB on Android.
   const bottom =
     Platform.OS === "android"
       ? Math.max(insets.bottom, 16) + 16 + fabSize + 12

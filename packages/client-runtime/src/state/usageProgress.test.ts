@@ -91,7 +91,6 @@ describe("usageProgress", () => {
         options,
       ),
     ).toEqual({ dimmed: false, label: "Updating 2 providers…" });
-    // Without a follow-up in flight, a leftover refreshing source is not waited on.
     expect(usageProgress([{ ...partway, isPending: false }], options)).toEqual({
       dimmed: false,
       label: null,
@@ -117,7 +116,6 @@ describe("usageProgress", () => {
   });
 
   it("dims every answered environment while a manual refresh runs", () => {
-    // Pricing refreshes first, so neither query is pending yet.
     expect(
       usageProgress([environment("a"), environment("b")], { ...options, refreshing: true }),
     ).toEqual({ dimmed: true, label: "Updating 2 environments…" });

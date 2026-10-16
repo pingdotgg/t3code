@@ -5,14 +5,9 @@ import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalSt
 import type { Atom } from "effect/reactivity";
 
 /**
- * Whether the Home route can be seen. Home stays mounted under a pushed
- * Thread, and native-stack never freezes the route directly below the focused
- * one on Fabric, so Home has to stop its own work.
- *
- * Driven by the native appear/disappear events rather than focus. A form sheet
- * over Home blurs it but leaves it on screen, and the presenting screen gets no
- * disappear event for it. Home becomes visible as soon as a back swipe or pop
- * starts revealing it, so the list is fresh during the transition.
+ * Home stays mounted under a pushed Thread, and native-stack never freezes the
+ * route directly below the focused one on Fabric, so Home has to stop its own
+ * work.
  */
 export function useHomeRouteVisible(): boolean {
   const navigation =
@@ -38,11 +33,6 @@ export function useHomeRouteVisible(): boolean {
   return visible;
 }
 
-/**
- * Like `useAtomValue`, but unsubscribed while `visible` is false: the last
- * visible value is held and atom changes do not re-render. Resubscribing reads
- * the current value in the same render that turns visibility back on.
- */
 export function useAtomValueWhileVisible<A>(atom: Atom.Atom<A>, visible: boolean): A {
   const registry = useContext(RegistryContext);
   const held = useRef<{ readonly value: A } | null>(null);

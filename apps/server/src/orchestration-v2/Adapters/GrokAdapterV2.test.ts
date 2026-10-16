@@ -138,8 +138,6 @@ describe("GrokAdapterV2 capabilities", () => {
     // stops the work.
     assert.isTrue(flavor.restartRuntimeAfterInterrupt);
     assert.isTrue(flavor.terminateRuntimeProcessGroupOnInterrupt);
-    // Non-Stop interrupts (steering, restart_active) reuse the process and
-    // session; the cancelled work backgrounds and the model decides its fate.
     assert.isUndefined(flavor.restartRuntimeOnEveryInterrupt);
     assert.isTrue(flavor.preserveRuntimeOnSettledInterrupt);
   });
@@ -198,13 +196,11 @@ describe("GrokAdapterV2 capabilities", () => {
   });
 
   it("overrides ACP image capability false so screenshot attachments can prompt", () => {
-    // Handshake alone would refuse attachments (Grok advertises image:false).
     assert.isFalse(
       acpSupportsImagePrompts({
         negotiatedImage: false,
       }),
     );
-    // Flavor override unblocks image content blocks for Grok.
     assert.isTrue(
       acpSupportsImagePrompts({
         flavorSupportsImagePrompts: true,
@@ -300,8 +296,6 @@ describe("Grok permission prompts", () => {
     "/home/ada",
   ).permissionDisposition;
 
-  // grok_auto_blocked_command replays Auto end to end. When an explicit policy
-  // launches Grok asking instead, T3's policy still answers its prompts.
   it("leaves Auto prompts to the user unless an explicit policy launched Grok asking", () => {
     assert.equal(
       disposition?.(runtimePolicy({ runtimeMode: "auto" }), permissionRequest("read")),
@@ -329,9 +323,6 @@ describe("Grok launch permission mode", () => {
     layerHost,
   );
 
-  // Opens a session through the adapter's own Grok runtime factory and returns
-  // the argv it tried to launch. The spawn fails after recording, so no
-  // process starts.
   const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
     Effect.gen(function* () {
       const launches: Array<ReadonlyArray<string>> = [];
@@ -362,11 +353,7 @@ describe("Grok launch permission mode", () => {
         })
         .pipe(Effect.scoped, Effect.ignore);
       return launches;
-    }).pipe(
-      // Keep the launch argv unwrapped by the Linux cgroup shim.
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provide(layerTest),
-    );
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin"), Effect.provide(layerTest));
 
   const policy = (
     runtimeMode: RuntimeMode,
@@ -395,7 +382,6 @@ describe("Grok launch permission mode", () => {
 
   it.effect("launches a thread stored as Auto-accept edits asking", () =>
     Effect.gen(function* () {
-      // The policy the orchestrator resolves from Grok's own provider snapshot.
       const snapshot = yield* buildInitialGrokProviderSnapshot(LAUNCH_TEST_GROK_SETTINGS);
       const instanceId = ProviderInstanceId.make("grok-launch-test");
       const now = yield* DateTime.now;

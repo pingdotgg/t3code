@@ -7,7 +7,6 @@ import { PreviewControlsToolkit } from "./tools.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const access = Effect.gen(function* () {
-  // The preview capability already reflects the calling project's access setting.
   const scope = yield* requireThreadMcpCapability("preview");
   return { scope, manager: yield* Preview.PreviewManager };
 });

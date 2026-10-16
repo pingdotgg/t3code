@@ -83,7 +83,6 @@ describe("normalizeElementContextSelection", () => {
     expect(result).not.toBeNull();
     expect(result!.htmlPreview.length).toBeLessThanOrEqual(4000);
     expect(result!.styles.length).toBeLessThanOrEqual(4000);
-    // Truncated values should end with the ellipsis sentinel
     expect(result!.htmlPreview.endsWith("…")).toBe(true);
     expect(result!.styles.endsWith("…")).toBe(true);
   });

@@ -64,8 +64,6 @@ export function projectWorkspaceConnectionState(input: {
   readonly networkStatus: NetworkStatus;
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
 }): WorkspaceConnectionState {
-  // Switched-off environments still count as saved connections, but they do
-  // not drive the overall connection state or surface their last error.
   const activeEnvironments = input.environments.filter((environment) => environment.isEnabled);
   const connectingEnvironments = activeEnvironments.filter(
     (environment) =>

@@ -22,11 +22,6 @@ const COMPOSER_TOOLBAR_GAP = 8;
 const COMPOSER_TOOLBAR_FADE_WIDTH = 18;
 const COMPOSER_TOOLBAR_SCROLL_EPSILON = 4;
 
-/**
- * Quiet inline composer control used inside cards and their context rows.
- * Unlike ComposerToolbarButton, this does not draw another pill inside the
- * composer surface, so model and workspace controls read as part of the card.
- */
 export function ComposerInlineControl(props: {
   readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string;
@@ -123,11 +118,8 @@ export function ComposerToolbarRow(props: {
 export function ComposerToolbarScroller(props: {
   readonly children: ReactNode;
   readonly align?: "start" | "end";
-  /** Only for non-Uniwind surfaces such as the native terminal palette. */
   readonly fadeOpaque?: string;
-  /** Only for non-Uniwind surfaces such as the native terminal palette. */
   readonly fadeTransparent?: string;
-  /** Semantic Uniwind surface behind the toolbar. Defaults to card. */
   readonly fadeSurface?: "card" | "sheet";
   readonly contentPaddingRight?: number;
 }) {
@@ -309,10 +301,6 @@ export function ComposerToolbarButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
-        // Default width cap lives in the class chain (not the inline style)
-        // so callers can lift it with max-w-full — flex-filling pills in the
-        // thread composer stretch to the row's edge. The numeric maxWidth
-        // prop still wins via the inline style below.
         "h-11 max-w-[172px] flex-row items-center justify-center rounded-full border active:opacity-70",
         variant === "primary" && "shadow-lg shadow-adaptive-black-a10-a25 disabled:shadow-none",
         isCircle ? "w-11" : "gap-2 px-3.5",

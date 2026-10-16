@@ -74,7 +74,6 @@ describe("guardHttpResponseWriteErrors", () => {
     expect(writeErrors[0]).toBeInstanceOf(Error);
     expect((writeErrors[0] as NodeJS.ErrnoException).code).toBe("EPIPE");
 
-    // The process survived the failed write and the server keeps serving.
     server.on("request", (_request, response) => {
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok");

@@ -45,7 +45,7 @@ const isChildRunLive = (
       thread.status === "running" ||
       thread.status === "waiting";
 
-/** What a subagent's live run waits on the user for. Provider-native
+/** Provider-native
     subagents ask on their parent, so they are skipped. */
 function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
   const kind = thread.pendingRuntimeRequest?.kind;
@@ -61,11 +61,6 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   return kind === "user_input" ? "user_input" : "approval";
 }
 
-/**
- * Threads above a subagent that waits on the user, by what it waits on. Every
- * thread up to the visible one carries it, because subagent rows are hidden.
- * An approval outranks a question.
- */
 export function pendingSubagentRequestsByThread(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyMap<ThreadId, PendingSubagentRequest> {
@@ -88,7 +83,6 @@ export function pendingSubagentRequestsByThread(
   return requests.size === 0 ? EMPTY_SUBAGENT_REQUESTS : requests;
 }
 
-/** Banner title for the subagents `childThreadInputsAtom` lists. */
 export function childThreadInputsTitle(
   children: ReadonlyArray<Pick<EnvironmentThreadShell, "hasPendingApprovals">>,
 ): string {

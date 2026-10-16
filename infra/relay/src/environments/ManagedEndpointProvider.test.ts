@@ -364,8 +364,6 @@ function layerProvider(
   );
 }
 
-// First 16 hex chars of SHA-256(`dev_julius:${userId}:${environmentId}`), pinned so a
-// change to the endpoint naming scheme fails here instead of silently matching.
 const MANAGED_ENDPOINT_HASHES: Record<string, string> = {
   "user_ABC:env_ABC": "d101ac68108a423e",
   "user_ABC:env_shared": "d7e6356aaf8863aa",
@@ -916,8 +914,6 @@ describe("ManagedEndpointProvider", () => {
         return;
       }
 
-      // A relink refreshes the allocation generation after unlink captured its
-      // target but before unlink begins external teardown.
       yield* provider.provision(request);
       const tunnelCallCount = tunnelCalls.length;
       const dnsCallCount = dnsCalls.length;
@@ -954,28 +950,22 @@ describe("ManagedEndpointProvider", () => {
       expect(released).toBe(true);
       expect(second.endpoint).toEqual(first.endpoint);
       expect(tunnelCalls.map((call) => call.operation)).toEqual([
-        // first provision
         "list",
         "create",
         "putConfiguration",
         "getToken",
-        // release deletes only the tunnel...
         "delete",
-        // ...and the next provision recreates it under the same name
         "list",
         "create",
         "putConfiguration",
         "getToken",
       ]);
-      // The DNS record survives the release and is repointed, never deleted.
       expect(dnsCalls.map((call) => call.operation)).toEqual([
         "listRecords",
         "createRecord",
         "updateRecord",
       ]);
       expect(allocationCalls.map((call) => call.operation)).not.toContain("remove");
-      // An ordinary release, such as a host shutting down, must not tell the
-      // user to update: that host gets a new tunnel when it starts again.
       const claims = allocationCalls.filter((call) => call.operation === "claimRelease");
       expect(claims.map((call) => (call.input as { markReleased?: boolean }).markReleased)).toEqual(
         [undefined, undefined],
@@ -1000,8 +990,6 @@ describe("ManagedEndpointProvider", () => {
       });
       expect(yield* provider.release({ ...key, markReleased: true })).toBe(true);
 
-      // The first claim only reserves the release; the second, taken with the
-      // row locked right before the delete, is the one that records it.
       const claims = allocationCalls.filter((call) => call.operation === "claimRelease");
       expect(claims.map((call) => (call.input as { markReleased?: boolean }).markReleased)).toEqual(
         [undefined, true],
@@ -1031,8 +1019,6 @@ describe("ManagedEndpointProvider", () => {
   it.effect("keeps the tunnel alive when a concurrent provision outdates the release claim", () => {
     const tunnelCalls: TunnelCall[] = [];
     const allocations = makeAllocations();
-    // Simulates a provision racing the release: the allocation generation no
-    // longer matches what the release loaded, so the claim fails.
     const outdated = ManagedEndpointAllocations.ManagedEndpointAllocations.of({
       ...allocations,
       claimRelease: () => Effect.succeed(null),
@@ -1048,8 +1034,6 @@ describe("ManagedEndpointProvider", () => {
       });
       const released = yield* provider.release(key);
 
-      // false tells the caller its connector token is still live, so it must
-      // keep its runtime config.
       expect(released).toBe(false);
       expect(tunnelCalls.map((call) => call.operation)).toEqual([
         "list",
@@ -1150,8 +1134,6 @@ describe("ManagedEndpointProvider", () => {
       const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
       const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 } as const;
       const provisioned = yield* provider.provision({ ...key, origin });
-      // A shutdown release deletes the tunnel but keeps the recorded id; the
-      // host was killed before it dropped its stored config.
       expect(yield* provider.release(key)).toBe(true);
 
       expect(
@@ -1577,8 +1559,6 @@ describe("ManagedEndpointProvider", () => {
         tunnelId: "tunnel-id",
         cause: { _tag: "TimeoutError" },
       });
-      // Cloudflare may or may not have applied the delete before the
-      // response was lost; the client only sees the timeout.
       const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
         ...persistent,
         delete: (tunnelId) =>
@@ -1599,10 +1579,8 @@ describe("ManagedEndpointProvider", () => {
         const result = yield* Effect.result(provider.release({ ...key, markReleased: true }));
 
         if (released) {
-          // Succeeding commits the marked claim, so status can explain it.
           expect(result).toMatchObject({ _tag: "Success", success: true });
         } else {
-          // Failing rolls the claim back; the tunnel is still there to retry.
           expect(result).toMatchObject({
             _tag: "Failure",
             failure: { stage: "delete-tunnel", cause: lostResponse },

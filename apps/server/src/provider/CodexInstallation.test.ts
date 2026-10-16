@@ -40,7 +40,6 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     local?: { version: string; appServerFails?: boolean; versionFails?: boolean };
     platform?: NodeJS.Platform;
     spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
-    // Fails this many renames of an extracted runtime before letting one through.
     runtimeRenameFailures?: number;
   } = {},
 ) {
@@ -412,7 +411,6 @@ it.live("startup removes only stale staging directories", () =>
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-install-test-" });
     const managed = `${baseDir}/tools/codex`;
-    // utimes takes seconds when given numbers.
     const stale = ((yield* Clock.currentTimeMillis) - 25 * 60 * 60_000) / 1000;
     for (const name of [".install-stale", ".active-stale", ".install-live"]) {
       yield* fs.makeDirectory(`${managed}/${name}`, { recursive: true });

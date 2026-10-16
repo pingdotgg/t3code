@@ -155,30 +155,19 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
   return truncateDiagnostic(formatted, MAX_SCHEMA_DIAGNOSTIC_LENGTH - suffix.length) + suffix;
 };
 
-/**
- * A `Getter` that parses a lenient JSON string (tolerating trailing commas
- * and JS-style comments) into an unknown value.
- *
- * Mirrors `SchemaGetter.parseJson()` but strips JSONC syntax before parsing.
- */
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
-  // Strip single-line comments - alternation preserves quoted strings.
   let stripped = input.replace(
     /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
     (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
   );
 
-  // Strip multi-line comments.
   stripped = stripped.replace(
     /("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g,
     (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
   );
 
-  // Strip trailing commas before `}` or `]`. The alternation preserves quoted
-  // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
-  // mistaken for a trailing comma and removed.
   stripped = stripped.replace(
     /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
     (match, stringLiteral: string | undefined, bracket: string | undefined) =>
@@ -188,13 +177,6 @@ const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
   return decodeJsonString(stripped).pipe(Effect.mapError((error) => error.issue));
 });
 
-/**
- * Schema transformation: lenient JSONC string ↔ unknown.
- *
- * Same API as `SchemaTransformation.fromJsonString`, but the decode side
- * strips trailing commas and JS-style comments before parsing.
- * Encoding produces strict JSON via `JSON.stringify`.
- */
 const fromLenientJsonString = new SchemaTransformation.Transformation(
   parseLenientJsonGetter,
   SchemaGetter.stringifyJson(),
@@ -204,12 +186,6 @@ const prettyJsonString = SchemaGetter.parseJson<string>().pipe(
   SchemaGetter.compose(SchemaGetter.stringifyJson({ space: 2 })),
 );
 
-/**
- * Build a schema that decodes a lenient JSON string into `A`.
- *
- * Drop-in replacement for `Schema.fromJsonString(schema)` that tolerates
- * trailing commas and comments in the input.
- */
 export const fromLenientJson = <S extends Schema.Top>(schema: S) =>
   Schema.String.pipe(Schema.decodeTo(schema, fromLenientJsonString));
 
@@ -261,12 +237,6 @@ export function extractJsonObject(raw: string): string {
   return trimmed.slice(start);
 }
 
-/**
- * Build a JSON string schema that encodes with stable 2-space formatting.
- *
- * Decode behavior matches `Schema.fromJsonString(schema)`. Encode behavior
- * keeps the transformation schema-based while preserving human-readable JSON.
- */
 export const fromJsonStringPretty = <S extends Schema.Top>(schema: S) =>
   Schema.fromJsonString(schema).pipe(
     Schema.encode({

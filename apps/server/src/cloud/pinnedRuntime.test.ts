@@ -17,9 +17,6 @@ import {
   type PinnedRuntimeProgress,
 } from "./pinnedRuntime.ts";
 
-// Every install fetches the release archive, checks it against SHA256SUMS,
-// and unpacks it with tar. The fake client serves both files; the fake runner
-// stands in for tar and drops the executable where extraction would.
 const version = "1.2.3";
 const archiveName = `t3-${version}-linux-x64.tar.gz`;
 const archiveBytes = new TextEncoder().encode("not really a tarball");

@@ -4,7 +4,6 @@ import { scheduleOnUI } from "react-native-worklets";
 
 function collectUiRuntimeGarbage() {
   "worklet";
-  // Hermes exposes `gc` on the worklets UI runtime; skip quietly on runtimes that do not.
   const gc = (globalThis as { gc?: () => void }).gc;
   if (typeof gc === "function") gc();
 }

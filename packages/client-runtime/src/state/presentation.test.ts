@@ -169,7 +169,6 @@ describe("environment summary subscriptions", () => {
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(false);
       h.registry.set(h.configs(FIRST), config(true));
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(true);
-      // The first true result short-circuits: the second must be read when the first stops supporting it.
       h.registry.set(h.configs(SECOND), config(true));
       h.registry.set(h.configs(FIRST), null);
       expect(h.registry.get(h.pullRequestsSupportedAtom)).toBe(true);

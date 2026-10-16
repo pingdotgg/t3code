@@ -233,8 +233,6 @@ describe("mobile SQLite environment cache store", () => {
       expect(DateTime.formatIso(shell.threads[0]!.titleRegeneration!.startedAt)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
-      // Working and unsettled threads are exactly what a backgrounded app
-      // caches; a decode failure here discards the whole shell on relaunch.
       expect(DateTime.formatIso(shell.threads[0]!.activityRunStartedAt!)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
@@ -317,7 +315,6 @@ describe("mobile SQLite environment cache store", () => {
 
       const shell = Option.getOrThrow(yield* store.loadShell(ENVIRONMENT_ID));
       expect(shell.threads.map((thread) => thread.id)).toEqual([THREAD_ID, readable.id]);
-      // Only the thread with the unreadable link loses its links.
       expect([...(yield* shell.loadPullRequests!)]).toEqual([[readable.id, [link]]]);
       expect(messages).toHaveLength(1);
       expect(memory.removed).toEqual([]);

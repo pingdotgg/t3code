@@ -159,7 +159,6 @@ export function isProviderNativeImageAttachment(attachment: ChatAttachment): boo
 export function providerMessageTextWithAttachmentPaths(input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
-  /** Absolute path of a stored attachment, such as `ProviderHost.resolveAttachmentPath`. */
   readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
 }): string {
   let text = input.text;

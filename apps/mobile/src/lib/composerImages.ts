@@ -28,9 +28,7 @@ import { writeFileAtomically } from "./atomic-file";
 export interface DraftComposerImageAttachment extends Omit<UploadChatImageAttachment, "dataUrl"> {
   readonly id: string;
   readonly previewUri: string;
-  /** Owned image bytes from a file-backed draft. Current writers still use inline bytes. */
   readonly fileUri?: string;
-  /** Inline bytes from current writers and older drafts. */
   readonly dataUrl?: string;
   readonly uploadedAttachmentId?: string;
   readonly uploadEnvironmentId?: EnvironmentId;
@@ -80,16 +78,9 @@ export async function createPastedTextComposerAttachment(input: {
 export type DraftComposerAttachment = DraftComposerImageAttachment | DraftComposerFileAttachment;
 
 /**
- * What the strip above the composer shows: media, and nothing else. A thumbnail is the only
- * way to see a picture or a video, so those always preview there. Everything else reads as
- * its inline chip, which carries the name, the type and the size in the line of prose the
- * file belongs to — a square tile showing a generic document glyph says strictly less.
- *
  * The chip is not optional for a non-media file. Every path that attaches one also writes
  * its reference, so a file with no chip means the draft lost it rather than that the strip
- * should stand in. Which attachments carry a chip is therefore not consulted at all; surfaces
- * whose attachments never get chips (a question answer) pass them to the strip directly
- * instead of through this filter.
+ * should stand in.
  */
 export function composerStripAttachments(
   attachments: ReadonlyArray<DraftComposerAttachment>,
@@ -100,8 +91,8 @@ export function composerStripAttachments(
 }
 
 /**
- * Whether a draft attachment is a picture. The document picker types every pick as a plain
- * file, so the answer comes from the attachment itself rather than from which picker made it.
+ * The document picker types every pick as a plain file, so the answer comes from the
+ * attachment itself rather than from which picker made it.
  */
 export function isComposerImageAttachment(
   attachment: DraftComposerAttachment,
@@ -109,10 +100,8 @@ export function isComposerImageAttachment(
   return attachment.type === "image" || imageMimeType(attachment) !== null;
 }
 
-/** Any composer attachment whose bytes live in the app-owned attachment directory. */
 export type FileBackedComposerAttachment = DraftComposerAttachment & { readonly fileUri: string };
 
-/** Files have a local copy. Images can have one after a file-backed draft is restored. */
 export function isFileBackedComposerAttachment(
   attachment: DraftComposerAttachment,
 ): attachment is FileBackedComposerAttachment {
@@ -120,10 +109,9 @@ export function isFileBackedComposerAttachment(
 }
 
 /**
- * The bytes a draft attachment can be previewed from without the server. A picture taken from
- * the photo library or the clipboard owns no file and carries its bytes inline, and its
- * `attachmentId` is a local draft id the server has never seen — so falling back to a remote
- * asset for one only ever fails. Returns undefined when the attachment really is remote-only.
+ * A picture taken from the photo library or the clipboard owns no file and carries its bytes
+ * inline, and its `attachmentId` is a local draft id the server has never seen — so falling
+ * back to a remote asset for one only ever fails.
  */
 export function composerAttachmentInlineUri(
   attachment: DraftComposerAttachment | undefined,
@@ -369,7 +357,6 @@ export async function pickComposerImages(input: { readonly existingCount: number
   };
 }
 
-/** Videos use file uploads; omit maxVideoBytes for image-only destinations. */
 export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
@@ -476,8 +463,7 @@ export async function pickComposerMedia(input: {
       sourceBytes = null;
     }
     // Originals the provider can read and that fit the cap pass through byte for byte so
-    // transparency and animation survive. Everything else (HEIC/HEIF, oversized JPEGs,
-    // unmeasurable sources) is rendered to a bounded JPEG off the JS thread.
+    // transparency and animation survive.
     const originalMimeType =
       mimeType !== undefined &&
       isProviderSendTurnSupportedImageMimeType(mimeType) &&
@@ -540,7 +526,6 @@ export async function pickComposerMedia(input: {
   };
 }
 
-/** Clipboard images take priority over their alternate text representation. */
 export async function pasteComposerClipboard(input: { readonly existingCount: number }): Promise<
   | {
       readonly images: ReadonlyArray<DraftComposerImageAttachment>;

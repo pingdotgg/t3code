@@ -10,9 +10,8 @@ export interface ScaledTextRole {
 }
 
 /**
- * Mirrors the values injected into Uniwind for style-prop consumers that
- * cannot use a `text-*` class. This deliberately does not subscribe to CSS
- * variables, so palette-only setTheme calls remain native-only.
+ * This deliberately does not subscribe to CSS variables, so palette-only
+ * setTheme calls remain native-only.
  */
 export function useScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY): ScaledTextRole {
   const { appearance } = useAppearancePreferences();

@@ -18,7 +18,6 @@ function requireEnv(name) {
   return value;
 }
 
-// Service account key -> OAuth access token via a self-signed JWT grant.
 async function playAccessToken(key) {
   const now = Math.floor(Date.now() / 1000);
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");

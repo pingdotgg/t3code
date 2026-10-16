@@ -52,9 +52,6 @@ describe("createFileTreeDragMentionController", () => {
   });
 
   it("does not tag drags of selected text from the panel chrome", () => {
-    // Only a drag that originates on a tree row is a mention; dragging a text
-    // selection also carries text/plain, and tagging it would drop an invalid
-    // pill into the composer.
     const controller = createFileTreeDragMentionController({ deselect: () => {} });
     const transfer = makeTransfer("selected text");
     controller.handleDragStart({ dataTransfer: transfer, composedPath: () => [{}] });

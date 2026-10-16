@@ -8,7 +8,6 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 
-// The primary owns OAuth for this stream; the destination owns the refresh session.
 export function subscribeChatGptHandoff(
   input: ChatGptHandoffInput,
   owner: string,

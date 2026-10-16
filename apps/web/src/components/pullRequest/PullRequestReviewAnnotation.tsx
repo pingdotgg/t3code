@@ -1,7 +1,3 @@
-/**
- * Pull-request-specific annotations: conversations already on the host and comments queued for
- * the review being written. New comment composition uses the shared diff annotation.
- */
 import type {
   EnvironmentId,
   PullRequestDiffSide,
@@ -36,7 +32,6 @@ import type { PendingReviewComment } from "./pullRequestReviewStore";
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
 
-/** Sends a reply on ⌘/Ctrl+Enter and abandons it on Escape. */
 function submitKeys(input: {
   readonly value: string;
   readonly pending: boolean;
@@ -55,7 +50,6 @@ function submitKeys(input: {
   };
 }
 
-/** The contract's sides named the way the diff viewer names them, and back again. */
 export function toViewerSide(side: PullRequestDiffSide) {
   return side === "left" ? ("deletions" as const) : ("additions" as const);
 }
@@ -77,7 +71,6 @@ export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
   }
 }
 
-/** A comment waiting to be sent with the rest of the review. */
 export function PendingReviewCommentCard({
   comment,
   onRemove,
@@ -109,7 +102,6 @@ export function PendingReviewCommentCard({
   );
 }
 
-/** A conversation already on the host, with whatever this host lets the reader do to it. */
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -137,23 +129,16 @@ export function ReviewThreadCard({
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   pending: boolean;
-  /** True while this thread's own hand-off is preparing, so only its button says so. */
   fixPending?: boolean;
   fixLabel?: string;
-  /** Absent where a thread is shown outside the pull request page's reach. */
   onFix?: () => void;
-  /** Resolves to whether the host took it, so a reply that failed keeps the words it was given. */
   onReply: (body: string) => Promise<boolean>;
-  /** Reads one more page only after the reader asks for it. */
   onLoadMore: (cursor: string) => Promise<PullRequestThreadCommentsResult | null>;
-  /** Whether this reader wrote this remark, which is what rewriting one takes. */
   canEditComment: (comment: PullRequestThreadComment) => boolean;
-  /** Resolves to whether the host took it, like `onReply`. */
   onEditComment: (commentId: string, body: string) => Promise<boolean>;
   onToggleResolved: () => void;
   onReacted: () => void;
 }) {
-  // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const [expanded, setExpanded] = useState(!thread.isResolved);
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
@@ -192,8 +177,6 @@ export function ReviewThreadCard({
     const trimmed = reply.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
-    // Cleared only once the host has it. Otherwise a failed reply leaves an error toast and an
-    // empty box, and the words have to be written again.
     try {
       if (await onReply(trimmed)) {
         // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so

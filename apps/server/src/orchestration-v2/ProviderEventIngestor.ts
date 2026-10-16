@@ -202,19 +202,12 @@ function withPlanStepDurations(
   };
 }
 
-/** Settled runs that carried conversation to the provider. */
 const CONVERSATION_RUN_STATUSES = new Set<OrchestrationV2Run["status"]>([
   "completed",
   "interrupted",
   "failed",
 ]);
 
-/**
- * Settled runs on a provider thread that a native rewind left off the active
- * branch. A run whose provider turn has a strong native ref is judged by that
- * ref. A run without one cannot be located, so it falls with everything after
- * the last run still on the branch.
- */
 function runsOffNativeBranch(input: {
   readonly projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">;
   readonly providerThreadId: ProviderThreadId;
@@ -271,19 +264,11 @@ export interface ProviderEventIngestorV2Shape {
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2DomainEvent>, ProviderEventIngestorV2Error>;
   readonly ingestNormalized: (
     input: ProviderEventIngestInput & {
-      /**
-       * Atomically reject mutable provider state emitted by an attempt that
-       * lost ownership while the adapter event was in flight.
-       */
       readonly writeIfRunCurrent?: {
         readonly runId: RunId;
         readonly activeAttemptId: RunAttemptId;
         readonly expectedStatus: OrchestrationV2Run["status"];
       };
-      /**
-       * Atomically reject provider-thread snapshots from an attempt that no
-       * longer owns the run or from a run that no longer owns the thread.
-       */
       readonly writeIfProviderThreadOwner?: {
         readonly providerThreadId: ProviderThreadId;
         readonly runId: RunId;
@@ -405,13 +390,10 @@ export const layer: Layer.Layer<
     );
 
     /**
-     * A native subagent's thread starts on the parent's model when the
-     * provider names the real one later (a Claude agent file's model arrives
-     * with the subagent's first reply). Clients read the thread's model and
-     * effort, so move the thread to the reported selection, or to the reported
-     * model alone when the provider reports no selection. Thread commands
-     * rewrite the whole thread row under the thread's lock, so this read and
-     * write take it too.
+     * A native subagent's thread starts on the parent's model when the provider
+     * names the real one later (a Claude agent file's model arrives with the
+     * subagent's first reply). Thread commands rewrite the whole thread row
+     * under the thread's lock, so this read and write take it too.
      */
     const syncSubagentThreadModel = Effect.fn("ProviderEventIngestor.syncSubagentThreadModel")(
       function* (input: ProviderEventIngestInput, subagent: OrchestrationV2Subagent) {
@@ -427,15 +409,13 @@ export const layer: Layer.Layer<
           subagent.modelSelection ??
           (model === null || model === modelSelection.model
             ? modelSelection
-            : // The parent's options belong to the parent's model.
-              { instanceId: modelSelection.instanceId, model });
+            : { instanceId: modelSelection.instanceId, model });
         const staleThread = projections.getThread(childThreadId).pipe(
           Effect.map((thread) =>
             modelSelectionsEqual(thread.modelSelection, reportedSelection(thread)) ? null : thread,
           ),
           Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
         );
-        // Nearly every update already matches; only a mismatch takes the lock.
         if ((yield* staleThread) === null) return [];
         return yield* threadCommands.withLock(
           childThreadId,
@@ -460,10 +440,10 @@ export const layer: Layer.Layer<
     );
 
     /**
-     * The provider rewound its conversation outside T3. Retire the runs that
-     * fell off its active branch with the same run, root-node, and checkpoint
-     * updates CheckpointRollbackService writes for a T3 revert. The run
-     * reporting the rewind performed it and stays, so it keeps lastRunOrdinal.
+     * Retire the runs that fell off its active branch with the same run,
+     * root-node, and checkpoint updates CheckpointRollbackService writes for a
+     * T3 revert. The run reporting the rewind performed it and stays, so it
+     * keeps lastRunOrdinal.
      */
     const rollBackRewoundRuns = Effect.fn("ProviderEventIngestor.rollBackRewoundRuns")(function* (
       input: ProviderEventIngestInput,
@@ -703,8 +683,6 @@ export const layer: Layer.Layer<
               return dismissed;
             }
             const occurredAt = yield* DateTime.now;
-            // A turn that failed because systemd killed the agent's scope for
-            // memory would otherwise read as a plain provider crash.
             const failure = (yield* agentScope.oomKilled(input.threadId))
               ? { ...input.event.failure, message: "Killed: out of memory.", code: "oom_kill" }
               : input.event.failure;

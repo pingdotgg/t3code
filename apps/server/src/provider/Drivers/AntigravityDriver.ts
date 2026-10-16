@@ -83,7 +83,6 @@ export type AntigravityDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-/** Each instance owns its Google profile. Executable releases are shared by the environment. */
 export const AntigravityDriver: ProviderDriver<
   AntigravitySettings,
   AntigravityDriverEnv,
@@ -140,9 +139,6 @@ export const AntigravityDriver: ProviderDriver<
         ),
       );
       const profileDirectory = directories.profile;
-      // No process of this instance exists yet, so every runtime temp
-      // directory it owns is an orphan from a killed server. Older builds
-      // unpacked inside the profile.
       for (const directory of [
         directories.runtimeTemp,
         path.join(profileDirectory, "antigravity-acp", "tmp"),
@@ -342,14 +338,9 @@ export const AntigravityDriver: ProviderDriver<
         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
       });
 
-      // Kick the TTL-gated manifest refresh alongside the health check, as
-      // Codex and Claude do. Without it an environment that only runs
-      // Antigravity would keep classifying against a stale disk cache.
       // The probe must not spawn. The agent is a PyInstaller one-file bundle
       // that unpacks about 1 GB per launch, and the health check runs every
-      // minute. Resolving the install on disk is enough to report installed
-      // and version. The response below is synthetic: only agentInfo.version
-      // is read from it. Sessions and manual refreshes still spawn.
+      // minute.
       const probe = Effect.gen(function* () {
         yield* modelCatalog.refreshInBackground;
         if (authConfigIssue !== null) {

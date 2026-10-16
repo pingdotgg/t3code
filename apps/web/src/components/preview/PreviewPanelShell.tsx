@@ -22,24 +22,17 @@ import { RightPanelResizeHandle } from "./RightPanelResizeHandle";
 
 export type PreviewPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 
-/**
- * Shell for the preview panel. In inline mode the panel is user-resizable
- * via a drag handle on the left edge; width persists per browser. In
- * sheet/sidebar modes the parent owns the size.
- */
 interface PreviewPanelShellProps {
   mode: PreviewPanelMode;
   maximized?: boolean;
   inlineSize?: PreviewPanelInlineSize;
   open?: boolean;
   /**
-   * Overrides the localStorage key used to persist the panel width. Callers
-   * embedding this shell for a different surface (e.g. the pull requests
-   * page) should pass their own key so resizing one panel doesn't clobber
-   * the other's remembered width.
+   * Callers embedding this shell for a different surface (e.g. the pull
+   * requests page) should pass their own key so resizing one panel doesn't
+   * clobber the other's remembered width.
    */
   widthStorageKey?: string;
-  /** Overrides the initial width (px) before the user has resized the panel. */
   defaultWidth?: number;
   children: ReactNode;
 }

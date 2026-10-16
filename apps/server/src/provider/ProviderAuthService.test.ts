@@ -76,11 +76,6 @@ function makeInstance(input: {
 
 const nowUtc = DateTime.makeUnsafe(now);
 
-/**
- * A thread bound to a provider instance with (or without) a live native
- * thread. The auth service reads only the routing fields, so the rest of the
- * shell row is left out.
- */
 function makeThread(
   thread: string,
   input: { readonly providerInstanceId?: ProviderInstanceId; readonly active?: boolean } = {},

@@ -144,7 +144,6 @@ describe("stepComposerPromptHistory", () => {
     const position: ComposerPromptHistoryPosition = { entryId: "m3", recalled: "third" };
     expect(backward(position, "third edited")).toBeNull();
     expect(forward(position, "third edited")).toBeNull();
-    // Sent and cleared: ArrowUp starts over from the newest entry.
     expect(backward(position, "")?.position).toEqual({ entryId: "m3", recalled: "third" });
   });
 
@@ -166,7 +165,6 @@ describe("stepComposerPromptHistory", () => {
       currentPrompt: "A",
     });
     expect(older?.prompt).toBe("zeroth");
-    // Unknown id with no matching text: browsing is over.
     const missing = stepComposerPromptHistory({
       direction: "forward",
       entries: grown,

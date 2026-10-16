@@ -35,7 +35,6 @@ const requireForNodePty = NodeModule.createRequire(import.meta.url);
 const loadNodePty: NodePtyModuleLoader = () =>
   Promise.resolve().then(() => requireForNodePty("node-pty") as typeof import("node-pty"));
 
-/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
 export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
   "server/terminal/NodePtyModuleLoader",
   { defaultValue: () => loadNodePty },
@@ -79,18 +78,14 @@ const ensureNodePtySpawnHelperExecutable = Effect.fn(function* () {
     return;
   }
 
-  // Best-effort: avoid FileSystem.stat in packaged mode where some fs metadata can be missing.
   yield* fs.chmod(helperPath, 0o755).pipe(Effect.orElseSucceed(() => undefined));
 });
 
 /**
- * Waits for Windows process creation so the manager receives a valid PID.
  * node-pty defers creation to avoid blocking on named pipes:
- * https://github.com/microsoft/node-pty/pull/885
- * T3 adopted that behavior when upgrading from 1.1.0 to 1.2.0-beta.15:
- * https://github.com/pingdotgg/t3code/pull/13748
- * Its public API has no readiness event. The private ready_datapipe handler sets
- * pid before our listener runs.
+ * https://github.com/microsoft/node-pty/pull/885 Its public API has no
+ * readiness event. The private ready_datapipe handler sets pid before our
+ * listener runs.
  */
 const waitForWindowsPid = (
   process: import("node-pty").IPty,
@@ -147,7 +142,6 @@ const waitForWindowsPid = (
 /**
  * Cancels Windows startup without waiting for the first output, unlike public kill().
  * The private agent can cancel the pending connection before a child exists.
- * Cleanup failures are logged without replacing the startup failure.
  */
 const killStartingWindowsPty = (process: import("node-pty").IPty) =>
   Effect.try(() => {
@@ -181,7 +175,6 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   constructor(process: import("node-pty").IPty, platform: NodeJS.Platform) {
     this.process = process;
     this.platform = platform;
-    // Retain exits while Windows readiness and the manager hand off the process.
     this.exitSubscription = process.onExit((event) => {
       if (this.exitEvent) return;
       this.exitEvent = { exitCode: event.exitCode, signal: event.signal ?? null };

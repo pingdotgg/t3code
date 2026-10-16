@@ -27,9 +27,7 @@ export function getProjectFaviconCacheKey(
   try {
     const pathname = new URL(url, "https://t3.invalid").pathname;
     revision = pathname.slice(pathname.lastIndexOf("/") + 1);
-  } catch {
-    // Keep the full value as a safe fallback for malformed URLs.
-  }
+  } catch {}
 
   return JSON.stringify([environmentId, workspaceRoot, revision]);
 }

@@ -61,9 +61,6 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
         expect(resolved?.endsWith(path.join("public", "favicon.svg"))).toBe(true);
 
-        // `favicon.svg` outranks `public/favicon.svg`, so a resolver that walked
-        // the candidate list again would switch to it. Staying on the original
-        // answer is only possible from cache.
         yield* writeTextFile(cwd, "favicon.svg", "<svg>root</svg>");
 
         for (const _attempt of [1, 2, 3]) {
@@ -89,7 +86,6 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         yield* fileSystem.remove(path.join(cwd, "favicon.svg")).pipe(Effect.orDie);
 
-        // Still inside the positive TTL: the cached path must not be served.
         expect(yield* resolver.resolvePath(cwd)).toBeNull();
       }).pipe(Effect.provide(TestClock.layer())),
     );
@@ -317,14 +313,10 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
-    // A large icon source with no icon metadata used to pin the server's event loop for
-    // minutes: the object pattern was unanchored, so it restarted at every offset and
-    // rescanned forward from each one. Anchoring keeps this proportional to file size.
     it.effect("scans large icon sources without an icon in reasonable time", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
-        // Mirrors a generated single-file build: large, brace-sparse, and no icon metadata.
         const filler = `<p>${"pokopia companion guide ".repeat(24)}</p>\n`;
         yield* writeTextFile(
           cwd,

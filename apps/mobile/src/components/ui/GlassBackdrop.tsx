@@ -4,7 +4,6 @@ import { Platform, StyleSheet, View, type ColorValue } from "react-native";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 
-/** Frosted backdrop for containers that clip their children to their shape. */
 export function GlassBackdrop(props: { readonly fallbackColor?: ColorValue }) {
   const { themeAppearance, themeVariables } = useAppearancePreferences();
   const supportsBlur = Platform.OS === "ios";

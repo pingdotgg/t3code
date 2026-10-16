@@ -48,7 +48,6 @@ const adapter = {
   openSession: () => Effect.die("Runs here never reach a provider"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 const layerDatabase = SqlitePersistence.layerMemory;
-// No effect worker: runs stay unstarted, so Stop ends them without a provider.
 const layerTest = ThreadManagementService.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
@@ -124,7 +123,6 @@ const send = (threadId: ThreadId, text: string, type: "start_immediately" | "que
     });
   });
 
-/** Delegates `task` from the parent's latest run and returns the child thread. */
 const delegate = (parentThreadId: ThreadId, task: string) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -169,13 +167,10 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     yield* createWatchingThread(parentThreadId, 1);
     yield* send(parentThreadId, "first", "start_immediately");
     const childThreadId = yield* delegate(parentThreadId, "child task");
-    // The parent owns its pull requests; a delegated task cannot watch one.
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(childThreadId, 2))));
     const grandchildThreadId = yield* delegate(childThreadId, "grandchild task");
     yield* send(childThreadId, "child follow-up", "queue_after_active");
 
-    // The run that delegated the child ends before the run the user stops, so
-    // only a Stop that covers earlier runs keeps the stopped child from waking it.
     const now = yield* DateTime.now;
     const firstRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
     yield* projections.apply({
@@ -212,7 +207,6 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
       "delegated-tasks.stop",
     );
 
-    // What the delegated-tasks.stop effect runs once the Stop commits.
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
     assert.deepEqual(yield* threadState(childThreadId), {
       runs: ["interrupted", "queued:held"],
@@ -220,7 +214,6 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
     });
     assert.deepEqual((yield* threadState(grandchildThreadId)).runs, ["interrupted"]);
 
-    // A retried effect stops nothing twice.
     yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted", "queued:held"]);
   }).pipe(Effect.provide(layerTest)),
@@ -323,7 +316,6 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       occurredAt: now,
       payload: { ...run, status: "running" },
     });
-    // A queued message the user cancelled does not count as the latest run.
     yield* send(threadId, "queued", "queue_after_active");
     const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
     yield* orchestrator.dispatch({
@@ -332,7 +324,6 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       threadId,
       runId: queued.id,
     });
-    // Stop reached the run, but its provider has not stopped it yet.
     yield* projections.apply({
       id: EventId.make("event:stop-barrier:interrupt-request"),
       type: "turn-item.updated",
@@ -362,7 +353,6 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
     assert.isTrue(Exit.isFailure(yield* Effect.exit(delegate(threadId, "late task"))));
     assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 5))));
 
-    // A slow watch_pull_request call can land after the stopped run ended.
     yield* projections.apply({
       id: EventId.make("event:stop-barrier:interrupted"),
       type: "run.updated",
@@ -377,7 +367,6 @@ it.effect("a run Stop reached cannot delegate or start a watch, even after it en
       watched: [4],
     });
 
-    // The user can still stop and restart a watch by hand.
     for (const watching of [false, true]) {
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
@@ -401,7 +390,6 @@ it.effect("thread.stop keeps a restart continuation of the stopped run from star
     yield* send(threadId, "work", "start_immediately");
     const now = yield* DateTime.now;
     const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-    // A server restart cut the run before its provider started; its continuation is pending.
     yield* projections.apply({
       id: EventId.make("event:stop-restart:cancelled"),
       type: "run.updated",
@@ -472,7 +460,6 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
               : { ...run, queueHeld: true },
         });
       }
-      // A later turn runs ahead of the held queue, then recovery cancels it.
       yield* send(threadId, "restart source", "start_immediately");
       const source = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
       yield* projections.apply({
@@ -586,11 +573,9 @@ it.effect.each([
         (projection) => projection.runtimeRequests[0],
       );
 
-      // While the task runs, its question stays open.
       yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
       assert.equal((yield* request)?.status, "pending");
       if (ending === "interrupted") {
-        // What task_cancel dispatches.
         yield* orchestrator.dispatch({
           type: "thread.stop",
           commandId: CommandId.make("stop-question-child"),
@@ -622,7 +607,6 @@ it.effect("a delegated task that cannot be stopped fails the walk after its sibl
     yield* send(parentThreadId, "work", "start_immediately");
     const childThreadId = yield* delegate(parentThreadId, "stoppable task");
     const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
-    // A task whose thread is gone, listed before the one that can stop.
     yield* projections.apply({
       id: EventId.make("event:stop-partial:missing-task"),
       type: "subagent.updated",
@@ -687,7 +671,6 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
     yield* send(threadId, "work", "start_immediately");
     const now = yield* DateTime.now;
     const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-    // The turn is running, but its provider session is gone, so the interrupt fails.
     yield* projections.apply({
       id: EventId.make("event:stop-lost-session:running"),
       type: "run.updated",
@@ -836,7 +819,6 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
           completedAt: now,
         },
       });
-      // The owner has finished but its child and queued prompt remain.
       yield* projections.apply({
         id: EventId.make("event:native-child-stop:owner-completed"),
         type: "run.updated",
@@ -891,9 +873,7 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         }),
       );
       assert.isTrue(Exit.isFailure(unrelated));
-      // The provider outcome predates the delayed projection repair.
       yield* TestClock.adjust("1 second");
-      // Only execute Stop's durable effect, with no terminal event ingestion.
       yield* sql`DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${commandId}`;
       if (providerState === "missing session") {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -932,8 +912,6 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         return;
       }
 
-      // Cached clients resume from this sequence, so all lifecycle repairs
-      // must be stored in the parent stream, not just applied to projections.
       const repaired = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
       const terminal = repaired.flatMap(({ event }) =>
         (event.type === "subagent.updated" ||
@@ -975,7 +953,6 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       assert.isNotNull(child.nodes.find((node) => node.id === childRoot.id)?.completedAt);
       assert.equal(settled.subagents.find((task) => task.id === sibling.id)?.status, "running");
       assert.deepEqual(yield* threadState(threadId), stateBefore);
-      // An old Stop follow-up cannot cancel a genuine subsequent resume.
       yield* TestClock.adjust("1 second");
       const resumedAt = yield* DateTime.now;
       yield* projections.apply({

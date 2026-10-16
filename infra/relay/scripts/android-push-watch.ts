@@ -88,7 +88,6 @@ const main = Effect.gen(function* () {
   );
   const layerSocketConstructor = Layer.succeed(
     Socket.WebSocketConstructor,
-    // Socket.makeWebSocket only ever passes its `protocols` option here.
     (url, protocols) =>
       new NodeSocket.NodeWS.WebSocket(url, protocols as string | string[] | undefined, {
         headers: { authorization: `Bearer ${connection.bearerToken}` },
@@ -172,7 +171,6 @@ const main = Effect.gen(function* () {
           }
           const state = item.kind === "thread.updated" ? next.get(item.thread.id) : undefined;
           const previous = state ? states.get(state.threadId) : undefined;
-          // A fresh subscription restores ongoing work without announcing old completions.
           const now = yield* Clock.currentTimeMillis;
           const alert =
             state && state.phase !== previous?.phase && item.kind !== "snapshot"

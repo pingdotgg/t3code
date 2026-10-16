@@ -19,8 +19,6 @@ import {
 } from "./attachments.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
-// The cycle threads the registry through to the commands untouched, so the
-// fakes below can ignore it.
 const registry = {} as AtomRegistry.AtomRegistry;
 
 type CreateUploadUrlCommand = AtomCommand<
@@ -128,13 +126,8 @@ describe("runAttachmentUploadCycle", () => {
 
 describe("verifyPersistedAttachmentUpload", () => {
   it("hits the server on every verification instead of reusing a cached failure", async () => {
-    // Mirrors the app's asset URL query atom: SWR-cached with a long stale
-    // window and kept alive across calls. Without a forced refresh, the
-    // second verification would read the cached failure and never retry.
     let lookups = 0;
     const assetUrlAtom = Atom.make(
-      // Async like the real RPC, so the first read is still in flight when
-      // the query decides whether a refresh is needed.
       Effect.promise(() => Promise.resolve()).pipe(
         Effect.flatMap(() => {
           lookups += 1;

@@ -23,9 +23,6 @@ export type {
   ThreadTitleGenerationResult,
 } from "@t3tools/provider-core/server/textGeneration";
 
-/**
- * TextGeneration - Service tag for commit and change request text generation.
- */
 export class TextGeneration extends Context.Service<TextGeneration, ProviderTextGeneration>()(
   "t3/textGeneration/TextGeneration",
 ) {}

@@ -59,7 +59,6 @@ export function QueuedRunsControl({
   readonly optimisticMessages: ReadonlyArray<
     Pick<ChatMessage, "id" | "inputIntent" | "text" | "attachments">
   >;
-  /** The saved queue entry stays visible while its draft is edited in the composer. */
   readonly editingRunId: RunId | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
@@ -73,8 +72,6 @@ export function QueuedRunsControl({
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
-  // Live drag-reorder state: the dragged run and the queue index the row
-  // would be inserted at (0..queued.length) as of the latest dragover.
   const [dragState, setDragState] = useState<{
     readonly runId: RunId;
     readonly insertIndex: number | null;
@@ -183,7 +180,6 @@ export function QueuedRunsControl({
     if (insertIndex === null || busyRunId !== null) return;
     const draggedIndex = queued.findIndex(({ run }) => run.id === runId);
     if (draggedIndex === -1) return;
-    // Inserting immediately before or after itself is a no-op.
     if (insertIndex === draggedIndex || insertIndex === draggedIndex + 1) return;
     void move(runId, queued[insertIndex]?.run.id ?? null);
   };

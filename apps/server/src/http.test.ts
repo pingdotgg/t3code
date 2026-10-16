@@ -444,7 +444,6 @@ describe("video asset byte ranges", () => {
         ] as const) {
           const file = yield* openMediaFile(canonicalPath);
           if (!file) throw new Error("Expected an opened media file");
-          // Model a sparse file beyond the native stream's numeric addressing limit.
           const info = yield* Effect.promise(() => file.handle.stat({ bigint: true }));
           info.size = size;
           const statSpy = vi.spyOn(file.handle, "stat").mockResolvedValue(info);
@@ -516,8 +515,6 @@ describe("video asset byte ranges", () => {
       const filePath = path.join(directory, "audio.wav");
       yield* fs.writeFileString(filePath, "RIFF");
       const canonicalPath = yield* fs.realPath(filePath);
-      // An attachment is read straight from disk, so it carries no opened host file. Its URL is
-      // signed and short-lived; a cached copy would outlive the grant that served it.
       const response = HttpServerResponse.toWeb(
         yield* assetFileResponse({ path: canonicalPath, mimeType: "audio/wav" }),
       );

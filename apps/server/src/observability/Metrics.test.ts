@@ -172,7 +172,6 @@ describe("withMetrics", () => {
       );
       yield* Deferred.await(started);
       yield* TestClock.adjust(Duration.millis(10));
-      // A backward wall-clock correction must not shorten the measured duration.
       yield* TestClock.setTime(0);
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(fiber);

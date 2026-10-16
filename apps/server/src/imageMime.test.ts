@@ -38,12 +38,9 @@ describe("imageMime", () => {
   });
 
   it("rejects structurally malformed base64", () => {
-    // '=' before the trailing padding position
     expect(parseBase64DataUrl("data:image/png;base64,AB=CD===")).toBeNull();
     expect(parseBase64DataUrl("data:image/png;base64,SGV=bG8=")).toBeNull();
-    // more than two padding characters
     expect(parseBase64DataUrl("data:image/png;base64,SGVsbG8=====AAA")).toBeNull();
-    // length not a multiple of 4
     expect(parseBase64DataUrl("data:image/png;base64,SGVsbG8")).toBeNull();
   });
 
@@ -71,9 +68,6 @@ describe("imageMime", () => {
   });
 
   it("parses a multi-megabyte payload from a deep call stack", () => {
-    // Regression: matching the payload with a regex borrowed the JS call
-    // stack, so a ~10 MB image parsed inside fiber execution threw
-    // "RangeError: Maximum call stack size exceeded".
     const dataUrl = `data:image/png;base64,${"A".repeat(14_000_000)}`;
     const atDepth = (depth: number): ReturnType<typeof parseBase64DataUrl> =>
       depth === 0 ? parseBase64DataUrl(dataUrl) : atDepth(depth - 1);

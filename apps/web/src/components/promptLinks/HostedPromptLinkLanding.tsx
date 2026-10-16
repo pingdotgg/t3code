@@ -60,11 +60,6 @@ function summarize(
   };
 }
 
-/**
- * On app.t3.codes a prompt link first asks where to open: the installed desktop or mobile app
- * (through `t3code://`), this browser when it is connected to a machine, or the download page.
- * Returns that page, or null when the link should open in this browser as usual.
- */
 export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
   const href = useLocation({ select: (location) => location.href });
   const { environments, isReady } = useEnvironments();
@@ -81,7 +76,6 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
   const canContinue = isReady && environments.length > 0;
   if (opener === "browser") {
     if (canContinue) return null;
-    // Blank until the machines load, so a remembered choice does not flash this page.
     if (!isReady) return <></>;
   }
   return (
@@ -114,8 +108,6 @@ function HostedPromptLinkLanding({
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
   const autoOpenedRef = useRef(false);
 
-  // After "remember", later links hand straight to the app. The page stays as the way back
-  // when the app is not installed on this device.
   useEffect(() => {
     if (!openInAppRemembered || !summary.ok || autoOpenedRef.current) return;
     autoOpenedRef.current = true;

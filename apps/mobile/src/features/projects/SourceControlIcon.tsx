@@ -3,7 +3,6 @@ import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-/** Draws a host's glyph by its client definition's `icon` key; null for a key it has no art for. */
 export function SourceControlIcon(props: {
   readonly kind: string;
   readonly size?: number;
@@ -14,7 +13,6 @@ export function SourceControlIcon(props: {
 
   switch (props.kind) {
     case "forgejo":
-      // Official two-color mark from https://forgejo.org/favicon.svg.
       return (
         <Svg width={size} height={size} viewBox="0 0 212 212">
           <G transform="translate(6 6)" fill="none">
@@ -252,7 +250,6 @@ export function SourceControlIcon(props: {
         </Svg>
       );
     case "gitcafe":
-      // GitCafe's own mark from https://git.cafe/favicon.svg, inset like the web icon.
       return (
         <Svg width={size} height={size} viewBox="0 0 64 64">
           <Rect x={4.8} y={4.8} width={54.4} height={54.4} fill="#a78bfa" />

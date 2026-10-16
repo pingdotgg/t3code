@@ -1,6 +1,5 @@
 import type { PreviewSessionSnapshot } from "@t3tools/contracts";
 
-/** The tab the agent touched last, the default when nothing is selected. */
 export function latestBrowserTab(tabs: ReadonlyArray<PreviewSessionSnapshot>) {
   return tabs.reduce<PreviewSessionSnapshot | null>(
     (latest, tab) => (latest === null || tab.updatedAt > latest.updatedAt ? tab : latest),

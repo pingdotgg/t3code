@@ -1,9 +1,3 @@
-/**
- * ACP Registry instance settings. Shared by the server driver and the client
- * settings form, so it holds only browser-safe schema code.
- *
- * @module provider-acp-registry/settings
- */
 import { TrimmedString, makeProviderSettingsSchema } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

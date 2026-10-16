@@ -76,7 +76,6 @@ describe("Muse model catalog", () => {
           ],
         },
       ]);
-      // Older hosts and "unknown" fall back to Muse's documented tiers.
       expect(models[1]?.capabilities).toEqual(museModelCapabilities());
       expect(models[2]?.capabilities).toEqual(museModelCapabilities());
     }),

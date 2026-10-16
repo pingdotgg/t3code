@@ -37,7 +37,6 @@ type BrowserPreviewRouteScreenProps = StaticScreenProps<{
   readonly tabId?: string;
 }>;
 
-/** The nested native stack supplies the navigation bar inside the modal. */
 export function BrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = useCallback(() => navigation.goBack(), [navigation]);
@@ -84,14 +83,12 @@ function BrowserPreviewScreen({
   const [foreground, setForeground] = useState(AppState.currentState !== "background");
   const [selectedTabId, setSelectedTabId] = useState(initialTabId);
   const [pictureInPicture, setPictureInPicture] = useState(NO_PICTURE_IN_PICTURE);
-  // Address bar commands only reach a page that is streaming.
   const [streaming, setStreaming] = useState(false);
   const [canControl, setCanControl] = useState(false);
   const streamRef = useRef<PreviewStreamRef>(null);
   const { tabs, loaded } = useThreadServerBrowserTabs({ environmentId, threadId, enabled: true });
   const tab = tabs.find((entry) => entry.tabId === selectedTabId) ?? latestBrowserTab(tabs);
   const tabId = tab?.tabId ?? null;
-  // Pin the fallback so another tab's activity does not switch the view.
   if (tabId !== null && tabId !== selectedTabId) {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
     setSelectedTabId(tabId);
@@ -113,7 +110,6 @@ function BrowserPreviewScreen({
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
     setSelectedTabId(next);
   };
-  // System picture in picture keeps showing this stream after the app leaves the foreground.
   const live = (focused && foreground) || pictureInPicture.active;
 
   return (
@@ -216,14 +212,11 @@ function BrowserAddressBar({
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
-  /** The viewer controls the page, so navigation and reload apply. */
   readonly ready: boolean;
-  /** The menu's changes need no control, only a live tab. */
   readonly streaming: boolean;
   readonly onCommand: PreviewStreamRef["command"];
 }) {
   const url = browserTabUrl(tab);
-  // Null while not editing, so agent navigation keeps the field current.
   const [draft, setDraft] = useState<string | null>(null);
   const submit = () => {
     const value = draft ?? url;

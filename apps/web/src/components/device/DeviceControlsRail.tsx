@@ -34,7 +34,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { DeviceStreamHandle, DeviceViewControls } from "./DeviceStreamView";
 import type { DeviceControls } from "./useDeviceControls";
 
-/** Stable floating controls for both presentations, regardless of panel width. */
 export function DeviceControlsRail(props: {
   platform: DevicePlatform;
   handle: DeviceStreamHandle | null;

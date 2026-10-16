@@ -27,7 +27,6 @@ interface ScopeChoice {
   search: SettingsScopeSearch;
 }
 
-/** Offer an explicit target change when a category has no settings at this scope. */
 export function SettingsScopeNotice({
   children,
   target,

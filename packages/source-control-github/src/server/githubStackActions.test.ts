@@ -25,7 +25,6 @@ type Call = ReadonlyArray<string>;
 /** The next answer in the script: a REST body, or for GraphQL the `data` to answer with. */
 type Send = (call: Call, kind: "graphql" | "rest") => Effect.Effect<unknown>;
 
-/** Every git command the cascade ran, in order; none actually runs. */
 let gitCalls: Array<ReadonlyArray<string>> = [];
 const fakeGit = Layer.mergeAll(
   TestSourceControlHost.layer({

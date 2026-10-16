@@ -7,7 +7,6 @@ import {
   type ComposerThreadTarget,
 } from "../../composerDraftStore";
 
-/** Keep an unsaved edit when its queued run starts or is removed remotely. */
 export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
@@ -26,7 +25,6 @@ export function recoverQueuedMessageEdit(input: {
   return dirty ? "discarded" : "clean";
 }
 
-/** Generic files need upload references; images also support the inline transport. */
 export async function prepareQueuedEditAttachments(input: {
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly images: ReadonlyArray<ComposerImageAttachment>;

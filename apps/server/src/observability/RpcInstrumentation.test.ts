@@ -27,7 +27,6 @@ import { RpcInstrumentation, rpcInstrumentationLayer } from "./RpcInstrumentatio
 
 type WsRpcMethod = keyof typeof RPC_REQUIRED_SCOPES;
 
-/** The server group narrowed to `tags`, so a test only implements the handlers it calls. */
 const groupOf = <const Tags extends ReadonlyArray<WsRpcMethod>>(...tags: Tags) =>
   WsRpcGroup.omit(
     ...[...WsRpcGroup.requests.keys()].filter(
@@ -36,14 +35,12 @@ const groupOf = <const Tags extends ReadonlyArray<WsRpcMethod>>(...tags: Tags) =
     ),
   ).middleware(RpcInstrumentation);
 
-/** The middleware ws.ts installs for a connection with `scopes`. */
 const connectionMiddleware = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
   Layer.merge(RpcAuthorization.layer(scopes), rpcInstrumentationLayer);
 const readOnlyConnection = connectionMiddleware([AuthOrchestrationReadScope]);
 const taskId = ScheduledTaskId.make("scheduled-task:instrumented");
 const rpcSpanDefaults = { "rpc.transport": "websocket", "rpc.system": "effect-rpc" };
 
-/** Runs a test with a fresh metric registry and a tracer that keeps every span it ends. */
 const withTelemetry = <A, E, R>(
   test: (ended: ReadonlyArray<Tracer.NativeSpan>) => Effect.Effect<A, E, R>,
 ) => {
@@ -70,7 +67,7 @@ const rpcSpans = (ended: ReadonlyArray<Tracer.NativeSpan>) =>
   ended.filter((span) => span.name.startsWith("ws.rpc."));
 
 // RpcTest keeps Effect's own RpcServer/RpcClient spans, which ws.ts turns off with
-// `disableTracing: true`. Everything else comes from the middleware or the handlers.
+// `disableTracing: true`.
 const appSpans = (ended: ReadonlyArray<Tracer.NativeSpan>) =>
   ended.filter((span) => span.attributes.get("rpc.system.name") !== "effect_rpc");
 
@@ -145,7 +142,6 @@ describe("WS RPC instrumentation middleware", () => {
         assert.deepStrictEqual(yield* client[WS_METHODS.serverProbe]({}), {});
         const listError = yield* client[WS_METHODS.scheduledTasksList]({}).pipe(Effect.flip);
         assert.equal(listError._tag, "ScheduledTaskError");
-        // Retrying telemetry needs operate scope, so the handler must not run.
         const rejection = yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(
           Effect.flip,
         );
@@ -270,8 +266,6 @@ describe("WS RPC instrumentation middleware", () => {
           ),
         );
 
-        // Wall and monotonic time disagree before the call starts, so a duration that mixes
-        // the two clocks is caught.
         yield* TestClock.adjust(Duration.seconds(1));
         yield* TestClock.setTime(0);
         const consumer = yield* Stream.runDrain(
@@ -279,11 +273,9 @@ describe("WS RPC instrumentation middleware", () => {
         ).pipe(Effect.forkChild);
         yield* Deferred.await(waiting);
         yield* TestClock.adjust(Duration.millis(250));
-        // A backward wall-clock correction must not shorten the measured duration.
         yield* TestClock.setTime(0);
         assert.deepStrictEqual(appSpans(ended), []);
 
-        // The client waits for the server to stop the call, which ends the RPC span.
         yield* Fiber.interrupt(consumer);
 
         const [rpcSpan] = rpcSpans(ended);

@@ -5,14 +5,13 @@ export type ProjectIconGlyph =
   | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor };
 
 /**
- * Visible glyph count for sizing monogram text. Hermes has no Intl.Segmenter, so combining
- * marks are folded into their base character instead of full grapheme segmentation.
+ * Hermes has no Intl.Segmenter, so combining marks are folded into their base
+ * character instead of full grapheme segmentation.
  */
 export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;
 }
 
-/** Mirrors the automatic monogram web derives from a project name when it has no favicon. */
 export function projectMonogram(projectName: string): string {
   const words =
     projectName
@@ -31,11 +30,6 @@ export function projectMonogram(projectName: string): string {
   return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
 }
 
-/**
- * Picks what mobile draws for an assigned project icon. Mobile does not bundle
- * the Lucide set, so a Lucide override keeps its color and falls back to the
- * project's monogram instead of the folder glyph.
- */
 export function resolveProjectIconGlyph(
   projectIcon: ProjectIconOverride | null | undefined,
   projectTitle: string,

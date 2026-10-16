@@ -869,7 +869,7 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
             .close()
             .pipe(Effect.andThen(Deferred.succeed(closed, undefined)), Effect.forkChild);
           assert.equal(yield* Deferred.isDone(closed), false);
-          // A separate fiber runs while the file operation remains pending.
+
           const heartbeat = yield* Deferred.make<void>();
           yield* Effect.forkChild(Deferred.succeed(heartbeat, undefined));
           yield* Deferred.await(heartbeat);

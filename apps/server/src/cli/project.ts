@@ -375,7 +375,6 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
       origin: runtimeState.value.origin,
       cause: attempted.failure,
     });
-    // The offline path decides whether that server still owns the home.
     return Option.none<{ readonly origin: string }>();
   },
 );

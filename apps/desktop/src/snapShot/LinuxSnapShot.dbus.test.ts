@@ -224,7 +224,6 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       "--method",
       "com.t3tools.SnapShot.Capture",
     ];
-    // Exercise the actual command copied to Niri's configuration, including gdbus introspection.
     await new Promise<void>((resolve, reject) => {
       NodeChildProcess.execFile(
         "gdbus",

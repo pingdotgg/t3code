@@ -7,11 +7,6 @@ const GENERIC_ERROR_PREFIXES = [
   "Provider adapter failed while dispatching orchestration command ",
 ];
 
-/**
- * User-facing prose for capability rejections. The internal error messages
- * keep command ids and capability codes for logs; the toast should say what
- * did not happen and why in the provider's own name.
- */
 const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string> = {
   queued_messages: (p) => `${p} cannot queue messages behind an active run.`,
   active_steering: (p) =>
@@ -38,7 +33,6 @@ function providerDisplayName(instanceId: string): string {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
-/** Friendly translation for command-policy rejections; undefined otherwise. */
 function policyRejectionMessage(value: unknown): string | undefined {
   if (!Predicate.isObject(value) || typeof value.providerInstanceId !== "string") return undefined;
   const provider = providerDisplayName(value.providerInstanceId);

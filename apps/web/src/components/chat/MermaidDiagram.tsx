@@ -12,12 +12,11 @@ let mermaidModulePromise: Promise<Mermaid> | null = null;
 let renderQueue: Promise<unknown> = Promise.resolve();
 let nextDiagramId = 0;
 const MAX_CACHED_RENDERS = 64;
-// Keyed by the full source so distinct diagrams never share an entry. Pending
-// renders are never evicted, because use() must get the same promise on retry.
+// Pending renders are never evicted, because use() must get the same promise on
+// retry.
 const renderCache = new Map<string, Promise<MermaidRenderResult>>();
 const settledRenders = new WeakSet<Promise<MermaidRenderResult>>();
 
-// Mermaid is ~1MB, so it only loads once a diagram is actually shown.
 function loadMermaid(): Promise<Mermaid> {
   mermaidModulePromise ??= import("mermaid")
     .then((module) => module.default)
@@ -33,7 +32,7 @@ let purifier: ReturnType<typeof DOMPurify> | null = null;
 
 // Diagrams can come from untrusted PR descriptions, so strip anything that can
 // navigate, run script, or fetch remote content on top of Mermaid's own strict
-// sanitization. CSS keeps only local url(#id) references; label text is untouched.
+// sanitization.
 function sanitizeMermaidSvg(svg: string): string {
   if (!purifier) {
     purifier = DOMPurify(window);
@@ -137,10 +136,8 @@ function mermaidRenderPromise(source: string, theme: "light" | "dark") {
 let expandedImageUrl: string | null = null;
 
 /**
- * Converts a rendered diagram into a standalone image with fixed size and background.
  * A blob URL, unlike a data URL, passes the desktop connect-src policy that media
- * save and copy actions fetch through. Only one diagram is expanded at a time, so
- * the previous URL is released.
+ * save and copy actions fetch through.
  */
 function mermaidImageUrl(svg: string): string {
   const svgDocument = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -160,7 +157,6 @@ function mermaidImageUrl(svg: string): string {
   return expandedImageUrl;
 }
 
-/** Suspends until the diagram renders; failures show the parser message above the source. */
 export function MermaidDiagram({
   source,
   theme,
@@ -192,7 +188,6 @@ export function MermaidDiagram({
             </Button>
           ) : null}
         </div>
-        {/* Find matches the source through the hidden copy beside the diagram. */}
         <pre
           data-thread-find-ignore
           className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap"

@@ -1,8 +1,3 @@
-/**
- * Discovery specs: how each provider reports its CLI or API, and the shared probe that runs them.
- *
- * @module source-control-core/server/discovery
- */
 import * as NodeUtil from "node:util";
 import {
   VcsProcessSpawnError,
@@ -82,8 +77,6 @@ type SourceControlCliRemoteRefinementSpec = SourceControlCliDiscoverySpec & {
   readonly refineUnknownRemote: NonNullable<SourceControlCliDiscoverySpec["refineUnknownRemote"]>;
 };
 
-// Most provider CLIs answer `--version` in well under a second, so a short budget keeps
-// discovery snappy. Specs whose CLI is known to be slower can raise it via probeTimeoutMs.
 const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 
 function probeTimeoutMs(spec: SourceControlCliDiscoverySpec): number {
@@ -321,7 +314,6 @@ export function isMissingExecutable(error: unknown): boolean {
   );
 }
 
-/** The CLI ran, but its output does not say whether it holds the remote's host. */
 class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered>()(
   "UnknownRemoteUnanswered",
   {},
@@ -329,7 +321,6 @@ class UnknownRemoteUnanswered extends Schema.TaggedError<UnknownRemoteUnanswered
 
 export interface UnknownRemoteVerdict {
   readonly provider: SourceControlProviderInfo | null;
-  /** Every integration answered, so the verdict holds for other checkouts of the same server. */
   readonly settled: boolean;
 }
 
@@ -367,7 +358,6 @@ function refineWithSpec(input: {
     );
 }
 
-/** Asks every integration whether it holds the remote's server; the first claim wins. */
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;

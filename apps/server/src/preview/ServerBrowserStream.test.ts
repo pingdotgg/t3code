@@ -149,8 +149,6 @@ it.effect.each([
         canOperate,
       },
     ]);
-    // In particular, a one-use ticket must never be authenticated a second
-    // time to discover whether this read session also has operate scope.
     expect(auth.requests).toEqual([resource]);
   }).pipe(Effect.scoped),
 );

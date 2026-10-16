@@ -1,9 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-/**
- * The Azure DevOps driver: repository operations, discovery, and pull requests through `az`.
- *
- * @module source-control-azure-devops/server/driver
- */
 import { defineSourceControlDriver } from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
 

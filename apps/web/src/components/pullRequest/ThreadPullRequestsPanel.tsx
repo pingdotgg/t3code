@@ -95,7 +95,6 @@ function LinkRowImpl({
   projectId: ProjectId | null;
   speedMode: boolean;
   onUnlink: (link: ThreadPullRequestLink) => void;
-  /** Null when the environment cannot watch pull requests. */
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
 }) {
   const openPrLink = useOpenPrLink(threadRef);
@@ -112,7 +111,6 @@ function LinkRowImpl({
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
   const watching = link.watch !== undefined;
-  // A link carries no host summary, so the host's own definition says what it can do.
   const linkHostActions = (
     sourceControlClients.findByChangeRequestUrl(link.url) ?? UNKNOWN_SOURCE_CONTROL_CLIENT
   ).changeRequestActions;
@@ -129,7 +127,6 @@ function LinkRowImpl({
           ...(link.stack === null ? {} : { stack: link.stack }),
         }
       : null;
-  // Speed mode swaps the menu for quick actions only where a row has some to offer.
   const hasQuickActions =
     actionEntry !== null && pullRequestQuickActions(actionEntry, linkHostActions).length > 0;
   return (
@@ -141,9 +138,6 @@ function LinkRowImpl({
         setMenuPosition({ x: event.clientX, y: event.clientY });
         setMenuOpen(true);
       }}
-      // Each layer steps in under the one it targets. The step is capped: beyond a few layers
-      // the indent only says "still in the stack", which the connector line already does, and
-      // a sixteen-layer stack would otherwise stair-step off the right edge.
       style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
     >
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
@@ -217,9 +211,6 @@ function LinkRowImpl({
               </>
             ) : null
           }
-          // Match the full PR list: diff counts up top, checks under the lifecycle glyph, the
-          // verdict by the author. Each is absent rather than neutral when the host said
-          // nothing, so a row without them reads as unknown, not as fine.
           status={
             <PullRequestDiffStat
               additions={snapshot?.additions ?? 0}
@@ -255,8 +246,6 @@ function LinkRowImpl({
               ) : null}
               {snapshot !== null ? (
                 <>
-                  {/* Cut in the middle: rows from one owner differ in the repository name at the
-                      end, which a tail cut would hide. */}
                   <Tooltip>
                     <TooltipTrigger render={<span className="flex min-w-0 max-w-32 font-mono" />}>
                       <MiddleTruncate value={link.repository} showTitle={false} />
@@ -282,9 +271,6 @@ function LinkRowImpl({
           visible={speedMode}
         />
       ) : null}
-      {/* Out of the row's flow, so no row reserves a column for a button only the hovered one
-          shows. It sits over the right end of the second line on the row's own hover color,
-          fading in from the left, so it covers the time and leaves the diff counts alone. */}
       <span
         className={cn(
           "absolute right-0 bottom-0.5 flex items-center rounded-r-md bg-background pr-1 pl-5",

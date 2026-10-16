@@ -75,12 +75,6 @@ const LOCATION_PRESETS = [
   { label: "Tokyo", latitude: 35.6762, longitude: 139.6503 },
 ] as const;
 
-/**
- * The Tools drawer for one open device: current settings read from the device,
- * one control per supported action, and the read-only feeds the hub exposes.
- * Every change is a `device.action` round trip; the returned detail replaces
- * local state so the controls never show a value the device did not confirm.
- */
 export function DeviceToolsPanel(props: {
   readonly controls: DeviceControls;
   readonly hostDiagnostics: string | undefined;

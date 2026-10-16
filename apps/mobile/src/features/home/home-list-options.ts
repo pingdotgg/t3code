@@ -48,10 +48,6 @@ interface HomeListOptionsContextValue {
 
 const HomeListOptionsContext = createContext<HomeListOptionsContextValue | null>(null);
 
-/**
- * Keeps list preferences stable while the app moves between compact and split shells.
- * Filters start from the saved preference, and changes are saved for the next launch.
- */
 export function HomeListOptionsProvider({
   children,
   projectGroupingMode,

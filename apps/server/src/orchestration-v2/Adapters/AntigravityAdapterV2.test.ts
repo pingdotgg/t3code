@@ -234,8 +234,6 @@ describe("AntigravityAdapterV2 client file system", () => {
       assert.isTrue(Exit.isFailure(outsideWrite));
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "planted.txt")));
 
-      // An in-workspace symlink to an outside file must not carry a read or
-      // write out of the workspace.
       const linkPath = path.join(workspace, "linked-secret.txt");
       yield* fileSystem.symlink(outsideFile, linkPath);
       const linkedRead = yield* readTextFile(
@@ -249,7 +247,6 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedWrite), "a write through an escaping symlink is denied");
       assert.equal(yield* fileSystem.readFileString(outsideFile), "secret");
-      // A dangling in-workspace symlink to an outside path must not create it.
       const plantedTarget = path.join(outside, "created-through-link.txt");
       const danglingLink = path.join(workspace, "dangling.txt");
       yield* fileSystem.symlink(plantedTarget, danglingLink);
@@ -259,7 +256,6 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(danglingWrite), "a write through a dangling symlink is denied");
       assert.isFalse(yield* fileSystem.exists(plantedTarget));
-      // A new file under an in-workspace directory link to outside is denied.
       yield* fileSystem.symlink(outside, path.join(workspace, "linked-dir"));
       const linkedDirWrite = yield* writeTextFile(
         {
@@ -271,7 +267,6 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedDirWrite), "a write under an escaping directory link");
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "new.txt")));
-      // A symlink that stays inside the workspace keeps working.
       const insideLink = path.join(workspace, "inside-link.ts");
       yield* fileSystem.symlink(insidePath, insideLink);
       const viaInsideLink = yield* readTextFile(
@@ -345,7 +340,6 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         modelSelection,
         runtimePolicy: policyFor(workspaceA),
       });
-      // The session opened for A now runs a turn for B.
       const now = yield* DateTime.now;
       yield* session
         .startTurn({
@@ -413,8 +407,6 @@ describe("AntigravityAdapterV2 workspace changes", () => {
 });
 
 describe("AntigravityAdapterV2 client file system under restrictive policies", () => {
-  // Antigravity asks before each of its own edits, so T3 serves an opted-in
-  // write whatever the thread's policy says, confined to the workspace.
   it.effect("serves in-workspace reads and writes and still refuses outside paths", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

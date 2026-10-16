@@ -9,17 +9,14 @@ import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
 
 const CITATION_PULSE_DURATION_MS = 650;
-// The second pulse settles into a held highlight so late glances still find the quote.
 const CITATION_HIGHLIGHT_HOLD_MS = 1575;
 const CITATION_HIGHLIGHT_FADE_MS = 450;
 const CITATION_HIGHLIGHT_TOTAL_MS =
   1.5 * CITATION_PULSE_DURATION_MS + CITATION_HIGHLIGHT_HOLD_MS + CITATION_HIGHLIGHT_FADE_MS;
 const CITATION_HIGHLIGHT_OPACITY = "--assistant-citation-highlight-opacity";
-// Matches the comment-editing highlight strength in index.css.
 const CITATION_HIGHLIGHT_PEAK = 0.45;
 const COMMENT_HIGHLIGHT_NAME = "t3-assistant-citation-comment";
 
-/** Keep source text marked while its comment editor is open, without changing native selection. */
 export function observeAssistantCitationCommentSource({
   anchor,
   citation,
@@ -102,7 +99,6 @@ export interface AssistantCitationTarget extends AssistantCitationRequest {
   onComplete: () => void;
 }
 
-/** Observe only the active source, including virtual containers moved above its root. */
 export function observeAssistantCitationSource({
   root,
   itemKey,
@@ -166,7 +162,6 @@ export function observeAssistantCitationSource({
     }
     const state = list.getState();
     const index = state.indexByKey(itemKey);
-    // alwaysRender mounts this row before navigation. Estimates are not measurements.
     if (index === undefined || !(state.sizeAtIndex(index) > 0)) return;
     const range = resolveAssistantCitationRange(root, request.citation);
     const rect = (range ?? root).getBoundingClientRect();
@@ -206,7 +201,6 @@ export function observeAssistantCitationSource({
         );
         return;
       }
-      // A prepend or row measurement can still change geometry during the scroll promise.
       if (rect.bottom <= scrollRect.top || rect.top >= scrollRect.bottom) return;
       activation.scrolled = true;
       request.onComplete();
@@ -229,7 +223,6 @@ export function observeAssistantCitationSource({
       root.dataset.citationHighlighted = "true";
     } else {
       const selection = root.ownerDocument.getSelection();
-      // Only a fresh activation may replace a selection we do not own.
       if (selection && (canReplaceSelection || ownsSelection(selection))) {
         selection.removeAllRanges();
         selection.addRange(range);
@@ -243,7 +236,6 @@ export function observeAssistantCitationSource({
       }
     }
     if (!pulseAnimation) {
-      // Preserve the original deadline through virtual remounts and range repairs.
       const pulse = (activation.pulse ??= {
         startedAt: performance.now(),
         reducedMotion,
@@ -314,7 +306,6 @@ export function observeAssistantCitationSource({
   const cancelScroll = () => {
     if (scrolling) {
       scrolling = false;
-      // Supersede a queued list scroll before the user's gesture or minimap action runs.
       void list.scrollToOffset({
         // Legend may defer this call too. Read the user's position when it executes.
         get offset() {

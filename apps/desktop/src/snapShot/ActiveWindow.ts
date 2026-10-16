@@ -7,9 +7,8 @@ import * as Schema from "effect/Schema";
 import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
 
 /**
- * The foreground window as the snapshot service needs it. `id` is the
- * CGWindowNumber on macOS and the HWND on Windows, which is what the capture
- * backends key on.
+ * `id` is the CGWindowNumber on macOS and the HWND on Windows, which is what
+ * the capture backends key on.
  */
 export type ActiveWindow = {
   readonly platform: "macos" | "windows";
@@ -49,9 +48,6 @@ const MacActiveWindow = Schema.Struct({
 });
 const decodeMacActiveWindow = Schema.decodeUnknownSync(Schema.fromJsonString(MacActiveWindow));
 
-// The frontmost app's first on-screen, layer-0 window in front-to-back order is
-// the active window. Window titles need Screen Recording, which the snapshot
-// service has already requested by the time this runs.
 const MAC_LOOKUP_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
@@ -135,7 +131,6 @@ async function windowsActiveWindow(): Promise<ActiveWindow | undefined> {
   };
 }
 
-/** Resolve the OS foreground window, or `undefined` when there is none. */
 export function activeWindow(platform: NodeJS.Platform): Promise<ActiveWindow | undefined> {
   if (platform === "darwin") return macActiveWindow();
   if (platform === "win32") return windowsActiveWindow();

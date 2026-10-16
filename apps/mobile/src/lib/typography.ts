@@ -10,7 +10,6 @@ export const MOBILE_TYPOGRAPHY = {
   display: { fontSize: 30, lineHeight: 36 },
 } as const;
 
-/** Shared geometry for dense, horizontally scrolling code surfaces. */
 export const MOBILE_CODE_SURFACE = {
   rowHeight: 22,
   gutterWidth: 46,

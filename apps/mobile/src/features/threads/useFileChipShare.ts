@@ -10,7 +10,6 @@ import { usePreparedConnection } from "../../state/session";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { fileChipShareSource, type FileChipTarget } from "./fileChipMenu";
 
-/** Fetches host files through the selected environment before opening the native save/share sheet. */
 export function useFileChipShare(
   environmentId: EnvironmentId,
   threadId: ThreadId,

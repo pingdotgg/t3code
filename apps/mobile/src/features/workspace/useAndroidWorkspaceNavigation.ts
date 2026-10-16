@@ -22,7 +22,6 @@ export function useWorkspaceListNavigation(tab: WorkspaceTab) {
   }, [navigation, dispatch, tab]);
 }
 
-/** Only base details own this Back handler; focused sheets and nested screens take priority. */
 export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
   const dispatch = useWorkspaceTabs()?.dispatch;
   const returnToList = useWorkspaceListNavigation(tab);

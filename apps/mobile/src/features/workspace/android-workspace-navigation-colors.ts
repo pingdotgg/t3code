@@ -5,7 +5,6 @@ import {
   type MobileThemeVariables,
 } from "../../lib/mobileTheme";
 
-/** Both navigation positions keep a visible tonal selection against their actual surface. */
 export function androidWorkspaceNavigationColors(colors: MobileThemeVariables, rail: boolean) {
   const header = flattenThemeColor(colors["--color-header"], colors["--color-screen"]);
   const containerColor = rail

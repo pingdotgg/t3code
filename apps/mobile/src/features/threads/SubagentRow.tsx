@@ -28,11 +28,6 @@ type SubagentRowSubagent = Pick<
   | "result"
 >;
 
-/**
- * One agent as shown in the Agents sheet and transcript cards: status, model,
- * workspace changes, and recent progress or result. Callers own the press
- * target and pass their own elapsed timer so ticking stays isolated.
- */
 export function SubagentRow(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: SubagentRowSubagent;
@@ -92,7 +87,6 @@ export function SubagentRow(props: {
   );
 }
 
-/** Uses shell data already held by the client, without loading child transcripts. */
 function SubagentMetadata(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: SubagentRowSubagent;

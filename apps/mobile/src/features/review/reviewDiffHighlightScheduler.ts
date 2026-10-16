@@ -30,14 +30,12 @@ export function createReviewDiffHighlightScheduler(
       }
       visibleRange = nextRange;
       cancel();
-      // Accumulate small scroll events relative to the last request, not each other.
       const movedRows =
         Math.abs(nextRange.firstRowIndex - requestedRange.firstRowIndex) +
         Math.abs(nextRange.lastRowIndex - requestedRange.lastRowIndex);
       if (movedRows >= 20) {
         flush();
       } else if (movedRows > 0) {
-        // Cover the final viewport even when scrolling stops below the threshold.
         timer = setTimeout(flush, 150);
       }
     },

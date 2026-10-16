@@ -1,30 +1,6 @@
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-/**
- * Multi-instance validation slices for the live `ProviderInstanceRegistry`.
- *
- * Two axes of the driver/registry refactor are exercised here:
- *
- *  1. **Same driver, many instances** — the "multi-instance codex slice"
- *     describe block below configures two independent `codex` instances and
- *     asserts each gets its own closures and identity. This is the
- *     multi-codex capability the refactor exists to unlock.
- *
- *  2. **Many drivers, one registry** — the "all drivers slice" describe
- *     block below configures one instance of every shipped driver
- *     (`codex`, `claudeAgent`, `cursor`, `grok`, `opencode`) in a single
- *     `ProviderInstanceConfigMap` and asserts the registry boots them all
- *     without cross-contamination. This proves the driver SPI is uniform
- *     across every provider — any driver plugs into the registry through
- *     the same `ProviderDriver` value contract.
- *
- * Every instance in these tests is configured with `enabled: false` so the
- * provider-status checks short-circuit to pending/disabled snapshots
- * without trying to spawn real `codex` / `claude` / `agent` / `grok` / `opencode`
- * binaries. That keeps the assertions focused on registry routing
- * behaviour rather than the runtime details of each provider.
- */
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -200,11 +176,6 @@ const makeTildeProviderFixtures = Effect.fn(
 });
 
 describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
-  // `ServerConfig.layerTest` needs `FileSystem` to materialize its scratch
-  // directory. `Layer.merge` just unions requirements, so we have to push
-  // `NodeServices.layer` through `Layer.provideMerge` to satisfy that
-  // dependency while still surfacing NodeServices to the test body (the
-  // codex driver's `create` yields `ChildProcessSpawner` directly).
   const layerBaseDeps = ServerConfig.layerTest(process.cwd(), {
     prefix: "provider-instance-registry-test",
   }).pipe(
@@ -285,7 +256,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         ["Codex (personal)", "Codex (work)"].toSorted(),
       );
 
-      // Each instance must be retrievable by id and carry its *own* closures.
       const personal = yield* registry.getInstance(personalId);
       const work = yield* registry.getInstance(workId);
       expect(personal).toBeDefined();
@@ -294,13 +264,10 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(personal!.textGeneration).not.toBe(work!.textGeneration);
       expect(personal!.snapshot).not.toBe(work!.snapshot);
 
-      // Snapshots identify themselves by instanceId + driver — this is
-      // what makes per-instance routing distinguishable downstream.
       const personalSnapshot = yield* personal!.snapshot.getSnapshot;
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
-      // The layout resolves the configured home through the host Path.
       const path = yield* Path.Path;
       expect(personalSnapshot.continuation?.groupKey).toBe(
         `codex:home:${path.resolve("/home/julius/.codex_personal")}`,
@@ -314,7 +281,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         `codex:home:${path.resolve("/home/julius/.codex")}`,
       );
 
-      // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
     }).pipe(Effect.provide(layerTest)),
@@ -322,8 +288,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
-      // Old settings files can carry both flags with conflicting values.
-      // The explicit false must win so a user's disable is never undone.
       const staleId = ProviderInstanceId.make("codex_stale");
       const configMap: ProviderInstanceConfigMap = {
         [staleId]: {
@@ -377,7 +341,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       });
       const codex = yield* registry.getInstance(codexId);
       expect(codex).toBeDefined();
-      // The usage read fails, so the re-probe cannot confirm new limits.
       yield* codex!.snapshot.refresh;
       expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
     }).pipe(Effect.provide(layerTest)),
@@ -605,18 +568,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 });
 
 describe("ProviderInstanceRegistry — all drivers slice", () => {
-  // All drivers need `NodeServices` (ChildProcessSpawner + FileSystem +
-  // Path). `OpenCodeDriver.create` additionally yields `OpenCodeRuntime`
-  // at construction time, so we wire `OpenCodeRuntimeLive` into the stack.
-  // `OpenCodeRuntimeLive` bundles its own `NetService.layer` via
-  // `Layer.provide`, so the only external requirement it still exposes is
-  // `ChildProcessSpawner` — resolved here by piping it through
-  // `provideMerge(NodeServices.layer)`.
-  //
-  // The nested `provideMerge`s read bottom-up: `NodeServices.layer`
-  // provides `OpenCodeRuntimeLive`'s deps while keeping its own outputs
-  // surfaced; that merged layer then provides `ServerConfig.layerTest`'s
-  // `FileSystem` dep while keeping everything else surfaced to the test.
   const layerInfra = OpenCodeRuntime.layer.pipe(
     Layer.provide(OpenCodeServerLedger.layerTest),
     Layer.provideMerge(NodeServices.layer),
@@ -718,8 +669,6 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
         configMap,
       });
 
-      // Every configured instance must materialize — none downgraded to a
-      // shadow snapshot, because every driver in the map is registered.
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
 
@@ -729,9 +678,6 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
         [codexId, claudeId, cursorId, grokId, openCodeId].toSorted(),
       );
 
-      // Instance lookup by id resolves each instance to its own bundle —
-      // this is how rest-of-server routes turn/session calls in the new
-      // model. Each driver's bundle carries its advertised `driverKind`.
       const codex = yield* registry.getInstance(codexId);
       const claude = yield* registry.getInstance(claudeId);
       const cursor = yield* registry.getInstance(cursorId);
@@ -748,11 +694,6 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       expect(grok?.displayName).toBe("Grok");
       expect(openCode?.displayName).toBe("OpenCode");
 
-      // Every instance owns its own set of closures — no sharing across
-      // drivers. `orchestrationAdapter` / `textGeneration` / `snapshot` are all
-      // distinct references even when two instances happen to share a
-      // trait (e.g. Cursor + others all use a stub-or-real
-      // `textGeneration`; they must still be different object values).
       const adapters = [
         codex!.orchestrationAdapter,
         claude!.orchestrationAdapter,
@@ -778,12 +719,6 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       ];
       expect(new Set(snapshots).size).toBe(snapshots.length);
 
-      // Snapshots identify themselves by `instanceId` + `driver` so
-      // downstream aggregation in `ProviderRegistry` can tell instances
-      // apart even when two share a driver. With `enabled: false`, the
-      // check short-circuits and we get a disabled/pending snapshot back
-      // — that's enough signal to validate the stamping wrapper without
-      // spawning real binaries.
       const codexSnapshot = yield* codex!.snapshot.getSnapshot;
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);

@@ -277,7 +277,6 @@ export function PullRequestActionToolbar(props: {
       )}
     </Toolbar.Menu>
   ) : null;
-  // Tabler file-diff geometry, rasterized at 1x/2x/3x for UIKit template images.
   const filesControl = (
     <Toolbar.Button
       identifier="workspace-trailing-action"

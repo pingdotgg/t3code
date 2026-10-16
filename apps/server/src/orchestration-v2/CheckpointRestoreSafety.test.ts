@@ -138,8 +138,6 @@ it.effect.each([
                 ].includes(owner)
                   ? ([
                       {
-                        // One session shared by every thread keeps the cwd of
-                        // the thread that opened it, here this thread's.
                         cwd: owner === "shared-provider" ? cwd : nested,
                         status:
                           owner === "provider" || owner === "shared-provider"

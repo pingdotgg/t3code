@@ -214,7 +214,6 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
   dependencies,
 })
   .annotate(Tool.Title, "Read a T3 thread")
-  // Strict so a misspelled paging param fails instead of silently reading from position 0.
   .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)

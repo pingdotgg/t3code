@@ -18,7 +18,6 @@ describe("composerContextRecordsFromDraft", () => {
       regions: [],
       strokes: [],
       styleChanges: [],
-      // The draft stores annotations without their data URL.
       screenshot: {
         dataUrl: "",
         width: 10,

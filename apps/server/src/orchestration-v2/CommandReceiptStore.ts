@@ -7,9 +7,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 
-/**
- * ERRORS
- */
 export class CommandReceiptStoreWriteError extends Schema.TaggedError<CommandReceiptStoreWriteError>()(
   "CommandReceiptStoreWriteError",
   {
@@ -40,9 +37,6 @@ export const CommandReceiptStoreV2Error = Schema.Union([
 ]);
 export type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
 
-/**
- * SERVICE DEFINITION
- */
 export const CommandReceiptV2Status = Schema.Literals(["accepted", "rejected"]);
 export type CommandReceiptV2Status = typeof CommandReceiptV2Status.Type;
 
@@ -57,7 +51,6 @@ export const CommandReceiptV2 = Schema.Struct({
 });
 export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
 
-/** Receipt for a project command; shares the receipt table with thread commands. */
 export const ProjectCommandReceiptV2 = Schema.Struct({
   commandId: CommandId,
   projectId: ProjectId,
@@ -93,9 +86,6 @@ export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2Shape
 >()("t3/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
 
-/**
- * IMPLEMENTATIONS
- */
 const decodeReceipt = Schema.decodeUnknownEffect(
   CommandReceiptV2.mapFields((fields) => ({
     ...fields,

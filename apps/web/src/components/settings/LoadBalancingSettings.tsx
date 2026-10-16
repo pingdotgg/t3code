@@ -21,7 +21,6 @@ const preferences = [
 
 type LoadPreference = (typeof preferences)[number]["value"];
 
-/** Snaps a saved weight (older builds stored a slider value) onto the four preferences. */
 export function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
   if (weight === undefined || weight === 50) return 50;
   if (weight === 0) return 0;
@@ -32,10 +31,6 @@ function preferenceLabel(preference: LoadPreference): string {
   return preferences.find((entry) => entry.value === preference)!.label;
 }
 
-/**
- * Closed-header summary: the machines not at Normal, so the folded section
- * still tells you what is set. Null when every machine is at the default.
- */
 export function summarizeLoadPreferences(
   environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
   weights: Readonly<Record<string, number>>,
@@ -49,12 +44,6 @@ export function summarizeLoadPreferences(
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
-/**
- * Folded section under the environments list. Its switch turns balancing on
- * for this client, and the body holds one row per switched-on machine with
- * how often that machine should receive new threads. Rendered only when two
- * or more machines are on, since one machine has nothing to balance against.
- */
 export function LoadBalancingSettings({
   environments,
 }: {

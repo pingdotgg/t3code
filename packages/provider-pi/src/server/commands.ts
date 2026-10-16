@@ -42,7 +42,6 @@ function normalizePiSkillScope(scope: string | undefined): string | undefined {
   return scope;
 }
 
-/** Maps Pi's `get_commands` payload to T3's shared command and skill surfaces. */
 export function parsePiDiscoveredCommands(data: unknown): PiDiscoveredCommands {
   const commands = recordField(data, "commands");
   if (!Array.isArray(commands)) return { slashCommands: [], skills: [] };

@@ -14,7 +14,6 @@ export interface MenuPopupProps {
   readonly onPress: (action: MenuAction) => void;
   readonly onBack: () => void;
   readonly onClose: () => void;
-  /** Keep the editor's window focus and keyboard while showing native menu rows. */
   readonly inline?: boolean;
 }
 

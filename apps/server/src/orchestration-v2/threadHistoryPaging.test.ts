@@ -210,9 +210,6 @@ describe("threadHistoryPaging", () => {
   });
 
   it("counts runs that a notification started toward the 150-turn ceiling", () => {
-    // A wake (PR watch, task completion) starts its run with a notification. A
-    // row of the run (a handoff) can come before it, and a wake steered into the
-    // running turn comes after it and starts no turn.
     const inRun = (index: number, run: number, item: object = {}) => {
       const row = makeRow(index);
       return {
@@ -247,7 +244,6 @@ describe("threadHistoryPaging", () => {
       inRun(run * 4 + 3, run),
     ]).flat();
     const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
-    // 150 runs from the start of run 11. Its earlier row goes to the older page.
     expect(first.items).toHaveLength(150 * 4 - 1);
     expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
     const older = selectHistoryPageFromCursor({
@@ -373,8 +369,6 @@ describe("threadHistoryPaging", () => {
       snapshotSequence: 3,
       policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
     });
-    // Clamp exclusive end to items.length and page backward so the client can
-    // dedupe and advance rather than permanently 400 on a dead cursor.
     expect(page.items.map((row) => row.sourceItemId)).toEqual(["item-3", "item-4"]);
     expect(page.hasMoreHistory).toBe(true);
     expect(page.nextCursor).not.toBeNull();
@@ -420,7 +414,6 @@ describe("threadHistoryPaging", () => {
     expect(bounded.hasMoreHistory).toBe(true);
     expect(bounded.historyCursor).not.toBeNull();
     expect(bounded.projection.visibleTurnItems.map((row) => row.position)).toEqual([0, 1, 2, 3, 4]);
-    // Watermark comes from the full projection, not the trimmed window.
     expect(bounded.latestLocalTurnOrdinal).toBe(40);
     expect(computeLatestLocalTurnOrdinal(full.turnItems)).toBe(40);
   });
@@ -471,13 +464,7 @@ describe("threadHistoryPaging", () => {
         threadId: ThreadId.make("parent-thread"),
       },
     };
-    // Full projection still has local turnItems even if the recent window is
-    // only the inherited row (e.g. after aggressive byte budget on a large
-    // local item that is not selected into the recent page). Use a synthetic
-    // projection with local turnItems and inherited-only visible window.
     const full = makeProjection([localOlder, localMid, inherited]);
-    // Force an inherited-only visible window by rebuilding with only inherited
-    // visible rows while retaining full local turnItems for the watermark.
     const inheritedOnly = {
       ...full,
       visibleTurnItems: [inherited],
@@ -496,7 +483,6 @@ describe("threadHistoryPaging", () => {
   });
 
   it("retains an out-of-window run_interrupt_request needed by a visible result", () => {
-    // Older request sits outside a 1-row recent window; result is visible alone.
     const request = interruptRow(0, "run_interrupt_request");
     const filler = makeRow(1);
     const result = interruptRow(2, "run_interrupt_result");
@@ -518,9 +504,6 @@ describe("threadHistoryPaging", () => {
   });
 
   it("retains all run_interrupt_request items even when no result is in the initial window", () => {
-    // Cold open: recent window is only filler. Request and result both live on
-    // older pages, but the request must still ride in turnItems so a later
-    // history page can introduce the result safely under live attempt updates.
     const request = interruptRow(0, "run_interrupt_request");
     const result = interruptRow(1, "run_interrupt_result");
     const recent = makeRow(2);
@@ -564,7 +547,6 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems.length).toBeGreaterThan(0);
     expect(bounded.projection.visibleTurnItems.length).toBeLessThan(rows.length);
 
-    // History pages only charge the projected row once (no turnItems copy).
     const historyPage = selectRecentTimelineWindow({
       items: rows,
       snapshotSequence: 1,
@@ -577,7 +559,6 @@ describe("threadHistoryPaging", () => {
     expect(historyBytes).toBeLessThanOrEqual(maxEncodedBytes);
     expect(historyPage.items.length).toBeGreaterThan(bounded.projection.visibleTurnItems.length);
 
-    // Dual-cost for one local row exceeds the plain row cost.
     const sample = rows[0]!;
     expect(projectedRowBoundedSnapshotEncodedBytes(sample, THREAD)).toBeGreaterThan(
       projectedRowEncodedBytes(sample),

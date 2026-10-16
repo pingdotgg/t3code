@@ -218,7 +218,6 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     ),
   );
   yield* runtime.auth.controller.subscribe("managed-codex-snapshot").pipe(
-    // Disconnect also publishes idle when a saved account has no active sign-in flow.
     Stream.filter((state) => ["idle", "succeeded", "failed", "cancelled"].includes(state.phase)),
     // Sign-out closes the scope of an in-flight probe, which fails that refresh
     // with an interrupt. Keep listening so the sign-out's own idle still refreshes.

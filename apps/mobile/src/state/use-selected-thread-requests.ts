@@ -336,7 +336,6 @@ export function useSelectedThreadRequests() {
     selectedThreadShell,
   ]);
 
-  // Closes an async question without messaging the agent.
   const onDismissUserInput = useCallback(async () => {
     if (
       !selectedThreadShell ||

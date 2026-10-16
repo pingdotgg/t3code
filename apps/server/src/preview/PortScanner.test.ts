@@ -44,7 +44,6 @@ const layerTestProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
   run: processProbeFailure,
 });
 
-/** A host without `/proc`, so a missing `lsof` leaves only configured URLs. */
 const layerNoProc = FileSystem.layerNoop({});
 
 const layerProbeFailure = (
@@ -76,7 +75,6 @@ const layerTestPortDiscovery = PortScanner.layer.pipe(
 
 const LSOF_TEST_PORT = 43_123;
 
-/** The scanner with `processIds` registered to a T3 terminal, so their listeners get probes. */
 const ownedScanner = (processIds: ReadonlyArray<number> = [1234]) =>
   Effect.tap(PortScanner.PortDiscovery, (scanner) =>
     scanner.registerTerminalProcesses({
@@ -670,8 +668,6 @@ effectIt.effect("does not swallow process probe defects", () =>
   }),
 );
 
-// /proc/net/tcp: 127.0.0.1:8765 and 0.0.0.0:22 listening, an established
-// connection, and a non-loopback listener; /proc/net/tcp6 adds [::]:3001.
 const PROC_NET_TCP = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 0100007F:223D 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5001 1 0000000000000000 100 0 0 10 0
    1: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5002 1 0000000000000000 100 0 0 10 0
@@ -732,18 +728,14 @@ effectIt.effect(
     return Effect.gen(function* () {
       const scanner = yield* ownedScanner([4242]);
       const first = yield* scanner.scan();
-      // Ports 22 and 3001 have no known owner, so they never receive probes.
       expect(first.map(({ port, pid, processName }) => ({ port, pid, processName }))).toEqual([
         { port: 8765, pid: 4242, processName: "python3" },
       ]);
       yield* scanner.scan();
       expect(lsofSpawns).toBe(1);
-      // Ports 22 and 3001 have no readable owner, so the second scan walks
-      // again; it stops at 77, which holds no listener, once nothing is left.
       expect(fdWalks).toEqual(["77", "4242", "77", "4242"]);
       yield* scanner.scan();
       yield* scanner.scan();
-      // Unresolved owners are retried a bounded number of times.
       expect(fdWalks).toEqual(["77", "4242", "77", "4242", "77", "4242"]);
     }).pipe(Effect.provide(layer));
   },
@@ -809,7 +801,6 @@ effectIt.effect(
               spawnedArgs.push(input.args);
               const isIpv6 = input.args.includes("tcpv6");
               const isTasklist = input.command === "tasklist.exe";
-              // The first lookup fails, so it must not be cached as "no name".
               const failTasklist = isTasklist && tasklistCalls++ === 0;
               return Effect.succeed({
                 stdout: isTasklist
@@ -865,7 +856,6 @@ effectIt.effect(
         ["/FO", "CSV", "/NH", "/FI", "PID eq 1234"],
       ]);
 
-      // The failed lookup retries; the result is then cached, so later polls spawn only netstat.
       expect(summarize(yield* scanner.scan())).toEqual([
         { port: 5173, pid: 1234, processName: "node" },
         { port: 43123, pid: 1234, processName: "node" },
@@ -873,7 +863,6 @@ effectIt.effect(
       yield* scanner.scan();
       expect(tasklistCalls).toBe(2);
 
-      // Cached names expire, since Windows may hand the PID to another process.
       yield* TestClock.adjust(Duration.seconds(61));
       yield* scanner.scan();
       expect(tasklistCalls).toBe(3);

@@ -15,11 +15,9 @@ interface MediaVideoPlayerProps {
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
   readonly autoPlay?: boolean | undefined;
-  /** Presents a still thumbnail whose full surface opens the video in a viewer. */
   readonly onOpen?: (() => void) | undefined;
   readonly className?: string | undefined;
   readonly videoClassName?: string | undefined;
-  /** Styles the loading and failure panels, which otherwise assume an inline light surface. */
   readonly stateClassName?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly copyMarkdown?: string | undefined;
@@ -27,7 +25,6 @@ interface MediaVideoPlayerProps {
   readonly actionsSource?: MediaActionSource | undefined;
 }
 
-/** Keeps native range streaming and playback state consistent across inline and file previews. */
 export function MediaVideoPlayer({
   src: latestSrc,
   label,
@@ -138,8 +135,6 @@ export function MediaVideoPlayer({
         <span
           role="alert"
           className={cn(
-            // Same 16:9 slot as the loading and playing states, so a failed or
-            // retried video does not move the rows below it.
             "flex aspect-video max-h-full min-h-28 w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
             stateClassName,
           )}

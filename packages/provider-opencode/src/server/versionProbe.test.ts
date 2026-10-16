@@ -70,7 +70,6 @@ describe("OpenCode version probe", () => {
     Effect.gen(function* () {
       const urls: Array<string> = [];
       const replay = replayOpenCodeServer(OPENCODE_1_RESPONSES, "pw");
-      // A reverse proxy mounting OpenCode under /opencode, reached with a routing query.
       const proxied = HttpClient.make((request, url) => {
         urls.push(url.href);
         return replay.execute(
@@ -190,7 +189,6 @@ describe("OpenCode version probe", () => {
       assert.strictEqual((yield* probe.get).generation, "v2");
       assert.strictEqual((yield* probe.get).generation, "v2");
       assert.strictEqual(calls, 2);
-      // A status refresh re-probes, so an in-place downgrade or upgrade re-routes.
       assert.strictEqual((yield* probe.refresh).generation, "v1");
       assert.strictEqual((yield* probe.get).generation, "v1");
       assert.strictEqual(calls, 3);

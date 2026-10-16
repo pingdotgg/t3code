@@ -66,12 +66,9 @@ export function PermissionUpdateNotice() {
     const dismiss = () => {
       dismissedThisLaunch.add(environment.environmentId);
       const next = new Set([...dismissed, ...dismissedThisLaunch]);
-      // Keep notices serial when several environments have old grants.
       showing.current = false;
       setDismissed(next);
-      void SecureStore.setItemAsync(storageKey, JSON.stringify([...next])).catch(() => {
-        // Remember for this launch even if persistent storage is unavailable.
-      });
+      void SecureStore.setItemAsync(storageKey, JSON.stringify([...next])).catch(() => {});
     };
     Dialog.alert(
       `Permissions have changed for ${environment.label}`,

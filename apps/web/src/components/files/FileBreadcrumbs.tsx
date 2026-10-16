@@ -147,8 +147,6 @@ function BreadcrumbMenuContent(props: {
               : "This folder is empty."}
           </MenuItem>
         ) : (
-          // Files form a radio group keyed by path so the open file is marked as checked;
-          // directories only navigate the menu, so they stay plain items.
           <MenuRadioGroup
             value={props.currentFilePath}
             onValueChange={(path) => {

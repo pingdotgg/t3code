@@ -33,7 +33,6 @@ function choices(field: string, options: Readonly<Record<string, string>>, selec
   }));
 }
 
-/** The project list's own order, which is the order its sidebar and new-task picker show. */
 function useProjectsInSidebarOrder<Project extends { id: string; environmentId: string }>(
   projects: readonly Project[],
 ) {

@@ -53,7 +53,6 @@ export function retryComposerAttachmentUpload(environmentId: EnvironmentId, atta
   uploadQueue?.retry(environmentId, attachmentId);
 }
 
-/** Runs outside mounted composers so a transfer can finish after navigation. */
 export function useComposerAttachmentUploadWorker() {
   const drafts = useAtomValue(composerDraftsAtom);
   const queuedMessages = useThreadOutboxMessages();

@@ -28,9 +28,7 @@ interface GlassSurfaceProps extends ViewProps {
   readonly tintColor?: ColorValue;
   readonly tintColorClassName?: string;
   readonly chrome?: "default" | "none";
-  /** Base color for the frosted tint, or solid fill when blur is unavailable. */
   readonly fallbackColor?: ColorValue;
-  /** Uniwind styling used only when native Liquid Glass is unavailable. */
   readonly fallbackClassName?: string;
 }
 

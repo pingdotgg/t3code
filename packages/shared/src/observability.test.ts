@@ -135,7 +135,6 @@ describe("truncateTraceAttributes", () => {
     const error = truncated["error"] as { stack: string; nested: Array<string> };
     assert.equal(error.stack.length, 500 + "…[truncated]".length);
     assert.equal(error.nested[0]?.length, 500 + "…[truncated]".length);
-    // Input is untouched: the live span's attributes are shared.
     assert.equal(attributes.error.stack, stack);
   });
 
@@ -365,9 +364,6 @@ describe("observability", () => {
             sink.push(makeRecord("first"));
             const flushing = yield* Effect.forkChild(sink.flush);
             yield* Deferred.await(started);
-            // These pushes return while the write is held. The backlog keeps one
-            // trace file of records: every small one, then large ones until the
-            // next would not fit.
             for (let index = 0; index < 2_000; index++)
               sink.push(makeRecord("small", String(index)));
             for (let index = 0; index < 3; index++)
@@ -608,7 +604,6 @@ describe("observability", () => {
         const path = yield* Path.Path;
         const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
         const tracePath = path.join(tempDir, "shared.trace.ndjson");
-        // A directory at the trace path fails every append, like a full disk.
         yield* fileSystem.makeDirectory(tracePath);
         const write = vi.spyOn(fileSystem, "writeFile");
         yield* Effect.addFinalizer(() => Effect.sync(() => write.mockRestore()));
@@ -624,14 +619,12 @@ describe("observability", () => {
           sink.push(makeRecord("lost", String(index)));
         }
         yield* sink.flush;
-        // Timed flushes run in the fiber forked inside the makeTraceSink span.
         for (let index = 0; index < 5; index += 1) {
           sink.push(makeRecord("lost"));
           yield* TestClock.adjust("1 second");
           yield* sink.flush;
         }
 
-        // One write per batch, never a growing backlog.
         assert.deepStrictEqual(
           write.mock.calls.map(([, chunk]) => Buffer.from(chunk).toString().split("\n").length - 1),
           [1024, 1, 1, 1, 1, 1],
@@ -640,7 +633,6 @@ describe("observability", () => {
           { logLevel: "Warn", message: [expect.any(String), { filePath: tracePath }] },
         ]);
 
-        // Once the disk recovers, new records are written and the loss is reported.
         yield* fileSystem.remove(tracePath, { recursive: true });
         sink.push(makeRecord("recovered"));
         yield* TestClock.adjust("1 second");
@@ -656,13 +648,11 @@ describe("observability", () => {
           message: [expect.any(String), { filePath: tracePath, droppedCount: 1_029 }],
         });
 
-        // Healthy flushes after the recovery log nothing.
         sink.push(makeRecord("healthy"));
         yield* TestClock.adjust("1 second");
         yield* sink.flush;
         expect(logs).toHaveLength(2);
 
-        // A new failure episode warns again.
         yield* fileSystem.remove(tracePath);
         yield* fileSystem.makeDirectory(tracePath);
         sink.push(makeRecord("lost-again"));
@@ -673,7 +663,6 @@ describe("observability", () => {
           ["Warn", "Info", "Warn"],
         );
 
-        // The ended makeTraceSink span is never released, so it must not collect log events.
         assert.deepStrictEqual(
           spans.map((span) => [span.name, span.events.length]),
           [["makeTraceSink", 0]],

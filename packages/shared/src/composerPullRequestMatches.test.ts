@@ -27,7 +27,6 @@ describe("filterComposerPullRequestMatches", () => {
   });
 
   it("leaves the caller's array untouched", () => {
-    // The sort runs on a copy; mutating the input would reorder whatever the caller holds.
     const entries = [entry(2, "2026-01-01"), entry(1, "2026-01-02")];
     const snapshot = entries.map((match) => match.number);
     filterComposerPullRequestMatches({

@@ -8,11 +8,6 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "./fileSurfaceChrome";
 
-/**
- * Highlighted source for files that cannot be edited: captured attachments,
- * host files outside the workspace and truncated reads. Same surface theme,
- * word-wrap preference and virtualization as the editable workspace file.
- */
 export default function ReadOnlySourcePreview(props: {
   readonly name: string;
   readonly text: string;

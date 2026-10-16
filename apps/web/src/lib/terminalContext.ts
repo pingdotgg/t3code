@@ -18,7 +18,6 @@ export interface TerminalContextDraft extends TerminalContextSelection {
   createdAt: string;
 }
 
-/** Legacy ordinal placeholder from drafts saved before context references. Migration only. */
 export const INLINE_TERMINAL_CONTEXT_PLACEHOLDER = "\uFFFC";
 
 export interface TerminalContextReferenceSource {
@@ -28,7 +27,6 @@ export interface TerminalContextReferenceSource {
   lineEnd: number;
 }
 
-/** The canonical inline link that stands for this context in the prompt. */
 export function formatTerminalContextReference(context: TerminalContextReferenceSource): string {
   return formatComposerContextReference({
     kind: "terminal",
@@ -89,7 +87,6 @@ export function formatTerminalContextLabel(selection: {
   return `${selection.terminalLabel} ${formatTerminalContextRange(selection)}`;
 }
 
-/** Binds legacy U+FFFC placeholders to contexts in array order; leftover placeholders vanish. */
 export function migrateLegacyTerminalContextPlaceholders(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextReferenceSource>,

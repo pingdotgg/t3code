@@ -27,7 +27,6 @@ type Runtime = Pick<
   "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
 >;
 
-/** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
   readonly settings: AcpRegistrySettings;
@@ -194,9 +193,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
         detachExit();
         try {
           process.kill();
-        } catch {
-          /* The login process may already have exited. */
-        }
+        } catch {}
       }),
     );
     let transcript = "";

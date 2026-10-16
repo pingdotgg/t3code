@@ -1,18 +1,3 @@
-/**
- * AgentSessionScanner - discovery of projects a user already works on.
- *
- * Claude Code and Codex both keep a per-session transcript on disk, and each
- * transcript records the directory the session ran in. Reading those `cwd`
- * values gives us the set of directories worth offering as projects during
- * onboarding, without asking the user to browse the filesystem.
- *
- * The scan is read-only and best-effort: an unreadable home, a malformed
- * transcript, or a directory that has since been deleted is skipped rather
- * than failing the scan. Project creation stays with the client, which
- * dispatches `project.create` for whichever candidates the user picks.
- *
- * @module project/AgentSessionScanner
- */
 import * as NodeOS from "node:os";
 
 import {
@@ -58,25 +43,12 @@ import {
   TranscriptJsonLimitError,
 } from "./AgentSessionJson.ts";
 
-/** Chunk size for full transcript reads. */
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
-/** Small reads avoid wasting the metadata budget on long Codex instruction headers. */
 const METADATA_READ_BYTES = 8 * 1024;
-/** Prevent malformed transcripts from turning project discovery into a full file scan. */
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 
-/**
- * Upper bound on transcripts inspected (first line read) per source.
- * Newest-first ordering means the cap drops only stale sessions when a home
- * directory is unusually large.
- */
 const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
 
-/**
- * Upper bound on discovery filesystem operations per source. Newest-first
- * ordering needs mtimes before the read cap can be applied, so directory reads
- * and candidate stats share a larger budget. Once it runs out the scan stops.
- */
 const MAX_DISCOVERY_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
 const MAX_METADATA_BYTES_PER_SOURCE = 64 * 1024 * 1024;
 const MAX_METADATA_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
@@ -86,7 +58,7 @@ const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Large tool results (especially screenshots) can make an otherwise ordinary
  * Codex transcript several GiB. Streaming field selection avoids allocating
- * those payloads. Raw I/O and selected history have separate budgets.
+ * those payloads.
  */
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORTED_MESSAGES = 200;
@@ -178,16 +150,9 @@ export type AgentSessionRecentThread =
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Skipped" };
 
-/** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
   {
-    /**
-     * Discover every directory the configured Claude and Codex homes have run
-     * a session in. Candidates are returned newest-first; the client decides
-     * which ones to import and how far back to look. Fails with the contract
-     * error directly — there is no server-local context worth wrapping.
-     */
     readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
     readonly recentThreads: (
       workspaceRoot: string,
@@ -198,7 +163,6 @@ export class AgentSessionScanner extends Context.Service<
 
 type AgentSessionSource = AgentSessionProjectCandidate["sources"][number];
 
-/** A single directory's worth of evidence from one source. */
 interface RawCandidate {
   readonly cwd: string;
   readonly source: AgentSessionSource;
@@ -283,7 +247,6 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
-/** Keep visible user and assistant text while ignoring tools, reasoning, and malformed records. */
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
     readonly contents: string;
@@ -310,9 +273,6 @@ function parseAgentSessionRecords(
   let firstUserMessage:
     | (AgentSessionThreadMessage & { readonly codexResponseUser: boolean })
     | undefined;
-  // A Codex response item can include generated setup text beside the real
-  // prompt. Suppress response-user records only when the shared turn ID and a
-  // verbatim event copy prove which prompt the user submitted.
   const canonicalCodexResponseUserIndices = new Set<number>();
   let canonicalUserTextsInTurn = new Set<string>();
   let responseUsersInTurn: Array<{
@@ -535,16 +495,6 @@ function shouldRetainDecodedRecord(
   );
 }
 
-/**
- * T3 Code runs its own agent sessions inside disposable worktrees. Their
- * transcripts look exactly like user sessions, but re-importing the app's own
- * sandboxes as projects is never right. Matches this server's configured
- * worktrees directory plus the conventional `.t3/worktrees` layout, which
- * also catches sandboxes from other T3 homes on the same machine. Separators
- * are normalized (and, on Windows, case folded) so the prefix match holds
- * there too. Callers check both the recorded spelling and its realpath so a
- * symlink into the worktrees directory cannot bypass the filter.
- */
 function normalizeForWorktreeMatch(value: string, caseFold: boolean): string {
   const normalized = `${value.replaceAll("\\", "/")}/`;
   return caseFold ? normalized.toLowerCase() : normalized;
@@ -562,7 +512,6 @@ function isT3ManagedWorktree(
   );
 }
 
-/** Extract `cwd` from a session-meta record, tolerating the shapes each CLI writes. */
 function extractCwd(line: string): string | null {
   let parsed: unknown;
   try {
@@ -576,7 +525,6 @@ function extractCwd(line: string): string | null {
   if (typeof record.cwd === "string" && record.cwd.trim().length > 0) {
     return record.cwd;
   }
-  // Codex nests session metadata under `payload`.
   const payload = record.payload;
   if (typeof payload === "object" && payload !== null) {
     const nested = (payload as Record<string, unknown>).cwd;
@@ -627,8 +575,6 @@ export const make = Effect.gen(function* () {
   const projectStore = yield* ProjectStore.ProjectStoreV2;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
-  // Windows filesystems are case-insensitive, so path prefix checks there
-  // must case fold.
   const foldWorktreeCase = (yield* HostProcess.Platform) === "win32";
   const hostEnvironment = yield* HostProcess.Environment;
   const homeDir = yield* HostProcess.HomeDirectory;
@@ -638,9 +584,6 @@ export const make = Effect.gen(function* () {
       normalizeProjectPathForComparison(path.resolve(directory)),
     ),
   );
-  // Codex creates one scratch directory per conversation under
-  // ~/Documents/Codex/<date>/<slug>. Neither those nor anything a user
-  // unpacked into Downloads is a project.
   const excludedProjectAncestors = [
     path.join(homeDir, "Downloads"),
     path.join(homeDir, "Documents", "Codex"),
@@ -664,7 +607,6 @@ export const make = Effect.gen(function* () {
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
 
-  /** Match directory aliases without assuming the host volume is case-insensitive. */
   const directoryIdentity = Effect.fn("AgentSessionScanner.directoryIdentity")(function* (
     target: string,
     knownStats?: FileSystem.File.Info,
@@ -681,13 +623,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Git identity of a directory, or the reason it has none. Reads `.git`
-   * directly instead of spawning git so a scan over hundreds of candidates
-   * stays cheap. A `.git` file is a `gitdir:` pointer. When it points into a
-   * `worktrees/` directory the checkout is a linked worktree, which
-   * onboarding skips because its history belongs to the main checkout.
-   * Submodules use the same pointer shape but live under `modules/`, and
-   * are offered like any other repository.
+   * When it points into a `worktrees/` directory the checkout is a linked worktree, which
+   * onboarding skips because its history belongs to the main checkout. Submodules use the same
+   * pointer shape but live under `modules/`, and are offered like any other repository.
    */
   const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
     directory: string,
@@ -722,8 +660,6 @@ export const make = Effect.gen(function* () {
     } as const;
   });
 
-  // A large history snapshot can precede session metadata. Read bounded
-  // chunks until a complete record names its cwd or the safety budget ends.
   const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
     transcript: TranscriptCandidate,
     budget: MetadataReadBudget,
@@ -804,11 +740,6 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.orElseSucceed(() => null));
   });
 
-  /**
-   * Project history fields while reading, before allocating whole JSON records.
-   * Check the file identity on both sides of the read. A selected-history budget
-   * failure rejects the entire transcript before any imported messages persist.
-   */
   const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
@@ -898,12 +829,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Resolve the Claude config directory the CLI would use, matching the
-   * precedence the spawned CLI sees: the instance's `homePath` (exported as
-   * `CLAUDE_CONFIG_DIR`), then a `CLAUDE_CONFIG_DIR` already in the
-   * environment, then `~/.claude`.
-   */
   const resolveClaudeConfigDir = (homePath: string, environmentHome?: string): string => {
     const configured = homePath.trim();
     if (configured.length > 0) {
@@ -983,8 +908,6 @@ export const make = Effect.gen(function* () {
         operationsRemaining -= 1;
         return listDirectory(directory);
       };
-      // Date-partitioned directories sort chronologically, so walking them in
-      // reverse spends each home's share of the operation budget on recent sessions.
       for (const year of (yield* readDirectory(sessionsDir)).toSorted().toReversed()) {
         if (operationsRemaining <= 0) {
           truncated = true;
@@ -1097,8 +1020,6 @@ export const make = Effect.gen(function* () {
           instanceId: ProviderInstanceId.make(instanceId),
           config,
         }));
-      // The built-in default instance runs with default config when settings
-      // have no entry for it.
       if (!Object.hasOwn(settings.providerInstances, source)) {
         const defaultInstance = {
           instanceId: ProviderInstanceId.make(source),
@@ -1109,8 +1030,6 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      // A shared home contains one copy of each session. Prefer the built-in
-      // instance as its owner, then keep configured order for custom accounts.
       instances.sort((left, right) => {
         const leftDefault = left.instanceId === source ? 0 : 1;
         const rightDefault = right.instanceId === source ? 0 : 1;
@@ -1175,7 +1094,6 @@ export const make = Effect.gen(function* () {
       if (transcriptCandidates.length > MAX_TRANSCRIPTS_PER_SOURCE) {
         truncated = true;
       }
-      // Give each account a turn before taking another file from the same home.
       const selectedTranscripts = selectMetadataTranscripts(transcriptCandidates);
       const metadataBudget: MetadataReadBudget = {
         bytesRemaining: MAX_METADATA_BYTES_PER_SOURCE,
@@ -1196,8 +1114,6 @@ export const make = Effect.gen(function* () {
     const { candidates: raw, truncated } = yield* collectCandidates();
     cachedCandidates = raw;
 
-    // Filesystem identity merges symlinks and case aliases without collapsing
-    // distinct case-sensitive directories.
     const merged = new Map<
       string,
       {
@@ -1219,7 +1135,6 @@ export const make = Effect.gen(function* () {
       let key = directoryKeys.get(resolved);
       if (key === undefined) {
         const stats = yield* statOption(resolved);
-        // Directories that no longer exist can't be imported.
         if (Option.isNone(stats) || stats.value.type !== "Directory") {
           directoryKeys.set(resolved, "");
           continue;
@@ -1283,8 +1198,6 @@ export const make = Effect.gen(function* () {
 
     const candidates: Array<AgentSessionProjectCandidate> = [];
     for (const [key, entry] of merged.entries()) {
-      // Keep the path key for missing roots and use filesystem identity for
-      // aliases that resolve to the same directory.
       const importedProject =
         importedProjectsByRoot.get(normalizeProjectPathForComparison(entry.path)) ??
         importedProjectsByRoot.get(key);
@@ -1304,7 +1217,6 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    // Newest first, undated candidates last.
     candidates.sort((left, right) => {
       if (left.lastActiveAt === right.lastActiveAt) return left.path.localeCompare(right.path);
       if (left.lastActiveAt === null) return 1;
@@ -1411,7 +1323,6 @@ export const make = Effect.gen(function* () {
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          // Reserve the whole file even if its read or parse fails.
           transcriptsRemaining -= 1;
           bytesRemaining -= identity.size;
           const snapshot = yield* readTranscript(
@@ -1425,7 +1336,6 @@ export const make = Effect.gen(function* () {
           }
           recordsRemaining -= snapshot.recordCount;
 
-          // A stable replacement file can belong to a different project than the cached candidate.
           let snapshotCwd: string | null = null;
           for (const record of snapshot.records) {
             snapshotCwd = extractDecodedCwd(record);

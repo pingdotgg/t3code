@@ -22,7 +22,6 @@ const processOutput = TestSourceControlHost.processOutput;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-/** The JSON body a request sends. Forgejo encodes bodies as UTF-8 text. */
 const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
   assert.strictEqual(request.body._tag, "Uint8Array");
   return request.body._tag === "Uint8Array"
@@ -269,7 +268,6 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
         remoteUrl: "",
       });
 
-    // An installation mount in the HTTP path is the login's, not the repository's.
     assert.deepStrictEqual(
       yield* refine!({
         identity: identity("http://forge.test:3000/git/team/repo.git"),
@@ -281,7 +279,6 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
         webUrl: "http://forge.test:3000/git/team/repo",
       },
     );
-    // An SSH alias keeps its whole path.
     assert.strictEqual(
       (yield* refine!({
         identity: identity("ssh://git@ssh.forge.test/team/repo.git"),
@@ -289,7 +286,6 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
       })).webUrl,
       "http://forge.test:3000/git/team/repo",
     );
-    // Another host's identity, or a remote no Forgejo login serves, is left alone.
     const github = identity("https://github.com/team/repo.git", "github");
     assert.strictEqual(
       yield* refine!({ identity: github, resolveContext: () => Effect.die("not asked") }),

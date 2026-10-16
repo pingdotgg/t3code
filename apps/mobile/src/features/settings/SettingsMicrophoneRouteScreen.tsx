@@ -26,7 +26,6 @@ const REMOVE_SIZE = 20;
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
-/** Re-reads microphone access whenever the app returns from system Settings. */
 function useMicrophonePermission() {
   const [permission, setPermission] = useState<MicrophonePermission>("checking");
   const apply = useCallback(
@@ -55,7 +54,6 @@ function useMicrophonePermission() {
 const KINDS: Record<
   MicrophoneKind,
   {
-    /** Shown under a remembered device's name. */
     readonly label: string;
     readonly row: string;
     readonly rowDescription: string;
@@ -88,11 +86,6 @@ const KINDS: Record<
   },
 };
 
-/**
- * Microphone kinds and remembered devices, in the order voice input prefers
- * them. iOS only. A device joins the list the first time it is connected
- * during dictation; until then its kind's row ranks it.
- */
 export function SettingsMicrophoneRouteScreen() {
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -132,7 +125,6 @@ export function SettingsMicrophoneRouteScreen() {
         ),
       }),
     });
-  // A lifted row takes a neighbour's slot once it has moved past half of that row.
   const dropSteps = (from: number, translation: number) =>
     rowHeight === 0
       ? 0

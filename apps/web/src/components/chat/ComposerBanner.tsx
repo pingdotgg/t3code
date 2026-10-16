@@ -33,7 +33,6 @@ const variantColors: Record<ComposerBannerVariant, string> = {
     "[--chat-composer-attached-outline:color-mix(in_srgb,var(--warning)_28%,transparent)] [--chat-composer-attached-tint:color-mix(in_srgb,var(--warning)_8%,transparent)]",
 };
 
-/** Shared glass and attachment seam, also used by the command menu without banner row padding. */
 function Surface({
   placement = "attached",
   variant = "default",
@@ -54,7 +53,6 @@ function Surface({
         // The mask cut-off (1rem) bleeds one pixel past the seam (1rem + 1px): Chromium
         // drops the last device-pixel row of a filtered backdrop when the cut-off lands
         // off the device-pixel grid, and the composer's surface starts exactly there.
-        // The composer's own glass covers the extra row, so the overlap never shows.
         placement === "attached"
           ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4"
           : "[--chat-composer-attachment-overlap:0px] before:rounded-2xl",
@@ -70,7 +68,6 @@ function Surface({
   );
 }
 
-// A peeking notice uses the first hidden notice's severity, never the attached row's.
 const peekBorder: Record<ComposerBannerVariant, string> = {
   default: "border-(--chat-composer-attached-outline)",
   error: "border-destructive/24",
@@ -109,7 +106,6 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
       data-slot="composer-banner-attachment"
       className={cn(
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
-        // Adjacent attachments share their outline, including notices outside the form.
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0",
         "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0",
         className,
@@ -131,7 +127,6 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** Attachments share a column while neighboring tabs keep their own surface. */
 function Column({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
@@ -165,9 +160,6 @@ function Root({
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(1.25)]",
         density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
-        // The first row's last action sits in the banner's corner: its outer corner follows the
-        // banner's curve (2xl minus the 1 spacing inset), and floating banners curve below too.
-        // Actions may also arrive grouped in one wrapper element (usage-limit recovery).
         "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
         "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl",
         "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
@@ -186,7 +178,6 @@ function Root({
   );
 }
 
-/** The same row can be a status, a list item, or an entire disclosure button. */
 function Row({
   className,
   render,
@@ -200,8 +191,6 @@ function Row({
       "group/banner-row grid min-h-(--composer-banner-icon-column) w-full min-w-0 grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)_auto] items-center gap-x-1 text-start",
       "not-has-[>[data-slot=composer-banner-actions]]:grid-cols-[var(--composer-banner-icon-column)_minmax(0,1fr)]",
       "[&:is(button)]:cursor-pointer [&:is(button)]:rounded-md [&:is(button)]:focus-visible:outline-2 [&:is(button)]:focus-visible:-outline-offset-2 [&:is(button)]:focus-visible:outline-ring",
-      // Actions share the title row while the title fits and move below it otherwise.
-      // The content's max width keeps it beside the icon, so a long title truncates instead of wrapping.
       layout === "wrap-actions" &&
         "flex flex-wrap *:data-[slot=composer-banner-content]:max-w-[calc(100%-var(--composer-banner-icon-column)-var(--spacing))] *:data-[slot=composer-banner-content]:grow",
       layout === "approval" && "items-start gap-x-2 gap-y-3",
@@ -275,7 +264,6 @@ function Actions({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-/** Child rows keep their parent's columns and begin immediately after its header. */
 function Children({ className, render, ...props }: useRender.ComponentProps<"div">) {
   return useRender({
     defaultTagName: "div",
@@ -287,7 +275,6 @@ function Children({ className, render, ...props }: useRender.ComponentProps<"div
   });
 }
 
-/** Bounded banner content uses the app's scroll area and fades only overflowing edges. */
 function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollArea>) {
   return (
     <ScrollArea
@@ -296,7 +283,7 @@ function Scroll({ className, children, ...props }: ComponentProps<typeof ScrollA
       className={cn("h-auto max-h-[min(24rem,40dvh)]", className)}
       {...props}
     >
-      {/* Clears the overlay scrollbar only once there is something to scroll. */}
+      {}
       <div className="[[data-has-overflow-y]>&]:pe-2">{children}</div>
     </ScrollArea>
   );
@@ -324,7 +311,6 @@ function Dot({ className, ...props }: ComponentProps<"span">) {
   );
 }
 
-// Decorative: the row itself is the control, so this only matches Dismiss's box.
 function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
     <Button

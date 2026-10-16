@@ -13,7 +13,6 @@ const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: n
 
 export function useVoiceInputController(input: {
   readonly ownerKey: string | null;
-  /** Shown by the global dictation pill when this composer is off screen. */
   readonly label: string;
   readonly readDraftMessage: () => string | null;
   readonly subscribeToDraftChanges: (onChange: () => void) => () => void;

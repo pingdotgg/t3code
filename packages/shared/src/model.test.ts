@@ -63,8 +63,6 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
 
 describe("model slug normalization", () => {
   it("preserves exact custom slugs instead of expanding provider aliases", () => {
-    // Claude aliases now resolve through the model catalog (#9084), so the
-    // provider alias table passes unknown slugs through unchanged.
     const claude = ProviderDriverKind.make("claudeAgent");
 
     expect(normalizeModelSlug("opus", claude)).toBe("opus");

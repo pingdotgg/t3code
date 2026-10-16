@@ -127,9 +127,6 @@ describe("parseModelsCliOutput", () => {
   });
 
   it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
-    // OpenRouter-style: the model id contains a `/` and no string value has a
-    // space, so the JSON body line itself matches the slug regex. It must still
-    // be treated as the body of the preceding slug, not a new slug.
     const stdout = [
       "openrouter/qwen/qwen3-coder",
       JSON.stringify({
@@ -303,10 +300,10 @@ describe("toOpenCodeFileParts", () => {
         attachment("text/html"),
         attachment("text/markdown"),
         attachment("application/octet-stream"),
-        // Image formats the model APIs reject stay on the fallback path too.
+
         attachment("image/bmp"),
         attachment("image/svg+xml"),
-        // Over the direct-attachment limit: path fallback even for a PDF.
+
         attachment("application/pdf", 21 * 1024 * 1024),
       ],
       resolveAttachmentPath: () => "/tmp/attachment",

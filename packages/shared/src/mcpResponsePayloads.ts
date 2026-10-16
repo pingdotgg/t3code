@@ -1,11 +1,4 @@
-// MCP responses carry opaque JSON-RPC that callers relay verbatim.
 // @effect-diagnostics preferSchemaOverJson:off
-/**
- * Reads the JSON-RPC payloads of a response from an MCP streamable-HTTP
- * endpoint. Used on the ACP bridge fast path, so it imports only effect core.
- *
- * @module mcpResponsePayloads
- */
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -33,11 +26,6 @@ async function* sseDataLines(response: Response): AsyncGenerator<string> {
 export const discardResponseBody = (response: Response): Effect.Effect<void> =>
   Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
 
-/**
- * Every JSON-RPC payload carried by a response, in arrival order: nothing for
- * notification acknowledgements, each SSE `data:` event as it streams in, or
- * the single JSON body.
- */
 export function responsePayloads<E>(
   response: Response,
   onError: (cause: unknown) => E,

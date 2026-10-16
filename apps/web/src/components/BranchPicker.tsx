@@ -28,7 +28,6 @@ import {
 } from "./ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/** Shared composer picker UI. The caller owns selection and any checkout mutations. */
 export function BranchPicker({
   items,
   filteredItems,

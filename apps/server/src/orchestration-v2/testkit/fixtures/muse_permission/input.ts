@@ -3,11 +3,6 @@ import type { OrchestratorFixtureInput } from "../shared.ts";
 export const MUSE_PERMISSION_APPROVED_FILE = "muse-approved.txt";
 export const MUSE_PERMISSION_DECLINED_FILE = "muse-declined.txt";
 
-/**
- * A Supervised Muse thread asks before each shell command. The first command
- * is approved and runs; the second is declined through Muse's Reject choice,
- * because Muse shell approvals offer no plain "deny".
- */
 export function musePermissionInput(): OrchestratorFixtureInput {
   return {
     runtimeMode: "approval-required",

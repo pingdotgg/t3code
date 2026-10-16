@@ -3,10 +3,6 @@ import * as Tracer from "effect/Tracer";
 
 let delegate: Tracer.Tracer | null = null;
 
-/**
- * Points the installed tracer at the exporter `configureClientTracing` just built,
- * or at nothing while no exporter is configured.
- */
 export function setDelegate(next: Tracer.Tracer | null): void {
   delegate = next;
 }

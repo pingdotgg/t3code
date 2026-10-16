@@ -59,9 +59,6 @@ const ManagedEndpointProvisioningStage = Schema.Literals([
   "sync-origin",
 ]);
 
-// Why a stage failed without an underlying error. `claim-lost` means another
-// provision, release, or deprovision changed the allocation's generation or
-// tunnel after this one loaded it.
 const ManagedEndpointProvisioningFailureReason = Schema.Literals([
   "claim-lost",
   "endpoint-mismatch",
@@ -177,12 +174,6 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly target?: ManagedEndpointDeprovisionTarget | null;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
     /**
-     * Deletes the provisioned Cloudflare tunnel while keeping the allocation
-     * (hostname + tunnel name reservation) and DNS record. Cloudflare bills per
-     * provisioned tunnel, so environments release the tunnel when they shut
-     * down; the next `provision` recreates it under the same name and repoints
-     * the CNAME, preserving the endpoint URL.
-     *
      * Resolves to whether the caller's connector token is now dead: true when
      * the tunnel was deleted (or none was recorded to begin with), false when
      * a concurrent provision outbid the release claim and the recorded tunnel
@@ -194,10 +185,6 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
       readonly expectedStatus?: "inactive" | "down";
-      /**
-       * Record that cleanup removed a legacy host's tunnel, so status tells the
-       * user to update. Other releases leave hosts that recover on their own.
-       */
       readonly markReleased?: boolean;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
   }
@@ -815,9 +802,7 @@ export const make = Effect.gen(function* () {
       // touching Cloudflare. A provision racing this release (fast environment
       // restart) increments the generation when it records its tunnel, so a stale
       // claim means the recorded tunnel may already back a fresh connector and
-      // must be left alive. A provision that starts after the claim instead
-      // fails loudly on the deleted tunnel and the client-side retry
-      // provisions a replacement.
+      // must be left alive.
       const claimedGeneration = yield* allocations
         .claimRelease({
           userId: input.userId,
@@ -839,9 +824,6 @@ export const make = Effect.gen(function* () {
       if (claimedGeneration === null) {
         return false;
       }
-      // After a failed delete: succeed if the tunnel is gone, since the delete
-      // then took effect and only its response was lost; otherwise keep the
-      // delete's error.
       const confirmTunnelGone = (
         failure: ManagedEndpointDeprovisioningFailed,
       ): Effect.Effect<void, ManagedEndpointDeprovisioningFailed> =>
@@ -937,9 +919,6 @@ export const make = Effect.gen(function* () {
             if (finalGeneration === null) {
               return false;
             }
-            // A connector still attached means the tunnel is not released. That
-            // is the same answer as losing the claim: the caller keeps its config,
-            // and the reaper deletes the tunnel once it has been down long enough.
             // A delete whose response is lost (a timeout) may still have
             // removed the tunnel. Ask Cloudflare before rolling back: if the
             // tunnel is gone, the delete happened and the claim, including any
@@ -974,9 +953,7 @@ export const make = Effect.gen(function* () {
       // The recorded tunnelId is now stale, but the allocation row is left
       // untouched deliberately: connect/status authorization requires a fully
       // recorded allocation, and an offline environment must keep reporting
-      // "offline" (health probe fails) rather than "not authorized". The next
-      // provision lists tunnels by name, finds none, creates a replacement and
-      // re-records the fresh id.
+      // "offline" (health probe fails) rather than "not authorized".
       return Option.getOrElse(released, () => false);
     }),
     provision: Effect.fn("relay.managed_endpoint_provider.provision")(function* (input) {

@@ -93,10 +93,6 @@ export const isTailnetHost = (host: string): boolean => {
   return ipv6 !== null && ipv6PrefixMatches(ipv6, [0xfd7a, 0x115c, 0xa1e0, 0, 0, 0, 0, 0], 48);
 };
 
-/**
- * An IPv4 address in 100.64.0.0/10. Tailscale, Cloudflare WARP and Mesh, other
- * VPNs, and carrier-grade NAT all assign from this range.
- */
 export const isSharedAddressSpaceHost = (host: string): boolean => {
   const parts = parseIpv4Address(host);
   return parts !== null && parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127;
@@ -144,7 +140,6 @@ const PRIVATE_FAVICON_TLDS = [
 ];
 const INTERNAL_HOST_LABELS: ReadonlySet<string> = new Set(["corp", "internal", "intranet"]);
 
-/** Whether a hostname is eligible to be disclosed to a public favicon provider. */
 export const isPublicFaviconHost = (host: string): boolean => {
   // A single trailing dot is a valid absolute DNS name. Repeated trailing
   // dots are malformed and can conceal legacy numeric forms such as 127.1.

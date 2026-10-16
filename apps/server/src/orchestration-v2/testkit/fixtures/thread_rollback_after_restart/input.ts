@@ -7,8 +7,7 @@ import {
 
 /**
  * The idle gap outlasts ProviderSessionManager's 30-minute idle timeout, which
- * releases the provider session, as a server restart would. The rollback then
- * runs in a fresh provider process that has not loaded the native thread.
+ * releases the provider session, as a server restart would.
  */
 export function threadRollbackAfterRestartInput(): OrchestratorFixtureInput {
   return {

@@ -38,12 +38,6 @@ const invalidLinkMessage = {
     "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
 } as const;
 
-/**
- * /connect: the URL the CLI prints for the loopback flow. Waits for a Clerk
- * session, then forwards the CLI's PKCE request to Clerk's authorize endpoint
- * with the loopback redirect URI so the code returns straight to the waiting
- * CLI. Headless hosts use Clerk's device authorization page instead.
- */
 export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();

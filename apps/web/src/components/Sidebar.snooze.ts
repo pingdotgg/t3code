@@ -33,10 +33,6 @@ export function resolveSnoozePresets(
   });
 }
 
-/**
- * Human wake time for menus and toasts: "tomorrow 9:00", "Mon 9:00",
- * "17:30" (today).
- */
 export function snoozeWakeDescription(
   snoozedUntil: string,
   now: Date,

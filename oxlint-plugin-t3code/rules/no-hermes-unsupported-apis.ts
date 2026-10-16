@@ -1,6 +1,5 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-// Add global APIs by dotted path, or instance methods by name. Values explain the replacement.
 const UNSUPPORTED_GLOBAL_APIS = new Map([
   [
     "Intl.Segmenter",
@@ -17,7 +16,6 @@ const UNSUPPORTED_METHODS = new Map([
     "toReversed",
     "Hermes does not implement Array#toReversed. Copy the array first: [...array].reverse().",
   ],
-  // splice returns the removed elements, so the copy itself is the result.
   [
     "toSpliced",
     "Hermes does not implement Array#toSpliced. Copy the array first: const copy = [...array]; copy.splice(...); use copy.",

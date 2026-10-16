@@ -29,10 +29,6 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-// A Supervised outside agent renames a thread through a `writesThreads` tool.
-// The thread's user raises it to full access after the tool's check but
-// before its write: the race the orchestrator closes under the thread's lock.
-
 const instanceId = ProviderInstanceId.make("codex");
 const adapter = {
   instanceId,
@@ -95,7 +91,6 @@ const decodeOutcome = Schema.decodeUnknownEffect(
   ),
 );
 
-/** Renames `threadId` as the Supervised client; the user may raise it in between. */
 const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -106,9 +101,7 @@ const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            // The tool's own check has passed; the user acts before the write.
             if (userRaises) {
-              // The user's own command carries no limit, so it lands.
               yield* orchestrator
                 .dispatch({
                   type: "thread.runtime-mode.set",

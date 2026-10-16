@@ -34,7 +34,6 @@ vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [], isReady: true }),
   usePrimaryEnvironment: () => null,
-  // Settings rows resolve the primary grant before rendering server controls.
   usePrimaryEnvironmentId: () => null,
 }));
 vi.mock("../../hooks/useSettings", async (importOriginal) => ({
@@ -51,8 +50,6 @@ vi.mock("./settingsLayout", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./settingsLayout")>()),
   SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
 }));
-// The scoped agent-access rows need the settings layout's scope provider;
-// this test covers the device-local browser sections only.
 vi.mock("./ProjectDefaultsSettings", () => ({ ProjectDefaultsSettings: () => null }));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({

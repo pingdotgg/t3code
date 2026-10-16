@@ -369,7 +369,6 @@ describe("getDiffLineStat", () => {
 });
 
 describe("a file whose name a patch header cannot carry plainly", () => {
-  /** How git writes such a name, and so how every provider's patch arrives here. */
   const quotedPatch = (written: string) =>
     [
       `diff --git "a/${written}" "b/${written}"`,
@@ -393,8 +392,6 @@ describe("a file whose name a patch header cannot carry plainly", () => {
   };
 
   it("is the name the host knows, not the part of it before the tab", () => {
-    // The path is what a viewed mark, a review comment and a file read are all asked for by, so a
-    // name read short is a mark put on a path the host has never heard of.
     expect(pathOf(quotedPatch("tab\\tfile.txt"))).toBe("tab\tfile.txt");
   });
 

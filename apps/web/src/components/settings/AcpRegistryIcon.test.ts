@@ -160,8 +160,6 @@ describe("ACP Registry icon cache", () => {
     hooks.beginRender();
     const validating = AcpRegistryAgentIcon({ icon: url }) as ReactElement<Record<string, unknown>>;
 
-    // The raw CDN URL is never rendered; only the fallback shows while the
-    // blob is fetched and validated.
     expect(visitElements(validating, (element) => element.type === "img")).toBeNull();
     expect(
       visitElements(validating, (element) => element.props["data-slot"] === "acp-icon-fallback"),

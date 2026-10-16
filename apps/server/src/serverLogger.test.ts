@@ -21,7 +21,6 @@ interface ExportedRequest {
   readonly body: string;
 }
 
-/** Answers every export with a 200 and keeps what was posted for assertions. */
 const layerCollector = (requests: Array<ExportedRequest>) =>
   Layer.succeed(
     HttpClient.HttpClient,
@@ -84,9 +83,8 @@ const layerConfig = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
   ).pipe(Layer.provide(NodePath.layer));
 
 /**
- * Logs once with the server's own logger set installed, then reports what the
- * collector received. The export is asserted after the layer's scope closes,
- * which is where the exporter flushes whatever the interval did not.
+ * The export is asserted after the layer's scope closes, which is where the
+ * exporter flushes whatever the interval did not.
  */
 const logThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Effect.gen(function* () {
@@ -102,10 +100,6 @@ const logThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
     return requests;
   });
 
-/**
- * Logs inside a span so the tracer logger has somewhere to attach an event,
- * then reports both what the collector received and what landed on the span.
- */
 const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Effect.gen(function* () {
     const requests: Array<ExportedRequest> = [];

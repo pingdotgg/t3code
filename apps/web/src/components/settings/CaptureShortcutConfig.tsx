@@ -19,7 +19,6 @@ import { useSnapShotShortcutRecorder } from "./useSnapShotShortcutRecorder";
 
 const DEFAULT_SHORTCUT = parseKeybindingShortcut("Ctrl+Shift+2")!;
 
-/** Wizard-owned config review; config contents never leave the desktop bridge. */
 export function CaptureShortcutConfig({
   state,
   disabled = false,

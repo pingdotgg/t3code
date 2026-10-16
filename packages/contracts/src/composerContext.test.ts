@@ -223,7 +223,6 @@ describe("OrchestrationMessageContext", () => {
           payload: { count: Number.NaN },
         },
         { ...knownRecords["review-comment"], contextId: "ctx_3", fenceLanguage: undefined },
-        // JSON.stringify throws on a bigint on every engine.
         { ...base, contextId: "ctx_4", kind: "future-kind", label: "y", payload: { n: 1n } },
       ],
     });

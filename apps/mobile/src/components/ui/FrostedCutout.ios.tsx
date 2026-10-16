@@ -8,7 +8,6 @@ const NativeFrostedCutout = requireNativeView<ViewProps & FrostedCutoutProps>(
   "FrostedCutout",
 );
 
-/** Fills its parent with one native blur that leaves a rounded hole clear. */
 export function FrostedCutout(props: FrostedCutoutProps) {
   return <NativeFrostedCutout {...props} pointerEvents="none" style={StyleSheet.absoluteFill} />;
 }

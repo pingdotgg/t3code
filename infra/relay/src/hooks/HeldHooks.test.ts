@@ -51,7 +51,6 @@ const linkFor = (userId: string, key: string, environmentPublicKey: string) => (
   holdWebhooksWhileOffline: true,
 });
 
-/** This environment's own link (user_1) and another account's link of the same environment. */
 const withService = <A, E>(
   options: { readonly ownReady?: boolean; readonly pendingKeys?: ReadonlyArray<string> },
   body: (input: {

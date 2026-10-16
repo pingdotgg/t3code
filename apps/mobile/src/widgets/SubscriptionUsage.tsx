@@ -33,7 +33,6 @@ function SubscriptionUsage(
   const accessory = family === "accessoryRectangular";
   const compact =
     family === "systemSmall" || accessory || environment.levelOfDetail === "simplified";
-  // Budget short cards for two quotas per provider, including their secondary text.
   const dense = family === "systemSmall" || family === "systemMedium";
   const limit = family === "systemExtraLarge" ? 6 : family === "systemLarge" ? 4 : 2;
   const monochrome =
@@ -50,7 +49,6 @@ function SubscriptionUsage(
     const windows = stale
       ? []
       : provider.windows.filter((window) => period === "auto" || window.kind === period);
-    // Lock Screen widgets surface the tightest selected limit.
     const tightest = windows.reduce<(typeof windows)[number] | undefined>(
       (result, window) => (!result || window.remaining < result.remaining ? window : result),
       undefined,

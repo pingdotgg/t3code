@@ -234,7 +234,6 @@ describe("scoped settings writes", () => {
   });
 
   describe("an environment that saves but drops keys it does not know", () => {
-    // Laptop knows every key; Server is an older build that keeps its settings as they were.
     const upgradedLaptop = (saved: Partial<ServerSettings>) =>
       vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
         _tag: "Success" as const,

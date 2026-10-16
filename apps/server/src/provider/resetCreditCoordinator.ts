@@ -1,12 +1,7 @@
 /**
- * Redeeming a reset credit is an account-level action: instances that share
- * the directory holding a provider's login share the credit, so their
- * redemptions must serialise on that directory, not the instance. This
- * service keeps one lock and one pending idempotency key per account key so
- * overlapping confirmations from any instance queue rather than spending two
- * credits, and a retry after a timeout re-sends the same attempt.
- *
- * @module provider/resetCreditCoordinator
+ * Redeeming a reset credit is an account-level action: instances that share the
+ * directory holding a provider's login share the credit, so their redemptions
+ * must serialise on that directory, not the instance.
  */
 import type { ProviderConsumeResetCreditOutcome } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -26,11 +21,10 @@ export class ResetCreditCoordinator extends Context.Service<
   ResetCreditCoordinator,
   {
     /**
-     * Run `consume` under the account's lock with a stable idempotency key.
      * The key is cleared when the provider reports an outcome, or when
-     * `isSettled` says a failure was a final answer (such as a cooldown).
-     * Any other failure (timeout included) keeps it so the next attempt is
-     * the same attempt.
+     * `isSettled` says a failure was a final answer (such as a cooldown). Any
+     * other failure (timeout included) keeps it so the next attempt is the same
+     * attempt.
      */
     readonly redeem: <E, R>(
       accountKey: string,
@@ -40,6 +34,7 @@ export class ResetCreditCoordinator extends Context.Service<
   }
 >()("t3/provider/resetCreditCoordinator") {}
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -87,10 +82,6 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(ResetCreditCoordinator, make);
 
-/**
- * Self-contained for tests: a counter-backed Crypto so keys are deterministic
- * and distinct without the platform layer.
- */
 export const layerTest = Layer.effect(
   ResetCreditCoordinator,
   Effect.gen(function* () {

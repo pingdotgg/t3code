@@ -30,7 +30,6 @@ import * as PullRequestReviewGuideService from "./PullRequestReviewGuideService.
 import * as PullRequestService from "./PullRequestService.ts";
 
 const projectId = ProjectId.make("project-1");
-/** The test project is a checkout of the repository its pull requests come from. */
 const ACME_APP = {
   canonicalKey: "github.com/acme/app",
   locator: {
@@ -58,10 +57,6 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     return result.stdout.trim();
   });
 
-/**
- * A remote whose `main` has moved on past where the change's base branch left it, with the
- * change stacked on that base branch. A guide for the change must see only its own commit.
- */
 const makeRepositories = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-guide-" });
@@ -83,13 +78,11 @@ const makeRepositories = Effect.gen(function* () {
   yield* git(remote, ["checkout", "--quiet", "-b", "stack-base"]);
   const lowerSha = yield* commit("lower.txt", "lower layer");
   yield* git(remote, ["checkout", "--quiet", "-b", "feature"]);
-  // Ten lines, so an excerpt reaching past them has something to be clamped to.
   const headSha = yield* commit(
     "feature.txt",
     "the change",
     Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n") + "\n",
   );
-  // A layer above the change, which uses what the change adds.
   yield* git(remote, ["checkout", "--quiet", "-b", "upper"]);
   const upperSha = yield* commit("upper.txt", "upper layer");
   yield* git(remote, ["checkout", "--quiet", "main"]);
@@ -117,7 +110,6 @@ const activity: PullRequestActivity = {
   commits: [],
 };
 
-/** The change as the middle layer of three; the top layer's head is not on any fetched branch. */
 const stack = (repositories: {
   readonly headSha: string;
   readonly lowerSha: string;
@@ -160,13 +152,9 @@ const makeLayer = (input: {
   readonly lowerSha: string;
   readonly upperSha: string;
   readonly generate: TextGeneration.TextGeneration["Service"]["generateReviewGuide"];
-  /** Completed when a run stores its guide, which is the last thing a run does but forget it. */
   readonly stored: Deferred.Deferred<void>;
-  /** The server's beta switch; on unless a test is about it being off. */
   readonly enabled?: boolean;
-  /** The head the host reports now, for a test that pushes between runs. */
   readonly currentHead?: Ref.Ref<string>;
-  /** The project's own repository; defaults to the one the test reference names. */
   readonly identity?: typeof ACME_APP;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
@@ -244,7 +232,6 @@ const awaitRunFailure = (
     Effect.retry(Schedule.spaced("20 millis")),
   );
 
-/** A workspace cloned with only `main`, so the change's head is not there until fetched. */
 const startSingleBranchRun = (input: {
   readonly repositoryName: string;
   readonly reportedHead: (repositories: Repositories) => string;
@@ -253,7 +240,6 @@ const startSingleBranchRun = (input: {
     repositories: Repositories,
     workspace: string,
   ) => Effect.Effect<void, GitCommandError, GitVcsDriver.GitVcsDriver>;
-  /** Runs inside the head branch's fetch, after the service asked for it and before git runs. */
   readonly onBranchFetch?:
     | ((
         repositories: Repositories,
@@ -562,7 +548,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           readonly upper: string;
         }>();
         const finish = yield* Deferred.make<void>();
-        // The fake model reads the checkout with the same driver, captured so it needs nothing.
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
           git(cwd, args).pipe(
@@ -585,15 +570,12 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                   `${input.baseCommit}...HEAD`,
                 ]);
                 const head = yield* readCheckout(input.cwd, ["rev-parse", "HEAD"]);
-                // Another layer's head is readable from the checkout, to check a seam.
                 const upper = yield* readCheckout(input.cwd, [
                   "show",
                   `${repositories.upperSha}:upper.txt`,
                 ]);
                 yield* Deferred.succeed(seen, { input, changed, head, upper });
                 yield* Deferred.await(finish);
-                // Written the way a model gets it wrong: an excerpt past the end of the file, a
-                // note outside what is left of it, and a changed file left off the tour.
                 return {
                   stops: [
                     {
@@ -620,13 +602,11 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
 
-        // Generate returns while the run is still reading the change.
         const started = yield* service.generate(reference);
         assert.strictEqual(started.run?._tag, "Running");
         assert.strictEqual(started.guide, null);
         assert.isTrue(started.started);
 
-        // A run that fails before reaching the model reports why rather than leaving this waiting.
         const failedRun = service.get(reference).pipe(
           Effect.flatMap((result) =>
             result.run?._tag === "Failed"
@@ -639,8 +619,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         assert.strictEqual(observed.head, repositories.headSha);
         assert.strictEqual(observed.changed, "feature.txt");
         assert.strictEqual(observed.input.baseBranch, "stack-base");
-        // The stack comes along, bottom first; a layer whose head could not be fetched is named
-        // without one.
         assert.deepStrictEqual(observed.input.stack, [
           { number: 6, title: "Lower", state: "open", headSha: repositories.lowerSha },
           { number: 7, title: "Add the feature", state: "open", headSha: repositories.headSha },
@@ -649,7 +627,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         ]);
         assert.strictEqual(observed.upper, "upper layer");
 
-        // A second press while running joins the run instead of starting another.
         const joined = yield* service.generate(reference);
         assert.strictEqual(joined.run, started.run);
         assert.isFalse(joined.started);
@@ -668,7 +645,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           story?.notes.map((note) => note.title),
           ["Kept"],
         );
-        // lower.txt is below the change's base, so it is neither in the change nor on the tour.
         assert.strictEqual(guide.stops.length, 1);
 
         const fs = yield* FileSystem.FileSystem;
@@ -710,7 +686,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           const repositories = yield* makeRepositories;
           const stored = yield* Deferred.make<void>();
           const currentHead = yield* Ref.make(repositories.headSha);
-          // The old run waits on this; the new one answers at once.
           const releaseOld = yield* Deferred.make<void>();
           const oldStarted = yield* Deferred.make<void>();
           const answer = (title: string) => ({
@@ -761,12 +736,10 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             Effect.retry(Schedule.spaced("20 millis")),
           );
           yield* Effect.raceFirst(Deferred.await(oldStarted), firstFailed);
-          // A push: the host reports the upper layer's commit as the head now, and a new run starts.
           yield* Ref.set(currentHead, repositories.upperSha);
           const second = yield* service.generate(reference);
           assert.strictEqual(second.run?._tag, "Running");
           assert.strictEqual(second.run?.headSha, repositories.upperSha);
-          // A run that fails reports why rather than leaving this waiting.
           const failedRun = service.get(reference).pipe(
             Effect.flatMap((result) =>
               result.run?._tag === "Failed"
@@ -777,7 +750,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           );
           yield* Effect.raceFirst(Deferred.await(stored), failedRun);
 
-          // The old run finishes last. Its guide is for a head nobody is looking at any more.
           yield* Deferred.succeed(releaseOld, undefined);
           const settled = yield* service.get(reference).pipe(
             Effect.filterOrFail(
@@ -787,7 +759,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 250 }),
           );
           assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
-          // Give the late run every chance to write over the newer guide; it must not.
           yield* Effect.sleep("200 millis");
           const after = yield* service.get(reference);
           assert.isNull(after.run);

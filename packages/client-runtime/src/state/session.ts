@@ -35,15 +35,8 @@ function initialConfigOption<E>(
   );
 }
 
-// Bounded so a wedged environment cannot pin the permissions check (and with it
-// the settings UI) in a loading state for long.
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 
-/**
- * Read the granted scopes of this client's session on one environment via its
- * `/api/auth/session` endpoint, using the connection's authentication method
- * and refreshing relay credentials when needed.
- */
 export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
 )(function* (input: {
@@ -127,9 +120,6 @@ function makeEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-prepared-connection:${environmentId}`)),
   );
 
-  // Keyed on the prepared connection's identity: a reconnect (new credential,
-  // new base URL) swaps the prepared value, which re-runs the fetch, so scope
-  // changes from re-pairing are picked up without an explicit refresh.
   const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom((get) => {
@@ -177,7 +167,6 @@ function makeEnvironmentSessionAtoms<R, E>(
 
 const sessionAtomsByRuntime = new WeakMap<object, ReturnType<typeof makeEnvironmentSessionAtoms>>();
 
-/** Commands and UI share one session fetch and the same reconnect invalidation. */
 export function createEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ): ReturnType<typeof makeEnvironmentSessionAtoms<R, E>> {

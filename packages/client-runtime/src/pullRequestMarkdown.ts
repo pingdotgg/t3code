@@ -5,12 +5,6 @@ export type PullRequestBodySegment =
       readonly id: string;
       readonly kind: "attachment";
       readonly url: string;
-      /**
-       * What the reader can be told the upload is. The uuid says nothing on its own — the type
-       * only appears in the signed redirect GitHub answers with — but the shape does: GitHub
-       * writes a dropped image into the body as an `<img>` tag, so a bare attachment link on its
-       * own line is what it does with a video. Anything else keeps the neutral name.
-       */
       readonly media: "video" | "image" | "unknown";
     };
 
@@ -20,20 +14,19 @@ const FENCE_PATTERN = /^\s{0,3}((?:`{3,})|(?:~{3,}))(.*)$/u;
  * and the bound keeps an unclosed tag from making each one rescan the rest of the body.
  */
 const VIDEO_TAG_MAX_LINES = 8;
-/** Four spaces open an indented code block, so its contents stay verbatim markdown. */
+
 const INDENTED_CODE_PATTERN = /^(?: {4}|\t)/u;
 const BARE_URL_PATTERN = /^<?(https?:\/\/\S+?)>?$/u;
 const IMAGE_EXTENSION_PATTERN = /\.(?:png|jpe?g|gif|webp|avif|heic|heif|svg)(?:$|[?#])/iu;
 const MARKDOWN_LINK_PATTERN = /^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/u;
 const VIDEO_EXTENSION_PATTERN = /\.(?:mp4|webm|mov|m4v|ogv)(?:$|[?#])/iu;
-/** A dropped video becomes a bare asset link; a dropped image becomes an `<img>` tag. */
+
 const GITHUB_ASSET_PATTERN = /^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu;
 const VIDEO_TAG_SRC_PATTERN = /<(?:video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/iu;
-/** Only a tag that owns its line is an embed; inline, it is prose the renderer should keep. */
+
 const STANDALONE_VIDEO_TAG_PATTERN = /^\s*<video\b/iu;
 const VIDEO_TAG_END_PATTERN = /<\/video>\s*$/iu;
 
-/** Anything else — `javascript:`, `data:`, a relative path — is not an upload to link out to. */
 function isWebUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -56,11 +49,6 @@ function attachmentFromLine(
   return null;
 }
 
-/**
- * Lifts standalone media links and video tags out of prose for both clients.
- * Ordinary links and code examples remain markdown. Images already embedded
- * with markdown or HTML keep their original renderer.
- */
 export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
@@ -114,8 +102,6 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
       markdown.push(line);
       continue;
     }
-    // A tag can span lines, so look ahead for its close — bounded, and without building the
-    // joined text until one is actually found.
     const lastCandidate = Math.min(index + VIDEO_TAG_MAX_LINES, lines.length) - 1;
     let cursor = index;
     while (cursor < lastCandidate && !VIDEO_TAG_END_PATTERN.test(lines[cursor]!)) {
@@ -130,7 +116,7 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
         id: `attachment:${segments.length}`,
         kind: "attachment",
         url: source,
-        // The author wrote the tag, so this one is a video whatever the URL looks like.
+
         media: "video",
       });
       index = cursor;

@@ -117,7 +117,6 @@ export function ThreadListToolbar(props: {
             </>
           ) : (
             <>
-              {/* Match the visible inset of the trailing 48dp icon button. */}
               <View className="min-w-0 flex-1 pl-4">
                 <WorkspaceConnectionTitle
                   grow
@@ -139,7 +138,6 @@ export function ThreadListToolbar(props: {
           )}
         </View>
       </View>
-      {/* Keep the filter above the New thread FAB at every text size. */}
       {state.hasConnections ? (
         <View
           className="absolute right-5 z-[5]"

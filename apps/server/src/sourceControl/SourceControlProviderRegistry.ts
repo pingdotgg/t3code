@@ -32,7 +32,6 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 const PROVIDER_DETECTION_CACHE_CAPACITY = 2_048;
 const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
 const UNKNOWN_REMOTE_CACHE_CAPACITY = 512;
-// Outlasts the one-minute pull request sweep. A login made since is noticed after this.
 const UNKNOWN_REMOTE_CACHE_TTL = Duration.minutes(5);
 
 export interface SourceControlProviderRegistration {
@@ -159,10 +158,8 @@ function selectProviderContext(
 }
 
 /**
- * One lookup per server: remotes that differ only in `owner/repo` share a verdict, and callers
- * that arrive while it runs wait on it. `cwd` is left out because it only matters when a probe
- * fails there, and a failed probe is not kept. Equality ignores `lookup`, so this is not a
- * `Data.Class`.
+ * `cwd` is left out because it only matters when a probe fails there, and a failed probe
+ * is not kept. Equality ignores `lookup`, so this is not a `Data.Class`.
  */
 class UnknownRemoteLookup {
   readonly key: string;
@@ -176,7 +173,6 @@ class UnknownRemoteLookup {
     this.key = [
       context.provider.name,
       context.provider.baseUrl,
-      // Strip a trailing `owner/repo`, never the host after `//`, so one-segment remotes stay apart.
       context.remoteUrl.trim().replace(/(?<!\/\/[^/]*)[^/:]+\/[^/:]+\/?$/u, ""),
       context.requestedHost ?? "",
     ].join("\n");
@@ -250,8 +246,6 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
 
-    // "No integration holds this host" is the common verdict and the one worth keeping. A verdict
-    // reached while some probe failed is handed to the callers waiting on it, then dropped.
     const unknownRemoteCache = yield* Cache.makeWith(
       (request: UnknownRemoteLookup) => request.lookup,
       {
@@ -260,7 +254,6 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           Exit.isSuccess(exit) && exit.value.settled ? UNKNOWN_REMOTE_CACHE_TTL : Duration.zero,
       },
     );
-    // A token saved or a host toggled in Settings must show on the next read, not after the TTL.
     const settingsChanges = yield* serverSettings.subscribeChanges;
     yield* Stream.runForEach(settingsChanges, () => Cache.invalidateAll(unknownRemoteCache)).pipe(
       Effect.forkScoped,

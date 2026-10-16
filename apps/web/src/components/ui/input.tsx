@@ -7,7 +7,6 @@ import { cn } from "~/lib/utils";
 
 type InputProps = Omit<InputPrimitive.Props & React.RefAttributes<HTMLInputElement>, "size"> & {
   size?: "sm" | "compact" | "default" | "lg" | number;
-  /** Monospace with tabular digits, for paths, commands, colors and numbers. */
   font?: "default" | "mono";
   unstyled?: boolean;
   nativeInput?: boolean;
@@ -28,7 +27,6 @@ function Input({
     size === "lg" && "h-9.5 leading-9.5 sm:h-8.5 sm:leading-8.5",
     props.type === "search" &&
       "[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none [&::-webkit-search-results-button]:appearance-none [&::-webkit-search-results-decoration]:appearance-none",
-    // Number fields are typed into; browser spin buttons crowd narrow fields and step by 1.
     props.type === "number" &&
       "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
     props.type === "file" &&

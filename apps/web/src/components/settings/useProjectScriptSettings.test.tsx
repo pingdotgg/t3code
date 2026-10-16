@@ -17,7 +17,6 @@ const commands = vi.hoisted(() => ({
   removeKeybinding: vi.fn(),
 }));
 
-// A browser client: the shortcut must still reach the environment's keybindings.
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/session", () => ({ readEnvironmentScope: () => true }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [] }));

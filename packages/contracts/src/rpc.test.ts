@@ -5,12 +5,6 @@ import * as Schema from "effect/Schema";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WsRpcGroup, WsSubscribeServerConfigRpc } from "./rpc.ts";
 
-/**
- * The client always sends `environmentThemes`, including to servers built
- * before the field existed, whose payload schema was an empty struct. What
- * makes that safe is that such a schema accepts the request rather than
- * rejecting it -- an error here would take down the config subscription.
- */
 describe("subscribeServerConfig payload compatibility", () => {
   it("is accepted by a server whose schema predates the field", () => {
     const oldServerPayload = Schema.Struct({});

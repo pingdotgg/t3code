@@ -1,14 +1,3 @@
-/**
- * Records a Pi RPC replay transcript by running a registered fixture's input
- * through the real orchestrator and the real PiAdapterV2 against a live
- * `pi --mode rpc`. The adapter's spawner tees every stdin/stdout record.
- *
- *   node scripts/record-pi-rpc-replay-fixture.ts --scenario simple
- *
- * The model is pinned to the fixture's Pi model selection through launch
- * arguments and `set_model`. Sessions go to a temporary directory, never the
- * user's Pi session store.
- */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderReplayEntry, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -73,11 +62,8 @@ const [modelProvider, ...modelId] = variant.modelSelection.model.split("/");
 const launchArgs = `--provider ${modelProvider} --model ${modelId.join("/")} ${HERMETIC_LAUNCH_ARGS}`;
 const home = process.env.HOME ?? "";
 
-// ── normalization ─────────────────────────────────────────────
-
 const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/giu;
 const ISO_TIMESTAMP_PATTERN = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/gu;
-/** Recorded wall-clock times are shifted to start here, keeping their spacing. */
 const NORMALIZED_EPOCH_MS = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"));
 
 function escapeRegExp(value: string): string {
@@ -89,12 +75,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Makes a live recording portable and reviewable. Session files, the
- * workspace, the home directory, UUIDs and wall-clock times become stable
- * placeholders applied consistently to both directions, so values the adapter
- * echoes back (a session path in `switch_session`, `--fork <file>`) still line
- * up on replay. Opaque reasoning signatures are dropped, and the model catalog
- * is trimmed to the pinned model: the adapter only reads context windows there.
+ * Session files, the workspace, the home directory, UUIDs and wall-clock times
+ * become stable placeholders applied consistently to both directions, so values
+ * the adapter echoes back (a session path in `switch_session`, `--fork <file>`)
+ * still line up on replay.
  */
 function normalizeEntries(input: {
   readonly entries: ReadonlyArray<ProviderReplayEntry>;
@@ -166,7 +150,6 @@ function normalizeEntries(input: {
     if (!isRecord(frame)) return normalizeValue(frame);
     const args = frame.args;
     if (frame.type === "process_start" && Array.isArray(args)) {
-      // The injected extension lives in the server's per-run cache directory.
       return normalizeValue({
         ...frame,
         args: args.map((arg, index) => (args[index - 1] === "--extension" ? PI_REPLAY_ANY : arg)),
@@ -201,8 +184,6 @@ function encodeTranscriptNdjson(transcript: ProviderReplayTranscript): string {
     "",
   ].join("\n");
 }
-
-// ── recording run ─────────────────────────────────────────────
 
 /**
  * Replay runs on a frozen TestClock; recording shares that runtime so fixture

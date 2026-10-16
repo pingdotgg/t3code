@@ -77,7 +77,6 @@ export function assertSubagentV2ApprovalOutput(
   assert.equal(approval.requestId, request.id);
   assert.include(approval.prompt ?? "", "subagent-approval.txt");
 
-  // While Codex waited, the parent reported the approval and the child did not.
   const pendingShell = result.capturedShellSnapshots.get(SUBAGENT_APPROVAL_PENDING_SHELL_KEY);
   assert.isDefined(pendingShell);
   const parentShell = pendingShell.threads.find((thread) => thread.id === projection.thread.id);
@@ -86,7 +85,6 @@ export function assertSubagentV2ApprovalOutput(
   assert.isDefined(childShell, "the child thread exists while its approval is pending");
   assert.isNull(childShell.pendingRuntimeRequest);
 
-  // The child keeps its own work and answer, and never holds a request.
   const child = result.projections.get(subagent.childThreadId!);
   assert.isDefined(child);
   assert.lengthOf(child.runtimeRequests, 0);

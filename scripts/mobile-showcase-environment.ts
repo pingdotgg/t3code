@@ -54,10 +54,6 @@ const PROJECT_SCRIPTS = JSON.stringify([
 const SHOWCASE_TERMINAL_PROMPT =
   "\u001b[1;32m→\u001b[0m \u001b[1;36mt3code\u001b[0m \u001b[1;34mgit:(\u001b[1;31mfeat/remote-command-center\u001b[1;34m)\u001b[0m \u001b[1;33m✗\u001b[0m ";
 
-// A dev-server startup mirroring the web settings' terminal font preview:
-// zsh-style prompt, brand line, addresses, the thread's 612-test summary,
-// and a READY badge, so the scene exercises bold, dim, underline, the six
-// accent colors, and a background cell.
 export const SHOWCASE_TERMINAL_BUFFER = [
   `${SHOWCASE_TERMINAL_PROMPT}vpr dev`,
   "",
@@ -230,10 +226,6 @@ export const SHOWCASE_THREADS = [
       "Delayed work now carries a concise reason through the trace, so the wait is legible without changing scheduling behavior.",
     snoozeMinutes: 8 * 60,
   },
-  // Finished work, settled by hand: the list keeps it as a receded tail so
-  // the active block above reads as everything still in flight. The active
-  // block stays small enough that the settled tail begins above the fold —
-  // a store screenshot has to show that history exists, not just imply it.
   {
     id: "handoff-haptics",
     projectId: "t3code",
@@ -629,9 +621,7 @@ function seedDatabase(
     // replace the one that actually explains the failure.
     try {
       database.exec("ROLLBACK");
-    } catch {
-      // Nothing to roll back.
-    }
+    } catch {}
     throw error;
   } finally {
     database.close();

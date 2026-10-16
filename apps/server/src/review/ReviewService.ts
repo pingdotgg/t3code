@@ -80,8 +80,6 @@ export const make = Effect.gen(function* () {
     const [candidate, workspaceRoot, worktreesRoots] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
-      // A managed root that cannot be resolved, or resolves to a filesystem
-      // root through a symlink, is skipped rather than failing every review.
       Effect.forEach(
         managedWorktreesDirectories(worktreesDirectories, config.worktreesDir, path, home),
         (directory) => canonicalizePath(directory).pipe(Effect.orElseSucceed(() => null)),

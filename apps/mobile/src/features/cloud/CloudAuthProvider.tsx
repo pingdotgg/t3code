@@ -73,11 +73,7 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
 
-    // Every sign-in or account switch that completes during this session (a
-    // cold start observes undefined → account and must not re-prompt) requests
-    // the T3 Connect onboarding sheet — account transitions clear the
-    // connected environments, so each new session starts with no devices to
-    // reach. The request itself is issued after the cleanup transition inside
+    // The request itself is issued after the cleanup transition inside
     // activateSession, so the sheet never lists the previous account's
     // environments; sign-out drops any not-yet-presented request instead.
     const isAccountTransition =
@@ -170,8 +166,6 @@ function CloudAuthBridge(props: { readonly children: ReactNode }) {
       deactivateCloudRelayAccount();
       activateAfterTransition(queueAccountCleanup(previous));
     } else {
-      // A failed disk write can be retried. The persisted account check above
-      // still requires cleanup before activating a different account.
       activateAfterTransition((accountTransitionRef.current ?? Promise.resolve()).catch(() => {}));
     }
 

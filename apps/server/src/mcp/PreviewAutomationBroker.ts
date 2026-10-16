@@ -44,7 +44,6 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 const HOST_RESPONSE_GRACE_MS = 1_000;
 
 export interface PreviewAutomationInvokeInput {
-  /** Preview tabs belong to a thread, so only thread callers reach the broker. */
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
   readonly operation: PreviewAutomationOperation;
   readonly input: unknown;
@@ -52,16 +51,10 @@ export interface PreviewAutomationInvokeInput {
   readonly timeoutMs?: number;
   /** Background metadata reads must not change the agent's current tab. */
   readonly updateCurrentTab?: boolean;
-  /** Capture the routed tab before another request changes the current assignment. */
   readonly onTargetTab?: (tabId: PreviewTabId | undefined) => void;
 }
 
 export interface PreviewAutomationConnectOptions {
-  /**
-   * New agent work goes to a preferred host before any desktop. The server's
-   * own headless browser registers this way so a standalone environment keeps
-   * browsing when every desktop disconnects.
-   */
   readonly preferred?: boolean;
 }
 
@@ -101,12 +94,9 @@ interface PendingRequest {
 }
 
 /**
- * A lease pinning one provider session to one desktop runtime. It lives exactly
- * as long as the connection it names: `connectionId`/`queue` identity is what
- * makes a lease valid, so a disconnected or replaced host is dropped on the next
- * lookup. The lease deliberately has no clock of its own — it used to inherit
- * the MCP credential's expiry, which coupled host stickiness to an unrelated
- * auth deadline and could migrate a live session to another runtime mid-flow.
+ * It lives exactly as long as the connection it names: `connectionId`/`queue`
+ * identity is what makes a lease valid, so a disconnected or replaced host is
+ * dropped on the next lookup.
  */
 interface HostAssignment {
   readonly clientId: ClientConnection["clientId"];
@@ -210,7 +200,6 @@ function remoteDetailKind(detail: unknown): RemoteDetailKind {
   }
 }
 
-/** Enough for a browser's own error line, such as a refused connection and its URL. */
 const MAX_REASON_CHARS = 500;
 
 const classifyResponseError = (
@@ -340,7 +329,6 @@ const classifyResponseError = (
       return new PreviewAutomationExecutionError({
         ...context,
         ...remoteDiagnostics,
-        // The server's own browser writes these; other hosts' text stays out of the agent's context.
         ...(context.clientId === SERVER_BROWSER_AUTOMATION_CLIENT_ID
           ? { reason: error.message.slice(0, MAX_REASON_CHARS) }
           : {}),
@@ -386,7 +374,6 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     completeStream = false,
   ) {
     yield* SynchronizedRef.modifyEffect(state, (current) => {
-      // Retired generations were already closed by their replacement or eviction.
       if (current.clients.get(clientId)?.queue !== queue) {
         return Effect.succeed([undefined, current] as const);
       }
@@ -524,11 +511,8 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
       const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
       // Keep one provider session on one physical desktop runtime so a
-      // multi-step browser interaction cannot jump between independent
-      // Electron cookie/DOM state. A live assignment that predates an
-      // operation is not silently moved to a newer client: the caller gets a
-      // capability failure and can deliberately start a fresh provider
-      // session. A dead lease is pruned above and may fail over.
+      // multi-step browser interaction cannot jump between independent Electron
+      // cookie/DOM state.
       const ownsTargetTab = (host: ClientConnection, visibleOnly = false) =>
         host.liveTabs.some(
           (tab) =>
@@ -661,10 +645,10 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return yield* Option.match(result, {
         onNone: () =>
           Effect.gen(function* () {
-            // An unanswered request invalidates this connection. Do not replay
-            // actions: the client may have applied them before becoming unreachable.
-            // A background metadata read has a short budget and changes nothing,
-            // so a slow one must not cut the host off from the agent's next call.
+            // Do not replay actions: the client may have applied them before
+            // becoming unreachable. A background metadata read has a short budget
+            // and changes nothing, so a slow one must not cut the host off from the
+            // agent's next call.
             if (input.updateCurrentTab !== false) {
               yield* disconnect(connection.clientId, connection.queue, true);
             }

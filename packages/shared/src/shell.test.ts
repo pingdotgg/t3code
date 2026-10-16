@@ -452,10 +452,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     }),
   );
 
-  // Records every path the scan stats, without ever reporting a match, so the
-  // walk runs to exhaustion and the probe set can be inspected. Assertions
-  // below count probes rather than naming paths: `Path` is the host's, so the
-  // separator differs between a Windows and a Linux CI runner.
   const recordProbes = (env: NodeJS.ProcessEnv) =>
     Effect.gen(function* () {
       const probed: Array<string> = [];
@@ -484,7 +480,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         PATHEXT: ".COM;.EXE",
       });
 
-      // Two directories, two extensions, upper and lowercase spellings.
       expect(probed).toHaveLength(8);
       expect(new Set(probed).size).toBe(probed.length);
     }),
@@ -497,9 +492,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         PATHEXT: ".COM;.EXE",
       });
 
-      // Deliberately not folded together. Windows 10+ can mark a directory
-      // case-sensitive, so the two spellings are not provably one directory and
-      // skipping the second could hide a command that is really there.
+      // Windows 10+ can mark a directory case-sensitive, so the two spellings
+      // are not provably one directory and skipping the second could hide a
+      // command that is really there.
       expect(probed).toHaveLength(8);
     }),
   );
@@ -521,7 +516,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
           Effect.provideService(CommandResolutionCache, new Map()),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
-            // Keep this case-sensitive fixture portable to case-insensitive hosts.
             stat: (filePath) =>
               fs.stat(filePath === executable ? filePath : path.join(cwd, "missing")),
           }),
@@ -578,14 +572,13 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         expect(yield* resolveCommandPath("cursor", { env })).toBe(path.join(first, "cursor.CMD"));
         expect(yield* isCommandAvailable("absent", { env })).toBe(false);
         yield* fs.writeFileString(path.join(second, "late.EXE"), "");
-        yield* fs.utimes(second, 4_102_444_800, 4_102_444_800); // seconds: 2100-01-01
+        yield* fs.utimes(second, 4_102_444_800, 4_102_444_800);
         expect(yield* resolveCommandPath("late", { env })).toBe(path.join(second, "late.EXE"));
       }).pipe(
         withPathDirectoryListings,
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           stat: (file) => {
-            // Record candidate probes, not the per-lookup directory mtime checks.
             if (file !== first && file !== second) probed.push(file);
             return fs.stat(file);
           },
@@ -606,7 +599,6 @@ describe("preferGitForWindowsBinary", () => {
       paths.includes(filePath);
 
   it("runs the git.exe Git for Windows' launcher would start", () => {
-    // 2.56+ on x64. The PATHEXT scan returns the extension in PATHEXT's case.
     expect(
       preferGitForWindowsBinary(
         "C:\\Program Files\\Git\\cmd\\git.EXE",
@@ -617,7 +609,6 @@ describe("preferGitForWindowsBinary", () => {
         ),
       ),
     ).toBe("C:\\Program Files\\Git\\ucrt64\\bin\\git.exe");
-    // Before 2.56, and the portable build's bin launcher.
     expect(
       preferGitForWindowsBinary(
         "D:\\PortableGit\\bin\\git.exe",
@@ -764,12 +755,9 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
 
       expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
       expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
-      // A failed spawn is how a provider reports "not installed", so a miss
-      // must clear the moment the binary appears.
       yield* resolve("missing", "C:\\one");
       yield* resolve("missing", "C:\\one");
       expect((yield* resolve("git", "C:\\two")).command).toBe("C:\\two\\git.exe");
-      // Callers probe explicit paths they may have just written.
       yield* resolve("C:\\tools\\git.exe", "C:\\one");
       yield* resolve("C:\\tools\\git.exe", "C:\\one");
       expect(scans).toEqual([
@@ -785,7 +773,6 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       yield* resolve("git", "C:\\one");
       expect(scans).toHaveLength(7);
 
-      // Another resolver sharing the cache gets its own answer, not the cached one.
       const elsewhere = yield* resolve("git", "C:\\one", () => "D:\\elsewhere\\git.exe");
       expect(elsewhere.command).toBe("D:\\elsewhere\\git.exe");
       expect((yield* resolve("git", "C:\\one")).command).toBe("C:\\one\\git.exe");
@@ -811,7 +798,6 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       yield* resolve({});
       yield* resolve({});
       expect(scans).toBe(1);
-      // A swap made without MSYSTEM must not reach a child that has it set.
       yield* resolve({ MSYSTEM: "MINGW64" });
       expect(scans).toBe(2);
     }).pipe(Effect.provideService(CommandResolutionCache, new Map())),

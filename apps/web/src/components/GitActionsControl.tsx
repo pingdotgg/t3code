@@ -125,10 +125,6 @@ interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
-  /**
-   * Opens the thread's own change request beside it. Absent when the thread has no project to
-   * place it against, in which case it still opens in the browser.
-   */
   onOpenPullRequest?: ((number: number) => void) | undefined;
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
@@ -181,7 +177,6 @@ function requestVcsStatusRefresh(
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
-/** Every built-in host, in the order the built-in definitions list them. */
 const PUBLISH_PROVIDER_OPTIONS = sourceControlClients.definitions.map((definition) => ({
   value: definition.kind,
   label: definition.pickerLabel,
@@ -369,10 +364,6 @@ function GitActionProgressButtonContent({
       aria-live="polite"
       className={cn(
         "grid min-w-0 flex-1 items-center",
-        // Pin the title row to the button's minimum content height so output
-        // expands below it. Panel controls leave 24px after padding and border.
-        // No row gap: collapsed output must not add height. The panel's elapsed
-        // counter uses the menu-chevron slot, so it has no trailing column.
         isPanel
           ? "grid-cols-[auto_minmax(0,1fr)] grid-rows-[1.5rem] gap-x-3"
           : "grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[1.25rem] gap-x-2.5 sm:grid-rows-[1rem]",
@@ -462,7 +453,6 @@ interface PublishRepositoryDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: ScopedThreadRef["environmentId"] | null;
-  /** Thread the dialog was opened from, so the new repository can open beside it. */
   readonly threadRef: ScopedThreadRef | null;
   readonly gitCwd: string;
 }
@@ -1141,11 +1131,9 @@ export default function GitActionsControl({
   );
   const changeRequestTerminology = sourceControlPresentation.terminology;
   const SourceControlIcon = sourceControlPresentation.Icon;
-  // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  // Matches the diff panel's Changes view. Older servers only report uncommitted totals.
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
@@ -1312,8 +1300,6 @@ export default function GitActionsControl({
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
-        // A pull request the action opens is linked to the thread it ran beside. Drafts
-        // have no server thread yet, so there is nothing to link to.
         ...(activeServerThread ? { threadId: activeServerThread.id } : {}),
         ...(activeDraftThread ? { projectId: activeDraftThread.projectId } : {}),
       });
@@ -1854,10 +1840,6 @@ export default function GitActionsControl({
             </ThreadDetailsControl>
           )}
           {isPanel && gitActionProgress ? (
-            // The menu is disabled while an action runs, so its chevron slot
-            // hosts the elapsed counter instead, leaving the full row width to
-            // the status text. Pinned to the title row so it stays put when
-            // the output row expands below.
             <GitActionElapsedTime
               startedAtMs={gitActionProgress.startedAtMs}
               className="flex h-8 shrink-0 items-center self-start pe-2.5 text-2xs font-normal tabular-nums text-muted-foreground"

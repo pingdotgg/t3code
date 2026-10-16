@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { formatStartupCrashReport, parseStartupCrashRecords } from "./crash-log-model";
 
-// Verbatim shape of the entry expo-updates wrote for the build 56 launch crash.
 const BUNDLE =
   "/Users/expo/workingdir/build/apps/mobile/ios/build/Build/Intermediates.noindex/ArchiveIntermediates/T3Code/BuildProductsPath/Release-iphoneos/main.jsbundle";
 const FATAL = {

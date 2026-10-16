@@ -37,7 +37,6 @@ import {
 } from "./preview-stream-document";
 
 export interface PreviewStreamRef {
-  /** Navigation requires current control of the browser. */
   readonly command: (input: PreviewStreamInput) => void;
   readonly togglePictureInPicture: () => void;
 }
@@ -49,20 +48,16 @@ export interface PreviewPictureInPictureState {
 
 type NativeStreamBridge = {
   readonly ref?: Ref<PreviewStreamRef>;
-  /** Refresh stream access; new access remounts the document with a fresh ticket. */
   readonly onUnauthorized: () => void;
-  /** The tab was closed on the server. */
   readonly onGone?: () => void;
   readonly onViewport?: (viewport: { readonly width: number; readonly height: number }) => void;
   readonly onControl?: (control: PreviewStreamControl | null) => void;
   readonly onPictureInPicture?: (state: PreviewPictureInPictureState, detail?: string) => void;
   /** True while frames show, so commands reach the page. Pass a stable function. */
   readonly onStreamingChange?: (streaming: boolean) => void;
-  /** The floating player shows a spinner without text or a reconnect button. */
   readonly compact?: boolean;
 };
 
-/** Picks files on this device and sends them to the page's open picker; none cancels it. */
 async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean) {
   const body = new FormData();
   if (pick) {
@@ -91,7 +86,6 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
   if (!response.ok) throw new Error((await response.text()) || "The upload was refused.");
 }
 
-/** The file is on the environment; saving it here goes through the share sheet. */
 function offerDownload(download: PreviewStreamDownload) {
   Dialog.alert(`Downloaded ${download.fileName}`, undefined, [
     { text: "Not now", style: "cancel" },
@@ -112,8 +106,6 @@ function offerDownload(download: PreviewStreamDownload) {
   ]);
 }
 
-// Consecutive refused tickets before the view stops and offers Reconnect, e.g. a
-// session without operate scope.
 const MAX_REFUSALS = 3;
 
 export function PreviewStreamWebView(
@@ -195,7 +187,6 @@ function AuthorizedPreviewStream({
       ref={ref}
       configuration={configuration}
       onUnauthorized={() => {
-        // The client has stopped. Restart it with a fresh ticket, backing off between refusals.
         const refusals = ++unauthorized.current;
         if (refusals >= MAX_REFUSALS) return false;
         if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
@@ -244,7 +235,6 @@ function PreviewStreamDocumentView({
 }: Omit<NativeStreamBridge, "onUnauthorized"> & {
   readonly configuration: string;
   readonly background: string;
-  /** False when the view should stop retrying and fail. */
   readonly onUnauthorized: () => boolean;
   readonly onRetry: () => void;
   readonly onStreaming: () => void;
@@ -289,7 +279,6 @@ function PreviewStreamDocumentView({
     setError(message);
     setStatus("error");
   };
-  // The shared transport owns reconnects once the document acknowledges startup.
   const bootstrapTimedOut = useEffectEvent(() =>
     fail("Browser viewer could not start. Reconnect to try again."),
   );
@@ -358,7 +347,6 @@ function PreviewStreamDocumentView({
         allowUniversalAccessFromFileURLs
         contentInsetAdjustmentBehavior="never"
         setSupportMultipleWindows={false}
-        // Picture in picture plays the canvas as an inline muted video, started from native chrome.
         allowsInlineMediaPlayback
         allowsPictureInPictureMediaPlayback
         mediaPlaybackRequiresUserAction={false}

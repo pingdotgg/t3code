@@ -315,7 +315,6 @@ describe("toComposerContextId", () => {
     expect(toComposerContextId("::")).toMatch(/^ctx-[0-9a-f]{16}$/);
   });
   it("tells apart producer ids that agree past the slug's truncation point", () => {
-    // The slug keeps 48 characters, so only the digest distinguishes these two.
     const shared = `pull-request-finding:${"a".repeat(60)}`;
     const first = toComposerContextId(`${shared}:1`);
     const second = toComposerContextId(`${shared}:2`);

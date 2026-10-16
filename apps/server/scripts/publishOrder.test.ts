@@ -8,9 +8,6 @@ import { publishPlatformsThenLauncher } from "./publishOrder.ts";
 const platformTarballs = ["a.tgz", "b.tgz", "c.tgz"];
 const launcherTarball = "t3.tgz";
 
-// A fake publish that records when each upload starts and ends. Platform
-// uploads only end once every platform upload has started, so they have to
-// run at the same time. `failing` fails as soon as it starts.
 const fakePublish = Effect.fn("fakePublish")(function* (failing?: string) {
   const events: Array<string> = [];
   const allStarted = yield* Latch.make();

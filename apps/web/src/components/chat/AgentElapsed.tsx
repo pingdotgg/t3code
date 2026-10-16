@@ -16,7 +16,6 @@ function formatElapsedSeconds(totalSeconds: number): string {
   return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/** Short form for tight rows: "45s", "12m", "1.5h", "14h". Rounds down. */
 export function formatCompactElapsedSeconds(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   if (seconds < 60) return `${seconds}s`;
@@ -26,11 +25,6 @@ export function formatCompactElapsedSeconds(totalSeconds: number): string {
   return `${Math.floor(minutes / 6) / 10}h`;
 }
 
-/**
- * Elapsed time for the current activation. Live agents self-tick via DOM
- * writes (zero React commits per tick); settled agents freeze at completedAt.
- * `compact` drops the smaller unit for narrow rows such as Lineage.
- */
 export function AgentElapsed({
   agent,
   compact = false,

@@ -125,7 +125,6 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
         );
         await NodeFSP.mkdir(NodePath.join(root, "hosts/one"), { recursive: true });
         await NodeFSP.writeFile(NodePath.join(root, "hosts/one/fail-start-once"), "");
-        // Unavailable advisory bookkeeping must not prevent either helper from starting.
         await NodeFSP.writeFile(NodePath.join(root, "tools/.maintenance-lock"), "blocked");
         await NodeFSP.writeFile(NodePath.join(root, "tools/.users"), "unwritable lease directory");
         try {
@@ -198,7 +197,6 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/stopped-agent"), "utf8"),
           ).toBe(String(upgradedDaemon.pid));
           expect(repaired.daemonPort).not.toBe(upgraded.daemonPort);
-          // Stop still uses the recorded entry when a future pinned package is not installed yet.
           const originalScript = remoteDeviceScript("one", "stop-agent");
           const upgradedStop = NodePath.join(home, "upgraded-stop.cjs");
           await NodeFSP.writeFile(

@@ -60,9 +60,6 @@ export function useAssetUrlState(
     );
   return deriveAssetUrlState({
     connectionPhase,
-    // A failure left over from an outage is re-queried as soon as the
-    // connection returns. While that re-query is in flight it is not a verdict
-    // on the file, so it reads as loading rather than a false "unavailable".
     shared: shared._tag === "Failure" && result.waiting ? { _tag: "Loading" } : shared,
   });
 }

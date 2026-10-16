@@ -10,12 +10,7 @@ import {
 } from "./baseSchemas.ts";
 
 /**
- * Inline context records: the typed payload behind every composer chip.
- * A message's `text` carries position through canonical reference links
- * (`[label](t3-context://v1/<kind>/<contextId>)`, see
- * `@t3tools/shared/composerContextReferences`); these records carry the payload,
- * keyed by `contextId`. Bytes never live here: image and file records bind to a
- * `ChatAttachment` by id.
+ * Bytes never live here: image and file records bind to a `ChatAttachment` by id.
  */
 
 export const COMPOSER_CONTEXT_KINDS = [
@@ -40,27 +35,22 @@ export const COMPOSER_CONTEXT_LABEL_MAX_CHARS = 200;
 export const COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS = 64_000;
 const COMPOSER_CONTEXT_ELEMENT_HTML_MAX_CHARS = 8_000;
 const COMPOSER_CONTEXT_ELEMENT_STYLES_MAX_CHARS = 8_000;
-/** Exported so producers can clamp to the same boundary the schema enforces, rather than
-    minting a record the send path would fail to encode. */
 export const COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS = 16_000;
 export const COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS = 32_000;
 const COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS = 8_000;
 
-/** Durable identity of one payload. Shared by every chip that points at it. */
 export const ComposerContextId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CONTEXT_ID_MAX_CHARS),
   Schema.isPattern(CONTEXT_ID_PATTERN),
 ).pipe(Schema.brand("ComposerContextId"));
 export type ComposerContextId = typeof ComposerContextId.Type;
 
-/** Identity of one occurrence in a document. Changes when a chip is duplicated. */
 export const ComposerContextReferenceId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(CONTEXT_ID_MAX_CHARS),
   Schema.isPattern(CONTEXT_ID_PATTERN),
 ).pipe(Schema.brand("ComposerContextReferenceId"));
 export type ComposerContextReferenceId = typeof ComposerContextReferenceId.Type;
 
-/** Open kind: known kinds get typed records, everything else preserves its payload. */
 export const ComposerContextKind = TrimmedNonEmptyString.check(
   Schema.isPattern(CONTEXT_KIND_PATTERN),
 );
@@ -77,7 +67,6 @@ const BoundedString = (max: number) => Schema.String.check(Schema.isMaxLength(ma
 const ShortString = BoundedString(2_048);
 const NullableShortString = Schema.NullOr(ShortString);
 
-/** Snapshot used to identify and present a pull request carried by a review-context record. */
 export const PullRequestContextMetadata = Schema.Struct({
   number: PositiveInt,
   title: ShortString,
@@ -135,7 +124,6 @@ export const ElementContextSource = Schema.Struct({
 });
 export type ElementContextSource = typeof ElementContextSource.Type;
 
-/** What a picked page element looks like to the agent; shared by element and annotation records. */
 export const ElementContextDetails = Schema.Struct({
   pageUrl: ShortString,
   pageTitle: NullableShortString,
@@ -167,12 +155,8 @@ export const PreviewAnnotationContextRecord = Schema.Struct({
   comment: BoundedString(COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS),
   targetSummary: ShortString,
   styleChanges: Schema.Array(ShortString).check(Schema.isMaxLength(200)),
-  /** Picked elements inside the annotation, with the detail the agent needs to find them. */
   elements: Schema.optionalKey(Schema.Array(ElementContextDetails).check(Schema.isMaxLength(50))),
-  /** Original target ids and edits allow pasted annotations to retain exact style changes. */
   elementIds: Schema.optionalKey(Schema.Array(ShortString).check(Schema.isMaxLength(50))),
-  /** Region and stroke geometry is lossy on purpose, but their counts feed the target summary,
-      so a pasted annotation still says what it marked. */
   regionCount: Schema.optionalKey(NonNegativeInt),
   strokeCount: Schema.optionalKey(NonNegativeInt),
   styleChangeDetails: Schema.optionalKey(
@@ -186,7 +170,6 @@ export const PreviewAnnotationContextRecord = Schema.Struct({
       }),
     ).check(Schema.isMaxLength(200)),
   ),
-  /** The screenshot travels as its own image record; this links the two. */
   screenshotContextId: Schema.optionalKey(ComposerContextId),
 });
 export type PreviewAnnotationContextRecord = typeof PreviewAnnotationContextRecord.Type;
@@ -221,10 +204,6 @@ export const SkillContextRecord = Schema.Struct({
 });
 export type SkillContextRecord = typeof SkillContextRecord.Type;
 
-/**
- * Another thread on the same server, attached so the agent can read its history through
- * `t3_thread_read`. Only identity travels; the title is a display snapshot.
- */
 export const ThreadContextRecord = Schema.Struct({
   ...recordBase,
   kind: Schema.Literal("thread"),
@@ -237,9 +216,8 @@ export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 const isJson = Schema.is(Schema.Json);
 
 /**
- * Catch-all for kinds this build does not know. Known discriminators are excluded so a
- * malformed known record fails its own schema instead of sliding through unchecked.
- * Mirrors `ChatUnknownAttachment`.
+ * Known discriminators are excluded so a malformed known record fails its own schema instead of
+ * sliding through unchecked.
  */
 export const UnknownContextRecord = Schema.Struct({
   ...recordBase,
@@ -250,11 +228,8 @@ export const UnknownContextRecord = Schema.Struct({
       try {
         encoded = JSON.stringify(payload);
       } catch {
-        // Cycles, bigints, and payloads nested deeper than this engine's stack.
         return false;
       }
-      // Only JSON values, so a payload the wire cannot carry (a Date, NaN, an
-      // undefined field) fails this record alone instead of the whole message.
       return encoded !== undefined && encoded.length <= 64_000 && isJson(payload);
     }),
   ),

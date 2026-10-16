@@ -185,7 +185,6 @@ export class RotatingFileSink {
   }
 }
 
-/** Serialized asynchronous writes and rotation without blocking the event loop. */
 export const makeAsyncRotatingFileSink = Effect.fnUntraced(function* (
   options: Omit<RotatingFileSinkOptions, "throwOnError">,
 ) {

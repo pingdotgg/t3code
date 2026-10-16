@@ -13,7 +13,6 @@ export interface ListRowContentProps {
   readonly disabled?: boolean;
 }
 
-/** Shared row geometry; controls own their behavior and accessibility. */
 export function ListRowLayout({
   icon,
   label,
@@ -24,7 +23,6 @@ export function ListRowLayout({
   tone = "default",
 }: ListRowContentProps & { readonly accessory?: ReactNode; readonly tone?: "default" | "danger" }) {
   const { fontScale } = useWindowDimensions();
-  // Leave the label room to wrap at accessibility text sizes.
   const stackDetail = fontScale >= 1.5;
   return (
     <View

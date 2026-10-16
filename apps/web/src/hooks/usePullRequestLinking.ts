@@ -29,14 +29,6 @@ import { useProjects, useServerConfigs } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-/**
- * Whether a parsed change-request link can be linked to a thread. `multiple` mode (the
- * `threadPullRequests` capability) stores a link's host, repository and number on the thread
- * directly and needs no project at all; a freshly linked pull request already starts with a
- * null snapshot until some project can sync it, so a host nothing here is checked out from is
- * the same case, not a reason to refuse the link. `single` mode still needs a matching project,
- * since that is where its required `projectId` comes from.
- */
 export function canLinkChangeRequest(
   mode: ReturnType<typeof threadPullRequestLinkMode>,
   projects: ReadonlyArray<EnvironmentProject>,
@@ -47,7 +39,6 @@ export function canLinkChangeRequest(
   return findProjectForChangeRequest(projects, parsed) !== undefined;
 }
 
-/** Routes link actions through the command advertised by this environment. */
 export function usePullRequestLinking(environmentId: EnvironmentId | null | undefined) {
   const configs = useServerConfigs();
   const projects = useProjects();

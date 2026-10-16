@@ -215,7 +215,6 @@ describe("rejected desktop-local bootstrap tokens", () => {
     const first = nextRejectedSecondaryBootstrap(undefined, signature, 0);
 
     expect(isRejectedSecondaryBootstrap(first, signature, 59_999)).toBe(true);
-    // A backend restarted on the same port accepts the same token again, so it is retried.
     expect(isRejectedSecondaryBootstrap(first, signature, 60_000)).toBe(false);
 
     const second = nextRejectedSecondaryBootstrap(first, signature, 60_000);
@@ -255,8 +254,6 @@ describe("rejected desktop-local bootstrap tokens", () => {
 
 describe("desktop-local bearer cache across token changes", () => {
   it("keeps a live bearer when only the bootstrap token rotates", () => {
-    // Cached by endpoint: a rotated token reuses the bearer instead of
-    // dropping the environment (and its drafts) when the new token is rejected.
     const cached = {
       signature: "http://a|ws://a",
       registration: {} as never,

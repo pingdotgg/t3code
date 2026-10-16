@@ -93,11 +93,9 @@ describe("BrowserSession", () => {
       const replacementChar = yield* browserSessions.getPartition("p\ufffd");
       assert.notStrictEqual(loneSurrogate, replacementChar);
 
-      // The escape can't be forged with a literal backslash either.
       const literal = yield* browserSessions.getPartition("p\\ud800");
       assert.notStrictEqual(literal, loneSurrogate);
 
-      // And a well-formed scope still lands on its historical partition.
       assert.strictEqual(
         yield* browserSessions.getPartition("scope-a"),
         "persist:t3code-preview-f051bb2c68cb7b2fe969",
@@ -109,8 +107,6 @@ describe("BrowserSession", () => {
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
 
-      // These share the same scope string: default environment `a::b`, and
-      // environment `a` with nondefault profile `b`.
       const legacyDefault = yield* browserSessions.getPartition("a::b");
       const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
 
@@ -123,10 +119,8 @@ describe("BrowserSession", () => {
   );
 
   // A rewritten session UA — any variant, even ones that keep the Electron
-  // token — makes Cloudflare Turnstile loop with error 600010 (#5002), so
-  // the guest must end up with Electron's native User-Agent. The mock applies
-  // setUserAgent calls, so this fails on any reintroduced rewrite while still
-  // permitting a harmless re-set of the unchanged native string.
+  // token — makes Cloudflare Turnstile loop with error 600010 (#5002), so the
+  // guest must end up with Electron's native User-Agent.
   it.effect("keeps the guest's effective User-Agent equal to Electron's native one", () =>
     Effect.gen(function* () {
       // Electron's real UA shape: app token, then Chrome, then Electron, then
@@ -242,8 +236,6 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  // A prompt without an owner can open behind the app window, leaving the one
-  // prompt slot taken and every later link silently denied.
   it.effect("attaches the open-externally prompt to the window hosting the preview", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;
@@ -362,10 +354,6 @@ describe("BrowserSession", () => {
       const browserSessions = yield* BrowserSession.BrowserSession;
       const partition = yield* browserSessions.getPartition("scope-untouched");
 
-      // Deriving the partition string does not create the session, and the
-      // clear only walks sessions it already holds. Without loading it first
-      // this reports success and deletes nothing — which is what a user
-      // clearing a profile after a restart would get.
       assert.isUndefined(sessions.get(partition));
       yield* browserSessions.clearCookies([partition]);
       assert.isUndefined(sessions.get(partition));

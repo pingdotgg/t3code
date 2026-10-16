@@ -40,7 +40,7 @@ export function FilesHeader(props: {
 
   return (
     <View>
-      {/* Keep the title/subtitle's natural height, including larger text, while searching. */}
+      {}
       <View
         pointerEvents={searching ? "none" : "auto"}
         accessibilityElementsHidden={searching}

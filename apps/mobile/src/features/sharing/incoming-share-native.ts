@@ -10,8 +10,8 @@ function errorCode(error: unknown): string | null {
 }
 
 /**
- * Normalizes the native "share into" capability to an empty inbox. Personal
- * Team builds cannot include the App Group that expo-sharing reads from.
+ * Personal Team builds cannot include the App Group that expo-sharing reads
+ * from.
  */
 export function createIncomingSharePayloadReader(input: {
   readonly platform: string;

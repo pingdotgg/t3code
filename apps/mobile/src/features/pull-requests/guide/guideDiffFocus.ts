@@ -6,7 +6,6 @@ export type GuideDiffFocus = {
   readonly end: number;
 };
 
-/** Match original diff coordinates, including deletions and renamed files. */
 export function guideFocusedRows(
   rows: readonly NativeReviewDiffRow[],
   fileId: string | undefined,

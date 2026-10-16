@@ -30,9 +30,6 @@ const decodeManifest = Schema.decodeUnknownSync(
 
 const repoRoot = NodeURL.fileURLToPath(new URL("../..", import.meta.url));
 
-// Copy the installed production JS dependency graph, with no pnpm symlinks back
-// into the checkout. Optional platform executables are covered by desktop staging
-// tests; this probe never creates a local agent or contacts Cursor.
 async function stagePackage(name: string, from: string, destination: string): Promise<void> {
   const require = NodeModule.createRequire(from);
   let source = NodePath.dirname(require.resolve(name));
@@ -68,7 +65,6 @@ async function stagePackage(name: string, from: string, destination: string): Pr
 it("loads packaged Cursor catalog chunks without credentials or checkout dependencies", async () => {
   const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-cursor-package-"));
   try {
-    // Missing staged dependencies must not resolve from a developer's /tmp tree.
     for (let parent = NodePath.dirname(scratch); ; parent = NodePath.dirname(parent)) {
       assert.isFalse(NodeFS.existsSync(NodePath.join(parent, "node_modules")));
       if (parent === NodePath.dirname(parent)) break;

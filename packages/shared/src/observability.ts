@@ -20,19 +20,12 @@ export type OtlpProtocol = typeof OtlpProtocol.Type;
 export const layerOtlpSerialization = (protocol: OtlpProtocol) =>
   protocol === "http/protobuf" ? OtlpSerialization.layerProtobuf : OtlpSerialization.layerJson;
 
-/**
- * How one signal is exported, once whichever source named that signal's
- * endpoint has been resolved. Held per signal rather than per process, so a
- * wire format or a credential cannot be paired by hand with an endpoint that
- * came from somewhere else.
- */
 export interface SignalExport {
   readonly protocol: OtlpProtocol;
   readonly headers: Readonly<Record<string, string>> | undefined;
   readonly exportIntervalMs: number;
 }
 
-/** What T3 Code exports with when nothing configured a signal. */
 export const DEFAULT_SIGNAL_EXPORT: SignalExport = {
   protocol: "http/json",
   headers: undefined,
@@ -283,9 +276,6 @@ const TRACE_ATTRIBUTE_TRUNCATED_LENGTH = 200;
 const TRACE_ATTRIBUTE_TRUNCATION_SUFFIX = "…[truncated]";
 const ALWAYS_TRUNCATED_TRACE_ATTRIBUTES: ReadonlySet<string> = new Set(["db.query.text"]);
 
-// Clamps strings nested inside already-normalized attribute values (arrays and
-// plain objects from normalizeJsonValue, e.g. an Error's `stack`). Returns the
-// input reference when nothing was clamped.
 function truncateNestedValue(value: unknown): unknown {
   if (typeof value === "string") {
     return value.length <= TRACE_ATTRIBUTE_MAX_LENGTH
@@ -310,10 +300,8 @@ function truncateNestedValue(value: unknown): unknown {
 }
 
 /**
- * Clamps oversized attribute values on the serialized trace record so the file
- * sink stays small, including strings nested inside arrays and objects (e.g.
- * error stacks). Returns a new record when anything was clamped; never
- * mutates the input (the live span's attributes are shared with other tracers).
+ * Returns a new record when anything was clamped; never mutates the input (the live span's
+ * attributes are shared with other tracers).
  */
 export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttributes {
   let truncated: Record<string, unknown> | undefined;
@@ -374,15 +362,9 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
   let buffer: Array<{ readonly text: string; readonly bytes: number }> = [];
   let bufferBytes = 0;
-  // While a write is slow, push keeps up to one trace file of records (at least
-  // 4 MiB), so the spans that time a stall still reach the file. Only a disk
-  // that stays stuck drops records, instead of growing memory or blocking push.
   const maxBufferBytes = Math.max(options.maxBytes, 4 * 1024 * 1024);
   const flushRequests = yield* Queue.sliding<void>(1);
   const flushSemaphore = yield* Semaphore.make(1);
-  // A failure episode starts at the first dropped record and ends when a flush
-  // sees that the latest write succeeded. Flush checks once per window, so a
-  // disk that flaps inside one window stays one episode.
   let writeFailing = false;
   let droppedCount = 0;
   let failureReported = false;
@@ -403,7 +385,6 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     let persistedCount = 0;
 
     while (persistedCount < records.length) {
-      // push drops any record larger than a file, so the first one always fits.
       const firstRecordBytes = records[persistedCount]!.bytes;
       let nextIndex = persistedCount + 1;
       let chunkBytes = firstRecordBytes;
@@ -438,8 +419,6 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
     }
   });
 
-  // Logs once when writes start failing and once when they recover, so a disk
-  // that stays broken costs one line, not one per flush.
   const flush = flushSemaphore
     .withPermits(1)(
       Effect.gen(function* () {
@@ -484,7 +463,6 @@ export const makeTraceSink = Effect.fn("makeTraceSink")(function* (options: Trac
 
   yield* Effect.addFinalizer(() => flush.pipe(Effect.ignore));
   yield* Effect.forkScoped(
-    // Flush when push fills a batch or the batch window passes.
     Queue.take(flushRequests).pipe(
       Effect.timeoutOption(`${options.batchWindowMs} millis`),
       Effect.andThen(flush),
@@ -773,13 +751,6 @@ function parseBigInt(input: string): bigint {
   }
 }
 
-/**
- * Parses the `OTEL_EXPORTER_OTLP_HEADERS` wire format used by
- * `T3CODE_OTLP_HEADERS`: W3C Baggage `key=value` pairs joined by commas, with
- * percent-encoded values. Each pair splits at its first `=` so an encoded or
- * literal `=` inside a value survives, and whitespace around the separators is
- * ignored.
- */
 export const OtlpHeadersFromString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.Record(Schema.String, Schema.String),

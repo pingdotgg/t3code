@@ -27,8 +27,7 @@ function outboundOfType(transcript: ProviderReplayTranscript, type: string) {
 
 /**
  * Stop terminates Pi (Stop-with-restart), so the stopped turn's session-tree
- * user entry has to be read before the kill. Rolling back to turn 1 then forks
- * at that entry, which discards the stopped turn and everything after it.
+ * user entry has to be read before the kill.
  */
 export function assertPiThreadRollbackAfterStopOutput(
   result: OrchestratorV2ScenarioResult,
@@ -41,12 +40,10 @@ export function assertPiThreadRollbackAfterStopOutput(
   const runStatus = (ordinal: number) =>
     projection.runs.find((run) => run.ordinal === ordinal)?.status;
   assert.equal(runStatus(1), "completed");
-  // The fork drops the stopped turn too, so it must leave the transcript.
   assert.equal(runStatus(2), "rolled_back");
   assert.equal(runStatus(3), "rolled_back");
   assert.equal(runStatus(4), "completed");
 
-  // The stopped turn must carry the strong ref rollback forks at.
   const stoppedTurn = projection.providerTurns.find((providerTurn) => providerTurn.ordinal === 2);
   assert.equal(stoppedTurn?.status, "interrupted");
   assert.equal(stoppedTurn?.nativeTurnRef?.strength, "strong");
@@ -75,7 +72,6 @@ export function assertPiThreadRollbackAfterStopOutput(
     THREAD_ROLLBACK_SECOND_PROMPT,
   ]);
 
-  // Pi's surviving branch holds only turn 1.
   const finalAnswer = projection.turnItems.findLast((item) => item.type === "assistant_message");
   assert.include(finalAnswer?.text, "rollback fixture first turn complete");
   assert.notInclude(finalAnswer?.text, "second turn");
