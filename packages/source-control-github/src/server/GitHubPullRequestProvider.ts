@@ -19,7 +19,11 @@ import {
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
+import type {
+  GitHubRepositoryAccess,
+  GitHubViewerAccess,
+  GitHubWorkflowRunApproval,
+} from "./gitHubPullRequestJson.ts";
 import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
@@ -50,17 +54,23 @@ const CAPABILITIES: PullRequestCapabilities = {
  * cannot do on their own pull request: GitHub shows an outside contributor the reviewer control
  * and refuses the request behind it.
  */
-export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
+export function gitHubViewerPermissions(
+  access: GitHubViewerAccess & Pick<GitHubRepositoryAccess, "autoMergeAllowed">,
+): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
     actions: [
       ...(access.canDeleteBranch === true ? (["delete-branch"] as const) : []),
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
-      // merge here may not leave an instruction to merge later either.
+      // merge here may not leave an instruction to merge later either. Arming also needs the
+      // repository to allow it, while an arming made before it was switched off can still go.
+      // Where a merge would go through now there is nothing to wait on, so only merge is offered.
       ...(access.canWrite
         ? ([
             "merge",
-            "enable-auto-merge",
+            ...(access.autoMergeAllowed && access.canMergeNow !== true
+              ? (["enable-auto-merge"] as const)
+              : []),
             "disable-auto-merge",
             "revert",
             "approve-workflows",

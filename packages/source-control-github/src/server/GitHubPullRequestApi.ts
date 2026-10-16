@@ -101,6 +101,7 @@ import {
   type GitHubReviewThreadEntry,
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
+  IMMEDIATELY_MERGEABLE,
 } from "./gitHubPullRequestJson.ts";
 import type {
   ProviderChangeRequestSummary,
@@ -870,9 +871,6 @@ const PullRequestGraphQLGroup = GraphQLGroup.merge(
   PullRequestReviewsGraphQLGroup,
   PullRequestMutationsGraphQLGroup,
 ).middleware(GitHubGraphQlClient.GitHubGraphQlAuth);
-
-/** States in which `gh pr merge --auto` merges at once instead of arming auto-merge. */
-const IMMEDIATELY_MERGEABLE = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -2485,6 +2483,8 @@ export const make = Effect.gen(function* () {
         }
         // A merge queue takes a pull request through auto-merge rather than a direct merge, and
         // `--auto` on a pull request that is mergeable right now simply merges it, as `gh` does.
+        // The detail stops offering auto-merge in that state, so this only meets a pull request
+        // whose requirements passed after the page was drawn.
         const auto =
           state.isMergeQueueEnabled === true ||
           (action === "enable-auto-merge" &&
