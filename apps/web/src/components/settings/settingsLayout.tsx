@@ -92,10 +92,25 @@ function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): vo
       ? (target.firstElementChild as HTMLElement)
       : target);
 
-  scrollTarget.scrollIntoView({
-    behavior: prefersReducedMotion ? "auto" : "smooth",
-    block: "center",
-  });
+  const scroll = () =>
+    scrollTarget.scrollIntoView({
+      behavior: prefersReducedMotion ? "auto" : "smooth",
+      block: "center",
+    });
+  scroll();
+  // A target inside a collapsible panel that is still opening is measured
+  // before the panel reaches full height, so scroll again once it has grown.
+  const openingPanel = target.parentElement?.closest<HTMLElement>(
+    '[data-slot="collapsible-panel"][data-starting-style]',
+  );
+  if (openingPanel) {
+    const onPanelOpened = (event: TransitionEvent) => {
+      if (event.target !== openingPanel) return;
+      openingPanel.removeEventListener("transitionend", onPanelOpened);
+      scroll();
+    };
+    openingPanel.addEventListener("transitionend", onPanelOpened);
+  }
   target.focus({ preventScroll: true });
   target.classList.remove("settings-search-target-pulse");
   if (!highlight || prefersReducedMotion) return;

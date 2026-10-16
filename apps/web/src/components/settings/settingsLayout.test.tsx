@@ -87,6 +87,45 @@ describe("settings search targets", () => {
     expect(add).not.toHaveBeenCalled();
   });
 
+  it("scrolls again once an opening collapsible panel finishes growing", () => {
+    const scrollIntoView = vi.fn();
+    let onTransitionEnd: ((event: { target: unknown }) => void) | undefined;
+    const panel = {
+      addEventListener: vi.fn((_type: string, listener: typeof onTransitionEnd) => {
+        onTransitionEnd = listener;
+      }),
+      removeEventListener: vi.fn(),
+    };
+    const closest = vi.fn(() => panel);
+    const target = {
+      tagName: "DIV",
+      firstElementChild: null,
+      parentElement: { closest },
+      scrollIntoView,
+      focus: vi.fn(),
+      classList: { remove: vi.fn(), add: vi.fn() },
+      addEventListener: vi.fn(),
+      offsetWidth: 100,
+    } as unknown as HTMLElement;
+    vi.stubGlobal("document", {
+      getElementById: vi.fn(() => target),
+    });
+    vi.stubGlobal("window", {
+      matchMedia: vi.fn(() => ({ matches: false })),
+    });
+
+    expect(scrollToSettingsTarget("legacy-sidebar")).toBe(true);
+    expect(closest).toHaveBeenCalledWith('[data-slot="collapsible-panel"][data-starting-style]');
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    onTransitionEnd?.({ target: {} });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    onTransitionEnd?.({ target: panel });
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(panel.removeEventListener).toHaveBeenCalledWith("transitionend", onTransitionEnd);
+  });
+
   it("leaves not-yet-mounted destinations to their mount lifecycle", () => {
     vi.stubGlobal("document", {
       getElementById: vi.fn(() => null),
