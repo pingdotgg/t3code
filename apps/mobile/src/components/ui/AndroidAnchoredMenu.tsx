@@ -1,11 +1,13 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
 import { BackHandler, Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 import Animated, { FadeIn } from "react-native-reanimated";
 
+import { deriveMenuHorizontalPlacement } from "../../lib/menu-placement";
+import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { MenuPopup } from "./MenuPopup";
@@ -46,10 +48,7 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const [path, setPath] = useState<readonly MenuAction[]>([]);
   const [rootHeight, setRootHeight] = useState<number | null>(null);
   const [overlay, setOverlay] = useState<OverlayFrame | null>(null);
-  const menuWidth =
-    overlay === null
-      ? desiredMenuWidth
-      : Math.min(desiredMenuWidth, Math.max(0, overlay.width - 2 * SCREEN_MARGIN));
+  const windowHinge = use(WindowHingeContext);
   const anchorRef = useRef<ViewInstance>(null);
   const overlayRef = useRef<ViewInstance>(null);
 
@@ -105,16 +104,17 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           width: anchor.width,
           height: anchor.height,
         };
-  const preferredLeft =
+  const { left, width: menuWidth } =
     local === null || overlay === null
-      ? 0
-      : local.x + local.width / 2 <= overlay.width / 2
-        ? local.x
-        : local.x + local.width - menuWidth;
-  const left =
-    overlay === null
-      ? 0
-      : Math.min(Math.max(preferredLeft, SCREEN_MARGIN), overlay.width - menuWidth - SCREEN_MARGIN);
+      ? { left: 0, width: desiredMenuWidth }
+      : deriveMenuHorizontalPlacement({
+          anchorX: local.x,
+          anchorWidth: local.width,
+          overlayWidth: overlay.width,
+          desiredWidth: desiredMenuWidth,
+          margin: SCREEN_MARGIN,
+          hinge: windowHinge && { x: windowHinge.x - overlay.x, width: windowHinge.width },
+        });
   // The keyboard stays up while the menu is open (in-window overlay, no
   // focus change), so the space it covers is not usable — without this the
   // composer-pill menus "open down" into the IME and can't be tapped.
@@ -174,7 +174,9 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
             <Pressable accessible={false} className="absolute inset-0" onPress={close} />
             {!placeable || local === null ? null : !anchor.keyboardWasVisible ? (
               <MenuPopup
-                anchor={local}
+                // Compose aligns its dropdown to the trigger's start whenever it fits, so a
+                // trigger at the hinge-safe position keeps the menu on the anchor's side.
+                anchor={windowHinge ? { ...local, x: left, width: menuWidth } : local}
                 menuWidth={menuWidth}
                 actions={levelActions}
                 title={props.title}
