@@ -810,9 +810,9 @@ export const layer = Layer.effect(
      *   - subscribe to each newly-added or rebuilt instance's
      *     `streamChanges` (so periodic + enrichment refreshes land in
      *     `providersRef`);
-     *   - read each newly-added/rebuilt instance's current snapshot after
-     *     subscribing, closing the race with its independently-running
-     *     background startup probe;
+     *   - read each instance's current snapshot after subscribing newly-added
+     *     instances, so presentation-only registry updates are reflected even
+     *     when the live instance identity is carried over;
      *   - prune `providersRef` of instances that no longer exist.
      *
      * Provider refreshes are owned by each managed provider and never run
@@ -898,8 +898,8 @@ export const layer = Layer.effect(
         // subscription race without putting external work on the registry
         // or HTTP server construction path.
         yield* Effect.forEach(
-          newlyAdded,
-          ([, instance]) =>
+          instances,
+          (instance) =>
             Effect.gen(function* () {
               const source = buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;

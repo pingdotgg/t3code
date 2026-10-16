@@ -1581,6 +1581,8 @@ it.layer(
           skills: [],
         } as const satisfies ServerProvider;
         const refreshCalls = yield* Ref.make(0);
+        const currentProvider = yield* Ref.make<ServerProvider>(initialProvider);
+        const registryChanges = yield* PubSub.unbounded<void>();
         const instance = {
           instanceId: codexInstanceId,
           driverKind: codexDriver,
@@ -1598,7 +1600,7 @@ it.layer(
                   packageName: null,
                 }),
               ),
-            getSnapshot: Effect.succeed(initialProvider),
+            getSnapshot: Ref.get(currentProvider),
             refresh: Ref.update(refreshCalls, (count) => count + 1).pipe(
               Effect.andThen(Effect.never),
             ),
@@ -1615,8 +1617,8 @@ it.layer(
               Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
             listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            streamChanges: Stream.fromPubSub(registryChanges),
+            subscribeChanges: PubSub.subscribe(registryChanges),
           },
         );
         const scope = yield* Scope.make();
@@ -1636,6 +1638,22 @@ it.layer(
           const registry = yield* ProviderRegistry.ProviderRegistry;
           assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
           assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+
+          const updates = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
+          // Let Stream.runHead acquire its PubSub subscription before the
+          // registry mutation receipt is published.
+          yield* Effect.yieldNow;
+          const presentationProvider = {
+            ...initialProvider,
+            displayName: "Work",
+            accentColor: "#654321",
+          } satisfies ServerProvider;
+          yield* Ref.set(currentProvider, presentationProvider);
+          yield* PubSub.publish(registryChanges, undefined);
+          const update = yield* Fiber.join(updates);
+          const providers = update._tag === "Some" ? update.value : [];
+          assert.strictEqual(providers[0]?.displayName, presentationProvider.displayName);
+          assert.strictEqual(providers[0]?.accentColor, presentationProvider.accentColor);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

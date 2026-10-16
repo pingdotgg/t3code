@@ -320,6 +320,80 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("retains live instances for presentation edits but replaces runtime edits", () =>
+    Effect.gen(function* () {
+      let closed = 0;
+      const trackingDriver: typeof CodexDriver = {
+        ...CodexDriver,
+        create: (input) =>
+          CodexDriver.create(input).pipe(
+            Effect.tap(() =>
+              Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  closed += 1;
+                }),
+              ),
+            ),
+          ),
+      };
+      const instanceId = ProviderInstanceId.make("codex_presentation");
+      const baseEntry = {
+        driver: ProviderDriverKind.make("codex"),
+        displayName: "Personal",
+        accentColor: "#123456",
+        enabled: false,
+        config: makeCodexConfig({}),
+      };
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+        drivers: [trackingDriver],
+        configMap: { [instanceId]: baseEntry },
+      });
+      const original = yield* registry.getInstance(instanceId);
+      expect(original).toBeDefined();
+
+      yield* mutator.reconcile({
+        [instanceId]: {
+          ...baseEntry,
+          displayName: "Work",
+          accentColor: "#654321",
+        },
+      });
+
+      const retained = yield* registry.getInstance(instanceId);
+      expect(retained).toBe(original);
+      expect(retained!.displayName).toBe("Work");
+      expect(retained!.accentColor).toBe("#654321");
+      expect((yield* retained!.snapshot.getSnapshot).displayName).toBe("Work");
+      expect((yield* retained!.snapshot.getSnapshot).accentColor).toBe("#654321");
+      expect(closed).toBe(0);
+
+      const clearedEntry = {
+        driver: baseEntry.driver,
+        enabled: baseEntry.enabled,
+        config: baseEntry.config,
+      };
+      yield* mutator.reconcile({ [instanceId]: clearedEntry });
+      const cleared = yield* registry.getInstance(instanceId);
+      expect(cleared).toBe(original);
+      expect(cleared!.displayName).toBeUndefined();
+      expect(cleared!.accentColor).toBeUndefined();
+      const clearedSnapshot = yield* cleared!.snapshot.getSnapshot;
+      expect(clearedSnapshot.displayName).toBeUndefined();
+      expect(clearedSnapshot.accentColor).toBeUndefined();
+      expect(closed).toBe(0);
+
+      yield* mutator.reconcile({
+        [instanceId]: {
+          ...clearedEntry,
+          config: makeCodexConfig({ customModels: ["runtime-change"] }),
+        },
+      });
+      const replaced = yield* registry.getInstance(instanceId);
+      expect(replaced).not.toBe(original);
+      expect(closed).toBe(1);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       // Old settings files can carry both flags with conflicting values.
