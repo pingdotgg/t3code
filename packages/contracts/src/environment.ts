@@ -39,6 +39,19 @@ export const ENVIRONMENT_MACHINE_KINDS = [
   "laptop",
   "mac-mini",
   "mac-studio",
+  "raspberry-pi",
+  "docker",
+  "macos",
+  "windows",
+  "wsl",
+  "debian",
+  "ubuntu",
+  "fedora",
+  "arch",
+  "mint",
+  "opensuse",
+  "nixos",
+  "alpine",
 ] as const;
 export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS);
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
@@ -148,6 +161,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server answers projects.listIgnoredFiles. */
   ignoredFileListing: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
+  /** Kinds this server accepts for `environmentIcon`; older servers reject the OS and distribution kinds. */
+  environmentIconKinds: Schema.optionalKey(Schema.Array(Schema.String)),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
   /** The desktop app switches update tracks when a server update request names one. */
   desktopAppChannelSwitch: Schema.optionalKey(Schema.Boolean),

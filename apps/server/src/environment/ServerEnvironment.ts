@@ -1,4 +1,5 @@
 import {
+  ENVIRONMENT_MACHINE_KINDS,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -267,6 +268,7 @@ export const make = Effect.gen(function* () {
       threadStop: true,
       ...(hostPlatform === "win32" ? {} : { localServerStop: true }),
       environmentIcon: true,
+      environmentIconKinds: ENVIRONMENT_MACHINE_KINDS,
       projectCloneTracking: true,
       projectOrganization: true,
       ignoredFileListing: true,
