@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -31,9 +31,14 @@ export function RedactedSensitiveText(props: {
   readonly hideTooltip: string;
   readonly className?: string;
 }) {
-  const [revealed, setRevealed] = useState(false);
+  // "hiding" blurs the real value first; the placeholder swaps in once the blur has faded in.
+  const [visibility, setVisibility] = useState<"hidden" | "hiding" | "revealed">("hidden");
+  const revealed = visibility === "revealed";
+  const hideTimeout = useRef(0);
   const value = props.value?.trim();
   const redacted = useMemo(() => (value ? redactedPlaceholder(value) : ""), [value]);
+  const finishHiding = () =>
+    setVisibility((current) => (current === "hiding" ? "hidden" : current));
 
   if (!value) return null;
 
@@ -48,10 +53,22 @@ export function RedactedSensitiveText(props: {
               revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-xs",
               props.className,
             )}
-            onClick={() => setRevealed((current) => !current)}
+            onClick={() => {
+              window.clearTimeout(hideTimeout.current);
+              if (!revealed) {
+                setVisibility("revealed");
+                return;
+              }
+              setVisibility("hiding");
+              // Finishes the hide when the blur never reports its end, e.g. a theme change suppressed it.
+              hideTimeout.current = window.setTimeout(finishHiding, 400);
+            }}
+            onTransitionEnd={(event) => {
+              if (event.propertyName === "filter") finishHiding();
+            }}
             aria-label={props.ariaLabel}
           >
-            {revealed ? value : redacted}
+            {visibility === "hidden" ? redacted : value}
           </button>
         }
       />
