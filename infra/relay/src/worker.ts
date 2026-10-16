@@ -68,6 +68,7 @@ import * as HookForwarder from "./hooks/HookForwarder.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
+import * as AgentWidgetRefresh from "./agentActivity/AgentWidgetRefresh.ts";
 
 const layerWebcrypto = Layer.succeed(
   Crypto.Crypto,
@@ -96,6 +97,7 @@ const layerRelayApi = Layer.mergeAll(
   RelayHttpApi.layerHealthApi,
   RelayHttpApi.layerMetadataApi,
   RelayHttpApi.layerMobileApi,
+  RelayHttpApi.layerWidgetApi,
   RelayHttpApi.layerClientApi,
   RelayHttpApi.layerTokenApi,
   RelayHttpApi.layerDpopClientApi,
@@ -272,7 +274,7 @@ export const layer = Api.make(
         ),
       ),
       Layer.provideMerge(DpopProofs.layer),
-      Layer.provideMerge(ApnsDeliveries.layer),
+      Layer.provideMerge(ApnsDeliveries.layer.pipe(Layer.provideMerge(AgentWidgetRefresh.layer))),
       Layer.provideMerge(
         FcmDeliveries.layer.pipe(
           Layer.provide(
