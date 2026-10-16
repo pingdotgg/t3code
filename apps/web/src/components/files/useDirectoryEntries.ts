@@ -12,6 +12,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [pending, setPending] = useState(0);
   const [loadingDirectories, setLoadingDirectories] = useState<ReadonlySet<string>>(new Set());
   const requests = useRef(new Map<string, Promise<void>>());
+  const followUpRefreshes = useRef(new Map<string, Promise<void>>());
   const loaded = useRef(new Set<string>());
   const requested = useRef(new Set<string>());
   const active = useRef(true);
@@ -21,8 +22,19 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const load = useCallback(
     function loadDirectory(directoryPath: string, refresh = false): Promise<void> {
       const existing = requests.current.get(directoryPath);
-      if (existing)
-        return refresh ? existing.then(() => loadDirectory(directoryPath, true)) : existing;
+      if (existing) {
+        if (!refresh) return existing;
+        // Share one rescan after this listing; mutations during that rescan can queue another.
+        let followUp = followUpRefreshes.current.get(directoryPath);
+        if (!followUp) {
+          followUp = existing.then(() => {
+            followUpRefreshes.current.delete(directoryPath);
+            if (active.current) return loadDirectory(directoryPath, true);
+          });
+          followUpRefreshes.current.set(directoryPath, followUp);
+        }
+        return followUp;
+      }
       if (!refresh && loaded.current.has(directoryPath)) return Promise.resolve();
       loaded.current.add(directoryPath);
       requested.current.add(directoryPath);
@@ -122,14 +134,11 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   const refresh = useCallback(() => {
     const paths = [...requested.current].filter((path) => reachableDirectories.has(path));
-    let next = 0;
-    const worker = async () => {
-      while (next < paths.length && active.current) {
-        const path = paths[next++];
-        if (path !== undefined) await load(path, true);
-      }
-    };
-    for (let index = 0; index < Math.min(4, paths.length); index++) void worker();
+    // load owns the concurrency limit and coalesces each directory's queued refresh.
+    for (const path of paths) {
+      if (!active.current) break;
+      void load(path, true);
+    }
   }, [load, reachableDirectories]);
 
   return {
