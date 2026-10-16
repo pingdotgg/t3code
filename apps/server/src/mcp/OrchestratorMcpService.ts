@@ -1443,6 +1443,13 @@ const make = Effect.gen(function* () {
             null);
       const resultTransfer = taskResultTransfer(parentProjection, childProjection, task) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+      const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
+        ? terminalRun.id === childRun?.id
+          ? derivedResult
+          : subagentResultForRun(childProjection, terminalRun).text
+        : null;
+      const latestTerminalTransferId = resultTransferForRun(terminalRun)?.id ?? null;
+      const resultContextTransferId = resultTransfer?.id ?? null;
       const response = {
         taskId: task.id,
         childThreadId: task.childThreadId,
@@ -1454,16 +1461,16 @@ const make = Effect.gen(function* () {
         providerInstanceId: task.providerInstanceId,
         model: task.model,
         summary: derivedResult,
-        resultContextTransferId: resultTransfer?.id ?? null,
+        resultContextTransferId,
         latestTerminalRunId: terminalRun?.id ?? null,
         latestTerminalStatus:
           terminalStatus !== null && isTerminalTaskStatus(terminalStatus) ? terminalStatus : null,
-        latestTerminalSummary: canExposeTaskRunResult(terminalRun)
-          ? terminalRun.id === childRun?.id
-            ? derivedResult
-            : subagentResultForRun(childProjection, terminalRun).text
-          : null,
-        latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+        // Null when it would repeat summary/resultContextTransferId, so the
+        // task's own result is not shipped twice.
+        latestTerminalSummary:
+          latestTerminalSummary === derivedResult ? null : latestTerminalSummary,
+        latestTerminalResultContextTransferId:
+          latestTerminalTransferId === resultContextTransferId ? null : latestTerminalTransferId,
         // A finished task has no question of its own; later child runs belong to other tasks.
         hasPendingQuestion:
           !isTerminalTaskStatus(status) &&

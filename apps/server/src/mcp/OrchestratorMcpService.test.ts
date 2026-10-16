@@ -182,6 +182,120 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect("omits latestTerminalSummary when it repeats the task summary", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-dedupe-parent");
+      const childThreadId = ThreadId.make("thread:mcp-dedupe-child");
+      const taskId = NodeId.make("node:mcp-dedupe-task");
+      const taskRunId = RunId.make("run:mcp-dedupe-task");
+      const followupRunId = RunId.make("run:mcp-dedupe-followup");
+      const taskResult = "Delegated result. ".repeat(1_000);
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: taskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            status: "completed",
+            result: taskResult,
+            completionDelivery: { state: "acknowledged" },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const taskRun = {
+        id: taskRunId,
+        ordinal: 1,
+        status: "completed",
+        delegatedTaskId: taskId,
+        startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+        completedAt: DateTime.makeUnsafe("2026-10-03T10:10:00Z"),
+      };
+      const followupRun = {
+        id: followupRunId,
+        ordinal: 2,
+        status: "completed",
+        startedAt: DateTime.makeUnsafe("2026-10-03T10:20:00Z"),
+        completedAt: DateTime.makeUnsafe("2026-10-03T10:30:00Z"),
+      };
+      let followupText: string | null = null;
+      const childProjection = () =>
+        ({
+          thread: { id: childThreadId },
+          runs: followupText === null ? [taskRun] : [taskRun, followupRun],
+          contextTransfers: [],
+          messages:
+            followupText === null
+              ? []
+              : [
+                  {
+                    id: "message:mcp-dedupe-followup",
+                    runId: followupRunId,
+                    role: "assistant",
+                    text: followupText,
+                    updatedAt: followupRun.completedAt,
+                  },
+                ],
+          turnItems: [],
+          subagents: [],
+          providerThreads: [],
+        }) as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection()),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-dedupe"),
+        requestNamespace: "provider-session:mcp-dedupe",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-dedupe",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const own = yield* service.taskStatus(scope, taskId);
+        assert.equal(own.summary, taskResult);
+        assert.equal(own.latestTerminalRunId, taskRunId);
+        assert.equal(own.latestTerminalStatus, "completed");
+        assert.isNull(own.latestTerminalSummary);
+
+        followupText = taskResult;
+        const identical = yield* service.taskStatus(scope, taskId);
+        assert.equal(identical.summary, taskResult);
+        assert.equal(identical.latestTerminalRunId, followupRunId);
+        assert.isNull(identical.latestTerminalSummary);
+
+        followupText = "Follow-up result.";
+        const distinct = yield* service.taskStatus(scope, taskId);
+        assert.equal(distinct.summary, taskResult);
+        assert.equal(distinct.latestTerminalRunId, followupRunId);
+        assert.equal(distinct.latestTerminalSummary, "Follow-up result.");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("reports a restart-cut child as working until its continuation settles", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-restart-parent");

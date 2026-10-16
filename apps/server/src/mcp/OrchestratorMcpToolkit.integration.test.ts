@@ -1801,10 +1801,10 @@ describe("orchestrator MCP toolkit", () => {
               hasPendingChildRuns: false,
               latestTerminalRunId: delegated.childRunId,
               latestTerminalStatus: "completed",
-              latestTerminalSummary: delegatedResult,
+              latestTerminalSummary: null,
+              latestTerminalResultContextTransferId: null,
             });
             expect(delegatedStatus.resultContextTransferId).not.toBeNull();
-            expect(delegatedStatus.latestTerminalResultContextTransferId).not.toBeNull();
 
             // Wait-mode completion already returned its result while the parent was live.
             yield* expectOffersToStay(0);
@@ -4045,12 +4045,10 @@ describe("orchestrator MCP toolkit", () => {
             hasPendingChildRuns: false,
             latestTerminalRunId: delegated.childRunId,
             latestTerminalStatus: "completed",
-            latestTerminalSummary: delegatedResult,
+            latestTerminalSummary: null,
+            latestTerminalResultContextTransferId: null,
           });
           expect(delegated.resultContextTransferId).not.toBeNull();
-          expect(delegated.latestTerminalResultContextTransferId).toBe(
-            delegated.resultContextTransferId,
-          );
 
           // Delegated children are subagent threads too, but T3 owns them, so
           // they keep taking follow-ups (provider-native children do not).
@@ -4146,8 +4144,8 @@ describe("orchestrator MCP toolkit", () => {
             hasPendingChildRuns: true,
             latestTerminalRunId: delegated.childRunId,
             latestTerminalStatus: "completed",
-            latestTerminalSummary: delegatedResult,
-            latestTerminalResultContextTransferId: delegated.resultContextTransferId,
+            latestTerminalSummary: null,
+            latestTerminalResultContextTransferId: null,
           });
 
           const finalSequence = yield* orchestrator.getThreadEventSequence(delegated.childThreadId);
