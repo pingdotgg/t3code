@@ -329,6 +329,8 @@ const withManager = <A>(
 
 interface TestCapturedPreviewImage {
   readonly toJPEG: () => Buffer;
+  /** Only fixtures that deliver picture-in-picture frames need pixels to fingerprint. */
+  readonly toBitmap?: () => Buffer;
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
 
@@ -3454,6 +3456,7 @@ describe("PreviewManager", () => {
         const jpeg = Buffer.from("shared-preview-frame");
         const capturePage = vi.fn(async () => ({
           toJPEG: () => jpeg,
+          toBitmap: () => jpeg,
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue({
@@ -3612,6 +3615,7 @@ describe("PreviewManager", () => {
         const jpeg = Buffer.from("shared-preview-frame");
         const capturePage = vi.fn(async () => ({
           toJPEG: () => jpeg,
+          toBitmap: () => jpeg,
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3687,6 +3691,7 @@ describe("PreviewManager", () => {
         const jpeg = Buffer.from("retry-preview-frame");
         const capturePage = vi.fn(async () => ({
           toJPEG: () => jpeg,
+          toBitmap: () => jpeg,
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3718,6 +3723,7 @@ describe("PreviewManager", () => {
         const jpeg = Buffer.from("reloaded-preview-frame");
         const capturePage = vi.fn(async () => ({
           toJPEG: () => jpeg,
+          toBitmap: () => jpeg,
           getSize: () => ({ width: 1280, height: 720 }),
         }));
         fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
@@ -3741,11 +3747,62 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("encodes a picture-in-picture frame only when the page changes", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let page = "static-page";
+        let pixelsReadable = true;
+        const toJPEG = vi.fn((pixels: string) => Buffer.from(`jpeg:${pixels}`));
+        const capturePage = vi.fn(async () => {
+          const pixels = page;
+          return {
+            toJPEG: () => toJPEG(pixels),
+            toBitmap: () => (pixelsReadable ? Buffer.from(pixels) : Buffer.alloc(0)),
+            getSize: () => ({ width: 1280, height: 720 }),
+          };
+        });
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+
+        yield* manager.createTab("tab_pip_unchanged");
+        yield* manager.registerWebview("tab_pip_unchanged", 42);
+        yield* manager.openPictureInPicture("tab_pip_unchanged");
+        yield* TestClock.adjust(100);
+
+        expect(capturePage).toHaveBeenCalledTimes(2);
+        expect(toJPEG).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledOnce();
+
+        page = "changed-page";
+        yield* TestClock.adjust(100);
+
+        expect(toJPEG).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(send).toHaveBeenLastCalledWith(
+          "desktop:preview-pip-frame",
+          expect.objectContaining({ data: Buffer.from("jpeg:changed-page").toString("base64") }),
+        );
+
+        // A frame whose pixels cannot be read has no fingerprint and is still delivered.
+        pixelsReadable = false;
+        yield* TestClock.adjust(100);
+
+        expect(toJPEG).toHaveBeenCalledTimes(3);
+        expect(send).toHaveBeenCalledTimes(3);
+        yield* manager.closePictureInPicture("tab_pip_unchanged");
+      }),
+    ),
+  );
+
   effectIt.effect("drops empty frames before picture-in-picture delivery", () =>
     withManager((manager) =>
       Effect.gen(function* () {
         const validImage: TestCapturedPreviewImage = {
           toJPEG: () => Buffer.from("valid-preview-frame"),
+          toBitmap: () => Buffer.from("valid-preview-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         };
         const capturePage = vi.fn(async () => validImage);

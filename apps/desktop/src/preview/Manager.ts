@@ -5,6 +5,7 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
@@ -318,6 +319,33 @@ const cropAnnotationScreenshot = (
   return { dataUrl: cropped.toDataURL(), width: size.width, height: size.height, cropRect };
 };
 
+/**
+ * Electron converts `toBitmap()` output to sRGB by default. Captures on P3 Macs are
+ * P3, so that conversion costs more per tick than the JPEG encode the fingerprint
+ * replaces. An invalid target color space has no Skia color space, so `readPixels`
+ * copies the pixels without a color transform. The fingerprint only compares frames
+ * with each other, so color accuracy is irrelevant.
+ */
+const FINGERPRINT_BITMAP_OPTIONS: Electron.ToBitmapOptions = {
+  colorSpace: { primaries: "invalid", transfer: "invalid", matrix: "invalid", range: "invalid" },
+};
+
+/**
+ * Identity of a captured frame: cheap enough to compute every tick, unlike a JPEG
+ * encode. Null when the pixels could not be read (Electron reports a failed
+ * `readPixels` as an empty buffer), so the caller treats the frame as changed.
+ */
+const fingerprintCapturedFrame = (image: Electron.NativeImage, size: Electron.Size) => {
+  let bitmap: Buffer;
+  try {
+    bitmap = image.toBitmap(FINGERPRINT_BITMAP_OPTIONS);
+  } catch {
+    return null;
+  }
+  if (bitmap.byteLength === 0) return null;
+  return `${size.width}x${size.height}:${NodeZlib.crc32(bitmap)}`;
+};
+
 const findZoomStep = (current: number): number => {
   const index = ZOOM_LEVELS.findIndex(
     (level) => Math.abs(level - current) < ZOOM_EPSILON || level > current,
@@ -370,7 +398,7 @@ interface FrameCaptureSession {
   readonly scope: Scope.Closeable | null;
   readonly consumers: ReadonlySet<FrameCaptureConsumer>;
   readonly unthrottledWebContentsIds: ReadonlySet<number>;
-  readonly lastPictureInPictureFrame: Buffer | null;
+  readonly lastPictureInPictureFingerprint: string | null;
 }
 
 interface PictureInPictureSession {
@@ -793,8 +821,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 ...current,
                 scope: consumer === "picture-in-picture" ? null : current.scope,
                 consumers,
-                lastPictureInPictureFrame:
-                  consumer === "picture-in-picture" ? null : current.lastPictureInPictureFrame,
+                lastPictureInPictureFingerprint:
+                  consumer === "picture-in-picture"
+                    ? null
+                    : current.lastPictureInPictureFingerprint,
               });
             }),
           ] as const;
@@ -2584,6 +2614,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     ) {
       return;
     }
+    const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
+    if (frameSession?.scope !== captureSession.scope) return;
+    // Fingerprint the raw pixels before encoding so an unchanged page skips the
+    // synchronous JPEG encode, the base64 copy and the IPC send. An unreadable
+    // frame has no fingerprint and is always delivered.
+    const fingerprint = fingerprintCapturedFrame(image, size);
+    const pictureInPicture =
+      frameSession.consumers.has("picture-in-picture") &&
+      (fingerprint === null || frameSession.lastPictureInPictureFingerprint !== fingerprint);
+    if (!pictureInPicture) return;
     const encoded = yield* attempt(
       {
         operation: "frameCapture.encodeFrame",
@@ -2592,12 +2632,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       },
       () => image.toJPEG(PICTURE_IN_PICTURE_JPEG_QUALITY),
     );
-    const frameSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
-    if (frameSession?.scope !== captureSession.scope) return;
-    const pictureInPicture =
-      frameSession.consumers.has("picture-in-picture") &&
-      frameSession.lastPictureInPictureFrame?.equals(encoded) !== true;
-    if (!pictureInPicture) return;
     const receivedAt = yield* currentIso;
     const frame: DesktopPreviewRecordingFrame = {
       tabId,
@@ -2662,7 +2696,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               return replaceMap(sessions, (copy) => {
                 copy.set(tabId, {
                   ...frameSession,
-                  lastPictureInPictureFrame: encoded,
+                  lastPictureInPictureFingerprint: fingerprint,
                 });
               });
             });
@@ -2754,7 +2788,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 scope,
                 consumers: new Set([consumer]),
                 unthrottledWebContentsIds: new Set([wc.id]),
-                lastPictureInPictureFrame: null,
+                lastPictureInPictureFingerprint: null,
               });
             }),
           ] as const;
@@ -2920,7 +2954,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               const current = sessions.get(tabId);
               if (!current?.consumers.has("picture-in-picture")) return sessions;
               return replaceMap(sessions, (copy) => {
-                copy.set(tabId, { ...current, lastPictureInPictureFrame: null });
+                copy.set(tabId, { ...current, lastPictureInPictureFingerprint: null });
               });
             }),
           );
