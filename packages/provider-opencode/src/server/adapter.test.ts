@@ -15,6 +15,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -148,13 +149,16 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
   suffix: string,
   nativeSessionId: string,
   client: object,
+  selection: Pick<ModelSelection, "model" | "options"> = {
+    model: "anthropic/claude-sonnet",
+    options: [],
+  },
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
   const modelSelection = {
     instanceId,
-    model: "anthropic/claude-sonnet",
-    options: [],
+    ...selection,
   };
   const policy = runtimePolicy("full-access", { cwd: "/workspace" });
   const adapter = yield* makeOpenCodeAdapterV2({
@@ -241,6 +245,105 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
 });
 
 describe("OpenCodeAdapterV2", () => {
+  it.effect.each([
+    ["empty", "prompt"],
+    ["absent", "prompt"],
+    ["unsupported", "prompt"],
+    ["supported", "prompt"],
+    ["unknown", "prompt"],
+    ["failure", "prompt"],
+    ["unset", "prompt"],
+    ["empty", "command"],
+    ["absent", "command"],
+    ["unsupported", "command"],
+    ["supported", "command"],
+    ["unknown", "command"],
+    ["failure", "command"],
+    ["unset", "command"],
+  ] as const)("normalizes reasoning variants for %j", ([kind, request]) =>
+    Effect.gen(function* () {
+      const suffix = `variant-${kind}-${request}`;
+      const nativeEvents = asyncEventStream();
+      const inputs: Array<Record<string, unknown>> = [];
+      let inventoryCalls = 0;
+      const receive = async (input: Record<string, unknown>) => {
+        inputs.push(input);
+        return { data: true };
+      };
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        suffix,
+        suffix,
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          provider: {
+            list: async () => {
+              inventoryCalls++;
+              if (kind === "failure") throw new Error("inventory unavailable");
+              return {
+                data: {
+                  all: [
+                    {
+                      id: "opencode",
+                      models:
+                        kind === "unknown"
+                          ? {}
+                          : {
+                              "big-pickle": {
+                                id: "big-pickle",
+                                ...(kind === "absent"
+                                  ? {}
+                                  : {
+                                      variants:
+                                        kind === "supported"
+                                          ? { medium: {} }
+                                          : kind === "unsupported"
+                                            ? { high: {} }
+                                            : {},
+                                    }),
+                              },
+                            },
+                    },
+                  ],
+                },
+              };
+            },
+          },
+          command: { list: async () => ({ data: [{ name: "review" }] }) },
+          session: {
+            create: async () => ({ data: { id: suffix, time: { created: 1, updated: 1 } } }),
+            promptAsync: receive,
+            command: receive,
+          },
+        },
+        {
+          model: "opencode/big-pickle",
+          options: [
+            ...(kind === "unset" ? [] : [{ id: "variant", value: "medium" }]),
+            { id: "agent", value: "plan" },
+          ],
+        },
+      );
+      yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
+      assert.equal(inputs.length, 1);
+      const payload = inputs[0]!;
+      assert.equal(payload.agent, "plan");
+      if (kind === "supported" || kind === "unknown" || kind === "failure") {
+        assert.equal(payload.variant, "medium");
+      } else {
+        assert.equal(Object.hasOwn(payload, "variant"), false);
+      }
+      if (kind === "unset") assert.equal(inventoryCalls, 0);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect.each(["completed", "failed", "unresolved", "unavailable", "reconnect"] as const)(
     "normalizes OpenCode step usage for %s turns",
     (ending) =>

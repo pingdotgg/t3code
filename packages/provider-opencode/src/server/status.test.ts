@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { beforeEach } from "vite-plus/test";
+import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/model";
 
 import { OpenCodeSettings } from "../settings.ts";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -454,6 +455,55 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         "build",
       );
     }),
+  );
+
+  it.effect.each(["empty", "absent"] as const)(
+    "omits Reasoning when model variants are %s",
+    (kind) =>
+      Effect.gen(function* () {
+        runtimeMock.state.inventory = {
+          providerList: {
+            connected: ["opencode"],
+            all: [
+              {
+                id: "opencode",
+                name: "OpenCode Zen",
+                models: {
+                  "big-pickle": {
+                    id: "big-pickle",
+                    name: "Big Pickle",
+                    ...(kind === "empty" ? { variants: {} } : {}),
+                  },
+                },
+              },
+            ],
+            default: {},
+          },
+          agents: [
+            { name: "build", hidden: false, mode: "primary" },
+            { name: "plan", hidden: false, mode: "primary" },
+          ],
+        };
+        const snapshot = yield* checkProvider(makeOpenCodeSettings());
+        const model = snapshot.models.find((entry) => entry.slug === "opencode/big-pickle");
+        NodeAssert.ok(model);
+        const descriptors = model.capabilities?.optionDescriptors;
+        NodeAssert.deepEqual(descriptors, [
+          {
+            id: "agent",
+            label: "Agent",
+            type: "select",
+            options: [
+              { id: "build", label: "Build", isDefault: true },
+              { id: "plan", label: "Plan" },
+            ],
+            currentValue: "build",
+          },
+        ]);
+        NodeAssert.deepEqual(buildProviderOptionSelectionsFromDescriptors(descriptors), [
+          { id: "agent", value: "build" },
+        ]);
+      }),
   );
 
   it.effect("includes OpenCode skills in the provider snapshot", () =>
