@@ -113,9 +113,21 @@ const TASK_WAKE_EVENTS = [
 /** A person answers the card, so a slower poll is plenty. */
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
-const DEFAULT_THREAD_READ_LIMIT = 50;
-const DEFAULT_THREAD_RUN_LIMIT = 10;
-const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+const DEFAULT_THREAD_READ_LIMIT = 20;
+const DEFAULT_THREAD_RUN_LIMIT = 5;
+// Default text budgets per item. Tool output is a preview; callers expand one
+// item with itemId/textOffset/maxCharsPerItem, which overrides both budgets.
+const DEFAULT_THREAD_MESSAGE_MAX_CHARS = 4_000;
+const DEFAULT_THREAD_TOOL_MAX_CHARS = 600;
+const TOOL_OUTPUT_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "dynamic_tool",
+  "command_execution",
+  "file_change",
+  "file_search",
+  "web_search",
+  "checkpoint",
+  "user_input_request",
+]);
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -467,7 +479,7 @@ function pageIncludesTerminalTaskResult(input: {
     OrchestrationV2ThreadProjection,
     "thread" | "runs" | "contextTransfers" | "messages" | "turnItems"
   >;
-  readonly maxChars: number;
+  readonly maxCharsPerItem: number | undefined;
 }): boolean {
   const transfer = taskResultTransfer(input.parent, input.target, input.task);
   if (transfer === undefined) return false;
@@ -490,7 +502,7 @@ function pageIncludesTerminalTaskResult(input: {
     if (!matchesResult) return false;
 
     const text = turnItemText(row.item);
-    return text !== null && text.length <= input.maxChars;
+    return text !== null && text.length <= itemTextBudget(row.item, input.maxCharsPerItem);
   });
 }
 
@@ -862,43 +874,57 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
   }
 }
 
+/** The caller's maxCharsPerItem, else the default budget for the item's type. */
+function itemTextBudget(item: OrchestrationV2TurnItem, maxCharsPerItem: number | undefined) {
+  return (
+    maxCharsPerItem ??
+    (TOOL_OUTPUT_ITEM_TYPES.has(item.type)
+      ? DEFAULT_THREAD_TOOL_MAX_CHARS
+      : DEFAULT_THREAD_MESSAGE_MAX_CHARS)
+  );
+}
+
+/** Projects a timeline row, omitting fields that are absent or implied by the read thread. */
 function timelineItem(input: {
+  readonly threadId: ThreadId;
   readonly row: OrchestrationV2ThreadProjection["visibleTurnItems"][number];
-  readonly maxChars: number;
+  readonly maxCharsPerItem: number | undefined;
   readonly textOffset?: number;
   readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
 }): OrchestratorMcpThreadTimelineItem {
-  const text = turnItemText(input.row.item);
+  const { row } = input;
+  const text = turnItemText(row.item);
   const offset = input.textOffset ?? 0;
-  const end = offset + input.maxChars;
+  const end = offset + itemTextBudget(row.item, input.maxCharsPerItem);
   const textTruncated = text !== null && text.length > end;
   const messageId =
-    input.row.item.type === "user_message" || input.row.item.type === "assistant_message"
-      ? input.row.item.messageId
+    row.item.type === "user_message" || row.item.type === "assistant_message"
+      ? row.item.messageId
       : null;
   const message =
     messageId === null
       ? undefined
       : input.messagesByThreadId
-          .get(input.row.sourceThreadId)
+          .get(row.sourceThreadId)
           ?.find((candidate) => candidate.id === messageId);
   return {
-    position: input.row.position,
-    visibility: input.row.visibility,
-    sourceThreadId: input.row.sourceThreadId,
-    itemId: input.row.sourceItemId,
-    ...(input.row.item.type === "subagent" ? { subagentId: input.row.item.subagentId } : {}),
-    runId: input.row.item.runId,
-    messageId,
-    createdBy: message?.createdBy ?? null,
-    creationSource: message?.creationSource ?? null,
-    type: input.row.item.type,
-    status: input.row.item.status,
-    title: input.row.item.title,
-    text: text === null ? null : text.slice(offset, end),
+    position: row.position,
+    ...(row.visibility === "local" ? {} : { visibility: row.visibility }),
+    ...(row.sourceThreadId === input.threadId ? {} : { sourceThreadId: row.sourceThreadId }),
+    itemId: row.sourceItemId,
+    ...(row.item.type === "subagent" ? { subagentId: row.item.subagentId } : {}),
+    ...(row.item.runId === null ? {} : { runId: row.item.runId }),
+    ...(messageId === null ? {} : { messageId }),
+    ...(message === undefined
+      ? {}
+      : { createdBy: message.createdBy, creationSource: message.creationSource }),
+    type: row.item.type,
+    status: row.item.status,
+    ...(row.item.title === null ? {} : { title: row.item.title }),
+    ...(text === null ? {} : { text: text.slice(offset, end) }),
     textTruncated,
-    nextTextOffset: textTruncated ? end : null,
-    updatedAt: DateTime.formatIso(input.row.item.updatedAt),
+    ...(textTruncated ? { nextTextOffset: end } : {}),
+    updatedAt: DateTime.formatIso(row.item.updatedAt),
   };
 }
 
@@ -2503,7 +2529,6 @@ const make = Effect.gen(function* () {
         const view = input.view ?? "messages";
         const afterPosition = input.afterPosition ?? -1;
         const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
-        const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
         const timeline = yield* threadManagement
           .getTimelinePage(input.threadId, {
             afterPosition,
@@ -2561,7 +2586,7 @@ const make = Effect.gen(function* () {
                 page,
                 task,
                 target: { ...target, ...resultRecords },
-                maxChars,
+                maxCharsPerItem: input.maxCharsPerItem,
               })
             ) {
               yield* readTask(
@@ -2576,14 +2601,19 @@ const make = Effect.gen(function* () {
         }
         return {
           thread: threadDetail(target, timeline.totalItems, shell, yield* Clock.currentTimeMillis),
-          recentRuns: target.runs
-            .toSorted((left, right) => right.ordinal - left.ordinal)
-            .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-            .map(threadRun),
+          // A later page already saw the runs, so only send them again on request.
+          recentRuns:
+            input.afterPosition !== undefined && input.runLimit === undefined
+              ? []
+              : target.runs
+                  .toSorted((left, right) => right.ordinal - left.ordinal)
+                  .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+                  .map(threadRun),
           items: page.map((row) =>
             timelineItem({
+              threadId: target.thread.id,
               row,
-              maxChars,
+              maxCharsPerItem: input.maxCharsPerItem,
               messagesByThreadId,
               ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
             }),

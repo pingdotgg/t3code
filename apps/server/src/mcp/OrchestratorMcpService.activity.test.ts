@@ -531,3 +531,204 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     expect(staleDelete.code).toBe("parent_not_active");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("readThread keeps default pages small and expands one item on request", async () => {
+  const readThreadId = ThreadId.make("thread-mcp-orchestrator-read");
+  const toolOutput = "tool-output-line\n".repeat(200);
+  const commandOutput = "command-output-line\n".repeat(200);
+  const longReply = "r".repeat(10_000);
+  const turnItem = <Fields extends { readonly type: string }>(id: string, fields: Fields) => ({
+    id,
+    runId: "run-read-1",
+    status: "completed",
+    title: null,
+    createdAt: now,
+    updatedAt: now,
+    ...fields,
+  });
+  const items = [
+    turnItem("item-tool", {
+      type: "dynamic_tool",
+      toolName: "fetch",
+      input: { url: "https://example.com" },
+      output: toolOutput,
+    }),
+    turnItem("item-command", { type: "command_execution", input: "ls", output: commandOutput }),
+    turnItem("item-reply", {
+      type: "assistant_message",
+      messageId: "message-reply",
+      text: longReply,
+    }),
+    ...Array.from({ length: 27 }, (_, index) =>
+      turnItem(`item-${index}`, {
+        type: "assistant_message",
+        messageId: `message-${index}`,
+        text: `reply ${index}`,
+      }),
+    ),
+  ];
+  const rows = [
+    ...items.map((item, position) => ({
+      position,
+      visibility: "local",
+      sourceThreadId: readThreadId,
+      sourceItemId: item.id,
+      item,
+    })),
+    {
+      position: items.length,
+      visibility: "inherited",
+      sourceThreadId: parentThreadId,
+      sourceItemId: "item-inherited",
+      item: turnItem("item-inherited", {
+        type: "assistant_message",
+        messageId: "message-inherited",
+        runId: null,
+        text: "from the parent",
+      }),
+    },
+  ];
+  const projection = {
+    thread: baseThread({
+      threadId: readThreadId,
+      title: "Read",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: Array.from({ length: 8 }, (_, index) =>
+      makeRun({ id: RunId.make(`run-read-${index + 1}`), ordinal: index + 1, status: "completed" }),
+    ),
+    visibleTurnItems: rows,
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const parentProjection = {
+    ...projection,
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : projection),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+          getTimelinePage: (_threadId, options) => {
+            // Mirrors ProjectionStore: the default messages view drops tool rows.
+            const matching = rows.filter((row) =>
+              options.itemId === undefined
+                ? row.position > (options.afterPosition ?? -1) &&
+                  (options.view === "activity" ||
+                    ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type))
+                : row.sourceItemId === options.itemId,
+            );
+            return Effect.succeed({
+              items: matching.slice(0, options.limit),
+              totalItems: rows.length,
+              hasMore: matching.length > options.limit,
+            } as never);
+          },
+          getProjectThreadRecords: () => Effect.succeed(projection),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const messages = yield* service.readThread(makeScope(), { threadId: readThreadId });
+    expect(messages.items[0]).toMatchObject({ itemId: "item-reply" });
+    const first = yield* service.readThread(makeScope(), {
+      threadId: readThreadId,
+      view: "activity",
+    });
+    expect(first.items).toHaveLength(20);
+    expect(first.hasMore).toBe(true);
+    expect(first.recentRuns.map((run) => run.ordinal)).toEqual([8, 7, 6, 5, 4]);
+
+    // Tool output is a preview of the same text a targeted re-read continues.
+    const [tool, command, reply, plain] = first.items;
+    expect(tool).toMatchObject({ itemId: "item-tool", textTruncated: true, nextTextOffset: 600 });
+    expect(tool!.text).toHaveLength(600);
+    expect(command).toMatchObject({ textTruncated: true, nextTextOffset: 600 });
+    expect(reply).toMatchObject({ textTruncated: true, nextTextOffset: 4_000 });
+    expect(reply!.text).toBe(longReply.slice(0, 4_000));
+    const rest = yield* service.readThread(makeScope(), {
+      threadId: readThreadId,
+      itemId: tool!.itemId,
+      textOffset: tool!.nextTextOffset,
+      maxCharsPerItem: 50_000,
+    });
+    expect(rest.items).toHaveLength(1);
+    expect(rest.items[0]).toMatchObject({ textTruncated: false });
+    expect(rest.items[0]).not.toHaveProperty("nextTextOffset");
+    const fullTool = JSON.parse(tool!.text! + rest.items[0]!.text!);
+    expect(fullTool).toEqual({
+      toolName: "fetch",
+      input: { url: "https://example.com" },
+      output: toolOutput,
+    });
+
+    // A plain local item carries no redundant or null metadata.
+    expect(plain).toEqual({
+      position: 3,
+      itemId: "item-0",
+      runId: "run-read-1",
+      messageId: "message-0",
+      type: "assistant_message",
+      status: "completed",
+      text: "reply 0",
+      textTruncated: false,
+      updatedAt: "2026-08-04T12:00:00.000Z",
+    });
+
+    // An explicit maxCharsPerItem overrides both type budgets.
+    const explicit = yield* service.readThread(makeScope(), {
+      threadId: readThreadId,
+      view: "activity",
+      limit: 3,
+      maxCharsPerItem: 1_000,
+    });
+    expect(explicit.items.map((item) => item.text?.length)).toEqual([1_000, 1_000, 1_000]);
+
+    // Later pages skip the runs already returned, and keep cross-thread provenance.
+    const next = yield* service.readThread(makeScope(), {
+      threadId: readThreadId,
+      afterPosition: first.nextPosition!,
+    });
+    expect(next.recentRuns).toEqual([]);
+    expect(next.items.at(-1)).toMatchObject({
+      visibility: "inherited",
+      sourceThreadId: parentThreadId,
+      text: "from the parent",
+    });
+    expect(next.items.at(-1)).not.toHaveProperty("runId");
+    const withRuns = yield* service.readThread(makeScope(), {
+      threadId: readThreadId,
+      afterPosition: first.nextPosition!,
+      runLimit: 2,
+    });
+    expect(withRuns.recentRuns).toHaveLength(2);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});

@@ -411,20 +411,23 @@ export type OrchestratorMcpThreadRun = typeof OrchestratorMcpThreadRun.Type;
 
 export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   position: NonNegativeInt,
-  visibility: Schema.Literals(["local", "inherited", "synthetic"]),
-  sourceThreadId: ThreadId,
+  /** Omitted for the read thread's own (local) items. */
+  visibility: Schema.optional(Schema.Literals(["inherited", "synthetic"])),
+  /** Omitted when the item belongs to the read thread itself. */
+  sourceThreadId: Schema.optional(ThreadId),
   itemId: TurnItemId,
   subagentId: Schema.optional(NodeId),
-  runId: Schema.NullOr(RunId),
-  messageId: Schema.NullOr(MessageId),
-  createdBy: Schema.NullOr(OrchestrationV2Actor),
-  creationSource: Schema.NullOr(OrchestrationV2CreationSource),
+  runId: Schema.optional(RunId),
+  messageId: Schema.optional(MessageId),
+  createdBy: Schema.optional(OrchestrationV2Actor),
+  creationSource: Schema.optional(OrchestrationV2CreationSource),
   type: Schema.String,
   status: OrchestrationV2TurnItemStatus,
-  title: Schema.NullOr(Schema.String),
-  text: Schema.NullOr(Schema.String),
+  title: Schema.optional(Schema.String),
+  text: Schema.optional(Schema.String),
   textTruncated: Schema.Boolean,
-  nextTextOffset: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  /** Pass as textOffset with this itemId to read the rest; omitted when nothing remains. */
+  nextTextOffset: Schema.optional(NonNegativeInt),
   updatedAt: IsoDateTime,
 });
 export type OrchestratorMcpThreadTimelineItem = typeof OrchestratorMcpThreadTimelineItem.Type;
