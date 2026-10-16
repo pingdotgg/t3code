@@ -1,8 +1,12 @@
 "use client";
 
 import { useAtomValue } from "@effect/atom-react";
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import {
+  parseScopedThreadKey,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
+import { type EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -11,6 +15,7 @@ import {
   readThreadPreviewState,
   reconcilePreviewServerSessions,
 } from "~/previewStateStore";
+import { isElectron } from "~/env";
 import { previewEnvironment } from "~/state/preview";
 
 class PreviewSessionThreadKeyParseError extends Schema.TaggedError<PreviewSessionThreadKeyParseError>()(
@@ -89,4 +94,40 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
 
 export function usePreviewSession(threadRef: ScopedThreadRef): void {
   useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+}
+
+const inactiveAtom = Atom.make(() => undefined);
+
+/**
+ * The desktop hosts its own server's tabs even while their chat is not shown.
+ * Otherwise an agent tab in a background thread never gets a webview and the
+ * server falls back to its headless browser. Keep each thread's sync running
+ * once the environment reports a tab for it.
+ */
+const desktopHostedPreviewSyncAtom = Atom.family((environmentId: EnvironmentId) => {
+  const eventsAtom = previewEnvironment.events({ environmentId, input: {} });
+  return Atom.make((get) => {
+    const syncedThreadKeys = new Set<string>();
+    get.subscribe(
+      eventsAtom,
+      (result) => {
+        if (!AsyncResult.isSuccess(result) || result.value.type === "closed") return;
+        const threadKey = scopedThreadKey(
+          scopeThreadRef(environmentId, ThreadId.make(result.value.threadId)),
+        );
+        if (syncedThreadKeys.has(threadKey)) return;
+        syncedThreadKeys.add(threadKey);
+        get.mount(previewSessionSyncAtom(threadKey));
+      },
+      { immediate: true },
+    );
+  }).pipe(Atom.withLabel(`preview:desktop-hosted-sync:${environmentId}`));
+});
+
+export function useDesktopHostedPreviewSessions(environmentId: EnvironmentId | null): void {
+  useAtomValue(
+    isElectron && environmentId !== null
+      ? desktopHostedPreviewSyncAtom(environmentId)
+      : inactiveAtom,
+  );
 }
