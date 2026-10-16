@@ -45,6 +45,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import * as CuaDriver from "../cua/CuaDriver.ts";
+import * as BrowserTabs from "../mcp/BrowserTabs.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -330,6 +331,7 @@ export const layerWithOptions = (
        * as settings; acquiring it returns nothing while the setting is off.
        */
       const cuaDriver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
+      const browserTabs = yield* Effect.serviceOption(BrowserTabs.BrowserTabs);
       /**
        * Records the thread's session with the managed Cua Driver, when it is
        * running. A session prepared while it is off keeps its stale answer
@@ -338,8 +340,24 @@ export const layerWithOptions = (
       const setMcpSession = (config: McpProviderSessionConfig) =>
         Effect.gen(function* () {
           const cua = Option.isSome(cuaDriver) ? yield* cuaDriver.value.acquire : Option.none();
-          const { cuaDriver: _previous, ...rest } = config;
-          yield* mcpSessions.set(Option.isSome(cua) ? { ...rest, cuaDriver: cua.value } : rest);
+          const tabs = Option.isSome(browserTabs)
+            ? yield* browserTabs.value.server
+            : Option.none<BrowserTabs.BrowserTabsMcpServer>();
+          const { cuaDriver: _cua, browserTabs: _tabs, ...rest } = config;
+          yield* mcpSessions.set({
+            ...rest,
+            ...(Option.isSome(cua) ? { cuaDriver: cua.value } : {}),
+            ...(Option.isSome(tabs)
+              ? {
+                  browserTabs: {
+                    command: tabs.value.command,
+                    args: tabs.value.args,
+                    env: tabs.value.env,
+                    browserName: tabs.value.browserName,
+                  },
+                }
+              : {}),
+          });
         });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;

@@ -66,6 +66,7 @@ describe("restoring V2 settings", () => {
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],
     ["snoozeLimitedThreads", "Snooze limited threads"],
     ["enableCua", "Computer use"],
+    ["enableAgentBrowserTabs", "Agent browser tabs"],
   ] as const)("restores %s when it is the only changed setting", async (key, label) => {
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, [key]: true };
     hooks.beginRender();

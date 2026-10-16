@@ -218,7 +218,7 @@ export function cursorMcpServers(
         Authorization: session.authorizationHeader,
       },
     },
-    ...McpProviderSession.cuaStdioMcpServers(session),
+    ...McpProviderSession.localStdioMcpServers(session),
   };
 }
 
@@ -2196,9 +2196,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const computerUse =
-            (yield* mcpSessions.read(turnInput.threadId))?.cuaDriver !== undefined;
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, computerUse })}`;
+          const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, computerUse: mcpSession?.cuaDriver !== undefined, browserTabs: mcpSession?.browserTabs?.browserName })}`;
           return images.length === 0
             ? text
             : ({
