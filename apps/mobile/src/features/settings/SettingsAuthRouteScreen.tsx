@@ -1,5 +1,9 @@
 import { useAuth } from "@clerk/expo";
-import { AuthView, type UserProfileCustomPage, UserProfileView } from "@clerk/expo/native";
+import {
+  AuthView,
+  type UserProfileCustomPage,
+  UserProfileView,
+} from "@clerk/expo/native-components";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { View } from "react-native";

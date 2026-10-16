@@ -1,8 +1,8 @@
 diff --git a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
-index 8a6a28c566376fe66c3097c4b09b4ada8df9632c..3446becd7aa8d084aaa14dd0583cc90a1d03afe4 100644
+index d58b54f..1920b1a 100644
 --- a/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
 +++ b/android/src/main/java/expo/modules/ui/ExpoUIModule.kt
-@@ -530,6 +530,10 @@ class ExpoUIModule : Module() {
+@@ -533,6 +533,10 @@ class ExpoUIModule : Module() {
        }
      }
  
@@ -14,10 +14,10 @@ index 8a6a28c566376fe66c3097c4b09b4ada8df9632c..3446becd7aa8d084aaa14dd0583cc90a
        Content { props ->
          HorizontalFloatingToolbarContent(props)
 diff --git a/android/src/main/java/expo/modules/ui/HostView.kt b/android/src/main/java/expo/modules/ui/HostView.kt
-index eac1903ae62f66081211101a0de408215fea6b44..1a3feb98cfb2e6bb38832ae96a22217b990ee888 100644
+index 4887034..6eaf039 100644
 --- a/android/src/main/java/expo/modules/ui/HostView.kt
 +++ b/android/src/main/java/expo/modules/ui/HostView.kt
-@@ -68,6 +68,7 @@ internal enum class ExpoLayoutDirection(val value: String) : Enumerable {
+@@ -69,6 +69,7 @@ internal enum class ExpoLayoutDirection(val value: String) : Enumerable {
  internal data class HostProps(
    val colorScheme: MutableState<ExpoColorScheme?> = mutableStateOf(null),
    val seedColor: MutableState<android.graphics.Color?> = mutableStateOf(null),
@@ -25,7 +25,7 @@ index eac1903ae62f66081211101a0de408215fea6b44..1a3feb98cfb2e6bb38832ae96a22217b
    val layoutDirection: MutableState<ExpoLayoutDirection> = mutableStateOf(ExpoLayoutDirection.LeftToRight),
    val useViewportSizeMeasurement: MutableState<Boolean> = mutableStateOf(false),
    val ignoreSafeAreaKeyboardInsets: MutableState<Boolean> = mutableStateOf(false),
-@@ -132,9 +133,60 @@ internal class HostView(context: Context, appContext: AppContext) :
+@@ -153,9 +154,60 @@ internal class HostView(context: Context, appContext: AppContext) :
      val seededScheme = remember(seedArgb, isDark) {
        seedArgb?.let { seedColorScheme(it, isDark) }
      }
@@ -89,7 +89,7 @@ index eac1903ae62f66081211101a0de408215fea6b44..1a3feb98cfb2e6bb38832ae96a22217b
      // Material3's `MaterialTheme` does not provide `LocalContentColor` — only `Surface` does — so
 diff --git a/android/src/main/java/expo/modules/ui/TopAppBarView.kt b/android/src/main/java/expo/modules/ui/TopAppBarView.kt
 new file mode 100644
-index 0000000000000000000000000000000000000000..4ed0132d57fc7aff08ecb7ee84fb8fa48942931b
+index 0000000..4ed0132
 --- /dev/null
 +++ b/android/src/main/java/expo/modules/ui/TopAppBarView.kt
 @@ -0,0 +1,47 @@
@@ -141,7 +141,7 @@ index 0000000000000000000000000000000000000000..4ed0132d57fc7aff08ecb7ee84fb8fa4
 +  )
 +}
 diff --git a/build/jetpack-compose/Host/index.d.ts b/build/jetpack-compose/Host/index.d.ts
-index b586b653a991ce8840b9994a6fe1e6af75480ece..e32f6e093fde22e9cfc9d7ff612cddb59e036945 100644
+index b586b65..e32f6e0 100644
 --- a/build/jetpack-compose/Host/index.d.ts
 +++ b/build/jetpack-compose/Host/index.d.ts
 @@ -1,6 +1,7 @@
@@ -161,44 +161,42 @@ index b586b653a991ce8840b9994a6fe1e6af75480ece..e32f6e093fde22e9cfc9d7ff612cddb5
       * The layout direction for the content.
       * Defaults to the current locale direction from I18nManager.
 diff --git a/build/jetpack-compose/Host/index.js b/build/jetpack-compose/Host/index.js
-index 3e785c1667bcba137c3369da15aa7b397aa0fb37..80dba6ac4dd6ac8caf53fb7839ff3ed38c27b7f3 100644
+index 3985656..2b4a4f9 100644
 --- a/build/jetpack-compose/Host/index.js
 +++ b/build/jetpack-compose/Host/index.js
-@@ -7,17 +7,14 @@ import { useMergeRefs } from '../../utils/useMergeRefs';
+@@ -8,16 +8,17 @@ import { useMergeRefs } from '../../utils/useMergeRefs';
  import { getMaterialColors, HostPaletteContext } from '../colors';
  const HostNativeView = requireNativeView('ExpoUI', 'HostView');
  export function Host(props) {
--    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, ref, ...restProps } = props;
-+    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, colorOverrides, ref, ...restProps } = props;
+-    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, ref, children, ...restProps } = props;
++    const { matchContents, modifiers, onLayoutContent, layoutDirection, colorScheme, seedColor, colorOverrides, ref, children, ...restProps } = props;
      const schemeString = colorScheme === 'light' || colorScheme === 'dark' ? colorScheme : undefined;
      const systemScheme = useRNColorScheme();
      const resolvedScheme = schemeString ?? (systemScheme === 'dark' ? 'dark' : 'light');
 -    const palette = useMemo(()=>getMaterialColors({
--            scheme: resolvedScheme,
--            seedColor
++    const palette = useMemo(()=>({ ...getMaterialColors({
+             scheme: resolvedScheme,
+             seedColor
 -        }), [
--        resolvedScheme,
++        }), ...colorOverrides }), [
+         resolvedScheme,
 -        seedColor
--    ]);
-+    const palette = useMemo(() => ({
-+        ...getMaterialColors({ scheme: resolvedScheme, seedColor }),
-+        ...colorOverrides
-+    }), [resolvedScheme, seedColor, colorOverrides]);
++        seedColor,
++        colorOverrides
+     ]);
      const hostRef = useTextInputHostRef();
      const mergedRef = useMergeRefs(ref, hostRef);
-     return /*#__PURE__*/ _jsx(HostPaletteContext.Provider, {
-@@ -30,7 +27,7 @@ export function Host(props) {
-                 matchContentsVertical: typeof matchContents === 'object' ? matchContents.vertical : matchContents,
+@@ -33,6 +34,7 @@ export function Host(props) {
                  matchContentsHorizontal: typeof matchContents === 'object' ? matchContents.horizontal : matchContents,
                  colorScheme: schemeString,
--                seedColor: seedColor,
-+                seedColor: seedColor, colorOverrides: colorOverrides,
+                 seedColor: seedColor,
++                colorOverrides: colorOverrides,
                  onLayoutContent: onLayoutContent,
                  layoutDirection: layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight'),
-                 ref: mergedRef
+                 ref: mergedRef,
 diff --git a/build/jetpack-compose/TopAppBar/index.d.ts b/build/jetpack-compose/TopAppBar/index.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..63afa28d56a9b0260de16d32e08bd7405e2c517d
+index 0000000..63afa28
 --- /dev/null
 +++ b/build/jetpack-compose/TopAppBar/index.d.ts
 @@ -0,0 +1,15 @@
@@ -219,7 +217,7 @@ index 0000000000000000000000000000000000000000..63afa28d56a9b0260de16d32e08bd740
 +}
 diff --git a/build/jetpack-compose/TopAppBar/index.js b/build/jetpack-compose/TopAppBar/index.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..95dcb7e59a2072446d45d51f14848075514e651f
+index 0000000..c6557fe
 --- /dev/null
 +++ b/build/jetpack-compose/TopAppBar/index.js
 @@ -0,0 +1,11 @@
@@ -235,27 +233,25 @@ index 0000000000000000000000000000000000000000..95dcb7e59a2072446d45d51f14848075
 +TopAppBar.NavigationIcon = function NavigationIcon({ children }) { return jsx(Slot, { style: { position: 'absolute' }, slotName: 'navigationIcon', children }); };
 +TopAppBar.Actions = function Actions({ children }) { return jsx(Slot, { style: { position: 'absolute' }, slotName: 'actions', children }); };
 diff --git a/build/jetpack-compose/index.d.ts b/build/jetpack-compose/index.d.ts
-index 8597c8f081d9ee31ac312721eb6a407a184f8133..e3661aac95080b6646a93a3f3b8043b0dd206b2d 100644
+index fa70b35..436a8b7 100644
 --- a/build/jetpack-compose/index.d.ts
 +++ b/build/jetpack-compose/index.d.ts
-@@ -52,3 +52,5 @@ export * from './FlowRow';
- export { useNativeState } from '../State';
- export type { ViewEvent } from '../types';
- export type { PrimitiveBaseProps } from './layout-types';
-+
+@@ -1,3 +1,4 @@
 +export * from './TopAppBar';
+ import './MaterialSymbolsAssetsTransformer.fx';
+ export * from './AlertDialog';
+ export * from './Badge';
 diff --git a/build/jetpack-compose/index.js b/build/jetpack-compose/index.js
-index bb5dcc76e45eabf2b31447f5c7ae26f507d032ce..a3c6a1b70fd1d39f2c901ea760b62e2144a77f68 100644
+index 2457ed1..fdc8eb1 100644
 --- a/build/jetpack-compose/index.js
 +++ b/build/jetpack-compose/index.js
-@@ -52,3 +52,5 @@ export * from './FlowRow';
- export { useNativeState } from '../State';
- 
- //# sourceMappingURL=index.js.map
-+
+@@ -1,3 +1,4 @@
 +export * from './TopAppBar';
+ import './MaterialSymbolsAssetsTransformer.fx';
+ export * from './AlertDialog';
+ export * from './Badge';
 diff --git a/build/swift-ui/Picker/index.d.ts b/build/swift-ui/Picker/index.d.ts
-index 5a973529c235050062aedcf749c8ff2d25fd7766..01e095bf179ed0d1642f1c50f2c0604f70f842d5 100644
+index 5a97352..01e095b 100644
 --- a/build/swift-ui/Picker/index.d.ts
 +++ b/build/swift-ui/Picker/index.d.ts
 @@ -7,6 +7,15 @@ export type PickerProps<T extends SelectionValueType = any> = {
@@ -275,7 +271,7 @@ index 5a973529c235050062aedcf749c8ff2d25fd7766..01e095bf179ed0d1642f1c50f2c0604f
       * A label displayed on the picker.
       */
 diff --git a/ios/Picker/PickerView.swift b/ios/Picker/PickerView.swift
-index 92236438f153f6f05d8fffc8c4057dcf7b968547..2d966f297350183abe28f9c5d778ce10a34bce6e 100644
+index c78f278..9b6adf8 100644
 --- a/ios/Picker/PickerView.swift
 +++ b/ios/Picker/PickerView.swift
 @@ -1,12 +1,27 @@
@@ -306,7 +302,7 @@ index 92236438f153f6f05d8fffc8c4057dcf7b968547..2d966f297350183abe28f9c5d778ce10
    var onSelectionChange = EventDispatcher()
  }
  
-@@ -24,7 +39,18 @@ internal struct PickerView: ExpoSwiftUI.View {
+@@ -25,7 +40,18 @@ internal struct PickerView: ExpoSwiftUI.View {
  
      let labelContent = props.children?.slot("label")
  
@@ -326,7 +322,7 @@ index 92236438f153f6f05d8fffc8c4057dcf7b968547..2d966f297350183abe28f9c5d778ce10
        Picker(label, systemImage: systemImage, selection: $selection) { content }
      } else if let labelContent {
        Picker(selection: $selection) { content } label: { labelContent }
-@@ -61,7 +87,7 @@ internal struct PickerView: ExpoSwiftUI.View {
+@@ -63,7 +89,7 @@ internal struct PickerView: ExpoSwiftUI.View {
      }
    }
  
@@ -335,7 +331,7 @@ index 92236438f153f6f05d8fffc8c4057dcf7b968547..2d966f297350183abe28f9c5d778ce10
      guard let either else { return nil }
      if let stringValue: String = either.get() {
        return stringValue
-@@ -72,3 +98,64 @@ internal struct PickerView: ExpoSwiftUI.View {
+@@ -74,3 +100,64 @@ internal struct PickerView: ExpoSwiftUI.View {
      return nil
    }
  }
@@ -401,11 +397,11 @@ index 92236438f153f6f05d8fffc8c4057dcf7b968547..2d966f297350183abe28f9c5d778ce10
 +  }
 +}
 diff --git a/src/jetpack-compose/Host/index.tsx b/src/jetpack-compose/Host/index.tsx
-index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332ac0d79760 100644
+index e994f6e..d0ed70a 100644
 --- a/src/jetpack-compose/Host/index.tsx
 +++ b/src/jetpack-compose/Host/index.tsx
-@@ -11,7 +11,7 @@ import {
- 
+@@ -12,7 +12,7 @@ import {
+ import { NativeTreeContext, useWarnIfNestedHost } from '../../NativeTreeContext';
  import { TextInputHostProvider, useTextInputHostRef } from '../../keyboard';
  import { useMergeRefs } from '../../utils/useMergeRefs';
 -import { getMaterialColors, HostPaletteContext } from '../colors';
@@ -413,7 +409,7 @@ index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332a
  import { type PrimitiveBaseProps } from '../layout';
  
  export interface HostProps extends PrimitiveBaseProps {
-@@ -51,6 +51,9 @@ export interface HostProps extends PrimitiveBaseProps {
+@@ -52,6 +52,9 @@ export interface HostProps extends PrimitiveBaseProps {
     */
    seedColor?: ColorValue;
  
@@ -423,15 +419,15 @@ index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332a
    /**
     * The layout direction for the content.
     * Defaults to the current locale direction from I18nManager.
-@@ -92,6 +95,7 @@ export function Host(props: HostProps) {
+@@ -93,6 +96,7 @@ export function Host(props: HostProps) {
      layoutDirection,
      colorScheme,
      seedColor,
 +    colorOverrides,
      ref,
+     children,
      ...restProps
-   } = props;
-@@ -100,8 +104,8 @@ export function Host(props: HostProps) {
+@@ -102,8 +106,8 @@ export function Host(props: HostProps) {
    const systemScheme = useRNColorScheme();
    const resolvedScheme = schemeString ?? (systemScheme === 'dark' ? 'dark' : 'light');
    const palette = useMemo(
@@ -442,7 +438,7 @@ index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332a
    );
    const hostRef = useTextInputHostRef();
    const mergedRef = useMergeRefs(ref, hostRef);
-@@ -120,6 +124,7 @@ export function Host(props: HostProps) {
+@@ -123,6 +127,7 @@ export function Host(props: HostProps) {
            }
            colorScheme={schemeString}
            seedColor={seedColor}
@@ -452,7 +448,7 @@ index c38eb76691942ee8515776cb443cd3b003052db3..ca3b901fc7c31768cce9d7923070332a
              layoutDirection ?? (I18nManager.getConstants().isRTL ? 'rightToLeft' : 'leftToRight')
 diff --git a/src/jetpack-compose/TopAppBar/index.tsx b/src/jetpack-compose/TopAppBar/index.tsx
 new file mode 100644
-index 0000000000000000000000000000000000000000..4f2d3ec00db95fb929f08656ebc57056c80267e5
+index 0000000..ca69824
 --- /dev/null
 +++ b/src/jetpack-compose/TopAppBar/index.tsx
 @@ -0,0 +1,28 @@
@@ -485,17 +481,16 @@ index 0000000000000000000000000000000000000000..4f2d3ec00db95fb929f08656ebc57056
 +TopAppBar.NavigationIcon = function NavigationIcon({ children }: { children: ReactNode }) { return <Slot style={{ position: "absolute" }} slotName="navigationIcon">{children}</Slot>; };
 +TopAppBar.Actions = function Actions({ children }: { children: ReactNode }) { return <Slot style={{ position: "absolute" }} slotName="actions">{children}</Slot>; };
 diff --git a/src/jetpack-compose/index.ts b/src/jetpack-compose/index.ts
-index 4e788cf01163a05e5043a36cc852507fe1f0d731..5f0ef493285e966d4f11be15774498df239a7d73 100644
+index 77fe3d7..3fa0fb9 100644
 --- a/src/jetpack-compose/index.ts
 +++ b/src/jetpack-compose/index.ts
-@@ -75,3 +75,5 @@ export * from './FlowRow';
- export { useNativeState } from '../State';
- export type { ViewEvent } from '../types';
- export type { PrimitiveBaseProps } from './layout-types';
-+
+@@ -1,3 +1,4 @@
 +export * from './TopAppBar';
+ import './MaterialSymbolsAssetsTransformer.fx';
+ 
+ export * from './AlertDialog';
 diff --git a/src/swift-ui/Picker/index.tsx b/src/swift-ui/Picker/index.tsx
-index ab7d7ceee94cc5755cdb4b708e70600d12532205..ceac7bff6ca71ed7fbfc526d771123e9e8aabd6e 100644
+index ab7d7ce..ceac7bf 100644
 --- a/src/swift-ui/Picker/index.tsx
 +++ b/src/swift-ui/Picker/index.tsx
 @@ -13,6 +13,15 @@ export type PickerProps<T extends SelectionValueType = any> = {

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@clerk/clerk-js": "catalog:",
     "@clerk/electron": "catalog:",
     "@clerk/react": "catalog:",
     "@daypicker/react": "^10.0.1",

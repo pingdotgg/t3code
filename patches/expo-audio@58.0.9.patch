@@ -1,8 +1,8 @@
 diff --git a/ios/AudioRecorder.swift b/ios/AudioRecorder.swift
-index 73c6a036be6c76e219774a8d1e1cc3a7f18e6f8e..edfbbe00c2b0f3544bcbe42d02b829bf310d241c 100644
+index 198fe6d..5b39611 100644
 --- a/ios/AudioRecorder.swift
 +++ b/ios/AudioRecorder.swift
-@@ -268,16 +268,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
+@@ -285,16 +285,16 @@ class AudioRecorder: SharedRef<AVAudioRecorder>, RecordingResultHandler {
    }
  
    func didFinish(_ recorder: AVAudioRecorder, successfully flag: Bool) {
