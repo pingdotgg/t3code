@@ -184,7 +184,12 @@ it("counts notifying threads across environments, replaces repeat alerts, and cl
   complete("two");
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(2);
+  expect(TestNotification.sent).toHaveLength(3);
+  expect(TestNotification.sent[0]!.tag).toBe(TestNotification.sent[1]!.tag);
+  expect(TestNotification.sent[0]!.tag).not.toBe(TestNotification.sent[2]!.tag);
   expect(TestNotification.sent[0]!.close).toHaveBeenCalledOnce();
+  expect(TestNotification.sent[1]!.close).not.toHaveBeenCalled();
+  expect(TestNotification.sent[2]!.close).not.toHaveBeenCalled();
   focused = true;
   window.dispatchEvent(new Event("focus"));
   expect(state.badge).toHaveBeenLastCalledWith(0);
@@ -195,6 +200,55 @@ it("counts notifying threads across environments, replaces repeat alerts, and cl
   complete("two", "2026-09-13T08:02:00Z");
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
+});
+
+function shellWithThreads(...overrides: ReadonlyArray<Partial<typeof thread>>) {
+  return {
+    status: "live",
+    snapshot: Option.some({
+      threads: overrides.map((override) => toV2ThreadShell({ ...thread, ...override })),
+    }),
+  };
+}
+
+it("uses bounded tags while replacing the same thread's alert and keeping another thread separate", async () => {
+  const environmentId = "fd6fff30-f90b-4ee7-9812-4cf497791b90";
+  const threadId = "a8395a98-a186-4fe7-9d4c-fb8ba63b7588";
+  const otherThreadId = "257598ad-ae4f-4422-a073-e03f4b4f5f0d";
+  const completed = (id: string, completedAt: string) => ({
+    id,
+    latestTurn: { turnId: id, state: "completed" as const, completedAt },
+  });
+
+  state.environmentIds = [environmentId];
+  state.shells.set(environmentId, shellWithThreads({ id: threadId }, { id: otherThreadId }));
+  await render();
+
+  state.shells.set(
+    environmentId,
+    shellWithThreads(completed(threadId, "2026-09-13T08:00:00Z"), { id: otherThreadId }),
+  );
+  await render();
+
+  state.shells.set(
+    environmentId,
+    shellWithThreads(
+      completed(threadId, "2026-09-13T08:01:00Z"),
+      completed(otherThreadId, "2026-09-13T08:00:00Z"),
+    ),
+  );
+  await render();
+
+  const [first, replacement, otherThread] = TestNotification.sent;
+  expect(TestNotification.sent).toHaveLength(3);
+  expect(first!.tag).toMatch(/^[0-9a-f]{16}$/);
+  expect(replacement!.tag).toBe(first!.tag);
+  expect(otherThread!.tag).toMatch(/^[0-9a-f]{16}$/);
+  expect(otherThread!.tag).not.toBe(first!.tag);
+  expect(first!.close).toHaveBeenCalledOnce();
+  expect(replacement!.close).not.toHaveBeenCalled();
+  expect(otherThread!.close).not.toHaveBeenCalled();
+  expect(state.badge).toHaveBeenLastCalledWith(2);
 });
 
 it("does not badge old completions on first load or reconnect", async () => {
