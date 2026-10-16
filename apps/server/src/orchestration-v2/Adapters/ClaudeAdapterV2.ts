@@ -5347,6 +5347,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt: task.completedAt,
               },
             });
+          }
+          // Ahead of the child thread's records: the run a resume attributes
+          // the subagent to adopts its child thread from this event.
+          yield* emitProviderEvent({
+            type: "subagent.updated",
+            driver: CLAUDE_PROVIDER,
+            subagent: task,
+          });
+          if (lifecycleChanged) {
             yield* emitProviderEvent({
               type: "node.updated",
               driver: CLAUDE_PROVIDER,
@@ -5389,11 +5398,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               now,
             });
           }
-          yield* emitProviderEvent({
-            type: "subagent.updated",
-            driver: CLAUDE_PROVIDER,
-            subagent: task,
-          });
           if (workflowWithThreads !== undefined) {
             yield* projectClaudeWorkflowMembers({
               coordinator: subagent,

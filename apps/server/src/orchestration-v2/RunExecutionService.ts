@@ -427,12 +427,28 @@ export function routeProviderEvent(
     case "subagent.updated": {
       const belongs = ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId);
       const coordinator = event.subagent;
+      // A provider-native subagent's child thread follows the live run it is
+      // attributed to. A resume reattributes it to the resuming run, which
+      // never saw the child thread created when the subagent was not
+      // completed at its start (e.g. cancelled by a server restart).
+      const adopted =
+        ownsRun(coordinator.runId) &&
+        !state.rootTurnEnded &&
+        isOrchestrationV2WorkActive(coordinator.status) &&
+        coordinator.origin === "provider_native" &&
+        coordinator.childThreadId !== null &&
+        !ownsThread(coordinator.childThreadId)
+          ? {
+              ...state,
+              ownedThreadIds: new Set([...state.ownedThreadIds, coordinator.childThreadId]),
+            }
+          : state;
       if (
         !ownsRun(coordinator.runId) ||
         coordinator.workflow === undefined ||
         coordinator.childThreadId === null
       ) {
-        return [belongs, state];
+        return [belongs, adopted];
       }
       const workflowMemberParents = new Map(state.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
@@ -440,7 +456,7 @@ export function routeProviderEvent(
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
         }
       }
-      return [true, { ...state, workflowMemberParents }];
+      return [true, { ...adopted, workflowMemberParents }];
     }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
