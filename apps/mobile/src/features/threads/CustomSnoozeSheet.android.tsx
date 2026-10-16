@@ -1,4 +1,4 @@
-import { SegmentedControl } from "../../components/ui/SegmentedControl.android";
+import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import {
   BasicAlertDialog,
   Column,
@@ -6,6 +6,7 @@ import {
   Host,
   FilledTonalIconButton,
   Row,
+  RNHostView,
   Shape,
   Surface,
   Text,
@@ -141,33 +142,37 @@ export function CustomSnoozeSheet(props: Props) {
                 modifiers={[fillMaxWidth(), padding(24, 24, 24, 16)]}
               >
                 <Text style={titleTypography}>Custom snooze</Text>
-                <SegmentedControl.Content
-                  options={modes}
-                  selected={mode}
-                  onSelect={(value) => {
-                    setMode(value);
-                    setError(null);
-                  }}
-                />
-                {mode === "date" ? (
-                  <SegmentedControl.Content
-                    options={[
-                      {
-                        value: "date",
-                        label: date.toLocaleDateString([], { month: "short", day: "numeric" }),
-                      },
-                      {
-                        value: "time",
-                        label: date.toLocaleTimeString([], {
-                          hour: "numeric",
-                          minute: "2-digit",
-                          hourCycle: is24Hour ? "h23" : "h12",
-                        }),
-                      },
-                    ]}
-                    selected={picker}
-                    onSelect={setPicker}
+                <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
+                  <SegmentedControl
+                    options={modes}
+                    selected={mode}
+                    onSelect={(value) => {
+                      setMode(value);
+                      setError(null);
+                    }}
                   />
+                </RNHostView>
+                {mode === "date" ? (
+                  <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
+                    <SegmentedControl
+                      options={[
+                        {
+                          value: "date",
+                          label: date.toLocaleDateString([], { month: "short", day: "numeric" }),
+                        },
+                        {
+                          value: "time",
+                          label: date.toLocaleTimeString([], {
+                            hour: "numeric",
+                            minute: "2-digit",
+                            hourCycle: is24Hour ? "h23" : "h12",
+                          }),
+                        },
+                      ]}
+                      selected={picker}
+                      onSelect={setPicker}
+                    />
+                  </RNHostView>
                 ) : null}
               </Column>
               {mode === "date" ? (
@@ -224,7 +229,9 @@ export function CustomSnoozeSheet(props: Props) {
                       <Text style={titleTypography}>+</Text>
                     </FilledTonalIconButton>
                   </Row>
-                  <SegmentedControl.Content options={units} selected={unit} onSelect={setUnit} />
+                  <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
+                    <SegmentedControl options={units} selected={unit} onSelect={setUnit} />
+                  </RNHostView>
                 </Column>
               )}
               <Column
