@@ -375,7 +375,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                 </View>
               ) : null}
               {chain.layers.map((link, index) => (
-                <View key={threadPullRequestKeyOf(link)}>
+                <View
+                  key={threadPullRequestKeyOf(link)}
+                  // Steps in per layer like the web list, capped so deep stacks keep their width.
+                  style={{ paddingLeft: Math.min(chain.depths[index]!, 3) * 16 }}
+                >
                   {index > 0 && Platform.OS !== "android" ? (
                     <View className="ml-12 h-px bg-border" />
                   ) : null}

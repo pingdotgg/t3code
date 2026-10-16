@@ -27,12 +27,12 @@ export function pullRequestListLines(
   );
   return ordered.flatMap((chain) => {
     const chainKey = chainKeyOf(chain);
-    return chain.layers.map((link, depth) => ({
+    return chain.layers.map((link, index) => ({
       link,
-      depth,
+      depth: chain.depths[index]!,
       chainKey,
       stack:
-        depth === 0 && chain.layers.length > 1
+        index === 0 && chain.layers.length > 1
           ? { kind: chain.kind, size: chain.layers.length }
           : null,
     }));

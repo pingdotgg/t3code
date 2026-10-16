@@ -270,6 +270,51 @@ describe("resolveThreadPullRequestChains", () => {
     ]);
   });
 
+  it("keeps every link built on the same parent under it", () => {
+    const links = [
+      link(3, { snapshot: snapshot({ headBranch: "c", baseBranch: "a" }) }),
+      link(5, { snapshot: snapshot({ headBranch: "p", baseBranch: "main" }) }),
+      link(6, { snapshot: snapshot({ headBranch: "q", baseBranch: "p" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "a", baseBranch: "p" }) }),
+      link(2, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(9, { snapshot: snapshot({ headBranch: "solo", baseBranch: "main" }) }),
+    ];
+    const chains = resolveThreadPullRequestChains(links);
+    expect(
+      chains.map((chain) => [chain.layers.map((layer) => layer.number), chain.depths]),
+    ).toEqual([
+      // #6 and #1 both build on #5; #3 and #2 both build on #1.
+      [
+        [5, 6, 1, 3, 2],
+        [0, 1, 1, 2, 2],
+      ],
+      [[9], [0]],
+    ]);
+    expect(resolveThreadPullRequestBadge(links.slice(0, 5))).toEqual({
+      kind: "stack",
+      layers: 5,
+      state: "open",
+    });
+  });
+
+  it("points at the highest layer of a branched stack, not the last sibling listed", () => {
+    // #1 → #2 → #3, and #4 also builds on #1.
+    const branched = (state: ThreadPullRequestSnapshot["state"]) => [
+      link(1, { snapshot: snapshot({ state, headBranch: "a" }) }),
+      link(2, { snapshot: snapshot({ state, headBranch: "b", baseBranch: "a" }) }),
+      link(3, { snapshot: snapshot({ state, headBranch: "c", baseBranch: "b" }) }),
+      link(4, { snapshot: snapshot({ state, headBranch: "d", baseBranch: "a" }) }),
+    ];
+    const open = resolveThreadCurrentPullRequest(branched("open"));
+    expect(open?.kind === "stack" ? open.open.map((entry) => entry.number) : null).toEqual([
+      3, 4, 2, 1,
+    ]);
+    expect(resolveThreadCurrentPullRequest(branched("merged"))).toMatchObject({
+      kind: "single",
+      link: { number: 3 },
+    });
+  });
+
   it("uses the native stack order when the host provides one", () => {
     const stack = {
       kind: "native" as const,
@@ -430,6 +475,17 @@ describe("chain selection and badge state", () => {
       others: 1,
       state: "open",
     });
+  });
+
+  it("lists a pull request once when two links share its identity", () => {
+    const links = [
+      link(1, { snapshot: snapshot({ headBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "c" }) }),
+    ];
+    expect(resolveThreadPullRequestChains(links).map((chain) => chain.layers)).toEqual([
+      [links[0]],
+    ]);
   });
 
   it("does not guess a parent when a head branch was reused", () => {
