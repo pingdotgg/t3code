@@ -24,6 +24,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
+import { sendPageCommand } from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -115,7 +116,7 @@ export const make = Effect.gen(function* () {
       {
         send: (method, params, sessionId) =>
           sessionId === undefined
-            ? debuggee.sendCommand(method, params)
+            ? sendPageCommand(webContents, debuggee, method, params)
             : debuggee.sendCommand(method, params, sessionId),
         targetId: () =>
           debuggee
