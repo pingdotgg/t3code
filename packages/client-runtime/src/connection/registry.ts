@@ -49,10 +49,9 @@ import {
   connectionRoutes,
   credentialConnectionId,
   entryWithRoutes,
-  findRouteToSameAddress,
   mergeLearnedRoutes,
   routesAfterRemoving,
-  upsertRoute,
+  routesWithAdded,
   type ReportedEndpoint,
 } from "./routes.ts";
 
@@ -112,6 +111,21 @@ export class EnvironmentRegistry extends Context.Service<
     ) => Effect.Effect<void>;
     readonly remove: (
       environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | ConnectionAttemptError
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
+    >;
+    /**
+     * Adds a route that needs no stored credential, such as an address that
+     * signs in with T3 Connect, to a saved environment. It replaces a route
+     * with the same id or address.
+     */
+    readonly addRoute: (
+      environmentId: EnvironmentId,
+      route: ConnectionRoute,
     ) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
@@ -575,14 +589,7 @@ export const make = Effect.gen(function* () {
         let entry = registered;
         if (previous !== undefined) {
           const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
-          const existing = connectionRoutes(previous);
-          const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
-          );
-          const next = withRoutes(previous, upsertRoute(routes, route));
+          const next = withRoutes(previous, routesWithAdded(connectionRoutes(previous), route));
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");
           }
@@ -977,6 +984,21 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const addRoute = Effect.fn("EnvironmentRegistry.addRoute")(function* (
+    environmentId: EnvironmentId,
+    route: ConnectionRoute,
+  ) {
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        const profile = Option.getOrNull(route.profile);
+        if (profile !== null) yield* profiles.put(profile);
+        yield* replaceRoutesLocked(entry, routesWithAdded(connectionRoutes(entry), route));
+      }),
+    );
+  });
+
   const removeRoute = Effect.fn("EnvironmentRegistry.removeRoute")(function* (
     environmentId: EnvironmentId,
     routeId: string,
@@ -1195,6 +1217,7 @@ export const make = Effect.gen(function* () {
     registerPlatform,
     reconcilePlatform,
     remove,
+    addRoute,
     removeRoute,
     reorderRoutes,
     removeRelayEnvironments,

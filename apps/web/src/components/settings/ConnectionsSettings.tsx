@@ -367,14 +367,12 @@ function parseRemotePairingFields(input: { readonly host: string; readonly pairi
   if (parsedPairingUrl) return parsedPairingUrl;
 
   const host = input.host.trim();
-  const pairingCode = input.pairingCode.trim();
   if (!host) {
     throw new Error("Enter a backend host.");
   }
-  if (!pairingCode) {
-    throw new Error("Enter a pairing code.");
-  }
-  return { host, pairingCode };
+  // A missing code is reported when connecting: a new route to a machine on
+  // T3 Connect needs none.
+  return { host, pairingCode: input.pairingCode.trim() };
 }
 
 function formatDesktopSshConnectionError(error: unknown): string {
@@ -2949,7 +2947,7 @@ export function ConnectionsSettings() {
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
-            placeholder="PAIRCODE"
+            placeholder={routeTarget?.relayManaged ? "Not needed" : "PAIRCODE"}
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
@@ -4115,9 +4113,11 @@ export function ConnectionsSettings() {
                     {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
                   </DialogTitle>
                   <DialogDescription>
-                    {routeTarget
-                      ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-                      : "Pair another environment to this client."}
+                    {routeTarget?.relayManaged
+                      ? "Enter another address for this machine, such as its LAN or Tailscale address. T3 Connect signs it in, so no pairing code is needed."
+                      : routeTarget
+                        ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
+                        : "Pair another environment to this client."}
                   </DialogDescription>
                 </DialogHeader>
                 <DialogPanel>
@@ -4126,7 +4126,9 @@ export function ConnectionsSettings() {
                       {renderConnectionModeCard({
                         mode: "remote",
                         title: "Remote link",
-                        description: "Enter a backend host and pairing code.",
+                        description: routeTarget?.relayManaged
+                          ? "Enter the machine's address."
+                          : "Enter a backend host and pairing code.",
                         icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
                       })}
                       {desktopBridge

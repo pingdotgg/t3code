@@ -21,6 +21,7 @@ import {
   BearerConnectionProfile,
   BearerConnectionRegistration,
   PrimaryConnectionRegistration,
+  RelayConnectionRegistration,
 } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
@@ -29,6 +30,7 @@ import {
   BearerConnectionTarget,
   ConnectionBlockedError,
   PrimaryConnectionTarget,
+  RelayConnectionTarget,
 } from "./model.ts";
 import * as Onboarding from "./onboarding.ts";
 import {
@@ -166,9 +168,10 @@ function layerPairingOnboarding(options?: Parameters<typeof layerPairingHttp>[1]
     Layer.mock(Persistence.ConnectionRegistrationStore)({
       register: () => Effect.void,
       setEnabled: () => Effect.void,
+      setRoutes: () => Effect.void,
     }),
     Layer.mock(Persistence.EnvironmentCacheStore)({}),
-    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({}),
+    Layer.mock(ConnectionProfileStore.ConnectionProfileStore)({ put: () => Effect.void }),
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({}),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)({}),
     Layer.succeed(
@@ -334,6 +337,41 @@ describe("connection onboarding", () => {
           }),
         ),
       ),
+  );
+
+  it.effect("turns a switched-off environment back on when a T3 Connect route is added", () =>
+    Effect.gen(function* () {
+      const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+      const onboarding = yield* Onboarding.ConnectionOnboarding;
+      const relay = new RelayConnectionTarget({
+        environmentId: PAIRED_ENVIRONMENT_ID,
+        label: "Paired environment",
+      });
+      yield* registry.register(new RelayConnectionRegistration({ target: relay }));
+      yield* registry.setEnabled(PAIRED_ENVIRONMENT_ID, false);
+
+      const environmentId = yield* onboarding.registerPairing({
+        host: "192.168.1.10:3773",
+        expectedEnvironmentId: PAIRED_ENVIRONMENT_ID,
+      });
+
+      expect(environmentId).toBe(PAIRED_ENVIRONMENT_ID);
+      const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+      expect(entry?.enabled).toBe(true);
+      expect(entry?.profile).toEqual(
+        Option.some(
+          new BearerConnectionProfile({
+            connectionId: "bearer:environment-paired:http://192.168.1.10:3773",
+            environmentId,
+            label: "Paired environment",
+            httpBaseUrl: "http://192.168.1.10:3773/",
+            wsBaseUrl: "ws://192.168.1.10:3773/",
+            authorization: "t3-connect",
+          }),
+        ),
+      );
+      expect(entry?.alternateRoutes?.map((route) => route.target)).toEqual([relay]);
+    }).pipe(Effect.provide(layerPairingOnboarding())),
   );
 
   it.effect("registers an enabled environment on first-time pairing", () =>

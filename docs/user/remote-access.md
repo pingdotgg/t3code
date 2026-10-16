@@ -68,7 +68,10 @@ A machine can have more than one route: LAN, Tailscale, another VPN, a public
 URL, SSH, or T3 Connect. Tailscale shares its `100.64.0.0/10` address range with
 other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
 unless the machine confirms it is on Tailscale. To add a route, choose **Add
-route** in the machine's route list, or next to it in the T3 Connect list.
+route** in the machine's route list, or next to it in the T3 Connect list. If
+the machine already has a T3 Connect route, enter only the address and leave the
+pairing code empty: the new route signs in with T3 Connect. The address must be
+one the machine listens on, so allow network access on it for a LAN address.
 Pairing the same machine again over another address also adds a route instead
 of a second machine. A new route is placed by speed, in that order, and you can
 reorder routes at any time.
@@ -91,8 +94,8 @@ return to the app, and every minute, and moves back as soon as one works.
 On web and desktop, select the route count under the machine's name in
 **Settings → Connections** to see its routes. Drag a route to change the order,
 or remove it. On mobile, open the machine under **Settings → Environments** and
-choose **Edit**. Signing out of T3 Connect removes only that route; a machine
-you can still reach another way stays saved.
+choose **Edit**. Signing out of T3 Connect removes that route and the routes
+that sign in with it; a machine you can still reach another way stays saved.
 
 Open **Permissions** next to **Routes** in web or desktop, or **Your permissions**
 in the mobile route details, to see what your current connection can do on that

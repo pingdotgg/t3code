@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { isPrivateNetworkHost, isTailnetHost } from "./hostClassification.ts";
+
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
 const HOSTED_PAIRING_LABEL_PARAM = "label";
@@ -242,4 +244,37 @@ export const resolveRemotePairingTarget = (input: {
     httpBaseUrl: toHttpBaseUrl(normalizedHost),
     wsBaseUrl: toWsBaseUrl(normalizedHost),
   };
+};
+
+/**
+ * The base URLs of a pairing input that carries no credential, or null when
+ * it carries one or names no valid address. Adding a route to a machine
+ * reached through T3 Connect needs only the address. A bare private address
+ * gets `http://`, since T3 Code serves plain HTTP there; any other bare host,
+ * including a Tailscale name, gets `https://`.
+ */
+export const resolveRemoteAddressWithoutCredential = (input: {
+  readonly pairingUrl?: string;
+  readonly host?: string;
+  readonly pairingCode?: string;
+}): { readonly httpBaseUrl: string; readonly wsBaseUrl: string } | null => {
+  const pairingUrl = input.pairingUrl?.trim() ?? "";
+  const raw = (pairingUrl || input.host?.trim() || "").replace(/^\/+/, "");
+  if (raw === "" || (pairingUrl === "" && (input.pairingCode?.trim() ?? "") !== "")) return null;
+  let url: URL;
+  try {
+    if (/^[a-zA-Z][a-zA-Z\d+-]*:\/\//.test(raw)) {
+      url = new URL(raw);
+    } else {
+      url = new URL(`http://${raw}`);
+      if (!isPrivateNetworkHost(url.hostname) || isTailnetHost(url.hostname)) {
+        url = new URL(`https://${raw}`);
+      }
+    }
+  } catch {
+    return null;
+  }
+  if (!hasSupportedRemoteBackendProtocol(url)) return null;
+  if (getPairingTokenFromUrl(url) !== null || readHostedPairingRequest(url) !== null) return null;
+  return { httpBaseUrl: toHttpBaseUrl(url), wsBaseUrl: toWsBaseUrl(url) };
 };

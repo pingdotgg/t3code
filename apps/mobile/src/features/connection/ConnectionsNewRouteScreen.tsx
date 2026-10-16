@@ -31,6 +31,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { splitEnvironmentSections } from "./environmentSections";
+import { useEnvironments } from "../../state/environments";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -52,6 +53,12 @@ export function ConnectionsNewRouteScreen({
   const navigation = useNavigation();
   const routeName = useRoute().name;
   const params = route.params ?? {};
+  const { environments } = useEnvironments();
+  // A new route to a machine on T3 Connect signs in with T3 Connect, so the
+  // address alone is enough.
+  const viaT3Connect = environments.some(
+    (environment) => environment.environmentId === params.routeFor && environment.relayManaged,
+  );
   // Deep-link prefill exists for development automation only. A production
   // link must not arrive with attacker-chosen host and token already filled.
   const routePairingUrl = __DEV__ ? (params.pairingUrl?.trim() ?? "") : "";
@@ -252,7 +259,7 @@ export function ConnectionsNewRouteScreen({
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
                 label="Code"
-                placeholder="Pairing code"
+                placeholder={viaT3Connect ? "Not needed with T3 Connect" : "Pairing code"}
                 returnKeyType="go"
                 value={codeInput}
                 onChangeText={handleCodeChange}
@@ -269,7 +276,9 @@ export function ConnectionsNewRouteScreen({
               )}
             >
               {pairingConnectionError ??
-                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
+                (viaT3Connect
+                  ? "Enter this machine's LAN or Tailscale address. T3 Connect signs it in."
+                  : "For machines on your local network or tailnet. The machine keeps its own provider credentials.")}
             </Text>
           </View>
 

@@ -159,12 +159,30 @@ export function upsertRoute(
  * its tunnels). Registering it again replaces that route, even when it was
  * saved under another id.
  */
-export function findRouteToSameAddress(
+function findRouteToSameAddress(
   routes: ReadonlyArray<ConnectionRoute>,
   route: ConnectionRoute,
 ): ConnectionRoute | undefined {
   const key = routeAddressKey(route);
   return key === null ? undefined : routes.find((existing) => routeAddressKey(existing) === key);
+}
+
+/**
+ * The routes after `route` is added: it replaces a saved route with the same
+ * id or the same address, or is inserted by kind.
+ */
+export function routesWithAdded(
+  routes: ReadonlyArray<ConnectionRoute>,
+  route: ConnectionRoute,
+): ReadonlyArray<ConnectionRoute> {
+  const sameAddress = findRouteToSameAddress(routes, route);
+  const id = connectionRouteId(route.target);
+  return upsertRoute(
+    routes.filter(
+      (existing) => existing !== sameAddress || connectionRouteId(existing.target) === id,
+    ),
+    route,
+  );
 }
 
 function routeAddressKey(route: ConnectionRoute): string | null {
@@ -396,10 +414,11 @@ export function isLearned(route: ConnectionRoute): boolean {
 }
 
 /**
- * Routes left after the user removes one. A learned route borrows the
- * credential of the route it was learned over, so it cannot outlive that
- * route: removing T3 Connect also removes routes learned through it, and
- * removing a paired address removes routes that borrow its token.
+ * Routes left after the user removes one. A route that signs in with T3
+ * Connect cannot outlive the T3 Connect route, whether it was learned or
+ * added by hand. A learned route borrows the credential of the route it was
+ * learned over, so removing a paired address removes routes that borrow its
+ * token.
  */
 export function routesAfterRemoving(
   routes: ReadonlyArray<ConnectionRoute>,
@@ -409,11 +428,11 @@ export function routesAfterRemoving(
   if (removed === undefined) return routes;
   return routes.filter((route) => {
     if (route === removed) return false;
-    if (!isLearned(route)) return true;
     const profile = Option.getOrNull(route.profile);
     if (profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect") {
       return removed.target._tag !== "RelayConnectionTarget";
     }
+    if (!isLearned(route)) return true;
     return credentialConnectionId(connectionRouteId(route.target)) !== removedId;
   });
 }

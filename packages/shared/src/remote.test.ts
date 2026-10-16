@@ -5,6 +5,7 @@ import {
   RemoteBackendUrlMissingError,
   RemotePairingTokenMissingError,
   RemotePairingUrlInvalidError,
+  resolveRemoteAddressWithoutCredential,
   resolveRemotePairingTarget,
 } from "./remote.ts";
 
@@ -219,5 +220,30 @@ describe("remote", () => {
     expect(hostError).toBeInstanceOf(RemoteBackendUrlInvalidError);
     expect(hostError).toMatchObject({ source: "direct-host" });
     expect((hostError as RemoteBackendUrlInvalidError).cause).toBeInstanceOf(TypeError);
+  });
+
+  it("reads an address without a credential, defaulting private hosts to http", () => {
+    expect(resolveRemoteAddressWithoutCredential({ host: "192.168.1.5:3773" })).toEqual({
+      httpBaseUrl: "http://192.168.1.5:3773/",
+      wsBaseUrl: "ws://192.168.1.5:3773/",
+    });
+    expect(resolveRemoteAddressWithoutCredential({ pairingUrl: "mac.tail1234.ts.net" })).toEqual({
+      httpBaseUrl: "https://mac.tail1234.ts.net/",
+      wsBaseUrl: "wss://mac.tail1234.ts.net/",
+    });
+    expect(resolveRemoteAddressWithoutCredential({ host: "http://t3.example.com/path" })).toEqual({
+      httpBaseUrl: "http://t3.example.com/",
+      wsBaseUrl: "ws://t3.example.com/",
+    });
+  });
+
+  it("leaves an address with a credential to pairing", () => {
+    expect(
+      resolveRemoteAddressWithoutCredential({ host: "192.168.1.5:3773", pairingCode: "CODE" }),
+    ).toBeNull();
+    expect(
+      resolveRemoteAddressWithoutCredential({ pairingUrl: "http://192.168.1.5:3773/#token=abc" }),
+    ).toBeNull();
+    expect(resolveRemoteAddressWithoutCredential({ host: " " })).toBeNull();
   });
 });

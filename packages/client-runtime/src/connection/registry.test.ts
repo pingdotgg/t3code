@@ -56,6 +56,8 @@ import {
 import * as Persistence from "../platform/persistence.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { addT3ConnectRoute } from "./onboarding.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import {
   GitHubRoutingPermissions,
   type StoredGitHubRoutingPermission,
@@ -1990,6 +1992,121 @@ describe("EnvironmentRegistry routes", () => {
           ).toEqual([again]);
         }).pipe(Effect.provide(harness.layer), Effect.scoped);
       }),
+  );
+
+  // Answers the descriptor request as `environmentId`.
+  const layerDescriptorHttp = (environmentId: EnvironmentId, label = "Relay environment") =>
+    RpcHttp.layerRemoteHttpClient(((input) =>
+      String(input).endsWith("/.well-known/t3/environment")
+        ? Promise.resolve(
+            Response.json({
+              environmentId,
+              label,
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+              capabilities: { repositoryIdentity: true },
+            }),
+          )
+        : Promise.reject(
+            new Error(`Unexpected request: ${String(input)}`),
+          )) satisfies typeof fetch);
+
+  it.effect("adds an address without a code as a T3 Connect route and drops it on sign-out", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const added = yield* addT3ConnectRoute({
+          host: "192.168.1.10:3773",
+          pairingCode: "",
+          expectedEnvironmentId: RELAY_TARGET.environmentId,
+        }).pipe(Effect.provide(layerDescriptorHttp(RELAY_TARGET.environmentId)));
+        expect(added).toBe(RELAY_TARGET.environmentId);
+
+        const connectionId = "bearer:environment-relay:http://192.168.1.10:3773";
+        expect(routesOf(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId)).toEqual(
+          [
+            new BearerConnectionTarget({
+              environmentId: RELAY_TARGET.environmentId,
+              label: RELAY_TARGET.label,
+              connectionId,
+            }),
+            RELAY_TARGET,
+          ],
+        );
+        expect((yield* Ref.get(harness.storedProfiles)).get(connectionId)).toMatchObject({
+          httpBaseUrl: "http://192.168.1.10:3773/",
+          wsBaseUrl: "ws://192.168.1.10:3773/",
+          authorization: "t3-connect",
+        });
+
+        // Without T3 Connect the address has no way to sign in.
+        yield* registry.removeRelayEnvironments();
+        expect(hasRoutes(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId)).toBe(
+          false,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps a paired address's token when it is added again without a code", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [LAN_TARGET, RELAY_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const added = yield* addT3ConnectRoute({
+          host: "192.168.1.10:3773",
+          expectedEnvironmentId: RELAY_TARGET.environmentId,
+        }).pipe(Effect.provide(layerDescriptorHttp(RELAY_TARGET.environmentId)));
+        expect(added).toBe(RELAY_TARGET.environmentId);
+        expect(routesOf(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId)).toEqual(
+          [LAN_TARGET, RELAY_TARGET],
+        );
+        expect((yield* Ref.get(harness.storedProfiles)).get(LAN_TARGET.connectionId)).toEqual(
+          LAN_PROFILE,
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("refuses a codeless address that reaches a different machine", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET]);
+      yield* Effect.gen(function* () {
+        const error = yield* addT3ConnectRoute({
+          host: "192.168.1.20:3773",
+          expectedEnvironmentId: RELAY_TARGET.environmentId,
+        }).pipe(
+          Effect.provide(layerDescriptorHttp(EnvironmentId.make("environment-other"), "Other")),
+          Effect.flip,
+        );
+        expect(error.message).toContain("Other, a different machine");
+        expect(routesOf(yield* Ref.get(harness.storedTargets), RELAY_TARGET.environmentId)).toEqual(
+          [RELAY_TARGET],
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("leaves a codeless address to pairing when the machine has no T3 Connect route", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [LAN_TARGET],
+        [LAN_PROFILE],
+        [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+      );
+      yield* Effect.gen(function* () {
+        const added = yield* addT3ConnectRoute({
+          host: "192.168.1.20:3773",
+          expectedEnvironmentId: LAN_TARGET.environmentId,
+        }).pipe(Effect.provide(layerDescriptorHttp(LAN_TARGET.environmentId)));
+        expect(added).toBeNull();
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
   );
 
   it.effect("signing out of T3 Connect keeps an environment that still has a LAN route", () =>
