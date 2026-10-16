@@ -807,6 +807,18 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Download internal Android APK for Nightly
+        if: needs.preflight.outputs.release_channel == 'nightly'
+        continue-on-error: true
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          PACKAGE_NAME: com.t3tools.t3code
+          APK_OUTPUT_DIR: release-assets
+        run: |
+          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            node .github/scripts/mirror-play-apk.cjs
+          fi
+
       # Installers verify archives against this file, so it is written from the
       # signed bytes that get uploaded, never from an earlier stage.
       - name: Write CLI archive checksums
@@ -888,6 +900,10 @@ jobs:
               echo 'release-assets/*.yml'
             fi
             echo 'release-assets/*.tar.gz'
+            # Only list APKs when Play has a processed internal build available.
+            for apk in release-assets/*.apk; do
+              [[ -f "$apk" ]] && echo "$apk"
+            done
             echo 'release-assets/SHA256SUMS'
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"

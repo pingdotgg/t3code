@@ -225,7 +225,7 @@ jobs:
       - name: Test preview artifact validation
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
-      - name: Test nightly release checks
+      - name: Test release checks
         run: node --test .github/scripts/check-nightly-release.test.cjs
 
       - name: Finish installing browser secret helper build libraries
