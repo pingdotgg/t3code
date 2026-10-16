@@ -1109,7 +1109,8 @@ export function buildPullRequestReferenceContext(
   input: PullRequestContextMetadata,
 ): ReviewCommentContext {
   const comment = pullRequestContextComment(input, []);
-  return { ...comment, id: `pr-reference:${input.number}` };
+  // Keyed by URL: the draft upserts by id, and two repositories can share a number.
+  return { ...comment, id: `pr-reference:${input.url}` };
 }
 
 /** What the agent is asked to do with a question, as opposed to a task. */
