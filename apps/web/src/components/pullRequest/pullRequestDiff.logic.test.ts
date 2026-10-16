@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
+  retainReviewDiffSlices,
   toggleFileDiffFoldForViewed,
 } from "./pullRequestDiff.logic";
 
@@ -18,6 +19,29 @@ function fileWithHunks(
 ): FileDiffMetadata {
   return { name: "src/app.ts", hunks } as unknown as FileDiffMetadata;
 }
+
+describe("retainReviewDiffSlices", () => {
+  const first = { cursor: null, patch: "page-1" };
+  const slices = [first, { cursor: "page-2", patch: "page-2" }];
+
+  it("keeps the first page and drops later ones when the same review refreshes", () => {
+    expect(retainReviewDiffSlices({ key: "pr-1", cursor: "page-2", slices }, "pr-1")).toEqual({
+      key: "pr-1",
+      cursor: null,
+      slices: [first],
+    });
+    const open = { key: "pr-1", cursor: null, slices: [first] };
+    expect(retainReviewDiffSlices(open, "pr-1")).toBe(open);
+  });
+
+  it("starts over when the review itself changes", () => {
+    expect(retainReviewDiffSlices({ key: "pr-1", cursor: null, slices }, "pr-2")).toEqual({
+      key: "pr-2",
+      cursor: null,
+      slices: [],
+    });
+  });
+});
 
 describe("isLineInFileDiff", () => {
   const file = fileWithHunks([
