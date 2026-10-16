@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   BackgroundActivityProfile,
   BackgroundActivityProfileSelection,
   ExecutionEnvironmentDescriptor,
@@ -13,6 +14,7 @@ import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandE
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as PeerEnvironmentService from "../../PeerEnvironmentService.ts";
 
 const PreferenceFields = {
   defaultThreadEnvMode: ServerSettings.fields.defaultThreadEnvMode,
@@ -40,7 +42,7 @@ const shared = {
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
-    "Read this server's identity and selected environment preferences. Provider/model availability is exposed by orchestrator_capabilities. Writing instructions are limited to 4,000 characters.",
+    "Read this server's identity and selected environment preferences. Provider/model availability is exposed by orchestrator_capabilities. Writing instructions are limited to 4,000 characters. This describes only the environment the thread runs in; use t3_environment_list for the user's other connected environments.",
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
     label: Schema.String,
@@ -64,4 +66,37 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+const peer = {
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    PeerEnvironmentService.PeerEnvironmentService,
+  ],
+};
+const EnvironmentListTool = Tool.make("t3_environment_list", {
+  ...peer,
+  description:
+    "List this environment and the user's other connected environments (other machines running T3 Code). Each has an environmentId, label, and status: connected, offline, unauthorized, or incompatible (its server speaks a different protocol version). Other environments are reached through a T3 Code app that is open and connected to both; when none is, only this environment is listed and unavailableReason says why. Pass a connected environmentId to t3_environment_catalog, then to t3_thread_launch, t3_thread_read, and t3_thread_wait.",
+  success: PeerEnvironmentService.PeerEnvironmentListResult,
+})
+  .annotate(Tool.Title, "List connected environments")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const EnvironmentCatalogTool = Tool.make("t3_environment_catalog", {
+  ...peer,
+  description:
+    "Read another connected environment's projects and provider instances with their models, as the ids to use when launching a thread there. Project, provider instance, model, and thread ids are per-environment: ids from this environment (t3_project_list, orchestrator_capabilities) do not exist on another one. Get environmentId from t3_environment_list.",
+  parameters: Schema.Struct({ environmentId: EnvironmentId }),
+  success: PeerEnvironmentService.PeerEnvironmentCatalogResult,
+})
+  .annotate(Tool.Title, "Read another environment's projects and providers")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  EnvironmentListTool,
+  EnvironmentCatalogTool,
+);

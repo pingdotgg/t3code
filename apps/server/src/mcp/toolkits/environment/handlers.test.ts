@@ -1,3 +1,4 @@
+import * as PeerEnvironmentService from "../../PeerEnvironmentService.ts";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -87,6 +88,7 @@ it.effect("updates preferences for a thread caller through the /mcp registration
           }),
         ),
         Layer.provide(layerEnvironment),
+        Layer.provide(Layer.mock(PeerEnvironmentService.PeerEnvironmentService)({})),
         Layer.provide(Settings.layerTest()),
       ),
     ),

@@ -119,6 +119,20 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+### Start threads on another machine from an agent
+
+An agent can start threads on any other machine you have connected. Ask for it
+by name, for example "start these five tasks on r2d2 with its Codex account".
+The agent looks up that machine's projects and provider accounts, starts the
+threads there, and can check on them afterwards.
+
+This works while a T3 Code app (desktop, web, or mobile) is open and connected
+to both machines, because the app carries the request using its own access.
+With every app closed, such as during a scheduled task overnight, the agent is
+told the other machine is not connected. The thread asking must be in
+Full access and Default mode, the same as for starting threads locally. To stop
+agents reaching a machine, switch it off in **Settings → Connections**.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale

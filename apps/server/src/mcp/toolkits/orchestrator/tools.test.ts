@@ -72,6 +72,27 @@ describe("orchestrator MCP tool guidance", () => {
     assert.include(ScheduleTaskTool.description ?? "", "nextRunAt");
   });
 
+  it("offers the environment selector on thread read and wait as an optional field", () => {
+    for (const tool of [
+      OrchestratorToolkit.tools.t3_thread_read,
+      OrchestratorToolkit.tools.t3_thread_wait,
+    ]) {
+      const schema = Tool.getJsonSchema(tool) as {
+        readonly properties?: Readonly<Record<string, unknown>>;
+        readonly required?: ReadonlyArray<string>;
+      };
+      assert.include(JSON.stringify(schema.properties?.environmentId), "t3_environment_list");
+      assert.notInclude(schema.required ?? [], "environmentId");
+      assert.include(tool.description ?? "", "another connected environment");
+    }
+    // Batch creation inherits the caller's checkout, so it must not grow a selector.
+    const batch = Tool.getJsonSchema(CreateThreadsTool) as {
+      readonly properties?: Readonly<Record<string, unknown>>;
+    };
+    assert.notProperty(batch.properties ?? {}, "environmentId");
+    assert.include(CreateThreadsTool.description ?? "", "t3_thread_launch once per thread");
+  });
+
   it("publishes thread metadata actions from an object-root schema", () => {
     const schema = Tool.getJsonSchema(ThreadUpdateTool) as {
       readonly type?: unknown;
