@@ -31,6 +31,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -975,11 +976,23 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         event("session.usage.updated", { sessionID: SESSION }),
       ]);
       const reported = yield* Deferred.make<void>();
+      const pendingSnapshots = yield* Ref.make<ReadonlyArray<boolean>>([]);
       yield* runtime.events.pipe(
         Stream.tap((event) =>
-          event.type === "subagent.updated" && event.subagent.status === "completed"
-            ? Deferred.succeed(reported, undefined)
-            : Effect.void,
+          Effect.gen(function* () {
+            if (
+              event.type === "provider_thread.updated" &&
+              event.pendingBackgroundWork !== undefined
+            ) {
+              yield* Ref.update(pendingSnapshots, (current) => [
+                ...current,
+                event.pendingBackgroundWork!,
+              ]);
+            }
+            if (event.type === "subagent.updated" && event.subagent.status === "completed") {
+              yield* Deferred.succeed(reported, undefined);
+            }
+          }),
         ),
         Stream.runDrain,
         Effect.forkScoped,
@@ -989,6 +1002,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // The follow-up execution OpenCode will start for the report is still to come.
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      assert.isTrue((yield* Ref.get(pendingSnapshots)).includes(true));
     }).pipe(Effect.scoped),
   );
 

@@ -337,6 +337,7 @@ interface OpenBlock {
 interface ThreadState {
   readonly sessionId: string;
   providerThread: OrchestrationV2ProviderThread;
+  publishedBackgroundWork?: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   /** What the native session runs now, so a changed selection is switched before prompting. */
@@ -940,7 +941,18 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return sessionGates.withLock(sessionId, effect);
       };
     const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-      Queue.offer(events, event).pipe(Effect.asVoid);
+      Effect.suspend(() => {
+        if (event.type === "provider_thread.updated") {
+          const nativeId = event.providerThread.nativeThreadRef?.nativeId;
+          const state = nativeId == null ? undefined : threads.get(nativeId);
+          if (state !== undefined) {
+            const pendingBackgroundWork = hasBackground(state);
+            state.publishedBackgroundWork = pendingBackgroundWork;
+            return Queue.offer(events, { ...event, pendingBackgroundWork }).pipe(Effect.asVoid);
+          }
+        }
+        return Queue.offer(events, event).pipe(Effect.asVoid);
+      });
     const ownerOf = (sessionId: string) => childOwners.get(sessionId) ?? threads.get(sessionId);
     /** Marks a run T3 ended while OpenCode may still run it (see `unsettled`). */
     const markUnsettled = (state: ThreadState) => {
@@ -1393,7 +1405,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     /**
      * Lists a thread's background subagents on its provider thread, as typed
      * `subagent` work: the thread shows it waits on them after its turn ends,
-     * and a Stop reaches them. Emitted only when the list changes.
+     * and a Stop reaches them. Emits when the roster or remaining native
+     * continuation work changes, in order with the events that describe it.
      */
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
       const roster = runningCalls(state)
@@ -1407,7 +1420,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : { childThreadId: call.child.subagent.appThread.id }),
         }));
       const current = state.providerThread.pendingBackgroundTasks ?? [];
+      const pendingBackgroundWork = hasBackground(state);
       if (
+        state.publishedBackgroundWork === pendingBackgroundWork &&
         current.length === roster.length &&
         current.every(
           (task, index) =>
@@ -1419,6 +1434,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         return;
       }
+      state.publishedBackgroundWork = pendingBackgroundWork;
       state.providerThread = {
         ...state.providerThread,
         pendingBackgroundTasks: roster,
@@ -1428,7 +1444,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         type: "provider_thread.updated",
         driver,
         providerThread: state.providerThread,
+        pendingBackgroundWork,
       });
+    });
+
+    const syncRosterAncestors = Effect.fnUntraced(function* (state: ThreadState) {
+      let current: ThreadState | undefined = state;
+      while (current !== undefined) {
+        yield* syncRoster(current);
+        current = current.subagent?.call.state;
+      }
     });
 
     const withReportedModel = (
@@ -2895,11 +2920,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(call, "interrupted", LOST_BACKGROUND);
           }
         }
-        // A subagent's session holds reports of its own background subagents.
-        for (const session of sessionsOf(state)) {
+        // Clear every descendant's reports before publishing ancestor snapshots.
+        const sessions = sessionsOf(state);
+        for (const session of sessions) {
           discardWakes(session, session.wakes.splice(0));
           session.reports.clear();
         }
+        for (const session of sessions.toReversed()) yield* syncRoster(session);
       }
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.
       for (const thread of new Set([...strays.values()].map(rootOf))) {
@@ -2967,7 +2994,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       stream: Stream.Stream<OpenCode2Client.OpenCode2StreamEvent, unknown>,
     ): Effect.Effect<void> =>
       stream.pipe(
-        Stream.runForEach((event) => lock.withPermit(handleEvent(event))),
+        Stream.runForEach((event) =>
+          lock.withPermit(
+            handleEvent(event).pipe(
+              Effect.andThen(() => {
+                const sessionId = sessionOfEvent(event);
+                const state = sessionId === undefined ? undefined : threads.get(sessionId);
+                if (
+                  state === undefined ||
+                  !(
+                    event.type === "session.execution.started" ||
+                    event.type === "unreadable.execution.started" ||
+                    executionEnd(event.type) ||
+                    event.type === "unreadable.execution.ended" ||
+                    event.type === "session.inbox.enqueued" ||
+                    event.type === "session.inbox.delivered" ||
+                    event.type === "session.inbox.cancelled"
+                  )
+                )
+                  return Effect.void;
+                return syncRosterAncestors(state);
+              }),
+            ),
+          ),
+        ),
         Effect.exit,
         Effect.flatMap(() =>
           Effect.gen(function* () {
@@ -3561,6 +3611,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (wake?.running !== true) return;
       state.wakes.pop();
       yield* replay(wake);
+      yield* syncRosterAncestors(state);
     });
 
     /**
@@ -3598,6 +3649,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // was over before it started: its end, still to come, is this turn's.
           if (wake.running) state.unsettled = false;
           yield* replay(wake);
+          yield* syncRosterAncestors(state);
         }),
       );
     });

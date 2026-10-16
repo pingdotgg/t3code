@@ -934,6 +934,9 @@ export const layer: Layer.Layer<
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
+          const pendingBackgroundWork = yield* Ref.make<ReadonlyMap<ProviderThreadId, boolean>>(
+            new Map(),
+          );
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
             runId: input.run.id,
@@ -1200,11 +1203,17 @@ export const layer: Layer.Layer<
             if (backgroundItems.size > 0) {
               return false;
             }
-            // Owner loss means do not hold the stream open solely for the
-            // roster probe; once background sets are empty, release.
-            if (yield* Ref.get(providerThreadOwnerLost)) {
-              return true;
+            // The adapter can already have parsed events whose SQLite writes
+            // are still queued. Owned children may have a continuation between
+            // turns; their consumed snapshots keep those events in order.
+            const pendingSnapshots = yield* Ref.get(pendingBackgroundWork);
+            for (const [providerThreadId, pending] of pendingSnapshots) {
+              if (providerThreadId !== input.providerThread.id && pending) return false;
             }
+            // A newer root's background work must not pin this subscription.
+            if (yield* Ref.get(providerThreadOwnerLost)) return true;
+            const pendingRoot = pendingSnapshots.get(input.providerThread.id);
+            if (pendingRoot !== undefined) return !pendingRoot;
             // Claude background Bash has no turn-item projection. Keep the
             // stream open while this root's provider thread still reports
             // pending roster work so late empty updates can clear Waiting.
@@ -1288,6 +1297,14 @@ export const layer: Layer.Layer<
                   }
                 }
                 if (event.type === "provider_thread.updated") {
+                  const pendingSnapshot = event.pendingBackgroundWork;
+                  if (pendingSnapshot !== undefined) {
+                    yield* Ref.update(pendingBackgroundWork, (snapshots) => {
+                      const next = new Map(snapshots);
+                      next.set(event.providerThread.id, pendingSnapshot);
+                      return next;
+                    });
+                  }
                   if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
                     yield* Ref.set(latestProviderThread, event.providerThread);
                   }

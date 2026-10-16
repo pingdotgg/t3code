@@ -12,9 +12,11 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1685,6 +1687,91 @@ it.effect("ends a nested native subagent and its thread when the root run is int
     assert.deepInclude(ended, ["subagent.updated", nestedId, "interrupted"]);
     assert.deepInclude(ended, ["node.updated", grandchildRootId, "interrupted"]);
   }),
+);
+
+it.effect.each([false, true])(
+  "drains an owned child continuation with an idle adapter and root ownership lost=%s",
+  (rootOwnershipLost) =>
+    Effect.gen(function* () {
+      const childEvents = yield* Ref.make<ReadonlyArray<string>>([]);
+      yield* runBackgroundItemScenario(
+        "ordered-background-continuation",
+        (ids) => {
+          const childProviderThreadId = ProviderThreadId.make(
+            "provider-thread:ordered-background-continuation:child",
+          );
+          const snapshot = (pendingBackgroundWork: boolean, populated: boolean, child = false) => ({
+            type: "provider_thread.updated" as const,
+            driver,
+            providerThread: {
+              id: child ? childProviderThreadId : ids.providerThreadId,
+              driver,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              providerSessionId: null,
+              appThreadId: child ? ids.childThreadId : ids.threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle" as const,
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              pendingBackgroundTasks: populated
+                ? [{ taskId: "child", kind: "subagent" as const, childThreadId: ids.childThreadId }]
+                : [],
+              createdAt: DateTime.makeUnsafe(0),
+              updatedAt: DateTime.makeUnsafe(0),
+            } satisfies OrchestrationV2ProviderThread,
+            pendingBackgroundWork,
+          });
+          const childTurn = (status: "running" | "completed") => ({
+            type: "provider_turn.updated" as const,
+            driver,
+            threadId: ids.childThreadId,
+            providerTurn: {
+              id: ProviderTurnId.make("provider-turn:ordered-background-continuation:child"),
+              providerThreadId: childProviderThreadId,
+              runAttemptId: null,
+              ordinal: 2,
+              status,
+            } as OrchestrationV2ProviderTurn,
+          });
+          return [
+            childThreadCreatedEvent(ids),
+            snapshot(true, true),
+            snapshot(true, true, true),
+            subagentEvent(ids, "running"),
+            rootTerminalEvent(ids, "completed"),
+            subagentEvent(ids, "completed"),
+            snapshot(true, false),
+            childTurn("running"),
+            {
+              type: "message.updated",
+              driver,
+              message: { threadId: ids.childThreadId, runId: null, text: "GRANDCHILD_OK" },
+            } as ProviderAdapter.ProviderAdapterV2Event,
+            childTurn("completed"),
+            snapshot(false, false, true),
+            snapshot(rootOwnershipLost, false),
+          ];
+        },
+        {
+          keepEventStreamOpen: true,
+          hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
+          rejectRootProviderThreadUpdates: rootOwnershipLost,
+          onIngest: (event) =>
+            Ref.update(childEvents, (events) =>
+              event.type === "provider_turn.updated"
+                ? [...events, event.providerTurn.status]
+                : event.type === "message.updated"
+                  ? [...events, event.message.text]
+                  : events,
+            ),
+        },
+      );
+      assert.deepEqual(yield* Ref.get(childEvents), ["running", "GRANDCHILD_OK", "completed"]);
+    }),
 );
 
 it.effect("keeps ingesting a late background command item completion after root terminal", () =>
@@ -4395,6 +4482,11 @@ function runBackgroundItemScenario(
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
     readonly onSubscribe?: Effect.Effect<void>;
+    readonly onIngest?: (event: ProviderAdapter.ProviderAdapterV2Event) => Effect.Effect<void>;
+    readonly hasPendingBackgroundWorkForThread?: (
+      thread: OrchestrationV2ProviderThread,
+    ) => Effect.Effect<boolean>;
+    readonly rejectRootProviderThreadUpdates?: boolean;
   },
 ) {
   return Effect.gen(function* () {
@@ -4427,6 +4519,7 @@ function runBackgroundItemScenario(
             ingestNormalized: (input) =>
               Effect.gen(function* () {
                 const event = input.event;
+                yield* options?.onIngest?.(event) ?? Effect.void;
                 if (event.type === "turn_item.updated") {
                   yield* Ref.update(observed, (current) => [
                     ...current,
@@ -4438,6 +4531,18 @@ function runBackgroundItemScenario(
                     ...current,
                     `subagent:${event.subagent.status}`,
                   ]);
+                }
+                if (event.type === "provider_thread.updated") {
+                  if (
+                    options?.rejectRootProviderThreadUpdates === true &&
+                    input.writeIfProviderThreadOwner !== undefined
+                  )
+                    return [];
+                  return [
+                    {
+                      event: { type: "provider-thread.updated", payload: event.providerThread },
+                    } as OrchestrationV2StoredEvent,
+                  ];
                 }
                 return [];
               }),
@@ -4455,6 +4560,11 @@ function runBackgroundItemScenario(
         providerSessionId: ProviderSessionId.make(`session:${key}`),
         session: {
           events: Stream.empty,
+          ...(options?.hasPendingBackgroundWorkForThread === undefined
+            ? {}
+            : {
+                hasPendingBackgroundWorkForThread: options.hasPendingBackgroundWorkForThread,
+              }),
           subscribeEvents: Effect.gen(function* () {
             yield* options?.onSubscribe ?? Effect.void;
             const events = Stream.fromIterable(makeEvents(ids));

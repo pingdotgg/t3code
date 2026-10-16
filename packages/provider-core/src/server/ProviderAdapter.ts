@@ -90,6 +90,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("provider_thread.updated"),
     driver: ProviderDriverKind,
     providerThread: OrchestrationV2ProviderThread,
+    /** Work remaining at this point in the ordered event stream, including native continuations. */
+    pendingBackgroundWork: Schema.optional(Schema.Boolean),
     /**
      * Set when the provider rewound its own conversation outside T3, for
      * example a Pi extension moving the session-tree leaf back. Lists every
