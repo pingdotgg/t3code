@@ -9,7 +9,6 @@ import {
   useClientSettings,
   useClientSettingsHydrationStatus,
 } from "../../hooks/useSettings";
-import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   isFirstRunWorkspaceProvenanceAuthoritative,
@@ -41,7 +40,7 @@ import { Button } from "../ui/button";
  * settings hydrate (the common case, no server round-trip). A `null` flag also
  * covers installs that predate the field, so it alone is not enough — the gate
  * waits for environment shells to bootstrap and inspects the workspace.
- * Hosted mode instead checks its saved environment catalog. A timeout shows
+ * Hosted mode never opens setup; it only waits for settings. A timeout shows
  * recovery for an unreachable primary server without mounting the app tree.
  */
 
@@ -86,7 +85,7 @@ export function FirstRunGate({
   const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
-  const { environments, isReady: environmentCatalogReady } = useEnvironments();
+  const { isReady: environmentCatalogReady } = useEnvironments();
   const projects = useProjects();
   const threads = useThreadShells();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
@@ -126,13 +125,7 @@ export function FirstRunGate({
   });
 
   const { decision: nextDecision, persistCompletion } = hostedStatic
-    ? resolveHostedFirstRunDecision({
-        localEnvironmentDisabled: isLocalEnvironmentDisabled(),
-        hydrated,
-        completed: onboardingCompletedAt !== null,
-        catalogReady: environmentCatalogReady,
-        environmentCount: environments.length,
-      })
+    ? resolveHostedFirstRunDecision(hydrated)
     : resolveFirstRunDecision({
         enabled,
         hydrated,
@@ -182,14 +175,20 @@ export function FirstRunGate({
     return () => window.clearTimeout(timer);
   }, [decision, enabled, hydrated]);
 
+  // Setup opens by itself only from the home route. A direct link, such as
+  // Settings, opens as asked so setup can never lock a user out of the app.
+  const wizardOwnsRoute = pathname === "/";
   useEffect(() => {
-    if (decision === "wizard" && pathname !== "/welcome") {
+    if (decision === "wizard" && wizardOwnsRoute) {
       void navigate({ to: "/welcome", replace: true });
     }
-  }, [decision, navigate, pathname]);
+  }, [decision, navigate, wizardOwnsRoute]);
 
   if (settingsReadFailed) {
     return <FirstRunRecovery reason="settings" retrying={hydrationStatus === "retrying"} />;
+  }
+  if (decision === "wizard" && !wizardOwnsRoute) {
+    return children;
   }
   if (decision !== "app") {
     return stalled ? <FirstRunRecovery reason="connection" /> : null;

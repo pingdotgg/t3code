@@ -275,82 +275,14 @@ describe("transitionFirstRunGateState", () => {
 
 describe("resolveHostedFirstRunDecision", () => {
   it("keeps the shell hidden until client settings are hydrated", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: false,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 0,
-      }),
-    ).toEqual({
+    expect(resolveHostedFirstRunDecision(false)).toEqual({
       decision: "pending",
       persistCompletion: false,
     });
   });
 
-  it("waits for the saved environment catalog before judging a hosted install", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: false,
-        environmentCount: 0,
-      }),
-    ).toEqual({
-      decision: "pending",
-      persistCompletion: false,
-    });
-  });
-
-  it("opens onboarding when a hosted install has no saved environments", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 0,
-      }),
-    ).toEqual({
-      decision: "wizard",
-      persistCompletion: false,
-    });
-  });
-
-  it("keeps Connections reachable for a remote-only desktop predating onboarding", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 0,
-        localEnvironmentDisabled: true,
-      }),
-    ).toEqual({ decision: "app", persistCompletion: true });
-  });
-
-  it("backfills onboarding for a hosted install with saved environments", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: false,
-        catalogReady: true,
-        environmentCount: 1,
-      }),
-    ).toEqual({
-      decision: "app",
-      persistCompletion: true,
-    });
-  });
-
-  it("opens the app immediately after hosted onboarding is complete", () => {
-    expect(
-      resolveHostedFirstRunDecision({
-        hydrated: true,
-        completed: true,
-        catalogReady: false,
-        environmentCount: 0,
-      }),
-    ).toEqual({
+  it("opens the app without setup, even with no saved computers", () => {
+    expect(resolveHostedFirstRunDecision(true)).toEqual({
       decision: "app",
       persistCompletion: false,
     });

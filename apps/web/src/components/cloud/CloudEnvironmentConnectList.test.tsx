@@ -268,9 +268,10 @@ describe("cloud onboarding discovery", () => {
     expect(onSelectionChange).toHaveBeenCalledWith(newMachineId, false);
     expect(renderer!.root.findByType("input").props.checked).toBe(false);
     expect(renderer!.root.findByType("input").props.disabled).toBe(true);
-    expect(renderer!.root.findAllByType("span").flatMap((span) => span.children)).toContain(
-      "Client not supported",
-    );
+    const rowText = renderer!.root.findAllByType("span").flatMap((span) => span.children);
+    expect(rowText).toContain("Client not supported");
+    // The reason stays visible without a tooltip, which touch screens cannot open.
+    expect(rowText).toContainEqual(expect.stringContaining("Update your app"));
     await act(async () => {
       await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
     });

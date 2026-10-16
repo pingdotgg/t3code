@@ -1,15 +1,26 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { LinkIcon, PlusIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useAuth } from "@clerk/react";
+import { CheckIcon } from "lucide-react";
+import { type ReactNode, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { isElectron } from "../env";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
+import { CommandBlock } from "../components/CommandBlock";
+import { useT3ConnectAuthPrompt } from "../components/clerk/useT3ConnectAuthPrompt";
+import { CloudEnvironmentConnectRows } from "../components/cloud/CloudEnvironmentConnectList";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -19,8 +30,8 @@ import {
   useProjects,
   useThreadShells,
 } from "../state/entities";
-import { useEnvironments } from "../state/environments";
-import { APP_DISPLAY_NAME } from "~/branding";
+import { useEnvironments, useRelayEnvironmentDiscovery } from "../state/environments";
+import { APP_DISPLAY_NAME, DESKTOP_DOWNLOAD_URL } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 
 function ChatIndexRouteView() {
@@ -132,14 +143,15 @@ export const Route = createFileRoute("/_chat/")({
   component: ChatIndexRouteView,
 });
 
+/**
+ * Hosted app with no computer yet. This is hosted onboarding: setup never
+ * opens here. With T3 Connect it recommends signing in, then adds the linked
+ * computers by itself. Without T3 Connect it points at `npx t3 pair`.
+ */
 function HostedStaticOnboardingState() {
   const cloudEnabled = hasCloudPublicConfig();
+  // Desktop with its own computer switched off: it needs Connections, not a download.
   const localEnvironmentOff = isLocalEnvironmentDisabled();
-  const description = localEnvironmentOff
-    ? "The local environment is turned off. Connect a remote environment, or turn the local environment back on in Connections."
-    : cloudEnabled
-      ? "Enable T3 Connect on that machine, then open Connections here to sign in with the same account. You can also add the machine using a pairing link."
-      : "Open Connections and add that machine using its pairing link. This app must be able to reach it.";
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -153,27 +165,132 @@ function HostedStaticOnboardingState() {
         </WorkspacePageHeader>
 
         <Empty className="flex-1">
-          <div className="w-full max-w-xl rounded-3xl border border-border/55 bg-card/20 px-8 py-12 shadow-sm/5">
-            <EmptyHeader className="max-w-none">
-              <div className="mx-auto mb-5 flex size-11 items-center justify-center rounded-xl border border-border/70 bg-background/70 text-muted-foreground">
-                <LinkIcon className="size-5" />
-              </div>
-              <EmptyTitle>Connect to a computer running T3 Code</EmptyTitle>
-              <EmptyDescription>
-                This app connects to T3 Code running on your computer or a server. Start the T3 Code
-                desktop app or command-line server on that machine and keep it running.
-              </EmptyDescription>
-              <EmptyDescription>{description}</EmptyDescription>
-              <div className="mt-6 flex justify-center">
-                <Button render={<Link to="/settings/connections" />} size="sm">
-                  <PlusIcon className="size-4" />
-                  Open Connections
-                </Button>
-              </div>
-            </EmptyHeader>
-          </div>
+          <EmptyHeader>
+            <EmptyTitle>
+              {localEnvironmentOff ? "This computer is off" : "No computer connected"}
+            </EmptyTitle>
+            <EmptyDescription>
+              {localEnvironmentOff
+                ? "Turn it back on, or connect a different computer."
+                : cloudEnabled
+                  ? "Your agents run on your computer."
+                  : "Your agents run on your computer. Start T3 Code there first."}
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            {localEnvironmentOff ? (
+              <Button render={<Link to="/settings/connections" />} size="sm">
+                Open Connections
+              </Button>
+            ) : (
+              <ol className="w-full space-y-4 text-left">
+                {cloudEnabled ? <T3ConnectSteps /> : <PairingSteps />}
+              </ol>
+            )}
+          </EmptyContent>
         </Empty>
       </div>
     </SidebarInset>
+  );
+}
+
+/** Needs ClerkProvider, which the app mounts whenever cloud config exists. */
+function T3ConnectSteps() {
+  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { openAuthPrompt } = useT3ConnectAuthPrompt();
+  // Selection mode adds each linked computer once, the same way setup does.
+  // The first one added replaces this screen with the app, so wait until
+  // every computer's health check is done and add them all in one pass.
+  const [autoAddedComputers] = useState(() => new Set<EnvironmentId>());
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
+  const discovered = [...useRelayEnvironmentDiscovery().environments.values()];
+  const discoverySettled =
+    discovered.length > 0 && discovered.every(({ availability }) => availability !== "checking");
+  return (
+    <>
+      <SetupStep number={1}>
+        {isSignedIn ? (
+          <p className="flex items-center gap-1.5 text-muted-foreground">
+            <CheckIcon className="size-4" />
+            Signed in
+          </p>
+        ) : (
+          <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
+            Sign in
+          </Button>
+        )}
+      </SetupStep>
+      <SetupStep number={2}>
+        <RunOnComputer command="npx t3 connect" />
+        {isSignedIn ? (
+          <div className="mt-4 space-y-1.5">
+            <CloudEnvironmentConnectRows
+              primaryEnvironmentId={null}
+              savedEnvironments={[]}
+              refreshWhileEmpty
+              selection={{
+                ...(discoverySettled ? { autoSelectedComputers: autoAddedComputers } : {}),
+                selectedIds,
+                onChange: (environmentId, selected) =>
+                  setSelectedIds((current) => {
+                    const next = new Set(current);
+                    if (selected) next.add(environmentId);
+                    else next.delete(environmentId);
+                    return next;
+                  }),
+              }}
+              empty={<p className="text-xs text-muted-foreground">Waiting for your computer…</p>}
+            />
+          </div>
+        ) : null}
+      </SetupStep>
+    </>
+  );
+}
+
+function PairingSteps() {
+  return (
+    <>
+      <SetupStep number={1}>
+        <RunOnComputer command="npx t3 pair" />
+      </SetupStep>
+      <SetupStep number={2}>
+        <Button render={<Link to="/settings/connections" />} size="sm">
+          Add pairing link
+        </Button>
+      </SetupStep>
+    </>
+  );
+}
+
+function SetupStep({
+  number,
+  children,
+}: {
+  readonly number: number;
+  readonly children: ReactNode;
+}) {
+  return (
+    <li className="flex gap-3">
+      <span className="w-2 shrink-0 pt-1 text-muted-foreground">{number}</span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </li>
+  );
+}
+
+function RunOnComputer({ command }: { readonly command: string }) {
+  return (
+    <>
+      <p>Run on your computer:</p>
+      <CommandBlock command={command} className="mt-2" />
+      <a
+        className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        href={DESKTOP_DOWNLOAD_URL}
+        target="_blank"
+        rel="noreferrer noopener"
+      >
+        Or download the desktop app
+      </a>
+    </>
   );
 }

@@ -48,14 +48,6 @@ interface FirstRunDecisionInput {
   readonly threadCount: number;
 }
 
-interface HostedFirstRunDecisionInput {
-  readonly localEnvironmentDisabled?: boolean;
-  readonly hydrated: boolean;
-  readonly completed: boolean;
-  readonly catalogReady: boolean;
-  readonly environmentCount: number;
-}
-
 export function isFirstRunWorkspaceProvenanceAuthoritative(input: {
   readonly welcomeReceived: boolean;
   readonly bootstrapStatus: "pending" | "complete" | null;
@@ -162,26 +154,14 @@ export function resolveFirstRunDecision(input: FirstRunDecisionInput): {
     : { decision: "app", persistCompletion: input.workspaceAuthoritative };
 }
 
-/** Hosted onboarding depends on saved environments because there is no primary server. */
-export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput): {
+/**
+ * Hosted mode never opens setup by itself. Its home screen asks the user to
+ * sign in and adds the computers on their account. It only waits for
+ * settings, so unreadable settings still show recovery.
+ */
+export function resolveHostedFirstRunDecision(hydrated: boolean): {
   readonly decision: FirstRunDecision;
   readonly persistCompletion: boolean;
 } {
-  if (!input.hydrated) {
-    return { decision: "pending", persistCompletion: false };
-  }
-
-  if (input.completed) {
-    return { decision: "app", persistCompletion: false };
-  }
-
-  if (!input.catalogReady) {
-    return { decision: "pending", persistCompletion: false };
-  }
-
-  // An existing desktop may have disabled its server before onboarding existed.
-  // Keep Connections accessible so it can turn local execution back on.
-  return input.environmentCount === 0 && !input.localEnvironmentDisabled
-    ? { decision: "wizard", persistCompletion: false }
-    : { decision: "app", persistCompletion: true };
+  return { decision: hydrated ? "app" : "pending", persistCompletion: false };
 }

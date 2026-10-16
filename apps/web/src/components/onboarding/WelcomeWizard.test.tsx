@@ -219,3 +219,13 @@ it("keeps setup open when saving completion fails and preserves the import warni
     }),
   );
 });
+
+it("closing setup on the first step completes onboarding and enters the app", async () => {
+  const onDone = vi.fn();
+  await act(async () => root.render(<WelcomeWizard localAvailable={false} onDone={onDone} />));
+  const close = document.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+  expect(close).not.toBeNull();
+  await act(async () => close!.click());
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  expect(onDone).toHaveBeenCalledWith(undefined);
+});
