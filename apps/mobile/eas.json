@@ -55,14 +55,6 @@
         "T3CODE_MOBILE_VERSION": "3.0.0"
       }
     },
-    "v2-preview": {
-      "extends": "production",
-      "distribution": "store",
-      "channel": "v2-preview",
-      "env": {
-        "T3CODE_MOBILE_UPDATES_ENABLED": "0"
-      }
-    },
     "production": {
       "corepack": true,
       "env": {
@@ -80,13 +72,6 @@
   "submit": {
     "testflight": {
       "extends": "production"
-    },
-    "v2-preview": {
-      "extends": "production",
-      "android": {
-        "track": "v2",
-        "releaseStatus": "completed"
-      }
     },
     "production": {
       "ios": {

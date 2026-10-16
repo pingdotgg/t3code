@@ -86,7 +86,7 @@ function readRelease(tag) {
 // Downloads the build's universal APK and uploads it, creating the release on
 // first use. Returns false when Play lists no universal APK, which happens
 // while it is still processing a fresh upload.
-async function uploadApk({ token, appUrl, build, tag, apkName, notes, release }) {
+async function uploadApk({ token, appUrl, build, tag, apkName, notes, title, release }) {
   const generated = await (
     await play(token, "GET", `${appUrl}/generatedApks/${build.versionCode}`)
   ).json();
@@ -117,7 +117,7 @@ async function uploadApk({ token, appUrl, build, tag, apkName, notes, release })
       "--prerelease",
       "--latest=false",
       "--title",
-      "T3 Code for Android (nightly)",
+      title,
       "--notes",
       notes,
     );
@@ -129,8 +129,8 @@ async function uploadApk({ token, appUrl, build, tag, apkName, notes, release })
 
 async function main() {
   const packageName = requireEnv("PACKAGE_NAME");
-  const trackName = requireEnv("PLAY_TRACK");
   const tag = requireEnv("RELEASE_TAG");
+  const title = "T3 Code for Android (testing)";
   const key = JSON.parse(requireEnv("GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"));
   const summary = (line) =>
     process.env.GITHUB_STEP_SUMMARY &&
@@ -138,48 +138,90 @@ async function main() {
 
   const token = await playAccessToken(key);
   const appUrl = `${PLAY_API}/${packageName}`;
-  const build = await newestTrackBuild(token, appUrl, trackName);
-  if (!build) {
-    console.log(`The ${trackName} track has no live release.`);
-    return;
-  }
-
-  const safeName = build.versionName.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-|-$/g, "");
-  const apkName = `t3code-android-${safeName}-${build.versionCode}.apk`;
-  const notes = [
-    `T3 Code for Android that works with nightly servers, mirrored from the Google Play ${trackName} track. Current build: ${build.versionName} (${build.versionCode}).`,
-    "",
-    "The Play Store release can't connect to a nightly server yet. Install this APK if you can't join the Play testing group. Only the newest build is kept here.",
-  ].join("\n");
-
-  const release = readRelease(tag);
+  let release = readRelease(tag);
   const assets = release?.assets ?? [];
-  // A failed upload can leave an empty asset under the final name.
-  const published = assets.some(
-    (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
-  );
-  if (published) {
-    console.log(`${apkName} is already published.`);
-  } else if (await uploadApk({ token, appUrl, build, tag, apkName, notes, release })) {
-    console.log(`Published ${apkName}.`);
-    summary(`:white_check_mark: Published \`${apkName}\` to the \`${tag}\` release.`);
-  } else {
-    // The next run retries.
-    console.log(`Play lists no universal APK for ${build.versionCode}.`);
-    summary(
-      `:hourglass: Play lists no universal APK for ${build.versionName} (${build.versionCode}).`,
+  const sections = [];
+  for (const { track, channel, label, stability } of [
+    {
+      track: "alpha",
+      channel: "beta",
+      label: "Beta",
+      stability:
+        "Promoted for wider testing. Recommended over internal builds, but may still contain bugs.",
+    },
+    {
+      track: "internal",
+      channel: "internal",
+      label: "Internal",
+      stability: "Newest, less-tested builds. May contain serious bugs.",
+    },
+  ]) {
+    const prefix = `t3code-android-${channel}-`;
+    let available = assets.filter(
+      (asset) => asset.name.startsWith(prefix) && asset.state === "uploaded" && asset.size > 0,
     );
-    return;
-  }
-
-  // Reconciled on every run so an interrupted cleanup finishes on the next one.
-  for (const stale of assets) {
-    if (stale.name.endsWith(".apk") && stale.name !== apkName) {
-      gh("release", "delete-asset", tag, stale.name, "--yes");
+    const build = await newestTrackBuild(token, appUrl, track);
+    if (build) {
+      const safeName = build.versionName.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-|-$/g, "");
+      const apkName = `${prefix}${safeName}-${build.versionCode}.apk`;
+      const published = assets.some(
+        (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
+      );
+      if (
+        published ||
+        (await uploadApk({
+          token,
+          appUrl,
+          build,
+          tag,
+          apkName,
+          notes: "Android testing APKs. Release notes are being updated.",
+          title,
+          release,
+        }))
+      ) {
+        release ??= { assets: [], body: "" };
+        available = [{ name: apkName }];
+        summary(`Published or verified \`${apkName}\` on \`${tag}\`.`);
+        // Clean up only this track after its replacement is available. Retire
+        // the legacy unlabelled APK when the beta replacement is published.
+        for (const stale of assets) {
+          const belongsToTrack =
+            stale.name.startsWith(prefix) ||
+            (track === "alpha" && /^t3code-android-(?!beta-|internal-).*\.apk$/.test(stale.name));
+          if (belongsToTrack && stale.name.endsWith(".apk") && stale.name !== apkName) {
+            gh("release", "delete-asset", tag, stale.name, "--yes");
+          }
+        }
+      } else {
+        summary(
+          `Play is still processing the ${track} APK for ${build.versionCode}; keeping the previous download.`,
+        );
+      }
     }
+    sections.push(
+      `## ${label}`,
+      "",
+      stability,
+      "",
+      ...available.map(
+        (asset) =>
+          `- [${asset.name}](https://github.com/${requireEnv("GH_REPO")}/releases/download/${tag}/${asset.name})`,
+      ),
+      ...(available.length ? [] : ["No APK available yet."]),
+      "",
+    );
   }
-  if (release && release.body.replace(/\r\n/g, "\n").trim() !== notes) {
-    gh("release", "edit", tag, "--notes", notes);
+  if (!release) return;
+  const notes = [
+    "T3 Code Android APKs mirrored from Google Play. Only the newest available APK from each track is kept here.",
+    "",
+    ...sections,
+  ]
+    .join("\n")
+    .trim();
+  if (release.body.replace(/\r\n/g, "\n").trim() !== notes) {
+    gh("release", "edit", tag, "--title", title, "--notes", notes);
   }
 }
 

@@ -15,9 +15,6 @@ name: Mobile EAS Production
 # batch to avoid a store build per PR.
 # workflow_dispatch remains as a manual override for both modes (e.g. to
 # retry an errored build or force an OTA).
-# Manual v2-preview builds keep the production app identity and disable OTA.
-# They auto-submit to TestFlight and the Google Play closed testing track v2.
-# Select the v2 branch when dispatching a preview build.
 on:
   workflow_dispatch:
     inputs:
@@ -30,14 +27,13 @@ on:
           - build
           - update
       profile:
-        description: "production: store release; testflight: iOS 3.0.0 beta; v2-preview: legacy closed testing"
+        description: "production: store release; testflight: iOS 3.0.0 beta"
         required: true
         type: choice
         default: production
         options:
           - production
           - testflight
-          - v2-preview
       platform:
         description: "Target platform"
         required: true
@@ -86,12 +82,6 @@ jobs:
       APP_VARIANT: production
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
-      - name: Reject preview OTA updates
-        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview' && inputs.mode == 'update'
-        run: |
-          echo "::error::V2 previews use store builds only. Select mode=build."
-          exit 1
-
       - name: Validate TestFlight inputs
         if: github.event_name == 'workflow_dispatch' && inputs.profile == 'testflight'
         env:
@@ -144,16 +134,6 @@ jobs:
           run-install: |
             args:
               - --filter=@t3tools/mobile...
-
-      - name: Verify v2 preview source
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview'
-        run: |
-          node --input-type=module -e '
-            import * as environment from "./packages/contracts/src/environment.ts";
-            if (environment.ORCHESTRATION_PROTOCOL_VERSION !== 2) {
-              throw new Error("V2 previews require a v2 source branch. Select the v2 branch when running this workflow.");
-            }
-          '
 
       - name: Expose pnpm
         if: steps.expo-token.outputs.present == 'true'
