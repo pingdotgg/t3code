@@ -1051,10 +1051,11 @@ export function PullRequestDetailPanel({
     projectRef: ReturnType<typeof scopeProjectRef>,
     task: ThreadTask | null,
     opened?: { draftId: DraftId },
+    options?: { environmentSelection: "manual" },
   ): Promise<{ draftId: DraftId } | null> => {
     const session =
       opened ??
-      (await newThread(projectRef).then(
+      (await newThread(projectRef, options).then(
         (result) => result,
         () => null,
       ));
@@ -1084,7 +1085,13 @@ export function PullRequestDetailPanel({
     }
     setHandoff(kind);
     const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
-    const opened = await openThreadWithTask(projectRef, task);
+    const pickedEnvironment = acting !== null && actingScope?.pullRequestKey === pullRequestKey;
+    const opened = await openThreadWithTask(
+      projectRef,
+      task,
+      undefined,
+      pickedEnvironment ? { environmentSelection: "manual" } : undefined,
+    );
     setHandoff(null);
     if (opened !== null && options?.keepGuide === true) {
       const draft = useComposerDraftStore.getState().getDraftSession(opened.draftId);
@@ -1160,7 +1167,7 @@ export function PullRequestDetailPanel({
     // The thread is opened before the checkout rather than after it, because the project's setup
     // script only runs for a checkout that knows which thread it is for — and a worktree with no
     // dependencies installed is not something anyone can test.
-    const opened = await newThread(projectRef).then(
+    const opened = await newThread(projectRef, { environmentSelection: "manual" }).then(
       (session) => session,
       () => null,
     );

@@ -103,6 +103,12 @@ different permissions.
 
 ### Balance new threads across machines
 
+For a project with copies on several environments, choose **Default environment**
+in its project settings to start new threads there whenever that environment is
+connected. If it is offline, new threads start on another connected copy instead.
+Choose **Automatic** to use the usual routing; you can still pick another
+environment for an individual thread.
+
 Auto balance is off by default. On web and desktop, enable it in
 **Settings → Connections → Load balancing** to automatically choose a machine for
 new threads in projects grouped across connected environments. The section
@@ -117,7 +123,9 @@ that choice stable. Choose **Auto balance** again to check current resources, or
 a specific machine to override it. Choosing a branch or worktree also keeps the draft
 on that machine. Existing threads stay where they started. If resource checks are
 unavailable or all eligible machines are full, choose a machine manually to continue.
-Mobile keeps its manual environment selection.
+Mobile does not use load balancing; its new tasks start on the project default when
+connected, or on another connected copy when it is offline, unless you choose an
+environment manually.
 
 ### Tailscale HTTPS
 

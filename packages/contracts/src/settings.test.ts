@@ -1173,6 +1173,22 @@ describe("requiredScopesForProjectMutation", () => {
   });
 });
 
+describe("project default environment settings", () => {
+  it("defaults existing snapshots to Automatic", () => {
+    expect(decodeServerSettings({}).defaultEnvironmentId).toBeNull();
+  });
+
+  it.each(["oliverpad", null])(
+    "round-trips a project default of %s in snapshots and patches",
+    (defaultEnvironmentId) => {
+      const input = { projectSettingsOverrides: { project: { defaultEnvironmentId } } };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+      expect(decodeServerSettingsPatch({ defaultEnvironmentId })).toEqual({ defaultEnvironmentId });
+    },
+  );
+});
+
 describe("server model preferences", () => {
   it("decodes a visibility update scoped to a provider instance and model", () => {
     const patch = { setModelsHidden: [{ provider: "codex_work", model: "sol", hidden: false }] };
