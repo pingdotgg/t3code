@@ -99,7 +99,7 @@ function WorkspaceRootContent() {
   return (
     <WorkspaceTabsContext value={context}>
       <View
-        className="flex-1 bg-screen"
+        className={sidebarTabs ? "flex-1 bg-drawer" : "flex-1 bg-screen"}
         style={sidebarTabs ? { paddingTop: insets.top } : undefined}
       >
         {Platform.OS === "ios" ? (
