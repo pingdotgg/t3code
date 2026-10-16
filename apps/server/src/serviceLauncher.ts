@@ -625,6 +625,9 @@ export class Launcher {
       if (update !== undefined) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
       }
+      if (update?.status === "committed") {
+        await this.#repointServiceUnit(this.#state.activeVersion);
+      }
       await this.#startChild(this.#state.activeVersion, "active", update);
       return;
     }
