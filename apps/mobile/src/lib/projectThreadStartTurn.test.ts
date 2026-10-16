@@ -14,44 +14,57 @@ import {
 } from "./projectThreadStartTurn";
 
 describe("project thread title", () => {
+  it.each([
+    ["![pasted-image.png](t3-context://v1/image/image-1)", "Attached image"],
+    ["![pasted-image.png](t3-context://v1/image/image-1) Fix the spacing", "Fix the spacing"],
+    ["Fix [src/app.ts](t3-context://v1/mention/source)", "Fix src/app.ts"],
+    ["x".repeat(80), `${"x".repeat(69)}...`],
+  ])("uses readable draft and queued titles for %s", (text, title) => {
+    expect(deriveThreadTitleFromPrompt(text)).toBe(title);
+  });
+
   it("keeps ordinary titles and the empty-prompt fallback", () => {
     expect(deriveThreadTitleFromPrompt("  Fix\n the parser  ")).toBe("Fix the parser");
     expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");
   });
 
-  it("derives attachment-only titles from prepared image metadata", () => {
-    const uploadedAttachments = [
-      {
-        type: "image" as const,
-        id: "prepared-photo",
-        name: "photo.png",
-        mimeType: "image/png",
-        sizeBytes: 3,
-      },
-    ];
-    const input = buildProjectThreadStartTurnInput({
-      projectId: ProjectId.make("project"),
-      projectCwd: "/workspace",
-      threadId: "image-thread",
-      commandId: "image-command",
-      messageId: "image-message",
-      createdAt: "2026-09-04T00:00:00Z",
-      text: "",
-      uploadedAttachments,
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      workspaceMode: "local",
-      branch: null,
-      worktreePath: null,
-      startFromOrigin: false,
-      worktreeBranchName: "unused",
-    });
+  it.each(["", "![photo.png](t3-context://v1/image/photo)"])(
+    "derives attachment-only titles from prepared image metadata for %s",
+    (text) => {
+      const uploadedAttachments = [
+        {
+          type: "image" as const,
+          id: "prepared-photo",
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        },
+      ];
+      const input = buildProjectThreadStartTurnInput({
+        projectId: ProjectId.make("project"),
+        projectCwd: "/workspace",
+        threadId: "image-thread",
+        commandId: "image-command",
+        messageId: "image-message",
+        createdAt: "2026-09-04T00:00:00Z",
+        text,
+        uploadedAttachments,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+        startFromOrigin: false,
+        worktreeBranchName: "unused",
+      });
 
-    expect(input.titleSeed).toBe("Image: photo.png");
-    expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
-    expect(input.message.attachments).toEqual(uploadedAttachments);
-  });
+      expect(input.titleSeed).toBe("Attached image");
+      expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
+      expect(input.message.attachments).toEqual(uploadedAttachments);
+      expect(input.message.text).toBe(text);
+    },
+  );
 
   it.each([
     {

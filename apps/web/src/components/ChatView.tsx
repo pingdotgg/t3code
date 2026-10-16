@@ -10,7 +10,6 @@ import {
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
 import {
   isPaintOnlyThreadTimeline,
@@ -88,7 +87,10 @@ import {
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import {
+  deriveThreadTitleSeed,
+  threadTitleTextFromPrompt,
+} from "@t3tools/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
   wasBootstrapThreadNotCreated,
@@ -396,7 +398,6 @@ import {
 import {
   ensureInlineContextReferences,
   removeInlineContextReference,
-  stripInlineContextReferences,
 } from "../lib/composerContextReferences";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
@@ -9092,8 +9093,10 @@ export default function ChatView(props: ChatViewProps) {
           ),
         );
         const title = truncate(
-          assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim() ||
-            composerAttachmentsSnapshot[0]?.name ||
+          threadTitleTextFromPrompt(trimmed) ||
+            (composerImagesSnapshot.length > 0
+              ? deriveThreadTitleSeed({ text: "", attachments: composerImagesSnapshot })
+              : composerAttachmentsSnapshot[0]?.name) ||
             "New thread",
         );
         promptRef.current = "";
@@ -9405,17 +9408,10 @@ export default function ChatView(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
-    if (composerImagesSnapshot.length > 0) {
-      const firstComposerImage = composerImagesSnapshot[0];
-      if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
-      }
-    }
-    let titleSeed = assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim();
+    let titleSeed = threadTitleTextFromPrompt(trimmed);
     if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
+      if (composerImagesSnapshot.length > 0) {
+        titleSeed = deriveThreadTitleSeed({ text: "", attachments: composerImagesSnapshot });
       } else if (composerFilesSnapshot[0]) {
         titleSeed = `File: ${composerFilesSnapshot[0].name}`;
       } else if (composerTerminalContextsSnapshot.length > 0) {

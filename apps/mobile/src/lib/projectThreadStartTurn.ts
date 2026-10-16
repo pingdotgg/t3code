@@ -9,8 +9,10 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import {
+  deriveThreadTitleSeed,
+  threadTitleTextFromPrompt,
+} from "@t3tools/client-runtime/operations";
 
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
@@ -80,7 +82,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
 }
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const trimmed = assistantCitationsToPlainText(value).trim();
+  const trimmed = threadTitleTextFromPrompt(value);
   if (trimmed.length === 0) {
     return "New thread";
   }
