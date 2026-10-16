@@ -186,6 +186,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "projectId"
   | "branch"
   | "worktreePath"
+  | "lineage"
   | "pullRequests"
   | "linkedPullRequest"
   | "branchPullRequest"
@@ -5620,6 +5621,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // Settlement needs activity timestamps, not item counts, run history,
             // provider sessions or inherited fork rows. Reject parked and busy
             // threads before loading the remaining candidates' background work.
+            // A subagent thread follows its parent: it is a candidate only once
+            // the parent is settled, archived, deleted or gone.
             const rows = yield* sql<SettlementThreadRow>`
             SELECT t.thread_id, t.payload_json,
               r.run_id AS latest_run_id,
@@ -5654,6 +5657,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
               AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
+              AND (
+                json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+                OR NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_threads parent
+                  WHERE parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                    AND parent.deleted_at IS NULL
+                    AND json_extract(parent.payload_json, '$.archivedAt') IS NULL
+                    AND json_extract(parent.payload_json, '$.settledOverride') IS NOT 'settled'
+                )
+              )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
                 WHERE active.thread_id = t.thread_id
@@ -6231,6 +6244,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
       getSettlementCandidates: (threadId) =>
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
+          // A subagent thread follows its parent: it is a candidate only once
+          // the parent is settled, archived, deleted or gone.
+          const parentDone = (thread: Pick<OrchestrationV2AppThread, "lineage">) => {
+            if (thread.lineage.relationshipToParent !== "subagent") return true;
+            const parent =
+              thread.lineage.parentThreadId === null
+                ? undefined
+                : projections.get(thread.lineage.parentThreadId)?.thread;
+            return (
+              parent === undefined ||
+              parent.deletedAt !== null ||
+              parent.archivedAt !== null ||
+              parent.settledOverride === "settled"
+            );
+          };
           return [...projections.values()]
             .filter(
               ({ thread, runs, runtimeRequests }) =>
@@ -6240,6 +6268,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 thread.settledOverride === null &&
                 thread.pinnedAt == null &&
                 thread.autoSettleDisabledAt == null &&
+                parentDone(thread) &&
                 !runs.some(isActivityRunForShell) &&
                 !runtimeRequests.some((request) => request.status === "pending"),
             )

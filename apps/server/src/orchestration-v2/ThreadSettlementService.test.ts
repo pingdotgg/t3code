@@ -821,6 +821,41 @@ describe("ThreadSettlementServiceV2 worker", () => {
     ),
   );
 
+  it.effect("settles a subagent thread with its parent, without a lookup", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const parentId = ThreadId.make("subagent-parent");
+        // Recent activity: on its own this thread would wait out the timer.
+        const child = makeThread("subagent-child", {
+          branch: "feature",
+          updatedAt: DateTime.makeUnsafe("2026-08-31T00:00:00.000Z"),
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-08-31T00:00:00.000Z"),
+          lineage: {
+            rootThreadId: parentId,
+            parentThreadId: parentId,
+            relationshipToParent: "subagent",
+          },
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([child]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 2 },
+          branchPullRequest: () => Effect.succeed(makeBranchPullRequest("open")),
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          const commands = yield* Ref.get(fixture.commands);
+          expect(commands).toHaveLength(1);
+          expect(commands[0]?.threadId).toBe(child.id);
+          expect(commands[0]?.snapshotAt).toEqual(child.updatedAt);
+          expect(commands[0]?.settledAt).toBeUndefined();
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("skips the branch recheck when a terminal link would settle nothing", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1211,6 +1246,41 @@ describe("ThreadSettlementServiceV2 terminals", () => {
           yield* fixture.publishEvent(settledEvent(settled));
           yield* fixture.publishEvent(settledEvent(marker));
           assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("skips the settle script for a subagent in its parent's worktree", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const parent = appThread("subagent-parent", "settled", "/worktrees/parent");
+        const subagent = (id: string, worktreePath: string) => ({
+          ...appThread(id, "settled", worktreePath),
+          lineage: {
+            parentThreadId: parent.id,
+            relationshipToParent: "subagent" as const,
+            rootThreadId: parent.id,
+          },
+        });
+        const shared = subagent("subagent-shared", "/worktrees/parent");
+        const own = subagent("subagent-own", "/worktrees/own");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          currentThreads: [parent, shared, own],
+          existingWorktreePaths: ["/worktrees/parent", "/worktrees/own"],
+        });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          // Events run in order, so the first run belongs to the second event
+          // only if the shared-worktree child was skipped. Both still close.
+          yield* fixture.publishEvent(settledEvent(shared));
+          yield* fixture.publishEvent(settledEvent(own));
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: shared.id });
+          assert.deepStrictEqual(yield* Queue.take(fixture.closedIdle), { threadId: own.id });
+          assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, own.id);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

@@ -339,6 +339,18 @@ export const make = Effect.gen(function* () {
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+        if (thread.lineage.relationshipToParent === "subagent") {
+          // The store returns a subagent only once its parent is done, so it
+          // settles with the parent and never runs its own lookup.
+          const uuid = yield* crypto.randomUUIDv4();
+          yield* orchestrator.dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            snapshotAt: thread.updatedAt,
+          });
+          return null;
+        }
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -584,6 +596,19 @@ export const make = Effect.gen(function* () {
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
+      // A subagent in its parent's worktree settled with the parent, whose own
+      // settlement already ran the script there.
+      if (
+        thread.lineage.relationshipToParent === "subagent" &&
+        thread.lineage.parentThreadId !== null
+      ) {
+        const parent = yield* projections.getThread(thread.lineage.parentThreadId).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+          }),
+        );
+        if (parent?.worktreePath === worktreePath) return;
+      }
       const run = yield* projectScripts.runForThread({
         threadId,
         projectId: thread.projectId,

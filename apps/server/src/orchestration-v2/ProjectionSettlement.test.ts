@@ -424,6 +424,32 @@ it.effect.each([
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: a subagent thread becomes a candidate once its parent is done", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("subagent-parent");
+    const child = yield* createThread("subagent-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepEqual(yield* ids(), [parent]);
+
+    const parentThread = yield* store.getThread(parent);
+    yield* store.apply({
+      id: EventId.make("event:settlement:subagent-parent-settled"),
+      type: "thread.settled",
+      threadId: parent,
+      occurredAt: now,
+      payload: { ...parentThread, settledOverride: "settled", settledAt: now, updatedAt: now },
+    });
+    assert.deepEqual(yield* ids(), [child]);
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect(
   "reads settlement candidates and thread metadata without loading historical or archived payloads",
   () =>
