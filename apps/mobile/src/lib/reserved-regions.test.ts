@@ -108,6 +108,43 @@ describe("Duo workspace sizing", () => {
     ).toBe(false);
   });
 
+  it("shows both columns on the unfolded inner display in portrait", () => {
+    // Reported by the iOS 27.1 Duo simulator: no side bar or fold, only the hinge.
+    const portrait: NativeLayoutMetrics = {
+      width: 669,
+      height: 951,
+      hasHinge: true,
+      horizontalSizeClass: "regular",
+      verticalBarEdge: "none",
+      safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+      reservedRegions: [{ kind: "occlusion", x: 535, y: 0, width: 134, height: 82 }],
+    };
+    expect(deriveLayout({ ...portrait, nativeMetrics: portrait }).usesSplitView).toBe(true);
+    // Without the hinge, the same window is an ordinary narrow iPad-style window.
+    const withoutHinge = { ...portrait, hasHinge: false };
+    expect(deriveLayout({ ...withoutHinge, nativeMetrics: withoutHinge }).usesSplitView).toBe(
+      false,
+    );
+  });
+
+  it("keeps the folded front screen compact in both orientations", () => {
+    for (const [width, height] of [
+      [466, 678],
+      [678, 466],
+    ]) {
+      const folded: NativeLayoutMetrics = {
+        width: width!,
+        height: height!,
+        hasHinge: true,
+        horizontalSizeClass: "compact",
+        verticalBarEdge: "right",
+        safeArea: { top: 0, bottom: 34, left: 0, right: 84 },
+        reservedRegions: [],
+      };
+      expect(deriveLayout({ ...folded, nativeMetrics: folded }).usesSplitView).toBe(false);
+    }
+  });
+
   it("requires enough safe width for both panes in a multitasking window", () => {
     const metrics = { ...innerDisplay, width: 660 };
     expect(deriveLayout({ ...metrics, nativeMetrics: metrics }).usesSplitView).toBe(false);

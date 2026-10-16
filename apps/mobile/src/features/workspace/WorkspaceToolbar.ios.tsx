@@ -11,6 +11,12 @@ import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-con
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
+import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
+import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
+
+// Tabler's git-pull-request geometry, shared with the UIKit tab bar.
+const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 
 export function WorkspaceToolbar(props: {
   readonly onNewTask: () => void;
@@ -19,8 +25,12 @@ export function WorkspaceToolbar(props: {
   const workspace = useWorkspaceTabs()!;
   const navigation = useNavigation();
   const metrics = useNativeLayoutMetrics();
+  const sidebarTabs = useSidebarWorkspaceTabs();
+  const selectTab = useSelectWorkspaceTab();
+  const selectedTint = useMobileNavigationTheme().colors.primary;
   const nativeToolbarCompose =
-    Platform.OS === "ios" && (Platform.isPad || (metrics?.verticalBarEdge ?? "none") !== "none");
+    Platform.OS === "ios" &&
+    (Platform.isPad || sidebarTabs !== null || (metrics?.verticalBarEdge ?? "none") !== "none");
   const { isTabActive } = workspace;
   const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
   const { panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
@@ -122,6 +132,24 @@ export function WorkspaceToolbar(props: {
         )}
       </Toolbar>
       <Toolbar placement="bottom">
+        {sidebarTabs === "toolbar" ? (
+          <Toolbar.Button
+            identifier="workspace-tab-threads"
+            accessibilityLabel="Threads"
+            icon={selectedTab === "threads" ? "text.bubble.fill" : "text.bubble"}
+            tintColor={selectedTab === "threads" ? selectedTint : undefined}
+            onPress={() => selectTab("threads")}
+          />
+        ) : null}
+        {sidebarTabs === "toolbar" ? (
+          <Toolbar.Button
+            identifier="workspace-tab-pull-requests"
+            accessibilityLabel="Pull requests"
+            icon={{ type: "image", source: PULL_REQUEST_ICON, tinted: true }}
+            tintColor={selectedTab === "pullRequests" ? selectedTint : undefined}
+            onPress={() => selectTab("pullRequests")}
+          />
+        ) : null}
         {nativeToolbarCompose ? <Toolbar.Spacer flexible /> : null}
         {nativeToolbarCompose ? (
           <Toolbar.Button

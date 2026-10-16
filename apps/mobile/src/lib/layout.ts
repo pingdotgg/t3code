@@ -91,9 +91,12 @@ export function deriveLayout(input: {
   const usableWidth = width - (metrics?.safeArea.left ?? 0) - (metrics?.safeArea.right ?? 0);
   // UIKit's size class supports the shorter Duo inner display. Geometry remains
   // a floor so a narrow multitasking window cannot squeeze both columns.
+  // Unfolded in portrait, the inner display reports neither a side bar nor a
+  // fold, only its hinge.
   const hasDuoGeometry =
     metrics &&
-    (metrics.verticalBarEdge !== "none" ||
+    (metrics.hasHinge === true ||
+      metrics.verticalBarEdge !== "none" ||
       metrics.reservedRegions.some((region) => region.kind === "division"));
   const wideEnoughForSplit = hasDuoGeometry
     ? metrics.horizontalSizeClass === "regular" &&

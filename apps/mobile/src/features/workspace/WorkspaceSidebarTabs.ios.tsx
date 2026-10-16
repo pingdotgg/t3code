@@ -1,12 +1,12 @@
-import { StackActions, useNavigation } from "@react-navigation/native";
-import { Keyboard, View } from "react-native";
+import { View } from "react-native";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
+import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 export function WorkspaceSidebarTabs() {
   const workspace = useWorkspaceTabs()!;
-  const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   return (
     <View className="px-4 pb-3 pt-2">
       <SegmentedControl
@@ -16,12 +16,7 @@ export function WorkspaceSidebarTabs() {
           { value: "pullRequests", label: "Pull requests" },
         ]}
         selected={workspace.state.selectedTab}
-        onSelect={(tab: WorkspaceTab) => {
-          if (tab === workspace.state.selectedTab) return;
-          Keyboard.dismiss();
-          if (navigation.getState()?.index) navigation.dispatch(StackActions.popToTop());
-          workspace.dispatch({ type: "select", tab });
-        }}
+        onSelect={(tab: WorkspaceTab) => selectTab(tab)}
       />
     </View>
   );
