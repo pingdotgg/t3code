@@ -3,6 +3,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
+  type NodeId,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
@@ -115,6 +116,19 @@ function isAppOwnedDelegationItem(
   return item.type === "subagent" && isAppOwnedDelegation(item);
 }
 
+function appOwnedSubagentIds(projection: ProjectionStore.ProjectionRuntimeRecoveryState) {
+  return new Set(
+    projection.subagents.filter((task) => task.origin === "app_owned").map((task) => task.id),
+  );
+}
+
+function isAppOwnedSubagentItem(
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  taskIds: ReadonlySet<NodeId>,
+): boolean {
+  return item.type === "subagent" && taskIds.has(item.subagentId);
+}
+
 function providerThreadHasPendingBackgroundTasks(
   providerThread: OrchestrationV2ThreadProjection["providerThreads"][number],
 ): boolean {
@@ -194,6 +208,9 @@ export const make = Effect.gen(function* () {
       continueAfterRestart: boolean,
     ) {
       const now = yield* DateTime.now;
+      // App-owned children have their own durable runs and recovery. Losing
+      // the parent provider session does not cancel the delegated task.
+      const taskIds = appOwnedSubagentIds(projection);
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
       for (const run of nonterminalRuns(projection)) {
         if (run.status === "waiting") {
@@ -274,6 +291,7 @@ export const make = Effect.gen(function* () {
       const recordCancelledBackgroundItem = (
         item: OrchestrationV2ThreadProjection["turnItems"][number],
       ) => {
+        if (isAppOwnedSubagentItem(item, taskIds)) return;
         if (!isBackgroundCapableTurnItemType(item.type)) return;
         const work = cancelledTurnItemWork(item);
         if (work === undefined) return;
@@ -372,6 +390,7 @@ export const make = Effect.gen(function* () {
         for (const node of projection.nodes.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            !taskIds.has(candidate.id) &&
             !messageRequestNodeIds.has(candidate.id) &&
             !delegatedTaskNodeIds.has(candidate.id) &&
             (candidate.status === "pending" ||
@@ -425,6 +444,7 @@ export const make = Effect.gen(function* () {
         for (const item of projection.turnItems.filter(
           (candidate) =>
             candidate.runId === run.id &&
+            !isAppOwnedSubagentItem(candidate, taskIds) &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
             (candidate.status === "pending" ||
@@ -478,6 +498,7 @@ export const make = Effect.gen(function* () {
       const recoveredNonterminalRunIds = new Set(runs.map((run) => run.id));
       const cancelledStaleNodeIds = new Set<string>();
       for (const item of projection.turnItems ?? []) {
+        if (isAppOwnedSubagentItem(item, taskIds)) continue;
         if (item.runId !== null && recoveredNonterminalRunIds.has(item.runId)) {
           continue;
         }

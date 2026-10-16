@@ -3,6 +3,7 @@ import type { OrchestrationV2PendingBackgroundTask } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  pendingBackgroundTurnItems,
   turnItemUpdateCanEndBackgroundWork,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
@@ -41,6 +42,72 @@ describe("backgroundWorkHoldsCompletion", () => {
 });
 
 describe("derivePendingBackgroundWork", () => {
+  it.each(["failed", "interrupted", "cancelled"] as const)(
+    "excludes a %s run's orphan handoff while preserving live background work and queued history",
+    (status) => {
+      const runs = [
+        { id: "run-1" as never, ordinal: 1, status },
+        { id: "run-2" as never, ordinal: 2, status: "queued" as const, queueHeld: true },
+        { id: "run-3" as never, ordinal: 3, status: "completed" as const },
+        { id: "run-4" as never, ordinal: 4, status: "completed" as const },
+      ];
+      const turnItems = [
+        {
+          id: "handoff",
+          type: "dynamic_tool" as const,
+          status: "running" as const,
+          runId: "run-1",
+          title: "mcp__t3-code__t3_worktree_handoff",
+        },
+        {
+          id: "completed-run-background",
+          type: "dynamic_tool" as const,
+          status: "running" as const,
+          runId: "run-3",
+          title: "Await background result",
+        },
+        {
+          id: "child",
+          type: "subagent" as const,
+          status: "running" as const,
+          runId: "run-1",
+          title: "Independent child",
+        },
+        {
+          id: "command",
+          type: "command_execution" as const,
+          status: "running" as const,
+          runId: "run-1",
+          title: "Dev server",
+        },
+      ];
+      const tasks = derivePendingBackgroundWork({
+        latestRun: runs[3],
+        runs,
+        turnItems,
+        providerThreads: [
+          {
+            id: "provider" as never,
+            pendingBackgroundTasks: [{ taskId: "live-roster", kind: "background_task" as const }],
+          },
+        ],
+      });
+      expect(tasks.map((task) => task.taskId)).toEqual([
+        "live-roster",
+        "completed-run-background",
+        "child",
+        "command",
+      ]);
+      expect(pendingBackgroundTurnItems({ turnItems, runs }).map((item) => item.id)).toEqual([
+        "completed-run-background",
+        "child",
+        "command",
+      ]);
+      expect(runs[1]).toMatchObject({ status: "queued", queueHeld: true });
+      expect(turnItems[0]?.status).toBe("running");
+    },
+  );
+
   it("returns empty while the latest run is not settled", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "running" },
