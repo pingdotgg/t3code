@@ -53,6 +53,7 @@ github:mackinleysmith
 github:maria-rcks
 github:MatthewFeroz
 github:maxwellyoung
+github:mweinbach
 github:mwolson
 github:myacoub91
 github:naMqe-h
