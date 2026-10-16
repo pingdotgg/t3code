@@ -522,8 +522,12 @@ export const layer = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
+    // A fresh scan supersedes an older scan for the same instance/cwd. Keep
+    // an ownership token rather than only a running set so an older scan
+    // cannot publish after the newer scan has taken over. The existing
+    // snapshot-equality guard keeps session writes ahead of a scan.
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlySet<string>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, object>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -1075,15 +1079,16 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
+      const token = {};
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
+        if (!input.fresh && current?.has(input.cwd)) return [false, refreshes] as const;
         const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
+        next.set(instance, new Map(current).set(input.cwd, token));
         return [true, next] as const;
       });
       // A fresh scan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      if (!claimed) return yield* Ref.get(providersRef);
       // Fresh scans also re-read the machine snapshot after invalidating caches.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
@@ -1098,10 +1103,14 @@ export const layer = Layer.effect(
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
                   if (currentInstance !== instance) return Ref.get(providersRef);
-                  // Write only if the cwd's snapshot did not change during the
-                  // scan. A session event or another scan that landed first is newer.
-                  return updateProviders((currentProviders) =>
-                    currentProviders.map((candidate) =>
+                  // Check ownership in the same atomic provider update so
+                  // an older scan cannot publish after a newer claim.
+                  return updateProviders((currentProviders) => {
+                    const refreshes = Ref.getUnsafe(workspaceRefreshesRef);
+                    if (refreshes.get(instance)?.get(input.cwd) !== token) {
+                      return currentProviders;
+                    }
+                    return currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
                       Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
@@ -1109,22 +1118,22 @@ export const layer = Layer.effect(
                             checkedAt: scannedAt,
                           })
                         : candidate,
-                    ),
-                  );
+                    );
+                  });
                 }),
               ),
         ),
         Effect.ensuring(
-          claimed
-            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
-                const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
-                current.delete(input.cwd);
-                if (current.size) next.set(instance, current);
-                else next.delete(instance);
-                return next;
-              })
-            : Effect.void,
+          Ref.update(workspaceRefreshesRef, (refreshes) => {
+            const current = refreshes.get(instance);
+            if (current?.get(input.cwd) !== token) return refreshes;
+            const next = new Map(refreshes);
+            const nextCwds = new Map(current);
+            nextCwds.delete(input.cwd);
+            if (nextCwds.size) next.set(instance, nextCwds);
+            else next.delete(instance);
+            return next;
+          }),
         ),
       );
     });

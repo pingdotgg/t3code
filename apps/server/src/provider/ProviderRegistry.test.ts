@@ -1677,10 +1677,12 @@ it.layer(
           slashCommandsPending: true,
         });
         const cacheInvalidations = yield* Ref.make(0);
-        const scanGate = yield* Ref.make<{
-          readonly started: Deferred.Deferred<void>;
-          readonly release: Deferred.Deferred<void>;
-        } | null>(null);
+        const scanGate = yield* Ref.make<
+          ReadonlyArray<{
+            readonly started: Deferred.Deferred<void>;
+            readonly release: Deferred.Deferred<void>;
+          }>
+        >([]);
         const returnPendingSnapshot = yield* Ref.make(true);
         const probeStarted = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
@@ -1721,7 +1723,10 @@ it.layer(
             yield* Deferred.succeed(probeStarted, undefined);
             yield* Deferred.await(releaseProbe);
             const result = yield* Ref.get(scopedResult);
-            const gate = yield* Ref.getAndSet(scanGate, null);
+            const gate = yield* Ref.modify(
+              scanGate,
+              (gates) => [gates[0], gates.slice(1)] as const,
+            );
             if (gate) {
               yield* Deferred.succeed(gate.started, undefined);
               yield* Deferred.await(gate.release);
@@ -1849,7 +1854,7 @@ it.layer(
           // newer scan that finished first.
           const slowStarted = yield* Deferred.make<void>();
           const releaseSlow = yield* Deferred.make<void>();
-          yield* Ref.set(scanGate, { started: slowStarted, release: releaseSlow });
+          yield* Ref.set(scanGate, [{ started: slowStarted, release: releaseSlow }]);
           yield* Ref.set(scopedResult, scopedProvider);
           const slowScan = yield* registry
             .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace", fresh: true })
@@ -1870,6 +1875,52 @@ it.layer(
           assert.deepStrictEqual(
             (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
             [latestSkills],
+          );
+
+          // When no cwd snapshot exists yet, an older ordinary scan can be in
+          // flight when a newer forced scan starts. The forced scan must own
+          // the cwd before the older result is allowed to publish.
+          const olderStarted = yield* Deferred.make<void>();
+          const releaseOlder = yield* Deferred.make<void>();
+          const newerStarted = yield* Deferred.make<void>();
+          const releaseNewer = yield* Deferred.make<void>();
+          yield* Ref.set(scanGate, [
+            { started: olderStarted, release: releaseOlder },
+            { started: newerStarted, release: releaseNewer },
+          ]);
+          const olderSkills = [
+            ...scopedProvider.skills,
+            { name: "older", path: "/workspace2/older/SKILL.md", enabled: true },
+          ];
+          const newerSkills = [
+            ...scopedProvider.skills,
+            { name: "forced", path: "/workspace2/forced/SKILL.md", enabled: true },
+          ];
+          yield* Ref.set(scopedResult, { ...scopedProvider, skills: olderSkills });
+          const olderScan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace2" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(olderStarted);
+          yield* Ref.set(scopedResult, { ...scopedProvider, skills: newerSkills });
+          const newerScan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace2", fresh: true })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(newerStarted);
+          yield* Deferred.succeed(releaseOlder, undefined);
+          yield* Fiber.join(olderScan);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (snapshot) => snapshot.cwd === "/workspace2",
+            )?.skills,
+            undefined,
+          );
+          yield* Deferred.succeed(releaseNewer, undefined);
+          yield* Fiber.join(newerScan);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (snapshot) => snapshot.cwd === "/workspace2",
+            )?.skills,
+            newerSkills,
           );
 
           yield* Ref.set(instancesRef, [rebuiltInstance]);
