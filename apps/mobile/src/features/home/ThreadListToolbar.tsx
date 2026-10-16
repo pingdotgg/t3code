@@ -12,16 +12,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { MenuAction } from "@react-native-menu/menu";
 
 import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
-import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { Menu } from "../../components/ui/Menu";
 import { SearchField } from "../../components/ui/SearchField";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
-import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
+import { AndroidWorkspaceHeader } from "../workspace/AndroidWorkspaceHeader";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
 
 /** One toolbar height for the compact list and expanded sidebar, including search. */
 export function ThreadListToolbar(props: {
@@ -44,7 +42,6 @@ export function ThreadListToolbar(props: {
   const listFocused =
     homeFocused && (workspace === null || workspace.state.selectedTab === "threads");
   const { fabSize } = useAndroidControlSizing();
-  const { height: toolbarHeight, ...headerPadding } = useToolbarLayout();
   const { state } = useWorkspaceState();
   const { onRequestVisibility, onSearchQueryChange } = props;
   const searchRef = useRef<TextInputInstance>(null);
@@ -98,32 +95,24 @@ export function ThreadListToolbar(props: {
 
   return (
     <>
-      <View
+      <AndroidWorkspaceHeader
+        title="Chats"
         onLayout={props.onLayout}
-        className={
-          props.sidebar ? "absolute inset-x-0 top-0 z-[4] bg-header px-2" : "bg-header px-2"
+        sidebar={props.sidebar}
+        onOpenEnvironments={props.onOpenEnvironments}
+        titleContent={searching ? searchField : undefined}
+        leading={
+          searching ? (
+            <AndroidHeaderIconButton
+              accessibilityLabel="Close search"
+              icon="arrow.left"
+              onPress={closeSearch}
+            />
+          ) : undefined
         }
-        style={headerPadding}
-      >
-        <View className="flex-row items-center gap-1" style={{ minHeight: toolbarHeight }}>
-          {searching ? (
+        trailing={
+          !searching ? (
             <>
-              <AndroidHeaderIconButton
-                accessibilityLabel="Close search"
-                icon="arrow.left"
-                onPress={closeSearch}
-              />
-              {searchField}
-            </>
-          ) : (
-            <>
-              <View className="min-w-0 flex-1 pl-4">
-                <WorkspaceConnectionTitle
-                  grow
-                  onPress={props.onOpenEnvironments}
-                  brand={<CompactBrandTitle allowFontScaling={false} />}
-                />
-              </View>
               <AndroidHeaderIconButton
                 accessibilityLabel="Search threads"
                 icon="magnifyingglass"
@@ -135,9 +124,9 @@ export function ThreadListToolbar(props: {
                 onPress={props.onOpenSettings}
               />
             </>
-          )}
-        </View>
-      </View>
+          ) : null
+        }
+      />
       {state.hasConnections ? (
         <View
           className="absolute right-5 z-[5]"

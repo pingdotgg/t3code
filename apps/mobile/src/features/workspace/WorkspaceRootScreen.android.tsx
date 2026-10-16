@@ -4,11 +4,9 @@ import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
-import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { AndroidWorkspaceNavigation } from "./AndroidWorkspaceNavigation";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -53,12 +51,7 @@ export function WorkspaceRootScreen() {
             {workspace.state.selectedTab === "threads" ? (
               <HomeRouteScreen />
             ) : (
-              <>
-                <PullRequestToolbar />
-                <ScreenContent>
-                  <PullRequestsScreen />
-                </ScreenContent>
-              </>
+              <PullRequestsScreen />
             )}
           </View>
         </SafeAreaInsetsContext>

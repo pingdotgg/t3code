@@ -1,8 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { View } from "react-native";
-import { ScreenContent } from "../../components/ui/ScreenContent";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
-import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 
 export function AndroidWorkspaceSidebar(props: {
@@ -17,10 +15,11 @@ export function AndroidWorkspaceSidebar(props: {
   ) : (
     <WorkspaceTabsContext value={context}>
       <View className="flex-1 bg-header">
-        <PullRequestToolbar onRequestVisibility={props.onRequestVisibility} />
-        <ScreenContent insetHorizontal>
-          <PullRequestsScreen sidebar selectedPullRequestKey={props.selectedPullRequestKey} />
-        </ScreenContent>
+        <PullRequestsScreen
+          sidebar
+          selectedPullRequestKey={props.selectedPullRequestKey}
+          onRequestVisibility={props.onRequestVisibility}
+        />
       </View>
     </WorkspaceTabsContext>
   );
