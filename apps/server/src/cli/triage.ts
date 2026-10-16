@@ -21,6 +21,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { baseDirFlag } from "./config.ts";
+import { interactiveStdin } from "./consoleStdin.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import {
   buildTriageContext,
@@ -118,7 +119,9 @@ const runInteractiveSession = (input: {
   Effect.callback<number, TriageAgentSpawnError>((resume) => {
     const child = NodeChildProcess.spawn(input.command, [...input.args], {
       cwd: input.cwd,
-      stdio: "inherit",
+      // The agent reads the user's terminal; under the desktop app's Windows
+      // launcher that is the reopened console, not the (missing) inherited stdin.
+      stdio: [interactiveStdin(), "inherit", "inherit"],
       shell: input.shell,
     });
     child.once("error", (cause) =>
