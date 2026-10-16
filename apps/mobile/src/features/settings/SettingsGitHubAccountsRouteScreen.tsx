@@ -130,7 +130,9 @@ function EnvironmentGitHubAccounts({
             ? "Could not check which GitHub logins this server holds."
             : discovery.data === null
               ? "Checking which GitHub logins this server holds…"
-              : "This server is signed in to one GitHub login per host. Run gh auth login on the server to add another."}
+              : (github?.auth.accounts ?? []).some((account) => account.authenticated)
+                ? "This server is signed in to one GitHub login per host. Run gh auth login on the server to add another."
+                : "This server is not signed in to GitHub. Run gh auth login on the server to sign in."}
         </Text>
       </SettingsSection>
     );

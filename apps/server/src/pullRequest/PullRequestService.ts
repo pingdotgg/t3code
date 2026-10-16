@@ -310,8 +310,8 @@ export interface SupportedProject {
   readonly remote: string;
   readonly repositoryKey: string | null;
   /**
-   * The account the repository is read as (the provider's `credentialScope`), empty for the
-   * host's own. Repositories with one share a viewer and batched reads.
+   * Which credential the repository is read with (the provider's `credentialScope`), empty for a
+   * provider with one account per host. Repositories with one share a viewer and batched reads.
    */
   readonly credentialScope: string;
 }

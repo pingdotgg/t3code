@@ -245,9 +245,8 @@ export const make = Effect.gen(function* () {
     kind: SourceControlProviderKind.make("github"),
     capabilities: CAPABILITIES,
     mergeMessageRewrite: removeAgentCredits,
-    // Settings choose an account per repository or owner; repositories read as one share it.
-    credentialScope: ({ host, repository }) =>
-      policy.accountFor(host, repository).pipe(Effect.map((account) => account ?? "")),
+    // Repositories read with one credential share a viewer and batched reads.
+    credentialScope: ({ host, repository }) => policy.credentialScope(host, repository),
     getRoutingIdentity: (input) =>
       policy
         .withRepositoryAccount(asRepository(input), cli.getRoutingIdentity(input))

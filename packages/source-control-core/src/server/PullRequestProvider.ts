@@ -276,9 +276,9 @@ export interface PullRequestProviderApi {
   readonly repositoryKey?: (input: { readonly canonicalKey: string }) => string;
 
   /**
-   * The account a repository is read with, for a host whose settings choose one per repository
-   * rather than once; empty for the host's own. Repositories with the same scope share a viewer
-   * and may share one batched read. Absent means one account for the whole host.
+   * Which credential a repository is read with, for a host whose settings choose one per
+   * repository rather than once. Repositories with the same scope share a viewer and may share
+   * one batched read. Absent means one account for the whole host.
    */
   readonly credentialScope?: (input: {
     readonly host: string;
