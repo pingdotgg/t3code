@@ -11,7 +11,6 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -65,6 +64,9 @@ const fixture = Effect.fn(function* (
     }),
     loadEmbedded: async () => ({
       EmbeddedCuaDriverHost: class {
+        static withOptions() {
+          return new this();
+        }
         async start() {
           starts++;
           Queue.offerUnsafe(starting, undefined);

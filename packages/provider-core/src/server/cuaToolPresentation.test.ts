@@ -243,6 +243,33 @@ const CUA_DRIVER_TOOLS = [
 ];
 
 describe("readCuaWindowTarget", () => {
+  it("keeps the capture target when restoring focus or a later tool fails", () => {
+    clearCuaToolContext(threadId);
+    cuaToolPresentation({
+      threadId,
+      rawToolName: "cua-driver/get_window_state",
+      args: { pid: 42, window_id: 7 },
+      status: "completed",
+    });
+    for (const status of ["inProgress", "completed"] as const) {
+      cuaToolPresentation({
+        threadId,
+        rawToolName: "cua-driver/bring_to_front",
+        args: { pid: 99, window_id: 8 },
+        status,
+      });
+      NodeAssert.deepEqual(readCuaWindowTarget(threadId), { pid: 42, windowId: 7n });
+    }
+    cuaToolPresentation({
+      threadId,
+      rawToolName: "cua-driver/get_window_state",
+      args: { pid: 99, window_id: 8 },
+      status: "failed",
+    });
+    NodeAssert.deepEqual(readCuaWindowTarget(threadId), { pid: 42, windowId: 7n });
+    clearCuaToolContext(threadId);
+  });
+
   it("remembers the last pid and window id a tool call addressed", () => {
     clearCuaToolContext(threadId);
     NodeAssert.equal(readCuaWindowTarget(threadId), undefined);
