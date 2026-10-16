@@ -6255,8 +6255,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
           const current = yield* Ref.get(activeTurn);
-          const context =
-            current?.nativeThreadId === closedQuery.nativeThreadId ? current : closedQuery.lastTurn;
+          // The query has already retired its ownership before this cleanup
+          // runs. Use its own last turn so a replacement query that starts
+          // during the cleanup cannot be finalized by the old process.
+          const context = closedQuery.lastTurn;
           if (context === null) return;
           const interrupted =
             closedQuery.stopping || (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
@@ -6279,12 +6281,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } else {
             yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId);
           }
-          // A workflow can outlive its launching turn, but not its CLI process.
+          // A background subagent can outlive its launching turn, but not its CLI process.
           // Apply buffered outcomes before Stop can discard their wake buffer.
           // Capture ownership before finalization, which may yield to a new process.
           for (const [taskId, subagent] of subagents) {
             if (
-              subagent.task.workflow === undefined ||
               subagent.task.status !== "running" ||
               closedQuery.subagentsFromEarlierProcesses.has(subagent)
             )

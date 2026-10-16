@@ -8103,30 +8103,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
-        for (const frame of [
+        yield* harness.offerAndWait(
           makeSubagentTaskStartedFrame({
             taskId: "task-idle-exit",
             toolUseId: TOOL_USE_ID,
             uuid: "00000000-0000-4000-8000-000000000981",
           }),
-          ...makeSubagentAssistantFrames({
-            parentToolUseId: TOOL_USE_ID,
-            uuid: "00000000-0000-4000-8000-000000000982",
-            bashToolUseId: BASH,
-          }),
+        );
+        const started = yield* Queue.take(harness.subagentReceipts);
+        assert.equal(started.subagent.status, "running");
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: TOOL_USE_ID,
+          uuid: "00000000-0000-4000-8000-000000000982",
+          bashToolUseId: BASH,
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000983",
             result: "Auditing in the background.",
           }),
-        ]) {
-          yield* Queue.offer(harness.sdkMessages, frame);
-        }
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "launch turn terminal");
+        );
+        yield* Queue.take(harness.terminalReceipts);
         assert.deepEqual(bashStatuses(), ["command_execution:running"]);
 
         // The CLI exits before the call returns; its result can never arrive.
         yield* Queue.shutdown(harness.sdkMessages);
-        yield* awaitUntil(() => bashStatuses().length === 2, "call ended");
+        let ended = yield* Queue.take(harness.subagentReceipts);
+        while (ended.subagent.status === "running") {
+          ended = yield* Queue.take(harness.subagentReceipts);
+        }
+        assert.equal(ended.subagent.status, "failed");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.deepEqual(bashStatuses(), ["command_execution:running", "command_execution:failed"]);
       }).pipe(
         Effect.provide(
@@ -8194,6 +8203,62 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "command_execution:running",
           "command_execution:interrupted",
         ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("cancels a plain background subagent when Stop closes its CLI process", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const TASK_ID = "task-idle-stop-exit";
+        const TOOL_USE_ID = "toolu-idle-stop-exit";
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-idle-stop-exit"),
+            text: "Audit in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: TOOL_USE_ID,
+            uuid: "00000000-0000-4000-8000-000000000989",
+          }),
+        );
+        const started = yield* Queue.take(harness.subagentReceipts);
+        assert.equal(started.subagent.status, "running");
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000990",
+            result: "Auditing in the background.",
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: terminal.providerTurnId,
+          requestRuntimeRestart: true,
+        });
+
+        let ended = yield* Queue.take(harness.subagentReceipts);
+        while (ended.subagent.status === "running") {
+          ended = yield* Queue.take(harness.subagentReceipts);
+        }
+        assert.equal(ended.subagent.status, "cancelled");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -11749,6 +11814,47 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       "workflow members projected",
     );
   });
+
+  it.effect("fails a workflow when its CLI process exits while the root turn is idle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarnessWithOptions({ close: Queue.shutdown });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-workflow-idle-exit"),
+            text: "Run the workflow.",
+            attachments: [],
+          }),
+        );
+        yield* launchWorkflow({
+          harness,
+          snapshotUuid: "00000000-0000-4000-8000-000000001210",
+        });
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000001211",
+            result: "Workflow launched.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* Queue.shutdown(harness.sdkMessages);
+        let ended = yield* Queue.take(harness.subagentReceipts);
+        while (ended.subagent.status === "running") {
+          ended = yield* Queue.take(harness.subagentReceipts);
+        }
+        assert.equal(ended.subagent.status, "failed");
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect.each(["Agent", "Workflow"] as const)(
     "keeps a workflow running after its %s launch reply without an async flag",
