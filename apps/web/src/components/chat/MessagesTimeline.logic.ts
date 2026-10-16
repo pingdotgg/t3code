@@ -565,6 +565,8 @@ type MessagesTimelineRowContent =
       durationStart: string;
       showAssistantMeta: boolean;
       showAssistantCopyButton: boolean;
+      /** A later assistant message in this run follows, so forks cut at this one. */
+      assistantMidRun?: boolean | undefined;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
@@ -576,6 +578,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       message: ChatMessage;
       showAssistantCopyButton: boolean;
+      assistantMidRun?: boolean | undefined;
       assistantCopyStreaming: boolean;
     }
   | {
@@ -670,8 +673,16 @@ export function resolveAssistantMessageCopyState({
   };
 }
 
+/**
+ * The assistant messages that end a stretch of output and so carry metadata:
+ * each run's last one, plus the last one before a later user message in the
+ * same run (a steer). `midRunIds` holds the latter; forking from one of them
+ * must cut inside its run.
+ */
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
   const lastAssistantMessageIdByResponseKey = new Map<string, string>();
+  const runSegmentByMessageId = new Map<string, { runId: RunId; segment: number }>();
+  const segmentByRunId = new Map<RunId, number>();
   let nullTurnResponseIndex = 0;
 
   for (const timelineEntry of timelineEntries) {
@@ -681,19 +692,36 @@ function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<Timeli
     const { message } = timelineEntry;
     if (message.role === "user") {
       nullTurnResponseIndex += 1;
+      if (message.runId) {
+        segmentByRunId.set(message.runId, (segmentByRunId.get(message.runId) ?? 0) + 1);
+      }
       continue;
     }
     if (message.role !== "assistant") {
       continue;
     }
 
+    const segment = message.runId ? (segmentByRunId.get(message.runId) ?? 0) : 0;
+    if (message.runId) {
+      runSegmentByMessageId.set(message.id, { runId: message.runId, segment });
+    }
     const responseKey = message.runId
-      ? `turn:${message.runId}`
+      ? `turn:${message.runId}:${segment}`
       : `unkeyed:${nullTurnResponseIndex}`;
     lastAssistantMessageIdByResponseKey.set(responseKey, message.id);
   }
 
-  return new Set(lastAssistantMessageIdByResponseKey.values());
+  const terminalIds = new Set(lastAssistantMessageIdByResponseKey.values());
+  // Any later user message in the run (a steer) makes a response mid-run, even
+  // when no assistant reply follows it yet.
+  const midRunIds = new Set<string>();
+  for (const messageId of terminalIds) {
+    const position = runSegmentByMessageId.get(messageId);
+    if (position && position.segment < (segmentByRunId.get(position.runId) ?? 0)) {
+      midRunIds.add(messageId);
+    }
+  }
+  return { terminalIds, midRunIds };
 }
 
 interface TurnFold {
@@ -1212,6 +1240,7 @@ function attachTrailingToolGroupsToAssistant(
       createdAt: rows[lastTrailingWorkIndex]?.createdAt ?? row.message.updatedAt,
       message: row.message,
       showAssistantCopyButton: row.showAssistantCopyButton,
+      assistantMidRun: row.assistantMidRun,
       assistantCopyStreaming: row.assistantCopyStreaming,
     });
   }
@@ -1304,7 +1333,7 @@ function deriveTimelineTurnFolds(
   });
   return deriveTurnFolds({
     timelineEntries,
-    terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries),
+    terminalAssistantMessageIds: deriveTerminalAssistantMessageIds(timelineEntries).terminalIds,
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
@@ -1349,7 +1378,8 @@ export function deriveMessagesTimelineRows(input: {
   const durationStartByMessageId = computeMessageDurationStart(
     timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
   );
-  const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
+  const { terminalIds: terminalAssistantMessageIds, midRunIds: midRunAssistantMessageIds } =
+    deriveTerminalAssistantMessageIds(timelineEntries);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
@@ -1803,6 +1833,7 @@ export function deriveMessagesTimelineRows(input: {
       durationStart,
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
+      assistantMidRun: midRunAssistantMessageIds.has(timelineEntry.message.id),
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
@@ -1925,7 +1956,14 @@ function attachCreatedThreadSummaries(
   const collapsedRuns = new Set<RunId>();
   const createdByRun = new Map<RunId, Array<Extract<MessagesTimelineRow, { kind: "event" }>>>();
   for (const [index, row] of rows.entries()) {
-    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+    // A response a steer cut off is not the run's answer, even when no reply
+    // follows the steer yet; created chats then stay where they happened.
+    if (
+      row.kind === "message" &&
+      row.showAssistantMeta &&
+      row.assistantMidRun !== true &&
+      row.message.runId
+    ) {
       terminalIndexes.set(row.message.runId, index);
     }
     if (row.kind === "turn-fold" && !row.expanded) collapsedRuns.add(row.runId);
@@ -1951,7 +1989,12 @@ function attachCreatedThreadSummaries(
       if (terminalIndex !== undefined && (collapsedRuns.has(runId!) || index > terminalIndex))
         return [];
     }
-    if (row.kind === "message" && row.showAssistantMeta && row.message.runId) {
+    // A steered run has a meta row per response; summaries follow only its last.
+    if (
+      row.kind === "message" &&
+      row.message.runId &&
+      terminalIndexes.get(row.message.runId) === index
+    ) {
       return [
         row,
         ...(createdByRun.get(row.message.runId) ?? []).map((entry) => ({
@@ -2143,6 +2186,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.projectedItem === bm.projectedItem &&
         a.message === bm.message &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
+        a.assistantMidRun === bm.assistantMidRun &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming
       );
     }
@@ -2233,6 +2277,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.durationStart === bm.durationStart &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
+        a.assistantMidRun === bm.assistantMidRun &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
         a.revertTurnCount === bm.revertTurnCount

@@ -75,6 +75,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type ThreadLinkedPullRequest,
+  type TurnItemId,
   type RunId,
   type RuntimeRequestId,
   type KeybindingCommand,
@@ -8226,6 +8227,7 @@ export default function ChatView(props: ChatViewProps) {
   const onForkFromRun = async (input: {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
+    readonly turnItemId?: TurnItemId;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
     const targetThreadId = newThreadId();
@@ -8236,6 +8238,7 @@ export default function ChatView(props: ChatViewProps) {
         sourceThreadId: input.sourceThreadId,
         targetThreadId,
         runId: input.runId,
+        ...(input.turnItemId === undefined ? {} : { turnItemId: input.turnItemId }),
         title: `${activeThread.title} fork`,
       },
     });

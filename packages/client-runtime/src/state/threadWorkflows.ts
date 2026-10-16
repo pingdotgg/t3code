@@ -1,8 +1,11 @@
 import type {
   ChatAttachment,
+  OrchestrationV2AppThread,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ThreadProjection,
+  ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
 
@@ -165,7 +168,12 @@ export function canForkProjectedAssistantItem(input: {
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
 }): boolean {
   const item = input.projectedItem.item;
-  if (item.type !== "assistant_message" || item.runId === null || item.status !== "completed") {
+  if (
+    item.type !== "assistant_message" ||
+    item.runId === null ||
+    // A reply the user stopped mid-stream is still a settled point to fork from.
+    (item.status !== "completed" && item.status !== "interrupted")
+  ) {
     return false;
   }
   if (input.capabilities === undefined) {
@@ -180,6 +188,38 @@ export function canForkProjectedAssistantItem(input: {
     capabilities.threads.canForkFromTurn &&
     capabilities.identity.nativeThreadIds === "strong";
   return canForkNatively || capabilities.context.supportsFullThreadHandoff;
+}
+
+/**
+ * The item a Fork on this response cuts at, or undefined to fork its whole run.
+ * A response a steer cut off cuts at itself. So does the response a fork was
+ * cut at: in the fork, and in forks of it, it looks like its run's last
+ * response, but the source run goes on past it. `readForkedFrom` looks up a
+ * thread's `forkedFrom`; the walk starts at the thread the response shows in.
+ */
+export function forkCutTurnItemId(input: {
+  readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly midRun: boolean;
+  readonly threadId: ThreadId;
+  readonly readForkedFrom: (
+    threadId: ThreadId,
+  ) => OrchestrationV2AppThread["forkedFrom"] | undefined;
+}): TurnItemId | undefined {
+  if (input.midRun) return input.projectedItem.item.id;
+  const seen = new Set<ThreadId>();
+  let threadId = input.threadId;
+  while (!seen.has(threadId)) {
+    seen.add(threadId);
+    const forkedFrom = input.readForkedFrom(threadId);
+    if (forkedFrom?.type !== "run") return undefined;
+    if (forkedFrom.threadId === input.projectedItem.sourceThreadId) {
+      return forkedFrom.throughTurnItemId === input.projectedItem.sourceItemId
+        ? input.projectedItem.item.id
+        : undefined;
+    }
+    threadId = forkedFrom.threadId;
+  }
+  return undefined;
 }
 
 export function canDetachThreadProviderSession(projection: Projection): boolean {

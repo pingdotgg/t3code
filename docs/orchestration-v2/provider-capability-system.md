@@ -50,12 +50,15 @@ type ThreadCapabilities = {
   canRollbackThread: boolean;
   canForkThread: boolean;
   canForkFromTurn: boolean;
+  canForkFromItem?: boolean;
   canForkFromSubagentThread: boolean;
   exposesNativeThreadId: boolean;
 };
 ```
 
 Codex can expose strong thread ids and rollback snapshots. Claude may support native forking through its own model/session primitives. Other providers may only support synthetic app forks.
+
+`canForkFromItem` means a native fork can end at one assistant response inside a turn. Active steering keeps the steer in the same turn, so a fork from a response a steer cut off needs it; without it the fork uses portable context cut at that response. Claude sets it because `forkSession` cuts at an SDK message uuid; Codex `thread/fork` cuts only at turn ends.
 
 ## Turn Capabilities
 

@@ -269,6 +269,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     canRollbackThread: true,
     canForkThread: true,
     canForkFromTurn: true,
+    canForkFromItem: true,
     canForkFromSubagentThread: false,
     exposesNativeThreadId: true,
   },
@@ -1439,6 +1440,25 @@ const getNativeConversationHeadId = Effect.fnUntraced(function* (
 
 const resolveClaudeForkUpToMessageId = Effect.fn("ClaudeAdapterV2.resolveForkUpToMessageId")(
   function* (input: ProviderAdapter.ProviderAdapterV2ForkThreadInput) {
+    // Assistant items carry the SDK message uuid, which forkSession accepts as
+    // an inclusive cut, so a fork can end before a steer in the same turn.
+    const throughItem = input.throughTurnItem;
+    if (throughItem !== undefined) {
+      const nativeId = throughItem.nativeItemRef?.nativeId;
+      if (
+        throughItem.type !== "assistant_message" ||
+        throughItem.nativeItemRef?.driver !== CLAUDE_PROVIDER ||
+        nativeId === undefined ||
+        nativeId === null
+      ) {
+        return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
+          driver: CLAUDE_PROVIDER,
+          providerThreadId: input.sourceProviderThread.id,
+          cause: `Cannot fork Claude thread at item ${throughItem.id}: it has no SDK assistant message id.`,
+        });
+      }
+      return nativeId;
+    }
     if (input.providerTurnId === undefined || input.sourceProviderTurns === undefined) {
       return undefined;
     }
@@ -2828,6 +2848,8 @@ function buildAssistantArtifacts(input: {
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeItemId: string;
+  /** The SDK message uuid, when the item id is derived from something else. */
+  readonly nativeMessageUuid?: string | undefined;
   readonly text: string;
   readonly ordinal: number;
   readonly startedAt: DateTime.Utc;
@@ -2849,9 +2871,11 @@ function buildAssistantArtifacts(input: {
     driver: CLAUDE_PROVIDER,
     nativeItemId: input.nativeItemId,
   });
+  // A fork cut at this item passes the native id to forkSession as
+  // upToMessageId, so it must be an SDK message uuid.
   const nativeItemRef = {
     driver: CLAUDE_PROVIDER,
-    nativeId: input.nativeItemId,
+    nativeId: input.nativeMessageUuid ?? input.nativeItemId,
     strength: "strong" as const,
   };
 
@@ -2975,6 +2999,8 @@ interface ActiveClaudeTurnContext {
     lastThinking: {
       readonly messageId: string;
       readonly itemId: string;
+      // The SDK snapshot that held the block, a valid forkSession cut.
+      readonly snapshotUuid: string;
       readonly text: string;
       readonly followsThinking: boolean;
     } | null;
@@ -5881,6 +5907,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly nativeItemId: string;
+          readonly nativeMessageUuid?: string;
           readonly text: string;
         }) {
           if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
@@ -5894,6 +5921,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput: input.context.input,
             providerTurnId: input.context.providerTurnId,
             nativeItemId: input.nativeItemId,
+            nativeMessageUuid: input.nativeMessageUuid,
             text: input.text,
             ordinal,
             startedAt: now,
@@ -6628,9 +6656,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update.followsThinking &&
                   claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
+                  // Cutting a fork at its snapshot keeps the thinking and drops
+                  // the tool call, which has no result yet.
                   yield* emitAssistantTextArtifacts({
                     context,
                     nativeItemId: update.itemId,
+                    nativeMessageUuid: update.snapshotUuid,
                     text: update.text,
                   });
                 }
@@ -6652,6 +6683,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? {
                     messageId: message.message.id,
                     itemId,
+                    snapshotUuid: message.uuid,
                     text: completedText,
                     followsThinking: previous !== null && previous.messageId === message.message.id,
                   }

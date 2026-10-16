@@ -5,6 +5,7 @@ import {
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  forkCutTurnItemId,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -383,6 +384,60 @@ describe("thread workflows", () => {
         } as never,
       }),
     ).toBe(false);
+  });
+
+  it("forks a fork's cut response at that response, at every fork depth", () => {
+    // Source S's run R: prompt, A, steer, B. F1 forks at A; F2 forks F1's own run.
+    const forkedFrom: Record<string, unknown> = {
+      S: null,
+      F1: { type: "run", threadId: "S", runId: "R", throughTurnItemId: "A" },
+      F2: { type: "run", threadId: "F1", runId: "R1" },
+      WHOLE: { type: "run", threadId: "S", runId: "R" },
+    };
+    const response = (sourceItemId: string) =>
+      ({
+        sourceThreadId: "S",
+        sourceItemId,
+        item: { id: sourceItemId, type: "assistant_message", runId: "R", status: "completed" },
+      }) as never;
+    const cut = (threadId: string, sourceItemId: string, midRun = false) =>
+      forkCutTurnItemId({
+        projectedItem: response(sourceItemId),
+        midRun,
+        threadId: threadId as never,
+        readForkedFrom: (id) => forkedFrom[id] as never,
+      });
+
+    // In a fork, A ends its run, but forking there must not bring back the steer.
+    expect(cut("F1", "A")).toBe("A");
+    expect(cut("F2", "A")).toBe("A");
+    // The source's own last response and a whole-run fork's copy fork the run.
+    expect(cut("S", "B")).toBeUndefined();
+    expect(cut("WHOLE", "B")).toBeUndefined();
+    // A response a steer cut off cuts at itself wherever it shows.
+    expect(cut("S", "A", true)).toBe("A");
+  });
+
+  it("forks from a reply that was stopped mid-stream, but not from a failed one", () => {
+    const withStatus = (status: string) =>
+      ({ item: { type: "assistant_message", runId: "run", status } }) as never;
+
+    expect(canForkProjectedAssistantItem({ projectedItem: withStatus("interrupted") })).toBe(true);
+    expect(
+      canForkProjectedAssistantItem({
+        projectedItem: withStatus("interrupted"),
+        capabilities: capabilities({ portableFork: true }),
+      }),
+    ).toBe(true);
+    expect(
+      canForkProjectedAssistantItem({
+        projectedItem: withStatus("interrupted"),
+        capabilities: capabilities(),
+      }),
+    ).toBe(false);
+    for (const status of ["failed", "cancelled", "pending", "waiting", "idle"]) {
+      expect(canForkProjectedAssistantItem({ projectedItem: withStatus(status) })).toBe(false);
+    }
   });
 
   it("merges the newest provider-finished run while checkpoint capture is pending", () => {

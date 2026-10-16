@@ -18,7 +18,10 @@ import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canForkProjectedAssistantItem,
+  forkCutTurnItemId,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import {
   type OrchestrationMessageContext,
   ThreadId,
@@ -171,6 +174,7 @@ import {
 } from "../../lib/markdownLinks";
 import {
   failedFeedRunIds,
+  terminalFeedAssistantMessageIds,
   deriveThreadFeedPresentation,
   threadFeedRunIsUnsettled,
   isContextCompactionActivityGroup,
@@ -357,8 +361,12 @@ function UserMessageCopyButton(props: {
 
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
+  /** The thread the response shows in, which may be a fork of its source. */
+  readonly threadId: ThreadId;
   readonly iconColor: ColorValue;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  /** A later response in the run follows, so the fork cuts at this item. */
+  readonly midRun: boolean;
   readonly sourceTitle: string;
 }) {
   const support = useV2ItemSupport({
@@ -384,6 +392,17 @@ function AssistantForkButton(props: {
       disabled={busy}
       onPress={() => {
         const targetThreadId = ThreadId.make(uuidv4());
+        const turnItemId = forkCutTurnItemId({
+          projectedItem: props.projectedItem,
+          midRun: props.midRun,
+          threadId: props.threadId,
+          readForkedFrom: (threadId) =>
+            appAtomRegistry.get(
+              environmentThreadShells.threadShellAtom(
+                scopeThreadRef(props.environmentId, threadId),
+              ),
+            )?.forkedFrom,
+        });
         setBusy(true);
         void Haptics.selectionAsync();
         void forkFromRun({
@@ -392,6 +411,7 @@ function AssistantForkButton(props: {
             sourceThreadId: props.projectedItem.sourceThreadId,
             targetThreadId,
             runId,
+            ...(turnItemId === undefined ? {} : { turnItemId }),
             title: `${props.sourceTitle} fork`,
             creationSource: "mobile",
           },
@@ -978,7 +998,7 @@ function renderFeedEntry(
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
-    readonly terminalAssistantMessageIds: ReadonlySet<string>;
+    readonly terminalAssistantMessageIds: ReturnType<typeof terminalFeedAssistantMessageIds>;
     readonly unsettledTurnId: RunId | null;
     readonly failedRunIds: ReadonlySet<RunId>;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
@@ -1146,7 +1166,7 @@ function renderFeedEntry(
       message.runId === props.unsettledTurnId;
     const showAssistantMeta =
       message.role === "assistant" &&
-      props.terminalAssistantMessageIds.has(message.id) &&
+      props.terminalAssistantMessageIds.terminalIds.has(message.id) &&
       !assistantTurnStillInProgress &&
       !message.streaming;
 
@@ -1421,8 +1441,10 @@ function renderFeedEntry(
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
+                threadId={props.threadId}
                 iconColor={iconSubtleColor}
                 projectedItem={message.projectedItem}
+                midRun={props.terminalAssistantMessageIds.midRunIds.has(message.id)}
                 sourceTitle={props.threadTitle}
               />
             ) : null}
@@ -2195,15 +2217,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => failedFeedRunIds(props.feed, props.latestRun),
     [props.feed, props.latestRun],
   );
-  const terminalAssistantMessageIds = useMemo(() => {
-    const terminalIdsByTurn = new Map<RunId, string>();
-    for (const entry of props.feed) {
-      if (entry.type === "message" && entry.message.role === "assistant" && entry.message.runId) {
-        terminalIdsByTurn.set(entry.message.runId, entry.message.id);
-      }
-    }
-    return new Set(terminalIdsByTurn.values());
-  }, [props.feed]);
+  const terminalAssistantMessageIds = useMemo(
+    () => terminalFeedAssistantMessageIds(props.feed),
+    [props.feed],
+  );
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestRun;
