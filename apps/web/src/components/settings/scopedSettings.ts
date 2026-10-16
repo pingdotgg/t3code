@@ -35,6 +35,8 @@ interface ScopedSettingsEnvironment {
       readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
     };
   } | null;
+  /** Server keys this environment cannot store; see `resolveUnsupportedSettingKeys`. */
+  readonly unsupportedSettingKeys?: ReadonlySet<string>;
 }
 
 const SERVER_KEYS = new Set<string>(Object.keys(ServerSettings.fields));
@@ -47,6 +49,42 @@ export function isProjectScopedSettingKey(key: string): key is ProjectScopedServ
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const NO_UNSUPPORTED_KEYS: ReadonlySet<string> = new Set();
+
+/**
+ * Server keys an environment cannot store. A server lists the keys it knows;
+ * an older one does not, so a key it dropped on an earlier save stands in.
+ * Settings decode missing keys to their defaults, so nothing else tells an
+ * unknown key apart from one left at its default.
+ */
+export function resolveUnsupportedSettingKeys(
+  advertised: readonly string[] | undefined,
+  dropped: ReadonlySet<string> | undefined,
+): ReadonlySet<string> {
+  if (advertised !== undefined) {
+    const known = new Set(advertised);
+    return new Set([...SERVER_KEYS].filter((key) => !known.has(key)));
+  }
+  return dropped ?? NO_UNSUPPORTED_KEYS;
+}
+
+function supportsSettingKey(
+  holder: { readonly unsupportedSettingKeys?: ReadonlySet<string> },
+  key: string,
+) {
+  return holder.unsupportedSettingKeys?.has(key) !== true;
+}
+
+/** The patch without the keys this environment cannot store. */
+function supportedServerPatch(
+  environment: ScopedSettingsEnvironment,
+  patch: ServerSettingsPatch,
+): ServerSettingsPatch {
+  return Object.fromEntries(
+    Object.entries(patch).filter(([key]) => supportsSettingKey(environment, key)),
+  ) as ServerSettingsPatch;
 }
 
 /** The representative supplies display values, never the set of write targets. */
@@ -76,6 +114,8 @@ export interface ScopedSettingsTarget {
   readonly projectId: ProjectId | null;
   readonly settings: ServerSettings;
   readonly sources: Readonly<Record<ProjectScopedServerSettingKey, ProjectSettingSource>>;
+  /** Server keys this target's environment cannot store; they show its defaults. */
+  readonly unsupportedSettingKeys?: ReadonlySet<string>;
 }
 
 export function resolveScopedSettingsTargets(
@@ -103,6 +143,7 @@ export function resolveScopedSettingsTargets(
           projectId: member.id,
           settings: resolved.settings,
           sources: resolved.sources,
+          unsupportedSettingKeys: environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS,
         },
       ];
     });
@@ -116,34 +157,67 @@ export function resolveScopedSettingsTargets(
             projectId: null,
             settings: environment.serverConfig.settings,
             sources: resolveProjectSettings(environment.serverConfig.settings, null).sources,
+            unsupportedSettingKeys: environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS,
           },
         ]
       : [],
   );
 }
 
+/** Whether the targets that can store a key disagree on it. */
 export function scopedSettingsAreMixed(
-  targets: readonly Pick<ScopedSettingsTarget, "settings">[],
+  targets: readonly Pick<ScopedSettingsTarget, "settings" | "unsupportedSettingKeys">[],
   keys: readonly (keyof ServerSettings)[],
 ): boolean {
-  const first = targets[0];
-  return (
-    first !== undefined &&
-    targets.some((candidate) =>
-      keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
-    )
-  );
+  return keys.some((key) => {
+    const holders = targets.filter((target) => supportsSettingKey(target, key));
+    const first = holders[0];
+    return (
+      first !== undefined &&
+      holders.some((candidate) => !Equal.equals(first.settings[key], candidate.settings[key]))
+    );
+  });
+}
+
+/** Targets whose environment cannot store any of the keys, for the row to name. */
+export function scopedSettingsUnsupportedTargets<
+  T extends Pick<ScopedSettingsTarget, "unsupportedSettingKeys">,
+>(targets: readonly T[], keys: readonly (keyof ServerSettings)[]): readonly T[] {
+  return targets.filter((target) => keys.some((key) => !supportsSettingKey(target, key)));
+}
+
+/**
+ * The representative's settings, with each key it cannot store taken from the
+ * first target that can, so a row shows the value the setting really has.
+ */
+export function scopedDisplaySettings(
+  representative: Pick<ScopedSettingsTarget, "settings" | "unsupportedSettingKeys">,
+  targets: readonly Pick<ScopedSettingsTarget, "settings" | "unsupportedSettingKeys">[],
+): ServerSettings {
+  const unsupported = representative.unsupportedSettingKeys;
+  if (!unsupported || unsupported.size === 0) return representative.settings;
+  const settings: Record<string, unknown> = { ...representative.settings };
+  for (const key of unsupported) {
+    const holder = targets.find((target) => supportsSettingKey(target, key));
+    if (holder) settings[key] = holder.settings[key as keyof ServerSettings];
+  }
+  return settings as ServerSettings;
 }
 
 export type ScopedSettingSource = ProjectSettingSource | "mixed";
 
 export function scopedSettingsSource(
-  targets: readonly Pick<ScopedSettingsTarget, "sources">[],
+  targets: readonly Pick<ScopedSettingsTarget, "sources" | "unsupportedSettingKeys">[],
   keys: readonly (keyof ServerSettings)[],
 ): ScopedSettingSource {
   const scoped = keys.filter(isProjectScopedSettingKey);
   if (scoped.length === 0 || targets.length === 0) return "environment";
-  const sources = new Set(targets.flatMap((target) => scoped.map((key) => target.sources[key])));
+  const sources = new Set(
+    targets.flatMap((target) =>
+      scoped.filter((key) => supportsSettingKey(target, key)).map((key) => target.sources[key]),
+    ),
+  );
+  if (sources.size === 0) return "environment";
   return sources.size > 1
     ? "mixed"
     : sources.has("project")
@@ -167,7 +241,9 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
+    environment: ScopedSettingsEnvironment,
   ) => ProjectSettingsOverrides | null,
+  includes: (environment: ScopedSettingsEnvironment) => boolean = () => true,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const writes = new Map<EnvironmentId, ScopedServerWrite>();
@@ -176,12 +252,18 @@ function projectOverrideWrites(
     if (
       !environment?.serverConfig ||
       environment.connection.phase !== "connected" ||
-      environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true
+      environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true ||
+      !includes(environment)
     ) {
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const entry = update(
+      settings.projectSettingsOverrides[member.id] ?? {},
+      settings,
+      member.id,
+      environment,
+    );
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -215,48 +297,60 @@ export function planScopedSettingsPatch(
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
+  const storesPatch = (environment: ScopedSettingsEnvironment) =>
+    Object.keys(supportedServerPatch(environment, serverPatch)).length > 0;
   const serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
-              // Object-valued keys arrive as partial patches (the writing style
-              // rows send one field); an override entry stores the whole value,
-              // so complete the patch from the target's effective value.
-              const effective = resolveProjectSettings(settings, projectId).settings;
-              const next: Record<string, unknown> = { ...current };
-              for (const [key, value] of Object.entries(serverPatch)) {
-                if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
-                  next[key] = {
-                    mode: "custom",
-                    rules: {
-                      ...resolveWorktreeCleanup(settings, projectId),
-                      ...serverPatch.worktreeCleanup.rules,
-                    },
-                  };
-                  continue;
+          : projectOverrideWrites(
+              scope,
+              environments,
+              (current, settings, projectId, environment) => {
+                // Object-valued keys arrive as partial patches (the writing style
+                // rows send one field); an override entry stores the whole value,
+                // so complete the patch from the target's effective value.
+                const effective = resolveProjectSettings(settings, projectId).settings;
+                const next: Record<string, unknown> = { ...current };
+                const environmentPatch = supportedServerPatch(environment, serverPatch);
+                for (const [key, value] of Object.entries(environmentPatch)) {
+                  if (
+                    key === "worktreeCleanup" &&
+                    environmentPatch.worktreeCleanup?.mode === "custom"
+                  ) {
+                    next[key] = {
+                      mode: "custom",
+                      rules: {
+                        ...resolveWorktreeCleanup(settings, projectId),
+                        ...environmentPatch.worktreeCleanup.rules,
+                      },
+                    };
+                    continue;
+                  }
+                  // A picker's "Inherit" sends null; for keys whose override
+                  // cannot store null that means remove the override.
+                  if (
+                    value === null &&
+                    !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
+                  ) {
+                    delete next[key];
+                    continue;
+                  }
+                  const base = effective[key as keyof ServerSettings];
+                  next[key] =
+                    isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
                 }
-                // A picker's "Inherit" sends null; for keys whose override
-                // cannot store null that means remove the override.
-                if (
-                  value === null &&
-                  !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
-                ) {
-                  delete next[key];
-                  continue;
-                }
-                const base = effective[key as keyof ServerSettings];
-                next[key] =
-                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
-              }
-              return next as ProjectSettingsOverrides;
-            })
+                return next as ProjectSettingsOverrides;
+              },
+              storesPatch,
+            )
         : scope.kind === "all" || scope.kind === "environment"
           ? connectedEnvironments.flatMap((environment) => {
               const previous = environment.serverConfig?.settings;
-              if (!previous) return [];
+              const environmentPatch = supportedServerPatch(environment, serverPatch);
+              if (!previous || Object.keys(environmentPatch).length === 0) return [];
               return [
                 {
                   environmentId: environment.environmentId,
@@ -264,31 +358,35 @@ export function planScopedSettingsPatch(
                   previous,
                   patch:
                     previous.worktreeCleanup != null &&
-                    serverPatch.storageCleanup &&
-                    Object.keys(serverPatch.storageCleanup).some((key) =>
+                    environmentPatch.storageCleanup &&
+                    Object.keys(environmentPatch.storageCleanup).some((key) =>
                       key.startsWith("worktree"),
                     )
                       ? {
-                          ...serverPatch,
+                          ...environmentPatch,
                           worktreeCleanup: {
                             mode: "custom",
                             rules: {
                               ...resolveWorktreeCleanup(previous, null),
                               ...Object.fromEntries(
-                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                                Object.entries(environmentPatch.storageCleanup).filter(([key]) =>
                                   key.startsWith("worktree"),
                                 ),
                               ),
                             },
                           },
                         }
-                      : serverPatch,
+                      : environmentPatch,
                 },
               ];
             })
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
+  const outdated =
+    serverKeys.length > 0 && unscopableKeys.length === 0
+      ? connectedEnvironments.filter((environment) => !storesPatch(environment))
+      : [];
   const unavailableReason =
     hasWrite || Object.keys(patch).length === 0
       ? null
@@ -296,9 +394,11 @@ export function planScopedSettingsPatch(
         ? scope.message
         : unscopableKeys.length > 0
           ? "This setting is environment-wide and cannot be overridden by a project."
-          : isProjectScope
-            ? "Connect the selected checkouts, or update their environments, to save a project override."
-            : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
+          : outdated.length > 0
+            ? `Update T3 Code on ${outdated.map(({ label }) => label).join(", ")} to use this setting.`
+            : isProjectScope
+              ? "Connect the selected checkouts, or update their environments, to save a project override."
+              : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 
@@ -398,19 +498,38 @@ function writeWasDropped(value: unknown, before: unknown, saved: unknown): boole
 
 /**
  * An older server drops keys it does not know, top-level or nested, and still
- * succeeds. Left unreported, the row stays mixed forever.
+ * succeeds. Left unreported, the row stays mixed forever. Project override
+ * entries report the setting keys inside them, since the server does know
+ * `projectSettingsOverrides` itself.
  */
 function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | undefined) {
   if (saved === undefined) return [];
-  return Object.entries(write.patch).flatMap(([key, value]) =>
-    writeWasDropped(
-      value,
-      write.previous[key as keyof ServerSettings],
-      saved[key as keyof ServerSettings],
-    )
-      ? [key]
-      : [],
-  );
+  const dropped = new Set<string>();
+  for (const [key, value] of Object.entries(write.patch)) {
+    const before: unknown = write.previous[key as keyof ServerSettings];
+    const after: unknown = saved[key as keyof ServerSettings];
+    if (key !== "projectSettingsOverrides" || !isPlainObject(value)) {
+      if (writeWasDropped(value, before, after)) dropped.add(key);
+      continue;
+    }
+    for (const [projectId, entry] of Object.entries(value)) {
+      if (!isPlainObject(entry)) continue;
+      const entryBefore = isPlainObject(before) ? before[projectId] : undefined;
+      const entryAfter = isPlainObject(after) ? after[projectId] : undefined;
+      for (const [setting, next] of Object.entries(entry)) {
+        if (
+          writeWasDropped(
+            next,
+            isPlainObject(entryBefore) ? entryBefore[setting] : undefined,
+            isPlainObject(entryAfter) ? entryAfter[setting] : undefined,
+          )
+        ) {
+          dropped.add(setting);
+        }
+      }
+    }
+  }
+  return [...dropped];
 }
 
 export async function persistScopedSettingsPatch(
@@ -431,12 +550,18 @@ export async function persistScopedSettingsPatch(
       persistServer({ environmentId, input: { patch } }),
     ),
   );
+  const droppedKeys = plan.serverWrites.map((write, index) => {
+    const result = results[index];
+    return result?.status === "fulfilled" && result.value._tag === "Success"
+      ? droppedSettingKeys(write, result.value.value)
+      : [];
+  });
   const saved = (index: number) => {
     const result = results[index];
     return (
       result?.status === "fulfilled" &&
       result.value._tag === "Success" &&
-      droppedSettingKeys(plan.serverWrites[index]!, result.value.value).length === 0
+      droppedKeys[index]!.length === 0
     );
   };
   const failedEnvironments = plan.serverWrites.flatMap((environment, index) => {
@@ -447,6 +572,7 @@ export async function persistScopedSettingsPatch(
         {
           ...environment,
           message: "This environment does not support this setting. Update T3 Code on it.",
+          droppedKeys: droppedKeys[index]!,
         },
       ];
     }
@@ -463,6 +589,7 @@ export async function persistScopedSettingsPatch(
           error instanceof Error
             ? error.message
             : "The save failed. Try reconnecting and saving again.",
+        droppedKeys: [] as readonly string[],
       },
     ];
   });

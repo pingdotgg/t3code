@@ -100,6 +100,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
+  settingsKeys: Schema.optionalKey(Schema.Array(Schema.String)),
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
   /**
    * Older

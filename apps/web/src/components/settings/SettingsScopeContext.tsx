@@ -8,7 +8,12 @@ import { createContext, type ReactNode, useContext, useMemo } from "react";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
+import { droppedSettingKeysAtom, droppedSettingKeysFor } from "./droppedSettingKeys";
+import {
+  resolveScopedSettingsTargets,
+  resolveUnsupportedSettingKeys,
+  selectScopedSettingsEnvironments,
+} from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
 
@@ -50,7 +55,22 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
 
 function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
   const groups = useSettingsProjectGroups();
-  const { environments: availableEnvironments } = useEnvironments();
+  const { environments } = useEnvironments();
+  const dropped = useAtomValue(droppedSettingKeysAtom);
+  const availableEnvironments = useMemo(
+    () =>
+      environments.map((environment) => {
+        const descriptor = environment.serverConfig?.environment;
+        const unsupportedSettingKeys = resolveUnsupportedSettingKeys(
+          descriptor?.capabilities.settingsKeys,
+          droppedSettingKeysFor(dropped, environment.environmentId, descriptor?.serverVersion),
+        );
+        return unsupportedSettingKeys.size === 0
+          ? environment
+          : { ...environment, unsupportedSettingKeys };
+      }),
+    [dropped, environments],
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const search = useMemo(
     () =>

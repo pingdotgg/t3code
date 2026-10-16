@@ -195,7 +195,8 @@ export function SettingInheritance({
       .filter(Boolean)
       .join(" · ");
     const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
-    const winningLayer = layers.find((layer) => layer.effective);
+    const unsupported = target.unsupportedSettingKeys?.has(key) === true;
+    const winningLayer = unsupported ? undefined : layers.find((layer) => layer.effective);
     return [
       {
         id: `${target.environmentId}:${target.projectId ?? ""}`,
@@ -205,8 +206,10 @@ export function SettingInheritance({
         overrides: environment.serverConfig.settings.projectSettingsOverrides,
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         layers,
+        unsupported,
         winningLayer,
         resolution: {
+          unsupported,
           winner: winningLayer?.key,
           layers: layers.map(({ key, value }) => [key, value]),
           settings: keys.map((settingKey) => target.settings[settingKey]),
@@ -263,8 +266,12 @@ export function SettingInheritance({
           {groups.map((members) => {
             const first = members[0];
             if (!first) return null;
-            const { id, target, machine, layers, winningLayer } = first;
-            const chain = (
+            const { id, target, machine, layers, unsupported, winningLayer } = first;
+            const chain = unsupported ? (
+              <p className="px-2 py-1 text-sm text-muted-foreground">
+                Not supported. Update T3 Code on this environment to use this setting.
+              </p>
+            ) : (
               <ol role="list" className="text-sm">
                 {layers.map((layer) => (
                   <li
@@ -329,7 +336,7 @@ export function SettingInheritance({
                       <span className="flex w-full min-w-0 flex-col">
                         <span className="flex min-w-0 items-center gap-2">
                           <span className="min-w-0 flex-1 truncate text-sm text-foreground tabular-nums">
-                            {winningLayer?.value}
+                            {unsupported ? "Not supported" : winningLayer?.value}
                           </span>
                           <span className="text-xs text-muted-foreground">
                             {winningLayer?.key === "environment"

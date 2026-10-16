@@ -24,10 +24,12 @@ import {
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { recordDroppedSettingKeys } from "./droppedSettingKeys";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
   planProjectOverridesClear,
+  scopedDisplaySettings,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
@@ -39,9 +41,12 @@ import {
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  const { target } = useSettingsScope();
+  const { target, targets } = useSettingsScope();
   const clientSettings = useClientSettings();
-  const serverSettings = target?.settings ?? DEFAULT_SERVER_SETTINGS;
+  const serverSettings = useMemo(
+    () => (target ? scopedDisplaySettings(target, targets) : DEFAULT_SERVER_SETTINGS),
+    [target, targets],
+  );
   useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
   const settings = useMemo(
     () => mergeEnvironmentSettings(serverSettings, clientSettings),
@@ -62,6 +67,7 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const environments = useOptionalSettingsScope()?.environments;
   return useCallback(
     (plan: ReturnType<typeof planScopedSettingsPatch>) => {
       if (plan.unavailableReason) {
@@ -92,6 +98,12 @@ function useRunScopedPlan() {
         persistClientSettingsPatch,
       ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
         if (failedEnvironments.length === 0) return;
+        for (const { environmentId, droppedKeys } of failedEnvironments) {
+          const serverVersion = environments?.find(
+            (environment) => environment.environmentId === environmentId,
+          )?.serverConfig?.environment.serverVersion;
+          if (serverVersion) recordDroppedSettingKeys(environmentId, serverVersion, droppedKeys);
+        }
         toastManager.add({
           type: "error",
           title:
@@ -107,7 +119,7 @@ function useRunScopedPlan() {
         });
       });
     },
-    [persistServer],
+    [environments, persistServer],
   );
 }
 

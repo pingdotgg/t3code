@@ -32,6 +32,7 @@ import {
   listProjectOverrides,
   type ProjectOverrideEntry,
   scopedSettingsAreMixed,
+  scopedSettingsUnsupportedTargets,
   scopedSettingsSource,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
@@ -284,6 +285,14 @@ export function SettingsRow({
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+  const unsupportedTargets =
+    context && serverScoped ? scopedSettingsUnsupportedTargets(context.targets, settingKeys) : [];
+  const unsupportedLabels = [...new Set(unsupportedTargets.map(({ label }) => label))].join(", ");
+  const unsupportedMessage = `Update T3 Code on ${unsupportedLabels} to use this setting.`;
+  const unsupportedEverywhere =
+    context !== null &&
+    context.targets.length > 0 &&
+    unsupportedTargets.length === context.targets.length;
   const source =
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
@@ -378,7 +387,9 @@ export function SettingsRow({
         )
       : environmentWide && control
         ? inertControl("Environment-wide setting. Select an environment to change it.")
-        : control;
+        : unsupportedEverywhere && control
+          ? inertControl(unsupportedMessage)
+          : control;
   const customized =
     context !== null &&
     settingKeys.some((key) =>
@@ -405,7 +416,11 @@ export function SettingsRow({
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
         state={inheritance.state}
-        summary={inheritance.summary}
+        summary={
+          unsupportedLabels
+            ? `${inheritance.summary} · Not supported on ${unsupportedLabels}`
+            : inheritance.summary
+        }
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}
@@ -418,7 +433,15 @@ export function SettingsRow({
           : {})}
       />
     ) : null;
-  const renderedStatus = status;
+  const renderedStatus =
+    unsupportedEverywhere && children ? (
+      <>
+        {status}
+        <div>{unsupportedMessage}</div>
+      </>
+    ) : (
+      status
+    );
 
   return (
     <div
@@ -460,7 +483,7 @@ export function SettingsRow({
           </div>
         ) : null}
       </div>
-      {unavailable && children ? (
+      {(unavailable || unsupportedEverywhere) && children ? (
         <div inert className="opacity-50">
           {children}
         </div>

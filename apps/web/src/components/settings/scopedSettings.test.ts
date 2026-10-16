@@ -19,8 +19,11 @@ import {
   planScopedSettingsClear,
   planScopedSettingsPatch,
   resolveScopedSettingsTargets,
+  resolveUnsupportedSettingKeys,
+  scopedDisplaySettings,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  scopedSettingsUnsupportedTargets,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
@@ -763,4 +766,104 @@ it("routes legacy model preference keys exclusively to the selected environment"
       patch,
     },
   ]);
+});
+
+describe("environments that cannot store a setting", () => {
+  const enabledLaptop = environment("Laptop", { settings: { reviewGuidesEnabled: true } });
+  const outdatedServer = {
+    ...server,
+    unsupportedSettingKeys: new Set(["reviewGuidesEnabled", "defaultAutoPull"]),
+  };
+  const pair = [enabledLaptop, outdatedServer];
+  const pairScope = resolveSettingsScope({}, [], pair);
+  const targets = resolveScopedSettingsTargets(pairScope, pair);
+
+  it("reads unsupported keys from the advertised list, else from dropped writes", () => {
+    const advertised = Object.keys(DEFAULT_SERVER_SETTINGS).filter(
+      (key) => key !== "reviewGuidesEnabled",
+    );
+    expect([...resolveUnsupportedSettingKeys(advertised, new Set(["branchNamePrefix"]))]).toEqual([
+      "reviewGuidesEnabled",
+    ]);
+    expect([...resolveUnsupportedSettingKeys(undefined, new Set(["reviewGuidesEnabled"]))]).toEqual(
+      ["reviewGuidesEnabled"],
+    );
+    expect(resolveUnsupportedSettingKeys(undefined, undefined).size).toBe(0);
+  });
+
+  it("leaves them out of the mixed state and shows the value where it is stored", () => {
+    expect(scopedSettingsAreMixed(targets, ["reviewGuidesEnabled"])).toBe(false);
+    expect(scopedSettingsUnsupportedTargets(targets, ["reviewGuidesEnabled"])).toEqual([
+      targets[1],
+    ]);
+    expect(scopedDisplaySettings(targets[1]!, targets).reviewGuidesEnabled).toBe(true);
+    // Keys the outdated environment does store still compare across both.
+    expect(
+      scopedSettingsAreMixed(
+        [
+          targets[0]!,
+          { ...targets[1]!, settings: { ...targets[1]!.settings, branchNamePrefix: "x" } },
+        ],
+        ["branchNamePrefix"],
+      ),
+    ).toBe(true);
+  });
+
+  it("writes only where the setting can be stored", () => {
+    const plan = planScopedSettingsPatch(pairScope, pair, {
+      reviewGuidesEnabled: false,
+      branchNamePrefix: "feat",
+    });
+    expect(plan.serverWrites.map(({ environmentId, patch }) => ({ environmentId, patch }))).toEqual(
+      [
+        {
+          environmentId: enabledLaptop.environmentId,
+          patch: { reviewGuidesEnabled: false, branchNamePrefix: "feat" },
+        },
+        { environmentId: server.environmentId, patch: { branchNamePrefix: "feat" } },
+      ],
+    );
+  });
+
+  it("names the environments to update when none can store the setting", () => {
+    const plan = planScopedSettingsPatch(
+      resolveSettingsScope({ machine: server.environmentId }, [], pair),
+      pair,
+      { reviewGuidesEnabled: true },
+    );
+    expect(plan.serverWrites).toEqual([]);
+    expect(plan.unavailableReason).toBe("Update T3 Code on Server to use this setting.");
+  });
+
+  it("skips project override writes for keys the environment cannot store", () => {
+    const plan = planScopedSettingsPatch(project, [laptop, outdatedServer], {
+      defaultAutoPull: true,
+    });
+    expect(plan.serverWrites.map(({ environmentId }) => environmentId)).toEqual([
+      laptop.environmentId,
+    ]);
+  });
+
+  it("reports the setting keys an environment dropped, including inside project overrides", async () => {
+    const result = await persistScopedSettingsPatch(
+      planScopedSettingsPatch(project, environments, {
+        defaultAutoPull: true,
+        enableAgentBrowserAccess: false,
+      }),
+      async ({ environmentId }) => ({
+        _tag: "Success" as const,
+        value: {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides:
+            environmentId === laptop.environmentId
+              ? { [laptopProjectId]: { defaultAutoPull: true, enableAgentBrowserAccess: false } }
+              : { [projectId]: { defaultAutoPull: true } },
+        },
+      }),
+      vi.fn(),
+    );
+    expect(
+      result.failedEnvironments.map(({ label, droppedKeys }) => ({ label, droppedKeys })),
+    ).toEqual([{ label: server.label, droppedKeys: ["enableAgentBrowserAccess"] }]);
+  });
 });
