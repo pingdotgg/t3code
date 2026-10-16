@@ -315,6 +315,12 @@ export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
 
 export const PullRequestListEntry = Schema.Struct({
   stack: Schema.optional(PullRequestStackMembership),
+  /**
+   * The login this row was read as, which is what "authored" compares its author with. Absent
+   * from a server that predates it, where `viewers` names the host's one account. Two rows on one
+   * host can differ: GitHub reads each repository owner as the account Settings choose for it.
+   */
+  viewer: Schema.optional(TrimmedNonEmptyString),
   provider: SourceControlProviderKind,
   host: TrimmedNonEmptyString,
   projectId: ProjectId,
@@ -384,7 +390,8 @@ export type PullRequestListProjectError = typeof PullRequestListProjectError.Typ
 
 export const PullRequestListResult = Schema.Struct({
   /**
-   * A host that could not be read is absent rather than present-and-undefined, because an
+   * The signed-in account per host, for rows without a `viewer` of their own; a host read as
+   * several accounts names the first. A host that could not be read is absent rather than present-and-undefined, because an
    * open-keyed record cannot carry an optional value through the JSON codec.
    */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
@@ -413,6 +420,12 @@ export type PullRequestRef = typeof PullRequestRef.Type;
 
 export const PullRequestRoutingIdentityInput = Schema.Struct({
   host: TrimmedNonEmptyString,
+  /**
+   * The `owner/name` the routed request is about, for a host that signs in per repository owner.
+   * Absent asks for the host's own account; a server that predates it ignores it, answers for
+   * that account, and so is only chosen when the two accounts match.
+   */
+  repository: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestRoutingIdentityInput = typeof PullRequestRoutingIdentityInput.Type;
 

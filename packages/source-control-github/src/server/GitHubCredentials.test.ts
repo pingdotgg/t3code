@@ -18,15 +18,20 @@ const TOKEN_VARIABLES = [
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
 
-const hostSettings = (
-  hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
-) =>
+type HostChoice = {
+  readonly account?: string;
+  readonly enabled?: boolean;
+  readonly owners?: Record<string, string>;
+  readonly repositories?: Record<string, string>;
+};
+
+const hostSettings = (hosts: Record<string, HostChoice>) =>
   Object.fromEntries(
     Object.entries(hosts).map(([host, choice]) => [host, { enabled: true, ...choice }]),
   );
 
 function harness(
-  hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
+  hosts: Record<string, HostChoice> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
 ) {
@@ -143,6 +148,87 @@ describe("GitHubCredentials", () => {
       yield* settings.update({ sourceControlHosts: { github: { hosts: {} } } });
       expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
       expect(calls).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads an owner's repositories as the account its rule names", () => {
+    const { layer, calls } = harness({ "github.com": { owners: { acme: "work" } } });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const work = yield* credentials.get("github.com", "Acme");
+      expect(Redacted.value(work.token)).toBe("token-for-work");
+      expect(work.account).toBe("work");
+      const personal = yield* credentials.get("github.com", "someone");
+      expect(Redacted.value(personal.token)).toBe("active-token");
+      expect(personal.account).toBeUndefined();
+      expect(yield* credentials.accountFor("github.com", "ACME")).toBe("work");
+      expect(yield* credentials.accountFor("github.com", "someone")).toBeUndefined();
+      expect(calls).toEqual([
+        ["auth", "token", "--hostname", "github.com", "--user", "work"],
+        ["auth", "token", "--hostname", "github.com"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads a repository with its own rule as that account, over its owner's", () => {
+    const { layer, calls } = harness({
+      "github.com": { owners: { acme: "work" }, repositories: { "acme/handbook": "personal" } },
+    });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(yield* credentials.accountFor("github.com", "Acme/Handbook")).toBe("personal");
+      expect(yield* credentials.accountFor("github.com", "acme/web")).toBe("work");
+      const handbook = yield* credentials.get("github.com", "acme/handbook");
+      expect(Redacted.value(handbook.token)).toBe("token-for-personal");
+      expect(handbook.account).toBe("personal");
+      expect(Redacted.value((yield* credentials.get("github.com", "acme/web")).token)).toBe(
+        "token-for-work",
+      );
+      expect(calls).toEqual([
+        ["auth", "token", "--hostname", "github.com", "--user", "personal"],
+        ["auth", "token", "--hostname", "github.com", "--user", "work"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("reads an owner without a rule as the host's pinned account", () => {
+    const { layer, calls } = harness({
+      "github.com": { account: "personal", owners: { acme: "work" } },
+    });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(Redacted.value((yield* credentials.get("github.com", "other")).token)).toBe(
+        "token-for-personal",
+      );
+      expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe(
+        "token-for-personal",
+      );
+      expect(calls).toEqual([["auth", "token", "--hostname", "github.com", "--user", "personal"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lets an environment token win over an owner's rule, as gh does", () => {
+    vi.stubEnv("GH_TOKEN", "from-env");
+    const { layer, calls } = harness({ "github.com": { owners: { acme: "work" } } });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const credential = yield* credentials.get("github.com", "acme");
+      expect(Redacted.value(credential.token)).toBe("from-env");
+      expect(credential.account).toBeUndefined();
+      expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("drops every account's token for a host when one is refused", () => {
+    const { layer, calls } = harness({ "github.com": { owners: { acme: "work" } } });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      yield* credentials.get("github.com", "acme");
+      yield* credentials.get("github.com");
+      yield* credentials.invalidate("github.com");
+      yield* credentials.get("github.com", "acme");
+      yield* credentials.get("github.com");
+      expect(calls).toHaveLength(4);
     }).pipe(Effect.provide(layer));
   });
 

@@ -26,6 +26,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { ProjectGitHubAccountRow } from "./GitHubAccountSettings";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -381,6 +382,18 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : category === "source-control" ? (
         <>
+          {isProjectScope
+            ? targets.map((candidate) =>
+                candidate.projectId === null ? null : (
+                  <ProjectGitHubAccountRow
+                    key={`${candidate.environmentId}:${candidate.projectId}`}
+                    environmentId={candidate.environmentId}
+                    projectId={candidate.projectId}
+                    environmentLabel={targets.length > 1 ? candidate.label : null}
+                  />
+                ),
+              )
+            : null}
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}

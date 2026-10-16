@@ -411,6 +411,10 @@
       "types": "./src/sourceControlClients.ts",
       "default": "./src/sourceControlClients.ts"
     },
+    "./github-accounts": {
+      "types": "./src/githubAccounts.ts",
+      "default": "./src/githubAccounts.ts"
+    },
     "./review-guide-tour": {
       "types": "./src/reviewGuideTour.ts",
       "default": "./src/reviewGuideTour.ts"

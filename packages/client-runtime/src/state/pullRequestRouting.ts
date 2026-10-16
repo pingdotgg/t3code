@@ -409,8 +409,10 @@ export function createPullRequestRouter() {
           if (!(yield* routingAllowed(registry, origin.target.environmentId, id, writes.has(tag))))
             return yield* visit(index + 1);
           // An older server would discard expectedAccountId. Verify it implements the guard first.
+          // The repository picks the account on a host that signs in per repository owner.
           const alternateProbe = request(WS_METHODS.pullRequestsRoutingIdentity, {
             host: identity.host,
+            repository: ref.repository,
           }).pipe(
             Effect.timeout("2 seconds"),
             Effect.catchCause((cause) =>
@@ -421,7 +423,11 @@ export function createPullRequestRouter() {
             .run(
               id,
               reads.has(tag)
-                ? shareMetadataRead(pendingIdentities, identity.host.toLowerCase(), alternateProbe)
+                ? shareMetadataRead(
+                    pendingIdentities,
+                    encodeKey([identity.host.toLowerCase(), ref.repository.toLowerCase()]),
+                    alternateProbe,
+                  )
                 : alternateProbe,
             )
             .pipe(

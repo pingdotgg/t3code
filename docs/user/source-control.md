@@ -28,8 +28,16 @@ order of precedence:
 3. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
 
 If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same place to pick
-the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence
-over that choice; a host turned off stays off either way.
+the account each host uses or turn a host off. With more than one account on a host, you can
+also pick one per repository owner, for example your company's organization. A single
+repository can use a different account from its owner: pick it in that project's **Source
+control** settings. A repository's pull requests are read and acted on as its account, **Mine**
+and **Reviewing** include the pull requests of every account, and agents in its projects get the
+account's token as `GH_TOKEN`. Codex, Claude, Grok, Antigravity, OpenCode 1.x, and Pi agents
+receive it; OpenCode 2.x and Cursor agents keep using `gh`'s active account. On mobile, the same
+choices are under **Settings → Source control → GitHub accounts**, and with a project selected
+in Settings. A saved token or `GH_TOKEN` takes precedence over every account choice; a host
+turned off stays off either way.
 
 For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code treats a
 custom server name as GitHub once it has a credential for that host.

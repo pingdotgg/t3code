@@ -38,6 +38,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
             fingerprint: `${host}:${tokens[0]}`,
           };
         }),
+      accountFor: () => Effect.succeed(undefined),
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;

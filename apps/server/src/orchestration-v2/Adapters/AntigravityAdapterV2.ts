@@ -15,6 +15,7 @@ import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
@@ -128,6 +129,7 @@ export function makeAntigravityAcpAdapterFlavor(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
+            workspaceEnvironment: ProviderAdapter.runtimePolicyEnvironment(input.runtimePolicy),
             clientFileSystem: true,
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),

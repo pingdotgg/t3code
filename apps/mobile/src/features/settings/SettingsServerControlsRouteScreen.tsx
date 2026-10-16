@@ -31,6 +31,7 @@ import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
+import { ProjectGitHubAccountSection } from "./SettingsGitHubAccountsRouteScreen";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
   planMobileScopedSettingsClear,
@@ -357,6 +358,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     disabled={disabledFor("branchNamingMode")}
                     onChange={write}
                   />
+                  {projectSelected ? (
+                    targets.map((target) =>
+                      target.projectId === null ? null : (
+                        <ProjectGitHubAccountSection
+                          key={`${target.environment.environmentId}:${target.projectId}`}
+                          environment={target.environment}
+                          projectId={target.projectId}
+                          labelled={targets.length > 1}
+                        />
+                      ),
+                    )
+                  ) : (
+                    <SettingsSection title="GitHub">
+                      <SettingsRow
+                        icon="person.2"
+                        label="GitHub accounts"
+                        target="SettingsGitHubAccounts"
+                      />
+                    </SettingsSection>
+                  )}
                   <SettingsSection title="Pull requests">
                     <SettingsSwitchRow
                       icon="arrow.triangle.merge"

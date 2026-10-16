@@ -39,6 +39,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp";
@@ -677,6 +678,20 @@ describe("CodexAdapterV2 process spawning", () => {
         },
       },
     );
+  });
+
+  it("sets the workspace's variables in the commands a thread runs", () => {
+    const params = CodexAdapterV2.codexThreadRuntimeParams({
+      mcpSession: undefined,
+      runtimePolicy: {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace/company",
+        environment: { GH_TOKEN: Redacted.make("company-token") },
+      },
+    });
+    // The app-server is shared by every workspace, so its process environment cannot carry it.
+    assert.equal(params.config["shell_environment_policy.set.GH_TOKEN"], "company-token");
   });
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>

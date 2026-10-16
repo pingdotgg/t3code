@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
@@ -22,11 +23,38 @@ const CHANGE_REQUEST_REFERENCE =
 
 const KIND = SourceControlProviderKind.make("github");
 
+/**
+ * An owner, or an `owner/name` repository, lowercased on decode: GitHub treats `PumpCade` and
+ * `pumpcade` as one.
+ */
+const GitHubRuleKey = TrimmedNonEmptyString.pipe(
+  Schema.decodeTo(Schema.String, SchemaTransformation.toLowerCase()),
+);
+
 export const GitHubHostChoice = Schema.Struct({
   account: Schema.optionalKey(TrimmedNonEmptyString),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** The login that reads each owner's repositories, overriding `account` for them. */
+  owners: Schema.optionalKey(Schema.Record(GitHubRuleKey, TrimmedNonEmptyString)),
+  /** The login that reads one `owner/name` repository, overriding its owner's. */
+  repositories: Schema.optionalKey(Schema.Record(GitHubRuleKey, TrimmedNonEmptyString)),
 });
 export type GitHubHostChoice = typeof GitHubHostChoice.Type;
+
+/**
+ * The login Settings choose for a repository on a host, given as `owner/name` or just its owner:
+ * the repository's own rule, else its owner's, else the host's pinned account, else none, which
+ * leaves the choice to `gh`.
+ */
+export function gitHubAccountFor(
+  choice: GitHubHostChoice | undefined,
+  repository: string | null | undefined,
+): string | undefined {
+  const key = repository?.trim().toLowerCase();
+  if (!key) return choice?.account;
+  const owner = key.split("/")[0]!;
+  return choice?.repositories?.[key] ?? choice?.owners?.[owner] ?? choice?.account;
+}
 
 export const settings = makeProviderSettingsSchema({
   hosts: Schema.Record(GitHubHost, GitHubHostChoice).pipe(

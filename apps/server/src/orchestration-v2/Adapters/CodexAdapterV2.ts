@@ -1306,11 +1306,20 @@ export function codexThreadRuntimeParams(input: {
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
   const { mcpSession } = input;
+  // One app-server serves every thread, so the workspace's variables cannot ride on its process
+  // environment. Codex sets them in each command the thread runs instead, after its own filtering.
+  // The protocol log redacts the keys, which all end in TOKEN.
+  const environment = Object.fromEntries(
+    Object.entries(ProviderAdapter.runtimePolicyEnvironment(input.runtimePolicy)).map(
+      ([name, value]) => [`shell_environment_policy.set.${name}`, value],
+    ),
+  );
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...environment,
       ...(mcpSession === undefined
         ? {}
         : {

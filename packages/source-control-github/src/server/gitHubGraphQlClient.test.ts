@@ -12,6 +12,7 @@ import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
@@ -28,6 +29,7 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
           source: "gh" as const,
           fingerprint: `${host}:secret`,
         }),
+      accountFor: () => Effect.succeed(undefined),
       invalidate: () =>
         Effect.sync(() => {
           invalidations++;
@@ -107,6 +109,75 @@ describe("GitHubGraphQlAuth", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("batches a repository's lookups only with lookups read as the same account", () => {
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const layer = GitHubRest.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(GitHubCredentials.GitHubCredentials, {
+            get: (host, repository) =>
+              Effect.succeed({
+                host,
+                token: Redacted.make(repository === "acme/web" ? "work-token" : "personal-token"),
+                source: "gh" as const,
+                fingerprint: `${host}:${repository === "acme/web" ? "work" : "personal"}`,
+              }),
+            accountFor: (_host, repository) =>
+              Effect.succeed(repository === "acme/web" ? "work" : undefined),
+            invalidate: () => Effect.void,
+          }),
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push(request);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  json({
+                    data: {
+                      _0_repository: { pullRequest: stats },
+                      _1_repository: { pullRequest: stats },
+                    },
+                  }),
+                ),
+              );
+            }),
+          ),
+          GitHubQuota.layer,
+          SourceControlRateLimit.layer,
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
+      const client = yield* GraphQLClient.make(
+        PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+      ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+      const resolver = GraphQLResolver.aliased(client.PullRequestStats, {
+        batchKey: GitHubGraphQlClient.batchKey,
+      });
+      const lookup = (owner: string, number: number) =>
+        policy.withRepositoryAccount(
+          { host: "github.com", repository: `${owner}/web` },
+          GraphQLResolver.request({ owner, name: "web", number }, resolver).pipe(
+            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+              host: "github.com",
+              operation: "stats",
+            }),
+          ),
+        );
+      yield* Effect.all([lookup("acme", 1), lookup("someone", 2), lookup("other", 3)], {
+        concurrency: "unbounded",
+      });
+      // The company's lookup went alone under its account; the two read as the default account
+      // still shared a document.
+      expect(requests.map((request) => request.headers["authorization"]).toSorted()).toEqual([
+        "Bearer personal-token",
+        "Bearer work-token",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("pauses the host on a RATE_LIMITED answer sent with HTTP 200", () => {
     const reset = Math.floor(NOW / 1000) + 600;

@@ -381,6 +381,32 @@ describe("pull request grouping", () => {
     ]);
   });
 
+  it("files each row under the account it was read as, two on one host", () => {
+    const groups = groupPullRequestsByInvolvement(
+      [
+        entry({
+          number: 1,
+          repository: "company/api",
+          viewer: "work-login",
+          author: { login: "work-login", name: null, avatarUrl: null },
+        }),
+        entry({ number: 2, author: { login: "bilal", name: null, avatarUrl: null } }),
+        entry({
+          number: 3,
+          repository: "company/web",
+          viewer: "work-login",
+          author: { login: "bilal", name: null, avatarUrl: null },
+        }),
+      ],
+      VIEWERS,
+    );
+    // The host's viewer is the personal login; the company's rows name their own.
+    expect(groups.map((group) => [group.key, group.entries.map((item) => item.number)])).toEqual([
+      ["authored", [1, 2]],
+      ["others", [3]],
+    ]);
+  });
+
   it("puts everything in Others when the viewer is unknown", () => {
     const groups = groupPullRequestsByInvolvement([entry({ number: 1 })], NO_VIEWERS);
     expect(groups.map((group) => group.key)).toEqual(["others"]);

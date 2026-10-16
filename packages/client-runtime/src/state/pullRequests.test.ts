@@ -110,7 +110,8 @@ for (const scenario of [
               input: unknown,
             ) =>
               Effect.gen(function* () {
-                if (local) expect(input).toEqual({ host: "github.com" });
+                // The repository picks the account on a host that signs in per owner.
+                if (local) expect(input).toEqual({ host: "github.com", repository: "acme/web" });
                 calls.push(`${name}:identity`);
                 if (
                   local &&

@@ -9,6 +9,7 @@ export type SettingsSheetTarget =
   | "SettingsProjectOverview"
   | "SettingsEnvironmentNewThreads"
   | "SettingsEnvironmentSourceControl"
+  | "SettingsGitHubAccounts"
   | "SettingsEnvironmentAgentBehavior"
   | "SettingsEnvironmentMaintenance"
   | "SettingsProviderAccounts"

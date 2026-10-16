@@ -14,6 +14,8 @@ import {
 
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 
+import { workspaceGitHubCredential } from "../sourceControl/GitHubWorkspaceAccount.ts";
+
 /**
  * Everything a redirect leads to — the presigned object stores GitHub hands assets off to —
  * authorizes with its own signature, and some of them reject a request that also carries a
@@ -50,11 +52,19 @@ const SVG_CONTENT_TYPE = "image/svg+xml";
 // body cannot run script against this origin.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-const githubToken = GitHubCredentials.GitHubCredentials.pipe(
-  Effect.flatMap((credentials) => credentials.get("github.com")),
-  Effect.map((credential) => credential.token),
-  Effect.orElseSucceed(() => null),
-);
+/** The github.com credential the workspace's repository is read with; null still loads public media. */
+const githubToken = (cwd: string) =>
+  workspaceGitHubCredential(cwd).pipe(
+    Effect.flatMap((credential) =>
+      credential?.host === "github.com"
+        ? Effect.succeed(credential)
+        : GitHubCredentials.GitHubCredentials.pipe(
+            Effect.flatMap((credentials) => credentials.get("github.com")),
+          ),
+    ),
+    Effect.map((credential) => credential.token),
+    Effect.orElseSucceed(() => null),
+  );
 
 const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedirects")(function* (
   url: string,
@@ -92,7 +102,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  const token = yield* githubToken;
+  const token = yield* githubToken(asset.cwd);
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = requestHeaders[name];

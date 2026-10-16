@@ -810,7 +810,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "GitHub accounts and token",
     to: "/settings/source-control",
     searchTerms: [
-      "github gh account login user host enterprise ghes switch multiple accounts disable sign in token personal access token pat api key credential",
+      "github gh account login user host enterprise ghes switch multiple accounts disable sign in token personal access token pat api key credential owner organization org work company per repository",
     ],
     environmentOnly: true,
     scope: "environment-defaults",

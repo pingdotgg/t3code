@@ -13,6 +13,19 @@ import type { GitHubPullRequestCore } from "./gitHubPullRequestJson.ts";
 import { gitHubViewerPermissions, loginAvatarUrl, make } from "./GitHubPullRequestProvider.ts";
 import type { GitHubReviewThreadComments } from "./gitHubPullRequestJson.ts";
 
+const mockGitHubPullRequestApi = Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi);
+/**
+ * The adapter's API, with a policy that runs every call as it is: these tests are about how the
+ * API's answers map, not about whose account reads them.
+ */
+const mockApi = (api: Parameters<typeof mockGitHubPullRequestApi>[0]) =>
+  Layer.merge(
+    mockGitHubPullRequestApi(api),
+    Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({
+      withRepositoryAccount: (_input, effect) => effect,
+    }),
+  );
+
 const coreFields = {
   reviewRequestTeams: [],
   checksTruncated: false,
@@ -32,7 +45,7 @@ it.effect("maps credential verification failures without relabeling operation fa
     let operations = 0;
     const provider = yield* make.pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           withVerifiedCredential: (_input, use) =>
             verificationFails
@@ -69,7 +82,7 @@ it.effect("advertises standalone branch deletion for source repository writers",
     let action: string | undefined;
     const provider = yield* make.pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           runPullRequestAction: (input) =>
             Effect.sync(() => {
               action = input.action;
@@ -118,7 +131,7 @@ it.effect("refreshes checks without permissions or comparison reads", () =>
     );
     const provider = yield* make.pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () =>
             Effect.sync(() => {
@@ -161,7 +174,7 @@ it.effect("uses one narrow read for a linked pull request summary", () =>
     let summaryReads = 0;
     const provider = yield* make.pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestSummary: () =>
             Effect.sync(() => {
@@ -210,7 +223,7 @@ it.effect("declares host-native stacks and passes the one the CLI reads through"
     };
     const provider = yield* make.pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestStack: (input) => Effect.succeed(input.number === 7 ? stack : null),
         }),
@@ -230,7 +243,7 @@ it.effect("reports a failed stack read against its own operation", () =>
   Effect.gen(function* () {
     const provider = yield* make.pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestStack: () =>
             Effect.fail(
@@ -379,7 +392,7 @@ describe("gitHubViewerPermissions", () => {
       }
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () =>
             Effect.succeed({
@@ -473,7 +486,7 @@ describe("gitHubViewerPermissions", () => {
       ]);
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () =>
             Effect.succeed({
@@ -577,7 +590,7 @@ it.effect(
     Effect.gen(function* () {
       const provider = yield* make.pipe(
         Effect.provide(
-          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+          mockApi({
             getPullRequestDetail: () =>
               Effect.succeed({ ...openDetail, comparison: { behindBy: 2, viewerCanUpdate: true } }),
             listWorkflowRunsRequiringApproval: () =>
@@ -618,7 +631,7 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
     expect(detail.checks).toEqual([]);
   }).pipe(
     Effect.provide(
-      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+      mockApi({
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
         listWorkflowRunsRequiringApproval: () =>
@@ -657,7 +670,7 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
     ]);
   }).pipe(
     Effect.provide(
-      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+      mockApi({
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed(openDetail),
         listWorkflowRunsRequiringApproval: () =>
@@ -699,7 +712,7 @@ it.effect("propagates workflow discovery rate limits", () =>
     expect(error.reason).toBe("rate-limited");
   }).pipe(
     Effect.provide(
-      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+      mockApi({
         revalidateChecks: (_input, read) => read,
         getPullRequestDetail: () => Effect.succeed(openDetail),
         listWorkflowRunsRequiringApproval: () =>
@@ -748,7 +761,7 @@ describe("getViewerPermissions", () => {
       expect(permissions.actions).not.toContain("update-branch");
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () => Effect.die("Unexpected detail read"),
           getViewerAccess: () => Effect.sync(() => (accessReads++, access)),
@@ -761,7 +774,7 @@ describe("getViewerPermissions", () => {
     detail: Effect.Effect<GitHubPullRequestCore, GitHubPullRequestApi.GitHubPullRequestApiError>,
     onDetail: (allowReserve: boolean) => void = () => {},
   ) =>
-    Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+    mockApi({
       revalidateChecks: (_input, read) => read,
       getPullRequestDetail: () =>
         SourceControlRateLimit.Interactive.pipe(
@@ -824,7 +837,7 @@ describe("getViewerPermissions", () => {
       expect(permissions.actions).not.toContain("update-branch");
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           getPullRequestDetail: () =>
             Effect.fail(
@@ -903,7 +916,7 @@ describe("getChangeRequest commits", () => {
   };
 
   const layerWith = (commits: GitHubReviewThreadComments["commits"]) =>
-    Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+    mockApi({
       revalidateChecks: (_input, read) => read,
       getPullRequestActivity: () =>
         Effect.succeed({
@@ -990,7 +1003,7 @@ describe("getChangeRequestActivity dismissed reviews", () => {
     viewer: { canUpdate: true, didAuthor: false },
   };
   const layerFor = (body: string) =>
-    Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+    mockApi({
       revalidateChecks: (_input, read) => read,
       getPullRequestActivity: () =>
         Effect.succeed({ author: null, comments: [dismissedReview(body)], commits: [] }),
@@ -1074,7 +1087,7 @@ describe("editing", () => {
       ]);
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        mockApi({
           revalidateChecks: (_input, read) => read,
           updatePullRequest: (input) => Effect.sync(() => void rewrites.push(input)),
           updateComment: (input) => Effect.sync(() => void rewrites.push(input)),

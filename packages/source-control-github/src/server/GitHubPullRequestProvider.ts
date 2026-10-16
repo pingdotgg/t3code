@@ -11,6 +11,7 @@ import type {
 
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -172,6 +173,7 @@ const rendersEmpty = (body: string): boolean =>
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+  const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
 
   const fail = (operation: string) => (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
     new PullRequestProviderError({
@@ -233,20 +235,37 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const provider: PullRequestProviderApi = {
+  /** The account a repository reads as: the identities below are about that account. */
+  const asRepository = (input: {
+    readonly host: string;
+    readonly repository?: string | undefined;
+  }) => ({ host: input.host, repository: input.repository?.trim() || null });
+
+  const provider = {
     kind: SourceControlProviderKind.make("github"),
     capabilities: CAPABILITIES,
     mergeMessageRewrite: removeAgentCredits,
+    // Settings choose an account per repository or owner; repositories read as one share it.
+    credentialScope: ({ host, repository }) =>
+      policy.accountFor(host, repository).pipe(Effect.map((account) => account ?? "")),
     getRoutingIdentity: (input) =>
-      cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
+      policy
+        .withRepositoryAccount(asRepository(input), cli.getRoutingIdentity(input))
+        .pipe(Effect.mapError(fail("routeIdentity"))),
     withVerifiedCredential: (input, use) =>
-      cli
-        .withVerifiedCredential(input, (identity) => use(identity).pipe(Effect.result))
+      policy
+        .withRepositoryAccount(
+          asRepository(input),
+          cli.withVerifiedCredential(input, (identity) => use(identity).pipe(Effect.result)),
+        )
         .pipe(Effect.mapError(fail("routeIdentity")), Effect.flatMap(Effect.fromResult)),
 
     getViewer: (input) =>
-      cli
-        .getViewerLogin({ cwd: input.cwd, host: input.host ?? "github.com" })
+      policy
+        .withRepositoryAccount(
+          asRepository({ host: input.host ?? "github.com", repository: input.repository }),
+          cli.getViewerLogin({ cwd: input.cwd, host: input.host ?? "github.com" }),
+        )
         .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
@@ -631,7 +650,63 @@ export const make = Effect.gen(function* () {
           resolved: input.resolved,
         })
         .pipe(Effect.mapError(fail("setThreadResolution"))),
-  };
+  } satisfies PullRequestProviderApi;
 
-  return provider;
+  /**
+   * Runs a call with the account Settings choose for the repository it is about, so a company's
+   * repositories and a personal account's are each read as the login that sees them. A batch
+   * across repositories reads as its first one's account: callers group by `credentialScope` and
+   * viewer, so every repository in it shares that account.
+   */
+  const owned =
+    <I extends { readonly host: string }, A>(
+      call: (input: I) => Effect.Effect<A, PullRequestProviderError>,
+      repositoryOf: (input: I) => string | undefined,
+    ) =>
+    (input: I) =>
+      policy.withRepositoryAccount(
+        asRepository({ host: input.host, repository: repositoryOf(input) }),
+        call(input),
+      );
+  const inRepository = <I extends ProviderRepositoryRef, A>(
+    call: (input: I) => Effect.Effect<A, PullRequestProviderError>,
+  ) => owned(call, (input) => input.repository);
+
+  return {
+    ...provider,
+    listChangeRequests: inRepository(provider.listChangeRequests),
+    listChangeRequestsAcross: owned(
+      provider.listChangeRequestsAcross,
+      (input) => input.repositories[0],
+    ),
+    listChangeRequestStats: owned(
+      provider.listChangeRequestStats,
+      (input) => input.changeRequests[0]?.repository,
+    ),
+    getChangeRequestSummary: inRepository(provider.getChangeRequestSummary),
+    getChangeRequestStack: inRepository(provider.getChangeRequestStack),
+    getChangeRequestWatchFingerprint: inRepository(provider.getChangeRequestWatchFingerprint),
+    getChangeRequestPreview: inRepository(provider.getChangeRequestPreview),
+    getChangeRequestChecks: inRepository(provider.getChangeRequestChecks),
+    getChangeRequest: inRepository(provider.getChangeRequest),
+    getChangeRequestActivity: inRepository(provider.getChangeRequestActivity),
+    getReviewThreadComments: inRepository(provider.getReviewThreadComments),
+    getViewerPermissions: inRepository(provider.getViewerPermissions),
+    getDiff: inRepository(provider.getDiff),
+    getDiffFileContents: inRepository(provider.getDiffFileContents),
+    getFilesViewed: inRepository(provider.getFilesViewed),
+    setFilesViewed: inRepository(provider.setFilesViewed),
+    listReviewerCandidates: inRepository(provider.listReviewerCandidates),
+    setReviewerRequest: inRepository(provider.setReviewerRequest),
+    listLabelCandidates: inRepository(provider.listLabelCandidates),
+    setLabels: inRepository(provider.setLabels),
+    runAction: inRepository(provider.runAction),
+    updateChangeRequest: inRepository(provider.updateChangeRequest),
+    comment: inRepository(provider.comment),
+    updateComment: inRepository(provider.updateComment),
+    submitReview: inRepository(provider.submitReview),
+    replyToThread: inRepository(provider.replyToThread),
+    setReaction: inRepository(provider.setReaction),
+    setThreadResolution: inRepository(provider.setThreadResolution),
+  } satisfies PullRequestProviderApi;
 });

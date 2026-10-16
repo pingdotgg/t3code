@@ -8134,7 +8134,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            environment: adapterOptions.environment,
+            // One CLI per thread, so the workspace's own variables can ride on its environment.
+            environment: {
+              ...adapterOptions.environment,
+              ...ProviderAdapter.runtimePolicyEnvironment(turnInput.runtimePolicy),
+            },
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}

@@ -213,7 +213,8 @@ export function filterPullRequestList<
     if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
       return false;
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
-    const viewer = viewers[viewerKey];
+    // The row's own viewer first: one host can be read as a different account per owner.
+    const viewer = entry.viewer ?? viewers[viewerKey];
     if (controls.involvement === "reviewing" && !entry.viewerReviewRequested) return false;
     if (
       controls.involvement === "authored" &&

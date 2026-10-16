@@ -450,6 +450,7 @@ const contextHost = (context: SourceControlProvider.SourceControlProviderContext
 
 export const make = Effect.gen(function* () {
   const api = yield* GitHubRest.GitHubRest;
+  const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
@@ -531,6 +532,16 @@ export const make = Effect.gen(function* () {
   const rest = (input: GitHubRest.GitHubRestInput, notFoundDetail?: string) =>
     api.rest(input).pipe(Effect.mapError((error) => fromGitHubApiError(error, notFoundDetail)));
 
+  /** Runs `effect` as the account Settings choose for the repository. */
+  const asAccountOf = <A, E, R>(
+    locator: Pick<GitHubRepositoryLocator, "host" | "owner" | "name">,
+    effect: Effect.Effect<A, E, R>,
+  ) =>
+    policy.withRepositoryAccount(
+      { host: locator.host, repository: `${locator.owner}/${locator.name}` },
+      effect,
+    );
+
   /**
    * Head lookups to one host under one credential share aliased documents: the resolver batches by
    * the host's endpoint and `batchKey`. Each lookup has its own `repository` root, so lookups on
@@ -562,25 +573,28 @@ export const make = Effect.gen(function* () {
     const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
     const ownerMatch = /^([^:/\s]+):(.+)$/u.exec(input.headSelector.trim());
     const headRefName = ownerMatch?.[2] ?? input.headSelector.trim();
-    const result = yield* graphqlRead(
-      {
-        host: locator.host,
-        operation: "listPullRequestsByHead",
-        allowReserve: input.allowReserve,
-        // Up to 50 heads of 100 rows each. A default branch such as `main` can match a hundred
-        // fork pull requests, so the usual cap would cut the answer short.
-        maxResponseBytes: HEAD_LOOKUP_MAX_RESPONSE_BYTES,
-      },
-      "GitHub returned an invalid change request list.",
-      GraphQLResolver.request(
+    const result = yield* asAccountOf(
+      locator,
+      graphqlRead(
         {
-          owner: locator.owner,
-          name: locator.name,
-          head: headRefName,
-          states: GRAPHQL_STATES[input.state],
-          first: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
+          host: locator.host,
+          operation: "listPullRequestsByHead",
+          allowReserve: input.allowReserve,
+          // Up to 50 heads of 100 rows each. A default branch such as `main` can match a hundred
+          // fork pull requests, so the usual cap would cut the answer short.
+          maxResponseBytes: HEAD_LOOKUP_MAX_RESPONSE_BYTES,
         },
-        input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
+        "GitHub returned an invalid change request list.",
+        GraphQLResolver.request(
+          {
+            owner: locator.owner,
+            name: locator.name,
+            head: headRefName,
+            states: GRAPHQL_STATES[input.state],
+            first: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
+          },
+          input.allowReserve ? interactiveHeadResolver : backgroundHeadResolver,
+        ),
       ),
     );
     if (result.repository === null) return yield* notFound("The repository could not be read.");
@@ -623,14 +637,17 @@ export const make = Effect.gen(function* () {
       }
       const locator = parsed.kind === "url" ? parsed.locator : yield* resolveRepository(input);
       const decodeDetail = "GitHub returned an invalid pull request.";
-      const result = yield* graphqlRead(
-        { host: locator.host, operation: "getPullRequest", allowReserve: true },
-        decodeDetail,
-        client.PullRequestByNumber({
-          owner: locator.owner,
-          name: locator.name,
-          number: parsed.number,
-        }),
+      const result = yield* asAccountOf(
+        locator,
+        graphqlRead(
+          { host: locator.host, operation: "getPullRequest", allowReserve: true },
+          decodeDetail,
+          client.PullRequestByNumber({
+            owner: locator.owner,
+            name: locator.name,
+            number: parsed.number,
+          }),
+        ),
       );
       const node = result.repository?.pullRequest;
       if (node == null) return yield* notFound("The pull request does not exist.");
@@ -644,14 +661,17 @@ export const make = Effect.gen(function* () {
   const readRepository = Effect.fn("GitHubSourceControlProvider.readRepository")(function* (
     locator: GitHubRepositoryLocator,
   ) {
-    const response = yield* rest(
-      {
-        host: locator.host,
-        operation: "getRepository",
-        path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}`,
-        allowReserve: true,
-      },
-      REPOSITORY_NOT_FOUND,
+    const response = yield* asAccountOf(
+      locator,
+      rest(
+        {
+          host: locator.host,
+          operation: "getRepository",
+          path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}`,
+          allowReserve: true,
+        },
+        REPOSITORY_NOT_FOUND,
+      ),
     );
     const decoded = decodeRawRepository(response.body);
     if (Result.isFailure(decoded)) {
@@ -746,7 +766,11 @@ export const make = Effect.gen(function* () {
         const known = remoteFor(headNameWithOwner);
         if (known !== null) return known;
         const [owner, name] = headNameWithOwner.split("/");
-        const fork = yield* readRepository({ host: base.host, owner: owner!, name: name! });
+        // A private fork is visible to whoever can see the repository it was opened against.
+        const fork = yield* asAccountOf(
+          base,
+          readRepository({ host: base.host, owner: owner!, name: name! }),
+        );
         const originUrl = yield* git.readConfigValue(input.cwd, "remote.origin.url");
         return yield* git.ensureRemote({
           cwd: input.cwd,
@@ -900,7 +924,10 @@ export const make = Effect.gen(function* () {
         input.url.pathname,
       );
       if (!match) return undefined;
-      return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
+      return asAccountOf(
+        { host: input.url.host, owner: match[1]!, name: match[2]! },
+        readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`),
+      );
     },
     listChangeRequests: (input) =>
       (input.state === "open" ? Effect.succeed(true) : SourceControlRateLimit.Interactive).pipe(
@@ -937,22 +964,25 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
-        yield* rest({
-          host: locator.host,
-          operation: "createPullRequest",
-          method: "POST",
-          allowReserve: true,
-          path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
-          // `owner:branch` is how the REST API takes a fork's head, the same as `gh --head`.
-          // gh allows maintainer edits unless told otherwise; the API's default is not documented.
-          body: {
-            base: input.baseRefName,
-            head: input.headSelector,
-            title: input.title,
-            body,
-            maintainer_can_modify: true,
-          },
-        });
+        yield* asAccountOf(
+          locator,
+          rest({
+            host: locator.host,
+            operation: "createPullRequest",
+            method: "POST",
+            allowReserve: true,
+            path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
+            // `owner:branch` is how the REST API takes a fork's head, the same as `gh --head`.
+            // gh allows maintainer edits unless told otherwise; the API's default is not documented.
+            body: {
+              base: input.baseRefName,
+              head: input.headSelector,
+              title: input.title,
+              body,
+              maintainer_can_modify: true,
+            },
+          }),
+        );
       }).pipe(
         Effect.mapError(
           providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
@@ -977,12 +1007,12 @@ export const make = Effect.gen(function* () {
           providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
         ),
       ),
-    createRepository: (input) =>
-      Effect.gen(function* () {
-        const locator = parseGitHubRepositorySelector(
-          input.repository,
-          (environment.GH_HOST ?? "github.com").toLowerCase(),
-        );
+    createRepository: (input) => {
+      const locator = parseGitHubRepositorySelector(
+        input.repository,
+        (environment.GH_HOST ?? "github.com").toLowerCase(),
+      );
+      const create = Effect.gen(function* () {
         const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
         const owner = locator?.owner ?? viewer;
         const name = locator?.name ?? input.repository.trim();
@@ -1006,11 +1036,14 @@ export const make = Effect.gen(function* () {
           return yield* failure("GitHub returned an invalid repository.", decoded.failure);
         }
         return repositoryCloneUrls(decoded.success);
-      }).pipe(
+      });
+      // An organization's repository is created by the account Settings choose for it.
+      return (locator === null ? create : asAccountOf(locator, create)).pipe(
         Effect.mapError(
           providerError("createRepository", input.cwd, { repository: input.repository }),
         ),
-      ),
+      );
+    },
     getDefaultBranch: (input) =>
       Effect.gen(function* () {
         const locator = yield* resolveRepository({
