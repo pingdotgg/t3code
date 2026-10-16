@@ -36,7 +36,14 @@ before starting the server.
 If you already configured a `cua-driver` MCP server for Codex yourself, Codex
 keeps yours and T3 Code does not add a second one.
 
-## What you see
+## Watch the agent work
 
 Each action an agent takes shows in the thread with the app's icon and a plain
 title, such as **Clicked in Safari**.
+
+On the web and desktop, a floating card shows the window the agent is driving
+and refreshes while the turn runs, then keeps the last frame. The card follows
+**Auto-show floating preview** under **Settings → Integrations**. Closing it
+stops the capture until the agent's next action. If the host cannot capture
+its screen, for example because Screen Recording is off on a Mac, the card
+says why.
