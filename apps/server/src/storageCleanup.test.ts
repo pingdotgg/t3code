@@ -870,6 +870,7 @@ describe("orphan worktree reports", () => {
               outcome: "kept",
               reason: "No thread uses this worktree",
               path: orphan,
+              projectPath: null,
               threadId: null,
               threadTitle: null,
               bytes: sizes.reduce((sum, size) => sum + size, 0),
@@ -1386,7 +1387,23 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it("decodes reports from servers without size fields", () => {
+  it.live("identifies the project and folder when worktree cleanup fails", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, repo, command } = yield* cleanupFixture();
+        const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
+        yield* fs.writeFileString(`${index.trim()}.lock`, "");
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "failed",
+          projectPath: repo,
+          path: worktree,
+          threadId: "thread-1",
+        });
+      }),
+    ),
+  );
+  it("decodes reports from servers without size or project fields", () => {
     const report = decodeCleanupReport({
       trigger: "manual",
       startedAt: "2026-06-10T12:00:00.000Z",
@@ -1405,7 +1422,7 @@ describe("storage cleanup reports and local file policies", () => {
       omittedCount: 0,
     });
     expect(report.bytesFreed).toBe(0);
-    expect(report.entries[0]).toMatchObject({ bytes: null, files: null });
+    expect(report.entries[0]).toMatchObject({ bytes: null, files: null, projectPath: null });
   });
   it.live.each([
     ["any-local-files", ".env", "kept"],

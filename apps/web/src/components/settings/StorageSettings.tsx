@@ -208,13 +208,38 @@ function CleanupResults({
         return (
           <SettingsRow
             key={`${entry.path ?? entry.kind}:${entry.threadId ?? index}`}
-            title={environmentLabel ? `${environmentLabel}: ${name}` : name}
+            title={<span className="wrap-anywhere">{name}</span>}
             description={
-              <span
-                className={`wrap-anywhere ${entry.outcome === "failed" ? "text-destructive" : ""}`}
-              >
-                {entry.threadTitle && entry.threadTitle !== name ? `${entry.threadTitle}. ` : ""}
-                {entry.reason}
+              <span className="block space-y-2 wrap-anywhere select-text">
+                <span className={`block ${entry.outcome === "failed" ? "text-destructive" : ""}`}>
+                  {entry.reason}
+                </span>
+                <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-l border-border/60 pl-3">
+                  {environmentLabel && (
+                    <>
+                      <span>Machine</span>
+                      <span className="text-foreground/80">{environmentLabel}</span>
+                    </>
+                  )}
+                  {entry.projectPath && (
+                    <>
+                      <span>Project</span>
+                      <code className="text-foreground/80">{entry.projectPath}</code>
+                    </>
+                  )}
+                  {entry.path && (
+                    <>
+                      <span>Folder</span>
+                      <code className="text-foreground/80">{entry.path}</code>
+                    </>
+                  )}
+                  {entry.threadTitle && entry.threadTitle !== name && (
+                    <>
+                      <span>Thread</span>
+                      <span>{entry.threadTitle}</span>
+                    </>
+                  )}
+                </span>
               </span>
             }
             control={
@@ -405,7 +430,7 @@ function CleanupSection() {
                 <CleanupResults
                   key={environment.environmentId}
                   report={report}
-                  environmentLabel={connectedEnvironments.length > 1 ? label : undefined}
+                  environmentLabel={label}
                 />
               ),
           )}

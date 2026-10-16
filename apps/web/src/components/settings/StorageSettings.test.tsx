@@ -199,6 +199,7 @@ it("shows an orphan's full path and size while keeping thread row titles unchang
         kind: "worktree",
         outcome: "kept",
         path: "/worktrees/repo/orphan",
+        projectPath: null,
         threadId: null,
         threadTitle: null,
         reason: "No thread uses this folder, and it isn't a git worktree",
@@ -209,6 +210,7 @@ it("shows an orphan's full path and size while keeping thread row titles unchang
         kind: "worktree",
         outcome: "kept",
         path: "/worktrees/repo/thread-checkout",
+        projectPath: "/projects/repo",
         threadId: ThreadId.make("thread"),
         threadTitle: "Thread title",
         reason: "Thread is running or has pending work",
@@ -228,6 +230,9 @@ it("shows an orphan's full path and size while keeping thread row titles unchang
   const titles = Array.from(container.querySelectorAll("h3"), (heading) => heading.textContent);
   expect(titles).toContain("/worktrees/repo/orphan");
   expect(titles).toContain("thread-checkout");
+  expect(container.textContent).toContain("MachineMachine");
+  expect(container.textContent).toContain("Project/projects/repo");
+  expect(container.textContent).toContain("Folder/worktrees/repo/thread-checkout");
   expect(titles).not.toContain("/worktrees/repo/thread-checkout");
   expect(container.textContent).toContain(
     "No thread uses this folder, and it isn't a git worktree",
