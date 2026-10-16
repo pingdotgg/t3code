@@ -130,3 +130,17 @@ query PullRequestList(
     }
   }
 }
+
+# Whether GitHub's search index covers a repository: one with pull requests that search finds
+# none of is one the index does not hold. `GraphQLResolver.aliased` asks for many repositories in
+# one request, which GitHub charges one point for, against four for one listing read.
+query PullRequestSearchCoverage($q: String!, $owner: String!, $name: String!) {
+  search(query: $q, type: ISSUE, first: 0) {
+    issueCount
+  }
+  repository(owner: $owner, name: $name) {
+    pullRequests {
+      totalCount
+    }
+  }
+}

@@ -46,6 +46,7 @@ import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
+import { PullRequestSearchCoverage } from "./pullRequestListings.graphql.ts";
 import { PullRequestMutationsGraphQLGroup } from "./pullRequestMutations.graphql.ts";
 import { PullRequestReadsGraphQLGroup } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
@@ -495,6 +496,21 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cursor?: ProviderListCursor | undefined;
       readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<GitHubPullRequestSearchBatch, GitHubPullRequestApiError>;
+
+    /**
+     * Whether GitHub's search index covers each repository. One it skips answers every search
+     * with nothing, so a repository is covered when it has no pull requests or search finds any
+     * of them. The two counts are not compared exactly, since the index can lag a fresh pull
+     * request. A repository that cannot be read is reported as not covered.
+     */
+    readonly searchCoverage: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repositories: ReadonlyArray<string>;
+    }) => Effect.Effect<
+      ReadonlyArray<{ readonly repository: string; readonly covered: boolean }>,
+      GitHubPullRequestApiError
+    >;
 
     /** The line counts the search leaves out, for rows already on the page. */
     readonly listPullRequestStats: (input: {
@@ -986,7 +1002,7 @@ const GRAPHQL_MERGE_METHODS = {
 /** Every GraphQL read and write this module makes, through GitHub's auth and rate limits. */
 const PullRequestGraphQLGroup = GraphQLGroup.merge(
   PullRequestBatchesGraphQLGroup,
-  GraphQLGroup.make(LenientPullRequestSearch, LenientPullRequestList),
+  GraphQLGroup.make(LenientPullRequestSearch, LenientPullRequestList, PullRequestSearchCoverage),
   PullRequestReadsGraphQLGroup,
   PullRequestReviewsGraphQLGroup,
   PullRequestMutationsGraphQLGroup,
@@ -1794,6 +1810,10 @@ export const make = Effect.gen(function* () {
   const stackMembershipResolver = GraphQLResolver.aliased(client.PullRequestStackMembership, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
+  // Every repository a listing's search said nothing about, one alias each, in one request.
+  const searchCoverageResolver = GraphQLResolver.aliased(client.PullRequestSearchCoverage, {
+    batchKey: GitHubGraphQlClient.batchKey,
+  }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
   // A burst of ticks is one request, each file under its own alias. GitHub has no bulk form of
   // `markFileAsViewed`/`unmarkFileAsViewed`, which each take a single path.
   const setFileViewedResolver = GraphQLResolver.aliased(client.SetFileViewed, {
@@ -2026,6 +2046,38 @@ export const make = Effect.gen(function* () {
           }),
         );
     },
+
+    searchCoverage: (input) =>
+      Effect.forEach(
+        input.repositories,
+        (repository) => {
+          const lookup = pullRequestLookup({ repository, number: 1 });
+          if (lookup === null) return Effect.succeed({ repository, covered: false });
+          return GraphQLResolver.request(
+            {
+              q: `is:pr repo:${lookup.owner}/${lookup.name}`,
+              owner: lookup.owner,
+              name: lookup.name,
+            },
+            searchCoverageResolver,
+          ).pipe(
+            Effect.map((result) => {
+              const total = result.repository?.pullRequests.totalCount;
+              return {
+                repository,
+                covered: total !== undefined && (total === 0 || result.search.issueCount > 0),
+              };
+            }),
+            // A repository GitHub cannot find or will not show (a SAML-gated org, a disabled
+            // repository) is not one search can be trusted about. Only its own alias says so, so
+            // the rest of the batch still answers.
+            Effect.catchIf(isGraphQlClientError, () =>
+              Effect.succeed({ repository, covered: false }),
+            ),
+          );
+        },
+        { concurrency: "unbounded" },
+      ).pipe((effect) => batchedRead({ ...input, operation: "searchCoverage" }, effect)),
 
     listPullRequestStats: (input) =>
       Effect.gen(function* () {

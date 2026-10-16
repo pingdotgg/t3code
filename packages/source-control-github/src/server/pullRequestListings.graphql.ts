@@ -241,7 +241,7 @@ export interface SearchResultItemOther extends Schema.Struct.Type<typeof SearchR
  * of matches, a maximum of 1,000 results will be available across all types,
  * potentially split across many pages.
  */
-export const SearchResultItemConnection = Schema.Struct({
+export const PullRequestSearchSearchSearchResultItemConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PageInfo,
   /** A list of nodes. */
@@ -250,7 +250,7 @@ export const SearchResultItemConnection = Schema.Struct({
     SearchResultItemOther
   ]))))
 })
-export interface SearchResultItemConnection extends Schema.Struct.Type<typeof SearchResultItemConnection.fields> {}
+export interface PullRequestSearchSearchSearchResultItemConnection extends Schema.Struct.Type<typeof PullRequestSearchSearchSearchResultItemConnection.fields> {}
 
 /** `query PullRequestSearch` */
 export const PullRequestSearch = GraphQL.query("PullRequestSearch", {
@@ -278,7 +278,7 @@ export const PullRequestSearch = GraphQL.query("PullRequestSearch", {
   },
   result: Schema.Struct({
     /** Perform a search across resources, returning a maximum of 1,000 results. */
-    search: SearchResultItemConnection
+    search: PullRequestSearchSearchSearchResultItemConnection
   })
 })
 export declare namespace PullRequestSearch {
@@ -287,18 +287,18 @@ export declare namespace PullRequestSearch {
 }
 
 /** The connection type for PullRequest. */
-export const PullRequestConnection = Schema.Struct({
+export const PullRequestListRepositoryPullRequestsPullRequestConnection = Schema.Struct({
   /** Information to aid in pagination. */
   pageInfo: PageInfo,
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(PullRequestRow)))
 })
-export interface PullRequestConnection extends Schema.Struct.Type<typeof PullRequestConnection.fields> {}
+export interface PullRequestListRepositoryPullRequestsPullRequestConnection extends Schema.Struct.Type<typeof PullRequestListRepositoryPullRequestsPullRequestConnection.fields> {}
 
 /** A repository contains the content for a project. */
 export const PullRequestListRepositoryRepository = Schema.Struct({
   /** A list of pull requests that have been opened in the repository. */
-  pullRequests: PullRequestConnection
+  pullRequests: PullRequestListRepositoryPullRequestsPullRequestConnection
 })
 export interface PullRequestListRepositoryRepository extends Schema.Struct.Type<typeof PullRequestListRepositoryRepository.fields> {}
 
@@ -340,5 +340,64 @@ export declare namespace PullRequestList {
   export type Result = typeof PullRequestList.result.Type
 }
 
+/**
+ * A list of results that matched against a search query. Regardless of the number
+ * of matches, a maximum of 1,000 results will be available across all types,
+ * potentially split across many pages.
+ */
+export const PullRequestSearchCoverageSearchSearchResultItemConnection = Schema.Struct({
+  /**
+   * The total number of issues that matched the search query. Regardless of the
+   * total number of matches, a maximum of 1,000 results will be available across all types.
+   */
+  issueCount: Shared.Int
+})
+export interface PullRequestSearchCoverageSearchSearchResultItemConnection extends Schema.Struct.Type<typeof PullRequestSearchCoverageSearchSearchResultItemConnection.fields> {}
+
+/** The connection type for PullRequest. */
+export const PullRequestSearchCoverageRepositoryPullRequestsPullRequestConnection = Schema.Struct({
+  /** Identifies the total count of items in the connection. */
+  totalCount: Shared.Int
+})
+export interface PullRequestSearchCoverageRepositoryPullRequestsPullRequestConnection extends Schema.Struct.Type<typeof PullRequestSearchCoverageRepositoryPullRequestsPullRequestConnection.fields> {}
+
+/** A repository contains the content for a project. */
+export const PullRequestSearchCoverageRepositoryRepository = Schema.Struct({
+  /** A list of pull requests that have been opened in the repository. */
+  pullRequests: PullRequestSearchCoverageRepositoryPullRequestsPullRequestConnection
+})
+export interface PullRequestSearchCoverageRepositoryRepository extends Schema.Struct.Type<typeof PullRequestSearchCoverageRepositoryRepository.fields> {}
+
+/** `query PullRequestSearchCoverage` */
+export const PullRequestSearchCoverage = GraphQL.query("PullRequestSearchCoverage", {
+  document: {
+    variables: [
+      { name: "q", body: "String!" },
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" }
+    ],
+    selections: [
+      { name: "search", body: ["(query:$", "q", " type:ISSUE first:0){issueCount}"] },
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests{totalCount}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    q: Schema.String,
+    owner: Schema.String,
+    name: Schema.String
+  },
+  result: Schema.Struct({
+    /** Perform a search across resources, returning a maximum of 1,000 results. */
+    search: PullRequestSearchCoverageSearchSearchResultItemConnection,
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(PullRequestSearchCoverageRepositoryRepository)
+  })
+})
+export declare namespace PullRequestSearchCoverage {
+  export type Variables = typeof PullRequestSearchCoverage.variables.Type
+  export type Result = typeof PullRequestSearchCoverage.result.Type
+}
+
 /** Every operation in pullRequestListings.graphql. */
-export const PullRequestListingsGraphQLGroup = GraphQLGroup.make(PullRequestSearch, PullRequestList)
+export const PullRequestListingsGraphQLGroup = GraphQLGroup.make(PullRequestSearch, PullRequestList, PullRequestSearchCoverage)

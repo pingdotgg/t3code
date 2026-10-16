@@ -428,6 +428,22 @@ export interface PullRequestProviderApi {
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
   /**
+   * Which of these repositories the host's search covers, for a host whose search can miss one
+   * (GitHub's index skips some, and answers for them with silence). The caller asks this about a
+   * repository a search returned nothing for, instead of reading it on its own every time.
+   * `covered` is false when the host cannot tell, which sends the repository to
+   * `listChangeRequests` as before.
+   */
+  readonly searchCoverage?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+    readonly repositories: ReadonlyArray<string>;
+  }) => Effect.Effect<
+    ReadonlyArray<{ readonly repository: string; readonly covered: boolean }>,
+    PullRequestProviderError
+  >;
+
+  /**
    * The line counts for rows a listing has already handed over. Only implemented by a provider
    * whose listing leaves them out — for everyone else the numbers arrived with the row, and the
    * caller has nothing to ask for.

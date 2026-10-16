@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
@@ -626,6 +627,9 @@ function withRateLimitBackoff(
       : {
           listChangeRequestsAcross: wrap("listChangeRequestsAcross", api.listChangeRequestsAcross),
         }),
+    ...(api.searchCoverage === undefined
+      ? {}
+      : { searchCoverage: wrap("searchCoverage", api.searchCoverage) }),
     ...(api.listChangeRequestStats === undefined
       ? {}
       : {
@@ -1257,6 +1261,9 @@ export const make = Effect.gen(function* () {
   // authored/reviewing searches for that same repository are therefore real empty answers, not
   // a reason to issue the two-command per-repository fallback again.
   const searchVisibleAt = new Map<string, number>();
+  // A repository the host said its search does not cover, held as long, so it is read on its own
+  // without being asked about again first.
+  const searchUncoveredAt = new Map<string, number>();
   const searchVisibilityKey = (host: string, repository: string) =>
     `${host}\n${repository.trim().toLowerCase()}`;
 
@@ -1472,11 +1479,12 @@ export const make = Effect.gen(function* () {
         }).pipe(
           observeRead,
           Effect.flatMap(({ value: page, observedAt }) =>
-            Effect.flatMap(Clock.currentTimeMillis, (now) => {
+            Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis;
               const rows = new Map<string, Array<ProviderChangeRequest>>();
-              for (const [key, visibleAt] of searchVisibleAt) {
-                if (now - visibleAt > Duration.toMillis(SEARCH_VISIBILITY_TTL)) {
-                  searchVisibleAt.delete(key);
+              for (const held of [searchVisibleAt, searchUncoveredAt]) {
+                for (const [key, at] of held) {
+                  if (now - at > Duration.toMillis(SEARCH_VISIBILITY_TTL)) held.delete(key);
                 }
               }
               for (const item of page.items) {
@@ -1493,32 +1501,57 @@ export const make = Effect.gen(function* () {
                   oldest === null || item.updatedAt < oldest ? item.updatedAt : oldest,
                 null,
               );
-              return Effect.forEach(
+              // GitHub does not index every repository for search — a renamed one answers for its
+              // old name with silence rather than with an error — so a repository the search said
+              // nothing at all about is not believed on silence alone. Only on its first slice:
+              // after that it has a boundary to carry on from, and silence past one means the rows
+              // are older rather than absent. The host is asked once whether its search covers
+              // the silent ones, which costs far less than listing each of them, and the answer is
+              // held like a row would be, either way. Only a repository it does not cover is read
+              // on its own.
+              const silent = chunk.filter(
+                (project) =>
+                  (rows.get(project.repository.trim().toLowerCase())?.length ?? 0) === 0 &&
+                  cursorOf(project) === undefined &&
+                  !searchVisibleAt.has(searchVisibilityKey(project.host, project.repository)),
+              );
+              const unasked = silent.filter(
+                (project) =>
+                  !searchUncoveredAt.has(searchVisibilityKey(project.host, project.repository)),
+              );
+              const searchCoverage = first.api.searchCoverage;
+              const covered =
+                unasked.length === 0 || searchCoverage === undefined
+                  ? []
+                  : yield* searchCoverage({
+                      cwd: first.project.workspaceRoot,
+                      host: first.host,
+                      repositories: unasked.map((project) => project.repository),
+                    }).pipe(Effect.orElseSucceed(() => []));
+              for (const { repository, covered: isCovered } of covered) {
+                (isCovered ? searchVisibleAt : searchUncoveredAt).set(
+                  searchVisibilityKey(first.host, repository),
+                  now,
+                );
+              }
+              const unconfirmed = new Set(
+                silent
+                  .filter(
+                    (project) =>
+                      !covered.some(
+                        (answer) =>
+                          answer.covered &&
+                          answer.repository.trim().toLowerCase() ===
+                            project.repository.trim().toLowerCase(),
+                      ),
+                  )
+                  .map((project) => project.cursorKey),
+              );
+              return yield* Effect.forEach(
                 chunk,
                 (project): Effect.Effect<RepositoryBatch> => {
+                  if (unconfirmed.has(project.cursorKey)) return readRepository(project);
                   const fetched = rows.get(project.repository.trim().toLowerCase()) ?? [];
-                  // GitHub does not index every repository for search — a renamed one answers for
-                  // its old name with silence rather than with an error — so a repository the
-                  // search said nothing at all about is read on its own, once, before it is
-                  // believed. Only on its first slice: after that it has a boundary to carry on
-                  // from, and silence past one means the rows are older rather than absent. That
-                  // keeps a search-invisible repository from disappearing on a busy host, at the
-                  // price of one request per repository with nothing in the first slice — which
-                  // run together, and only there.
-                  const lastVisible = searchVisibleAt.get(
-                    searchVisibilityKey(project.host, project.repository),
-                  );
-                  const searchIsKnownVisible =
-                    !page.truncated &&
-                    lastVisible !== undefined &&
-                    now - lastVisible <= Duration.toMillis(SEARCH_VISIBILITY_TTL);
-                  if (
-                    fetched.length === 0 &&
-                    cursorOf(project) === undefined &&
-                    !searchIsKnownVisible
-                  ) {
-                    return readRepository(project);
-                  }
                   const cursorHere = cursorOf(project);
                   const items =
                     cursorHere === undefined
@@ -3044,9 +3077,22 @@ export const make = Effect.gen(function* () {
       timeToLive: (exit) => (Exit.isSuccess(exit) ? LIST_CACHE_TTL : Duration.zero),
     },
   );
-  const list: PullRequestService["Service"]["list"] = (input) => {
-    const key = JSON.stringify([
+  // A listing narrowed to projects also moves with their project epochs, so a turn's own project
+  // reads fresh at once even while the turn throttle holds every other listing.
+  const listEpoch = (input: PullRequestListInput) => {
+    const projectIds = input.projectId !== undefined ? [input.projectId] : (input.projectIds ?? []);
+    return Math.max(
       listingsEpoch,
+      ...projectIds.map((projectId) => projectEpochs.get(projectId) ?? projectEpochFloor),
+    );
+  };
+  // Suspended so the key, and the epochs in it, are read when the listing runs rather than when
+  // it is built: an effect held and run again after a turn must ask the new question.
+  const list: PullRequestService["Service"]["list"] = (input) =>
+    Effect.suspend(() => listByKey(input));
+  const listByKey: PullRequestService["Service"]["list"] = (input) => {
+    const key = JSON.stringify([
+      listEpoch(input),
       input.state,
       input.involvement ?? null,
       // Positional so two identical filter sets key alike however their record was assembled.
@@ -3071,11 +3117,16 @@ export const make = Effect.gen(function* () {
         : Object.entries(input.cursors).toSorted(([left], [right]) => left.localeCompare(right)),
     ]);
     // A replacement reader can join a lookup still finishing its previous reader's cancellation.
-    return Cache.get(listCache, key).pipe(
+    const read = Cache.get(listCache, key).pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause) ? Cache.get(listCache, key) : Effect.failCause(cause),
       ),
     );
+    // A listing runs to its end in the service's scope even when its reader goes away: a page
+    // refreshing mid-read would otherwise cancel requests GitHub has already charged for and pay
+    // for them again, which a few agents finishing turns does all the time. The next reader with
+    // the same question joins it.
+    return Effect.forkIn(read, scope).pipe(Effect.flatMap(Fiber.join));
   };
 
   const checksCache = yield* Cache.makeWith(
@@ -3492,22 +3543,58 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
-    Effect.suspend(() => {
-      listingsEpoch = ++epochCounter;
-      projectEpochs.delete(projectId);
-      if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
-        const oldest = projectEpochs.keys().next().value;
-        if (oldest !== undefined) {
-          projectEpochFloor = projectEpochs.get(oldest)!;
-          projectEpochs.delete(oldest);
-        }
+  // A finished turn can change any listing, but with several agents running turns finish every
+  // few seconds, and every listing on every open page reads its hosts again when the epoch moves.
+  // So turns move the listings at most once per list cache window: the first at once, and any
+  // others in the window together at its end. A listing is never staler than the cache already
+  // lets it be. The project's own pull requests still move at once, through its project epoch.
+  let listingsTurnRefreshAt = Number.NEGATIVE_INFINITY;
+  let listingsTurnRefreshPending = false;
+  const refreshListingsAfterTurn = Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    Effect.sync(() => {
+      if (listingsTurnRefreshPending) return;
+      const wait = listingsTurnRefreshAt + Duration.toMillis(LIST_CACHE_TTL) - now;
+      if (wait <= 0) {
+        listingsTurnRefreshAt = now;
+        listingsEpoch = ++epochCounter;
+        return;
       }
-      projectEpochs.set(projectId, listingsEpoch);
-      return readCache
-        .invalidate(`project:${projectId}`)
-        .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, listingsEpoch)));
-    });
+      // Forked from the service's own context in one step with the flag, as the diff sweep is.
+      listingsTurnRefreshPending = true;
+      runFork(Effect.forkIn(trailingListingsRefresh(wait), scope));
+    }),
+  );
+  const trailingListingsRefresh = (wait: number) =>
+    Effect.sleep(Duration.millis(wait)).pipe(
+      Effect.andThen(Clock.currentTimeMillis),
+      Effect.flatMap((now) => {
+        listingsTurnRefreshPending = false;
+        listingsTurnRefreshAt = now;
+        listingsEpoch = ++epochCounter;
+        return SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+      }),
+    );
+
+  const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
+    refreshListingsAfterTurn.pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const projectEpoch = ++epochCounter;
+          projectEpochs.delete(projectId);
+          if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
+            const oldest = projectEpochs.keys().next().value;
+            if (oldest !== undefined) {
+              projectEpochFloor = projectEpochs.get(oldest)!;
+              projectEpochs.delete(oldest);
+            }
+          }
+          projectEpochs.set(projectId, projectEpoch);
+          return readCache
+            .invalidate(`project:${projectId}`)
+            .pipe(Effect.andThen(SubscriptionRef.set(pullRequestRefreshes, projectEpoch)));
+        }),
+      ),
+    );
 
   // Invalidate before notifying every client so mounted readers immediately fetch the edit.
   const invalidatedByMutation =
