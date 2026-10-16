@@ -23,11 +23,10 @@ import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentP
 import { View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { isDuoDevice } from "../../lib/device-type";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider } from "../workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
-import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
+import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
 import { WorkspaceEmptyDetail } from "./WorkspaceEmptyDetail";
@@ -43,7 +42,6 @@ import {
 } from "../../native/NativeWorkspaceColumns";
 import { V5StackHeader } from "../../native/V5StackHeader.ios";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
-import { dispatchHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import {
   nativeWorkspacePopAction,
   projectWorkspaceStack,
@@ -125,7 +123,6 @@ function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
   const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
-  const deviceType = useDeviceType();
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
@@ -185,7 +182,9 @@ function WorkspaceColumns(
       preferredSplitBehavior="tile"
       topColumnForCollapsing={compactColumn}
       preferredDisplayMode={
-        panes.primarySidebarVisible || !activeDetailKey ? "oneBesideSecondary" : "secondaryOnly"
+        panes.primarySidebarVisible || (!layout.usesSplitView && !activeDetailKey)
+          ? "oneBesideSecondary"
+          : "secondaryOnly"
       }
       displayModeButtonVisibility="never"
       presentsWithGesture
@@ -222,21 +221,6 @@ function WorkspaceColumns(
               options={{
                 headerShown: true,
                 title: "",
-                unstable_headerRightItems: () =>
-                  isDuoDevice(deviceType) && layout.usesSplitView && !panes.primarySidebarVisible
-                    ? [
-                        {
-                          type: "button",
-                          axisBehavior: "verticalPreferred",
-                          accessibilityLabel: "Search threads",
-                          label: "Search threads",
-                          icon: { type: "sfSymbol", name: "magnifyingglass" },
-                          onPress: () => {
-                            dispatchHardwareKeyboardCommand("focusSearch");
-                          },
-                        },
-                      ]
-                    : [],
                 unstable_headerLeftItems: () => [
                   {
                     type: "button",

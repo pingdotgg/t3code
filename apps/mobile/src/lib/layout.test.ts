@@ -9,6 +9,7 @@ import {
   deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
+  isPrimarySidebarPinned,
   SPLIT_LAYOUT_MIN_HEIGHT,
   SPLIT_LAYOUT_MIN_WIDTH,
 } from "./layout";
@@ -158,6 +159,36 @@ describe("deriveLayout", () => {
     expect(deriveLayout({ width: 720, height: 1_000 }).listPaneWidth).toBe(280);
     expect(deriveLayout({ width: 1_024, height: 768 }).listPaneWidth).toBe(328);
     expect(deriveLayout({ width: 1_600, height: 1_000 }).listPaneWidth).toBe(380);
+  });
+});
+
+describe("isPrimarySidebarPinned", () => {
+  it("lets native split columns collapse the sidebar on the workspace root", () => {
+    expect(
+      isPrimarySidebarPinned({ pathname: "/", nativeWorkspace: true, usesSplitView: true }),
+    ).toBe(false);
+  });
+
+  it("keeps compact native roots pinned so search cannot hide the sidebar for a later split", () => {
+    expect(
+      isPrimarySidebarPinned({ pathname: "/", nativeWorkspace: true, usesSplitView: false }),
+    ).toBe(true);
+  });
+
+  it("keeps the JS split layout pinned on the workspace root", () => {
+    expect(
+      isPrimarySidebarPinned({ pathname: "/", nativeWorkspace: false, usesSplitView: true }),
+    ).toBe(true);
+  });
+
+  it("never pins outside the workspace root", () => {
+    expect(
+      isPrimarySidebarPinned({
+        pathname: "/threads/a/b",
+        nativeWorkspace: false,
+        usesSplitView: true,
+      }),
+    ).toBe(false);
   });
 });
 

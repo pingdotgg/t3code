@@ -158,6 +158,20 @@ export function alignListPaneToHinge(input: {
   return { ...layout, listPaneWidth, listPaneGap: hinge.width };
 }
 
+/**
+ * Whether the workspace root must keep the primary sidebar open. Native split
+ * columns keep a sidebar toggle in the empty detail header, so only they may
+ * collapse it there. Compact layouts stay pinned so a reveal request (such as
+ * focusing search) cannot flip the saved preference for a later split view.
+ */
+export function isPrimarySidebarPinned(input: {
+  readonly pathname: string;
+  readonly nativeWorkspace: boolean;
+  readonly usesSplitView: boolean;
+}): boolean {
+  return input.pathname === "/" && !(input.nativeWorkspace && input.usesSplitView);
+}
+
 export function deriveWorkspacePaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;

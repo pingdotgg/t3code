@@ -38,6 +38,7 @@ import {
   deriveLayout,
   type VerticalHinge,
   deriveWorkspacePaneLayout,
+  isPrimarySidebarPinned,
   type FileInspectorPaneLayout,
   type Layout,
   type WorkspaceAuxiliaryPaneRole,
@@ -245,7 +246,6 @@ function AdaptiveWorkspaceLayoutContent(
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
-  const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
   const [supplementaryPanePreferredWidth, setSupplementaryPanePreferredWidth] = useState<
     number | null
@@ -261,6 +261,12 @@ function AdaptiveWorkspaceLayoutContent(
     () => deriveLayout({ width: viewportWidth, height, nativeMetrics }),
     [height, viewportWidth, nativeMetrics],
   );
+  const primarySidebarPinned = isPrimarySidebarPinned({
+    pathname,
+    nativeWorkspace,
+    usesSplitView: baseLayout.usesSplitView,
+  });
+  const showPrimarySidebar = primarySidebarPinned || primarySidebarPreferredVisible;
   const shouldRenderNavigationRail = Platform.OS === "android" && baseLayout.usesSplitView;
   const navigationRailWidth =
     shouldRenderNavigationRail && showPrimarySidebar
@@ -378,7 +384,7 @@ function AdaptiveWorkspaceLayoutContent(
     };
   }, []);
   const togglePrimarySidebar = useCallback(() => {
-    if (pathname === "/") {
+    if (primarySidebarPinned) {
       return;
     }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
@@ -387,7 +393,11 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     setPrimarySidebarPreferredVisible((current) => !current);
-  }, [panes.primarySidebarSuppressedByAuxiliary, panes.primarySidebarVisible, pathname]);
+  }, [
+    panes.primarySidebarSuppressedByAuxiliary,
+    panes.primarySidebarVisible,
+    primarySidebarPinned,
+  ]);
   const revealPrimarySidebar = useCallback(() => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
@@ -399,8 +409,8 @@ function AdaptiveWorkspaceLayoutContent(
     return true;
   }, [togglePrimarySidebar]);
   const sidebarCommands = useMemo(
-    () => (pathname === "/" ? [] : (["toggleSidebar"] as const)),
-    [pathname],
+    () => (primarySidebarPinned ? [] : (["toggleSidebar"] as const)),
+    [primarySidebarPinned],
   );
   useHardwareKeyboardCommand(sidebarCommands, handleToggleSidebarCommand);
   const showAuxiliaryPane = useCallback((role: WorkspaceAuxiliaryPaneRole) => {

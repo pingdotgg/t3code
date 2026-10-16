@@ -6,7 +6,6 @@ import { useDeviceType } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
-import { dispatchHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import {
   ThreadGitControls,
   useThreadGitCenterHeaderItems,
@@ -105,21 +104,6 @@ export function useThreadHeaderOptions(props: {
     () => [
       ...threadCenterHeaderItems,
       { type: "spacing", spacing: 8 },
-      ...(layout.usesSplitView && !panes.primarySidebarVisible
-        ? [
-            withNativeGlassHeaderItem({
-              type: "button" as const,
-              axisBehavior: "verticalPreferred",
-              identifier: "thread-right-search",
-              label: "Search threads",
-              accessibilityLabel: "Search threads",
-              icon: { name: "magnifyingglass", type: "sfSymbol" as const },
-              onPress: () => {
-                dispatchHardwareKeyboardCommand("focusSearch");
-              },
-            }),
-          ]
-        : []),
       withNativeGlassHeaderItem({
         type: "button" as const,
         axisBehavior: "verticalPreferred",
@@ -130,7 +114,7 @@ export function useThreadHeaderOptions(props: {
         onPress: () => navigation.navigate("NewTaskSheet", { screen: "NewTask" }),
       }),
     ],
-    [navigation, threadCenterHeaderItems, layout.usesSplitView, panes.primarySidebarVisible],
+    [navigation, threadCenterHeaderItems],
   );
 
   const options: AppNativeStackNavigationOptions = {
