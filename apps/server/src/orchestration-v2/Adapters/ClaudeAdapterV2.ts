@@ -3524,6 +3524,11 @@ function toSessionPermissionUpdates(
   if (updates.length > 0) {
     return updates;
   }
+  // A bare Bash rule would allow every later command, including the ones Auto
+  // mode or a hook escalated for a reason.
+  if (toolName === "Bash") {
+    return [];
+  }
   return [
     {
       type: "addRules",

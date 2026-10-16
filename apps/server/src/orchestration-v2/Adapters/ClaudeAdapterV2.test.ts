@@ -875,6 +875,21 @@ describe("ClaudeAdapterV2 session permissions", () => {
     ]);
   });
 
+  it("adds no session rule for Bash when Claude offers no suggestion", () => {
+    const result = ClaudeAdapterV2.permissionResultFromDecision({
+      toolName: "Bash",
+      decision: "acceptForSession",
+      toolInput: { command: "git push" },
+      toolUseID: "tool-3",
+    });
+
+    assert.equal(result.behavior, "allow");
+    if (result.behavior !== "allow") {
+      return;
+    }
+    assert.deepEqual(result.updatedPermissions, []);
+  });
+
   it("adds a whole-tool session rule when Claude offers no suggestion", () => {
     const result = ClaudeAdapterV2.permissionResultFromDecision({
       toolName: "mcp__t3__custom_tool",
