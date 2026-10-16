@@ -89,10 +89,41 @@ const expandGlob = Effect.fnUntraced(function* (pattern: string) {
   return matchedPaths.toSorted((left, right) => left.localeCompare(right));
 });
 
+interface HostNameRule {
+  /** Host patterns of the enclosing block, or null under a Match block. */
+  readonly patterns: ReadonlyArray<string> | null;
+  readonly hostname: string;
+}
+
+function matchesHostPatterns(alias: string, patterns: ReadonlyArray<string>): boolean {
+  let matched = false;
+  for (const pattern of patterns) {
+    const negated = pattern.startsWith("!");
+    if (!globToRegExp(negated ? pattern.slice(1) : pattern).test(alias)) continue;
+    if (negated) return false;
+    matched = true;
+  }
+  return matched;
+}
+
+/** ssh uses the first HostName whose block matches; null when that can't be known statically. */
+function resolveConfiguredHostname(
+  alias: string,
+  rules: ReadonlyArray<HostNameRule>,
+): string | null {
+  const rule = rules.find(
+    ({ patterns }) => patterns === null || matchesHostPatterns(alias, patterns),
+  );
+  if (!rule || rule.patterns === null || /%[^h]/u.test(rule.hostname)) return null;
+  return rule.hostname.replaceAll("%h", alias);
+}
+
 const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   filePath: string,
   visited = new Set<string>(),
   homeDir: string,
+  hostNameRules: Array<HostNameRule>,
+  inheritedPatterns: ReadonlyArray<string> | null,
 ): Effect.fn.Return<
   ReadonlyArray<string>,
   PlatformError.PlatformError,
@@ -109,6 +140,7 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
   const aliases = new Set<string>();
   const directory = path.dirname(resolvedPath);
   const raw = yield* fs.readFileString(resolvedPath);
+  let patterns = inheritedPatterns;
 
   for (const line of raw.split(/\r?\n/u)) {
     const stripped = stripInlineComment(line);
@@ -131,6 +163,8 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
             includedPath,
             visited,
             homeDir,
+            hostNameRules,
+            patterns,
           );
           for (const alias of includedAliases) {
             aliases.add(alias);
@@ -140,9 +174,20 @@ const collectSshConfigAliasesFromFile = Effect.fnUntraced(function* (
       continue;
     }
 
+    if (normalizedDirective === "match") {
+      patterns = null;
+      continue;
+    }
+    if (normalizedDirective === "hostname") {
+      if (rawArgs[0])
+        hostNameRules.push({ patterns, hostname: rawArgs[0].replace(/^"(.*)"$/u, "$1") });
+      continue;
+    }
     if (normalizedDirective !== "host") {
       continue;
     }
+
+    patterns = rawArgs;
 
     for (const alias of rawArgs) {
       if (alias.length === 0 || hasSshPattern(alias)) {
@@ -224,26 +269,33 @@ export const discoverSshHosts = Effect.fnUntraced(
     }
 
     const sshDirectory = path.join(homeDir, ".ssh");
+    const hostNameRules: Array<HostNameRule> = [];
     const configAliases = yield* collectSshConfigAliasesFromFile(
       path.join(sshDirectory, "config"),
       new Set<string>(),
       homeDir,
+      hostNameRules,
+      ["*"],
     );
     const knownHosts = yield* readKnownHostsHostnames(path.join(sshDirectory, "known_hosts"));
     const discovered = new Map<string, DesktopDiscoveredSshHost>();
+    const configuredHostnames = new Set<string>();
 
     for (const alias of configAliases) {
+      const hostname = resolveConfiguredHostname(alias, hostNameRules) ?? alias;
+      configuredHostnames.add(hostname.toLowerCase());
       discovered.set(alias, {
         alias,
-        hostname: alias,
+        hostname,
         username: null,
         port: null,
         source: "ssh-config",
       });
     }
 
+    // A raw known_hosts target that a configured alias points at would bypass the alias's settings.
     for (const hostname of knownHosts) {
-      if (discovered.has(hostname)) {
+      if (discovered.has(hostname) || configuredHostnames.has(hostname.toLowerCase())) {
         continue;
       }
       discovered.set(hostname, {
