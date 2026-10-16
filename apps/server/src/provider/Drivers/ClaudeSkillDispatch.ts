@@ -21,6 +21,11 @@
  * So one mention anywhere in the prompt becomes a guaranteed invocation, and
  * the user's text on either side is kept in order.
  *
+ * The model's Skill tool refuses a skill that opts out of model invocation
+ * (`disable-model-invocation`), so an earlier mention of one would dead-end in
+ * "ask the user to run it". Those mentions also carry the skill's file path and
+ * say the user invoked it, which lets the model read and follow it.
+ *
  * @module provider/Drivers/ClaudeSkillDispatch
  */
 
@@ -31,6 +36,15 @@
  */
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+
+/**
+ * What the dispatcher needs to know about one discovered skill.
+ * `userInvocationOnly` marks a skill the model may not start itself.
+ */
+export interface ClaudeSkillTarget {
+  readonly path: string;
+  readonly userInvocationOnly?: boolean;
+}
 
 export interface ClaudeSkillDispatch {
   /** Text before the dispatched mention, or `undefined` when it opens the prompt. */
@@ -48,11 +62,11 @@ export interface ClaudeSkillDispatch {
  */
 export function planClaudeSkillDispatch(
   prompt: string,
-  skillNames: ReadonlySet<string>,
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
 ): ClaudeSkillDispatch | undefined {
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
-    if (!skillNames.has(name)) return [];
+    if (!skills.has(name)) return [];
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     return [{ name, start, end: (match.index ?? 0) + match[0].length }];
   });
@@ -63,11 +77,25 @@ export function planClaudeSkillDispatch(
 
   const leading = prompt.slice(0, last.start);
   const trailing = prompt.slice(last.end);
+  // A skill named twice is annotated once, and the last skill needs no note
+  // because the CLI expands it itself.
+  const annotated = new Set([last.name]);
+  const inlineSlash = (name: string): string => {
+    const skill = skills.get(name);
+    if (skill?.userInvocationOnly !== true || annotated.has(name)) {
+      return `/${name}`;
+    }
+    annotated.add(name);
+    return `/${name} [The user invoked this skill. Follow the instructions at: ${skill.path}]`;
+  };
+  // Built front to back so the note lands on a skill's first mention, then
+  // spliced back to front so earlier offsets stay valid.
+  const replacements = mentions.slice(0, -1).map((mention) => inlineSlash(mention.name));
   const leadingWithInlineSlashes = mentions
     .slice(0, -1)
     .reduceRight(
-      (text, mention) =>
-        `${text.slice(0, mention.start)}/${mention.name}${text.slice(mention.end)}`,
+      (text, mention, index) =>
+        `${text.slice(0, mention.start)}${replacements[index]}${text.slice(mention.end)}`,
       leading,
     )
     .trimEnd();

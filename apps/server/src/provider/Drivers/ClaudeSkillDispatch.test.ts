@@ -1,8 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
+import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDispatch.ts";
 
-const SKILLS = new Set(["2spec", "implement", "review", "re-release-version"]);
+const skillPath = (name: string) => `/home/me/.claude/skills/${name}/SKILL.md`;
+
+const INTERROGATE_NOTE = `[The user invoked this skill. Follow the instructions at: ${skillPath("interrogate")}]`;
+
+const skillMap = (names: Iterable<string>, userInvocationOnly: ReadonlyArray<string> = []) =>
+  new Map<string, ClaudeSkillTarget>(
+    [...names].map((name): [string, ClaudeSkillTarget] => [
+      name,
+      {
+        path: skillPath(name),
+        ...(userInvocationOnly.includes(name) ? { userInvocationOnly: true } : {}),
+      },
+    ]),
+  );
+
+const SKILLS = skillMap(["2spec", "implement", "review", "re-release-version"]);
 
 describe("planClaudeSkillDispatch", () => {
   it("leaves a prompt without a known skill untouched", () => {
@@ -69,7 +84,7 @@ describe("planClaudeSkillDispatch", () => {
   });
 
   it("ignores currency amounts and compact monetary expressions", () => {
-    const skillsWithCurrency = new Set([...SKILLS, "20", "20k", "100M", "1e6"]);
+    const skillsWithCurrency = skillMap([...SKILLS.keys(), "20", "20k", "100M", "1e6"]);
     for (const symbol of ["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"]) {
       expect(
         planClaudeSkillDispatch(
@@ -78,5 +93,46 @@ describe("planClaudeSkillDispatch", () => {
         ),
       ).toBeUndefined();
     }
+  });
+
+  describe("earlier skills the model may not start itself", () => {
+    const skills = skillMap(
+      ["interrogate", "poteto-mode", "review"],
+      ["interrogate", "poteto-mode"],
+    );
+
+    it("tells the model the user invoked an earlier user-only skill and where it lives", () => {
+      expect(planClaudeSkillDispatch("$interrogate and $poteto-mode pleas", skills)).toEqual({
+        leadingText: `/interrogate ${INTERROGATE_NOTE} and`,
+        commandText: "/poteto-mode pleas",
+        skillName: "poteto-mode",
+      });
+    });
+
+    it("leaves an earlier skill the model may start as a bare slash name", () => {
+      expect(planClaudeSkillDispatch("$review then $interrogate", skills)).toEqual({
+        leadingText: "/review then",
+        commandText: "/interrogate",
+        skillName: "interrogate",
+      });
+    });
+
+    it("does not annotate the dispatched skill when it is named twice", () => {
+      expect(planClaudeSkillDispatch("$interrogate again $interrogate", skills)).toEqual({
+        leadingText: "/interrogate again",
+        commandText: "/interrogate",
+        skillName: "interrogate",
+      });
+    });
+
+    it("annotates a repeated earlier user-only skill only once", () => {
+      expect(
+        planClaudeSkillDispatch("$interrogate then $interrogate then $review", skills),
+      ).toEqual({
+        leadingText: `/interrogate ${INTERROGATE_NOTE} then /interrogate then`,
+        commandText: "/review",
+        skillName: "review",
+      });
+    });
   });
 });
