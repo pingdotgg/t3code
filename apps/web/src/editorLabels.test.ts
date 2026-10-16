@@ -27,3 +27,8 @@ describe("openInEditorMenuLabel", () => {
     expect(openInEditorMenuLabel(null)).toBe("Open in editor");
   });
 });
+
+it("labels the host's default editor", () => {
+  expect(editorLabelForPlatform("default-editor", "Linux x86_64")).toBe("Default editor");
+  expect(openInEditorMenuLabel("default-editor")).toBe("Open in default editor");
+});

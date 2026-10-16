@@ -85,3 +85,12 @@ describe("resolveOpenInOptions", () => {
     expect(resolveOpenInOptions("MacIntel", [])).toEqual([]);
   });
 });
+
+it("offers the host's default editor when the server reports it available", () => {
+  expect(
+    resolveOpenInOptions("Linux x86_64", ["default-editor"]).map(({ value, label }) => ({
+      value,
+      label,
+    })),
+  ).toEqual([{ value: "default-editor", label: "Default editor" }]);
+});

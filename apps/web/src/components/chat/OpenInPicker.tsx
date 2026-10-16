@@ -17,7 +17,12 @@ import {
   useRemoteOpenState,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
-import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  FolderClosedIcon,
+  SquareArrowOutUpRightIcon,
+  SquareTerminalIcon,
+} from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
 import {
@@ -182,6 +187,11 @@ export const resolveOpenInOptions = (
       Icon: WebStormIcon,
       value: "webstorm",
       kind: "brand",
+    },
+    {
+      Icon: SquareTerminalIcon,
+      value: "default-editor",
+      kind: "generic",
     },
     {
       Icon: isMacPlatform(platform)
