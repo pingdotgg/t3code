@@ -373,6 +373,10 @@ function PullRequestCodeTab({
   // A comment is posted against the pull request's head diff, so a line number taken from one
   // commit's own diff would land somewhere else entirely. Commenting waits for the whole change.
   const canCommentOnLines = review.inlineComment && commit === null;
+  // Add to agent never writes to the host, so lines stay selectable for it where the host or
+  // this account cannot comment, such as on Azure DevOps.
+  const canSelectLines =
+    commit === null && (review.inlineComment || onAddToAgentSelection !== undefined);
   // Every slice is parsed on its own and the result held, so a slice arriving costs one parse
   // rather than one per slice already on screen. Its cache key carries the theme, which is what
   // the tokenizer caches against, so a theme change is still a fresh parse.
@@ -715,7 +719,7 @@ function PullRequestCodeTab({
 
   const beginComment = useCallback(
     (range: SelectedLineRange | null, context: { item: CodeViewItem<ReviewAnnotationGroup> }) => {
-      if (!range || !canCommentOnLines) return;
+      if (!range || !canSelectLines) return;
       const item = context.item;
       if (item.type !== "diff") return;
       const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -740,7 +744,7 @@ function PullRequestCodeTab({
         range,
       });
     },
-    [canCommentOnLines, files, parsedSlices],
+    [canSelectLines, files, parsedSlices],
   );
 
   // Built here because the parsed diff only lives here, and built by the same function the
@@ -895,8 +899,8 @@ function PullRequestCodeTab({
       themeType: resolvedTheme,
       stickyHeaders: true,
       loadDiffFiles,
-      enableGutterUtility: canCommentOnLines && draft === null,
-      enableLineSelection: canCommentOnLines && draft === null,
+      enableGutterUtility: canSelectLines && draft === null,
+      enableLineSelection: canSelectLines && draft === null,
       // Two gestures reach the same place: dragging the line numbers selects a range, and the
       // gutter's own button comments on the one line it sits on. They are separate callbacks in
       // the viewer, so a reader who only ever presses the button gets nothing unless both are
@@ -904,7 +908,7 @@ function PullRequestCodeTab({
       onGutterUtilityClick: beginComment,
       onLineSelectionEnd: beginComment,
     }),
-    [diffLayout, wordWrap, resolvedTheme, loadDiffFiles, canCommentOnLines, draft, beginComment],
+    [diffLayout, wordWrap, resolvedTheme, loadDiffFiles, canSelectLines, draft, beginComment],
   );
 
   const runThreadCommand = useCallback(
@@ -1022,7 +1026,23 @@ function PullRequestCodeTab({
             onRemove={() => removeComment(reviewKey, comment.id)}
           />
         ))}
-        {annotation.metadata.draft && draft ? (
+        {annotation.metadata.draft && draft && !canCommentOnLines && onAddToAgentSelection ? (
+          <DiffCommentAnnotation
+            kind="draft"
+            rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
+            text=""
+            submitLabel="Add to agent"
+            onCancel={() => {
+              setDraft(null);
+              setSelectedLines(null);
+            }}
+            onComment={(text) =>
+              finishSelection(draft, text, (comment) =>
+                onAddToAgentSelection({ comment, request: text }),
+              )
+            }
+          />
+        ) : annotation.metadata.draft && draft ? (
           <DiffCommentAnnotation
             kind="draft"
             rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
@@ -1060,6 +1080,7 @@ function PullRequestCodeTab({
     ),
     [
       addComment,
+      canCommentOnLines,
       draft,
       finishSelection,
       onAddToAgentSelection,
