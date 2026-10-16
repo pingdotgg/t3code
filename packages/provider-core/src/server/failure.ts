@@ -31,10 +31,17 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
-/** Translate known categories without exposing arbitrary provider defect text. */
-function causeMessage(cause: unknown): string | undefined {
+/**
+ * Walks a cause chain for curated text without reading arbitrary provider
+ * defect text. `known` is the message of a domain error T3 raised itself;
+ * `category` is the generic message of the innermost provider wrapper seen.
+ */
+function curatedCauseMessages(cause: unknown): {
+  readonly known: string | undefined;
+  readonly category: string | undefined;
+} {
   const seen = new Set<unknown>();
-  let message: string | undefined;
+  let category: string | undefined;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -45,25 +52,30 @@ function causeMessage(cause: unknown): string | undefined {
       if (typeof cause !== "object") break;
       switch ((cause as Record<string, unknown>)._tag) {
         case "ContextHandoffBudgetError":
-          return new ContextHandoffBudgetError().message;
+          return { known: new ContextHandoffBudgetError().message, category };
+        case "AcpModelSelectionError":
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
-          return stringField(cause, "message");
+          return { known: stringField(cause, "message"), category };
         case "ContextHandoffDeliveryUncertainError":
-          return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
+          return {
+            known:
+              "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
+            category,
+          };
         case "ProviderAdapterTurnStartError":
-          message =
+          category =
             "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
           break;
         case "ProviderAdapterEventStreamError":
-          message =
+          category =
             "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
           break;
         case "ProviderAdapterOpenSessionError":
-          message =
+          category =
             "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.";
           break;
         case "ProviderAdapterResumeThreadError":
-          message =
+          category =
             "The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs.";
           break;
       }
@@ -72,7 +84,16 @@ function causeMessage(cause: unknown): string | undefined {
       break;
     }
   }
-  return message;
+  return { known: undefined, category };
+}
+
+/**
+ * The curated message of a domain error in a failure's cause chain, if any.
+ * Callers that pass their own `message` to `makeProviderFailure` check it
+ * first, so a known reason is not hidden behind a wrapper's text.
+ */
+export function knownProviderFailureMessage(cause: unknown): string | undefined {
+  return curatedCauseMessages(cause).known;
 }
 
 function stringField(value: unknown, key: "message" | "code"): string | undefined {
@@ -152,7 +173,9 @@ export function makeProviderFailure(input: {
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
-  const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const curated = curatedCauseMessages(input.cause);
+  const rawMessage =
+    input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =

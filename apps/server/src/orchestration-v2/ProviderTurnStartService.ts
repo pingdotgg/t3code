@@ -43,7 +43,10 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  knownProviderFailureMessage,
+  makeProviderFailure,
+} from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import {
@@ -549,9 +552,10 @@ export const layer: Layer.Layer<
         }),
       );
       // The last start attempt fails the run with the provider's own reason
-      // instead of leaving it `starting` after the effect gives up. A run that
-      // already left `starting` is not overwritten, and a failed write returns
-      // its error to the effect worker.
+      // instead of leaving it `starting` after the effect gives up. A known
+      // domain reason, such as a model the agent rejected, comes before the
+      // wrapper's text. A run that already left `starting` is not overwritten,
+      // and a failed write returns its error to the effect worker.
       const settleStartFailure = (failed: {
         readonly signal: string;
         readonly title: string;
@@ -571,11 +575,12 @@ export const layer: Layer.Layer<
               failure: makeProviderFailure({
                 cause: failed.error,
                 message:
-                  nestedCause instanceof Error
+                  knownProviderFailureMessage(failed.error) ??
+                  (nestedCause instanceof Error
                     ? nestedCause.message
                     : typeof nestedCause === "string"
                       ? nestedCause
-                      : failed.error.message,
+                      : failed.error.message),
                 class: "provider_error",
               }),
             },
