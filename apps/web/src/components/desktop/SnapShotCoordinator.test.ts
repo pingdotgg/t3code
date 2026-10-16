@@ -1,14 +1,22 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  type ClientSettings,
   type DesktopPendingSnapShot,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { act, createElement } from "react";
+import { create } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
+import * as settings from "../../hooks/useSettings";
+import * as newThread from "../../hooks/useHandleNewThread";
+import * as snapShotSound from "../../lib/snapShotSound";
+import { toastManager } from "../ui/toast";
 import {
   beginSnapShotAnimationWhenReady,
   deliverSnapShot,
@@ -16,6 +24,7 @@ import {
   resolveExistingSnapShotTarget,
   resolveSnapShotTargetOnce,
   resolveSnapShotDeliveryTarget,
+  SnapShotCoordinator,
 } from "./SnapShotCoordinator";
 import {
   beginSnapShotAnimation,
@@ -60,6 +69,7 @@ afterEach(() => {
   dismissAllSnapShotAnimations();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("window capture failures", () => {
@@ -130,6 +140,109 @@ describe("window capture failures", () => {
     expect(getPendingSnapShotAnimations()).toEqual([]);
     expect(soundedIds.size).toBe(0);
     expect(pendingStarts.size).toBe(0);
+  });
+});
+
+describe("snapshot enable setting", () => {
+  const capture = {
+    id: "12345678-1234-1234-1234-123456789abc",
+    name: "window.png",
+    mimeType: "image/png" as const,
+    sizeBytes: 3,
+    dataUrl: "data:image/png;base64,AQID",
+    source: {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-09-01T00:00:00.000Z",
+      appName: "Editor",
+      windowTitle: "main.ts",
+    },
+  };
+
+  function mountCoordinator(routeThreadRef: ReturnType<typeof scopeThreadRef> | null) {
+    const bridge = {
+      requestSnapShotPermissions: vi.fn(),
+      getSnapShotState: vi.fn(),
+      checkSnapShotShortcut: vi.fn(),
+      setSnapShotShortcutSuppressed: vi.fn(),
+      onSnapShotEvent: vi.fn(() => vi.fn()),
+      listPendingSnapShots: vi.fn(async () => [capture]),
+      readSnapShot: vi.fn(async () => capture),
+      acknowledgeSnapShot: vi.fn(async () => undefined),
+    };
+    vi.spyOn(settings, "useClientSettings").mockImplementation(
+      <T = ClientSettings>(selector?: (value: ClientSettings) => T) =>
+        selector ? selector(settings.getClientSettings()) : (settings.getClientSettings() as T),
+    );
+    vi.spyOn(newThread, "useHandleNewThread").mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: routeThreadRef ? projectRef : null,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    const sound = vi.spyOn(snapShotSound, "playSnapShotSound").mockImplementation(() => undefined);
+    const toast = vi.spyOn(toastManager, "add").mockReturnValue("toast-id");
+    const browserWindow = Object.assign(new EventTarget(), {
+      desktopBridge: bridge,
+      localStorage: storage,
+    });
+    vi.stubGlobal("window", browserWindow);
+    vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    return { bridge, browserWindow, sound, toast };
+  }
+
+  function setEnabled(snapShotEnabled: boolean) {
+    vi.spyOn(settings, "getClientSettings").mockReturnValue({
+      ...DEFAULT_CLIENT_SETTINGS,
+      snapShotEnabled,
+      snapShotPlaySound: true,
+    });
+  }
+
+  it("leaves pending captures alone while off and delivers them after re-enable", async () => {
+    const target = scopeThreadRef(environmentId, ThreadId.make("enabled-thread"));
+    const { bridge, browserWindow, sound, toast } = mountCoordinator(target);
+    setEnabled(false);
+    const renderer = await act(() => create(createElement(SnapShotCoordinator)));
+    try {
+      await act(async () => {
+        renderer.update(createElement(SnapShotCoordinator));
+        browserWindow.dispatchEvent(new Event("focus"));
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      expect(bridge.onSnapShotEvent).not.toHaveBeenCalled();
+      expect(bridge.listPendingSnapShots).not.toHaveBeenCalled();
+      expect(sound).not.toHaveBeenCalled();
+      expect(toast).not.toHaveBeenCalled();
+
+      setEnabled(true);
+      await act(async () => renderer.update(createElement(SnapShotCoordinator)));
+      expect(bridge.acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+      expect(useComposerDraftStore.getState().getComposerDraft(target)?.images).toHaveLength(1);
+      expect(toast).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+  });
+
+  it("reports a capture without a project once across focus and route changes", async () => {
+    const { bridge, browserWindow, sound, toast } = mountCoordinator(null);
+    setEnabled(true);
+    const renderer = await act(() => create(createElement(SnapShotCoordinator)));
+    try {
+      await act(async () => browserWindow.dispatchEvent(new Event("focus")));
+      await act(async () => renderer.update(createElement(SnapShotCoordinator)));
+      expect(bridge.listPendingSnapShots.mock.calls.length).toBeGreaterThan(1);
+      expect(sound).toHaveBeenCalledOnce();
+      expect(toast).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ title: "Snapshot taken, but no project is available" }),
+      );
+      expect(bridge.acknowledgeSnapShot).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer.unmount());
+    }
   });
 });
 
