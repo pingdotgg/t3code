@@ -76,6 +76,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskResultRun,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -435,10 +436,12 @@ function directAppOwnedChildTasks(
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
+  // A follow-up promoted to Steer shares the transfer of the run it joined.
+  const resultRun = delegatedTaskResultRun(child, task.id);
   const resultRunIds = new Set(
     child.runs
       .filter(
@@ -449,6 +452,7 @@ function taskResultTransfer(
       .map((run) => run.id),
   );
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
+  if (resultRun !== undefined) resultRunIds.add(resultRun.id);
   return parent.contextTransfers.find(
     (transfer) =>
       transfer.type === "subagent_result" &&
@@ -1368,9 +1372,7 @@ const make = Effect.gen(function* () {
       const progress = delegatedTaskProgress(childControls);
       const taskResultRun =
         childRun?.delegatedTaskId === task.id
-          ? childControls.runs
-              .filter((run) => run.delegatedTaskId === task.id)
-              .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+          ? delegatedTaskResultRun(childControls, task.id)
           : progress.resultRun;
       const taskWorkState =
         childRun?.delegatedTaskId === task.id
@@ -2543,8 +2545,13 @@ const make = Effect.gen(function* () {
           tasks.length > 0 &&
           (input.textOffset ?? 0) === 0
         ) {
+          const targetMessages = messagesByThreadId.get(target.thread.id) ?? [];
           for (const task of tasks) {
-            const transfer = taskResultTransfer(parent, target, task);
+            const transfer = taskResultTransfer(
+              parent,
+              { ...target, messages: targetMessages },
+              task,
+            );
             const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
             const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
             const resultRecords = yield* threadManagement

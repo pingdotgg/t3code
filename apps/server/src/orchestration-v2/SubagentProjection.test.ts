@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import {
   makeSubagentChildThread,
   delegatedTaskProgress,
+  delegatedTaskResultRun,
   subagentResultForRun,
   makeSubagentConversationArtifacts,
   endOrphanedNativeSubagent,
@@ -189,6 +190,52 @@ it("reports the run that ended last, not the highest ordinal", () => {
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.ordinal, 3);
+});
+
+it("settles a follow-up promoted to Steer with the run its message joined", () => {
+  const { run } = taskFixture();
+  const taskId = NodeId.make("node:follow-up");
+  const messageId = MessageId.make("message:follow-up");
+  const steered = { ...run, status: "running" as const };
+  const queued: OrchestrationV2Run = {
+    ...run,
+    id: RunId.make("run:follow-up"),
+    ordinal: 2,
+    status: "cancelled",
+    userMessageId: messageId,
+    delegatedTaskId: taskId,
+  };
+  const message = { id: messageId, runId: queued.id };
+  // Stopped while queued: the message still belongs to its own run.
+  assert.equal(
+    delegatedTaskResultRun({ runs: [steered, queued], messages: [message] }, taskId)?.id,
+    queued.id,
+  );
+  // Promoted to Steer: the message moved into the running turn.
+  assert.equal(
+    delegatedTaskResultRun(
+      { runs: [steered, queued], messages: [{ ...message, runId: steered.id }] },
+      taskId,
+    )?.id,
+    steered.id,
+  );
+  // A restart cut the steered turn; its continuation now carries the result.
+  const continuation: OrchestrationV2Run = {
+    ...run,
+    id: RunId.make("run:continuation"),
+    ordinal: 3,
+    restartContinuationOfRunId: steered.id,
+  };
+  assert.equal(
+    delegatedTaskResultRun(
+      {
+        runs: [{ ...steered, status: "cancelled" }, queued, continuation],
+        messages: [{ ...message, runId: steered.id }],
+      },
+      taskId,
+    )?.id,
+    continuation.id,
+  );
 });
 
 it("waits for nested work and retains the report across monitor acknowledgements", () => {

@@ -280,6 +280,97 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect("reports the steered turn's result transfer for a follow-up promoted to Steer", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-steer-parent");
+      const childThreadId = ThreadId.make("thread:mcp-steer-child");
+      const steeredTaskId = NodeId.make("node:mcp-steer-steered");
+      const promotedTaskId = NodeId.make("node:mcp-steer-promoted");
+      const steeredRunId = RunId.make("run:mcp-steer-steered");
+      const promotedMessageId = "message:mcp-steer-promoted";
+      const task = (id: NodeId) => ({
+        id,
+        threadId: parentThreadId,
+        origin: "app_owned",
+        childThreadId,
+        driver: "codex",
+        model: "gpt-5.6-terra",
+        status: "completed",
+        result: "Merged both branches.",
+        completionDelivery: { state: "delivered" },
+      });
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [
+          {
+            id: "context-transfer:mcp-steer-result",
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: steeredRunId },
+          },
+        ],
+        subagents: [task(steeredTaskId), task(promotedTaskId)],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const childProjection = {
+        thread: { id: childThreadId },
+        runs: [
+          { id: steeredRunId, ordinal: 1, status: "completed", delegatedTaskId: steeredTaskId },
+          {
+            id: RunId.make("run:mcp-steer-promoted"),
+            ordinal: 2,
+            status: "cancelled",
+            delegatedTaskId: promotedTaskId,
+            userMessageId: promotedMessageId,
+          },
+        ],
+        contextTransfers: [],
+        // Promoting the follow-up moved its message into the steered run.
+        messages: [{ id: promotedMessageId, role: "user", runId: steeredRunId }],
+        subagents: [],
+        providerThreads: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          dispatch: () => Effect.succeed({} as never),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-steer"),
+        requestNamespace: "provider-session:mcp-steer",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-steer",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const promoted = yield* service.taskStatus(scope, promotedTaskId);
+        assert.equal(promoted.status, "completed");
+        assert.equal(promoted.resultContextTransferId, "context-transfer:mcp-steer-result");
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("does not dispose delivery when a nonterminal task has no active child run", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-cancel-parent");
