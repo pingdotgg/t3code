@@ -43,6 +43,8 @@ import {
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
+import * as CuaDriver from "../cua/CuaDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
@@ -323,6 +325,22 @@ export const layerWithOptions = (
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
+      /**
+       * The environment's managed computer use. Optional for the same reason
+       * as settings; acquiring it returns nothing while the setting is off.
+       */
+      const cuaDriver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
+      /**
+       * Records the thread's session with the managed Cua Driver, when it is
+       * running. A session prepared while it is off keeps its stale answer
+       * until its next prepare, like the browser and device capabilities.
+       */
+      const setMcpSession = (config: McpProviderSessionConfig) =>
+        Effect.gen(function* () {
+          const cua = Option.isSome(cuaDriver) ? yield* cuaDriver.value.acquire : Option.none();
+          const { cuaDriver: _previous, ...rest } = config;
+          yield* mcpSessions.set(Option.isSome(cua) ? { ...rest, cuaDriver: cua.value } : rest);
+        });
       const eventSink = yield* EventSink.EventSinkV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -480,6 +498,7 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
+                    yield* setMcpSession(existing);
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -491,7 +510,7 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                 });
-                yield* mcpSessions.set(credential.config);
+                yield* setMcpSession(credential.config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),

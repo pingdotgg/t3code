@@ -6,6 +6,7 @@ import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcp
 import {
   PI_T3_MCP_EXTENSION_FILENAME,
   PI_T3_MCP_EXTENSION_SOURCE,
+  T3_CUA_MCP_ENV,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
@@ -285,6 +286,8 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_CUA_MCP_ENV];
+  const cuaDriver = hasT3Extension ? input.mcpSession?.cuaDriver : undefined;
 
   return {
     args,
@@ -307,6 +310,17 @@ export function buildPiRpcLaunch(input: {
             ),
           }
         : {}),
+      ...(cuaDriver === undefined
+        ? {}
+        : {
+            [T3_CUA_MCP_ENV]: JSON.stringify({
+              command: cuaDriver.command,
+              args: cuaDriver.args,
+              env: Object.fromEntries(
+                cuaDriver.environment.map(({ name, value }) => [name, value]),
+              ),
+            }),
+          }),
     },
     hasT3Mcp,
   };

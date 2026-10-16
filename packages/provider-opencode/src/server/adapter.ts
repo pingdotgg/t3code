@@ -57,6 +57,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -973,6 +974,25 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             }),
           );
         }
+        // Computer use is an addition: a server that cannot add it still runs
+        // the session, and the prompt only advertises it once it is attached.
+        const cuaDriver = mcpSession?.cuaDriver;
+        const computerUse =
+          hasT3Mcp && cuaDriver !== undefined
+            ? yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+                client.mcp.add({
+                  name: McpProviderSession.CUA_MCP_SERVER_NAME,
+                  config: McpProviderSession.cuaOpenCodeMcpConfig(cuaDriver),
+                }),
+              ).pipe(
+                Effect.as(true),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not add Cua Driver to OpenCode.", cause).pipe(
+                    Effect.as(false),
+                  ),
+                ),
+              )
+            : false;
 
         const now = yield* DateTime.now;
         let sessionEntity: OrchestrationV2ProviderSession = {
@@ -3221,6 +3241,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: turnInput.modelSelection.model,
+                  computerUse,
                 }),
               ]
                 .filter(Boolean)

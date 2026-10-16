@@ -547,7 +547,10 @@ function acpMcpContext(
   // Agents that advertise optional http support still routinely fail to wire
   // injected http servers through to their backend (codex-acp 1.2.0 and pi-acp
   // both drop them), so every ACP session gets the `t3 acp-mcp-bridge` stdio
-  // server, which forwards JSON-RPC to T3's authenticated MCP endpoint.
+  // server, which forwards JSON-RPC to T3's authenticated MCP endpoint. The
+  // managed Cua Driver is already a stdio server, so it is listed in both
+  // forms: an agent with MCP-over-ACP receives only `acpServers`.
+  const cua = McpProviderSession.cuaAcpMcpServers(session);
   return {
     servers: [
       {
@@ -560,8 +563,9 @@ function acpMcpContext(
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
         ],
       },
+      ...cua,
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }, ...cua],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
@@ -6370,6 +6374,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             text: buildRuntimeInstructions({
               harness: flavor.runtimeHarness ?? driver,
               model: turnInput.modelSelection.model,
+              computerUse: (yield* mcpSessions.read(turnInput.threadId))?.cuaDriver !== undefined,
             }),
           });
           return { prompt, instructionState: text === messageText ? undefined : instructionState };

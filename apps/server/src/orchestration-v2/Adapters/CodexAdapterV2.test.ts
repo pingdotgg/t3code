@@ -679,6 +679,31 @@ describe("CodexAdapterV2 process spawning", () => {
     );
   });
 
+  it("attaches the managed Cua Driver unless the user's Codex config defines one", () => {
+    const mcpSession = {
+      environmentId: EnvironmentId.make("environment-codex-cua"),
+      threadId: ThreadId.make("thread-codex-cua"),
+      providerSessionId: "mcp-session-codex-cua",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      endpoint: "http://127.0.0.1:43123/mcp",
+      authorizationHeader: "Bearer secret-codex-token",
+      browserToolsAvailable: true,
+      cuaDriver: {
+        command: "/resources/cua-driver",
+        args: ["mcp", "--embedded", "--socket", "/tmp/cua.sock"],
+        environment: [{ name: "CUA_MODE", value: "embedded" }],
+      },
+    };
+    const servers = (userCuaDriver: boolean) =>
+      CodexAdapterV2.codexThreadRuntimeParams({ mcpSession, userCuaDriver }).config.mcp_servers;
+    assert.deepEqual((servers(false) as Record<string, unknown>)["cua-driver"], {
+      command: "/resources/cua-driver",
+      args: ["mcp", "--embedded", "--socket", "/tmp/cua.sock"],
+      env: { CUA_MODE: "embedded" },
+    });
+    assert.deepEqual(Object.keys(servers(true) as Record<string, unknown>), ["t3-code"]);
+  });
+
   it.effect("resolves Windows command shims through the shared spawn policy", () =>
     Effect.gen(function* () {
       const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
