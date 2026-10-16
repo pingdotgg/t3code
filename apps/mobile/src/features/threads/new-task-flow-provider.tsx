@@ -980,8 +980,9 @@ export function NewTaskFlowProvider(
     ) {
       return;
     }
-    // A pin, pending-task edit, or project change made earlier in this commit
-    // has not rendered yet; the refs show whether this render is still current.
+    // A pin, pending-task edit, project change, or attachment made earlier in
+    // this commit has not rendered yet; the refs and the live draft show
+    // whether this render is still current.
     if (
       environmentPinnedRef.current ||
       editingPendingTaskRef.current !== null ||
@@ -995,13 +996,15 @@ export function NewTaskFlowProvider(
       (project) => project.environmentId === loadBalancing.environmentId,
     );
     if (!target) return;
+    const liveDraft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    if (liveDraft.attachments.length > 0) return;
     // The machine was checked for the model on screen, which is not always
     // the draft's stored one: it may be an unwritten default, or stand in for
     // a pick this machine cannot run. Write it down so it is what travels.
     if (selectedModel !== null && target.environmentId !== selectedProject.environmentId) {
       updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selectedModel });
     }
-    const workspaceSelection = getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection;
+    const workspaceSelection = liveDraft.workspaceSelection;
     carryDraftContentTo(target);
     if (target.environmentId !== selectedProject.environmentId) {
       releaseWorkspaceSelectionFromMachine(selectedProjectDraftKey, workspaceSelection);
