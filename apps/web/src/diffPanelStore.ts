@@ -15,11 +15,18 @@ const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  // Session-only (not persisted) so folds survive DiffPanel unmounting when the right panel switches surfaces.
+  collapsedFileKeysByScopeKey: Record<string, ReadonlySet<string>>;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
+  updateCollapsedFileKeys: (
+    scopeKey: string,
+    defaults: ReadonlySet<string>,
+    update: (current: ReadonlySet<string>) => ReadonlySet<string>,
+  ) => void;
 }
 
 function normalizeBaseRef(baseRef: string | null): string | null {
@@ -32,6 +39,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      collapsedFileKeysByScopeKey: {},
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -114,6 +122,15 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
           const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
             state.branchBaseRefByThreadKey;
           return { byThreadKey, branchBaseRefByThreadKey };
+        }),
+      updateCollapsedFileKeys: (scopeKey, defaults, update) =>
+        set((state) => {
+          const current = state.collapsedFileKeysByScopeKey[scopeKey] ?? defaults;
+          const next = update(current);
+          if (next === current) return state;
+          return {
+            collapsedFileKeysByScopeKey: { ...state.collapsedFileKeysByScopeKey, [scopeKey]: next },
+          };
         }),
     }),
     {
