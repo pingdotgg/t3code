@@ -321,15 +321,22 @@ export function useThreadComposerState() {
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
-  const pendingHandoff = useMemo(
-    () =>
-      resolvePendingHandoff(
-        selectedThreadProjection?.projection,
-        modelSelection,
-        selectedEnvironmentRuntime?.serverConfig?.providers ?? [],
-      ),
-    [modelSelection, selectedThreadProjection, selectedEnvironmentRuntime?.serverConfig?.providers],
-  );
+  const pendingHandoff = useMemo(() => {
+    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    // Preview only a selection the next send will accept.
+    return resolvePendingHandoff(
+      selectedThreadProjection?.projection,
+      isModelSelectionUnavailable(serverConfig, modelSelection, selectedThread?.projectId ?? null)
+        ? null
+        : modelSelection,
+      serverConfig?.providers ?? [],
+    );
+  }, [
+    modelSelection,
+    selectedThread?.projectId,
+    selectedThreadProjection,
+    selectedEnvironmentRuntime?.serverConfig,
+  ]);
   const runtimeMode = selectedDraft?.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
