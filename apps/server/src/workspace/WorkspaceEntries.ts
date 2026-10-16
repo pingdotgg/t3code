@@ -106,6 +106,9 @@ export class WorkspaceEntries extends Context.Service<
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
+/** Paths sent to one `git check-ignore` call when labelling a folder's children. */
+const IGNORE_CHECK_CHUNK_SIZE = 1000;
+
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
   path: Path.Path,
@@ -291,7 +294,7 @@ export const make = Effect.gen(function* () {
                   relativePath: directoryPath,
                 })
                 .pipe(Effect.mapError(toError));
-        const entries = yield* Effect.tryPromise({
+        const { entries, throughSymlink } = yield* Effect.tryPromise({
           try: async () => {
             const root = await NodeFSP.realpath(normalizedCwd);
             const directory = await NodeFSP.realpath(target.absolutePath);
@@ -306,35 +309,61 @@ export const make = Effect.gen(function* () {
               throw new Error("Directory must be inside the workspace and outside .git.");
             }
             const children = await NodeFSP.readdir(directory, { withFileTypes: true });
-            return children.flatMap((child): ProjectEntry[] => {
-              if (child.name === ".git" || (!child.isDirectory() && !child.isFile())) return [];
-              return [
-                {
-                  path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
-                  kind: child.isDirectory() ? "directory" : "file",
-                },
-              ];
-            });
+            return {
+              entries: children.flatMap((child): ProjectEntry[] => {
+                if (child.name === ".git" || (!child.isDirectory() && !child.isFile())) return [];
+                return [
+                  {
+                    path: target.relativePath ? `${target.relativePath}/${child.name}` : child.name,
+                    kind: child.isDirectory() ? "directory" : "file",
+                  },
+                ];
+              }),
+              // Git refuses to classify paths beyond a symbolic link.
+              throughSymlink: relative !== target.relativePath.split("/").join(path.sep),
+            };
           },
           catch: toError,
         });
         // Use stdin so large directories cannot exceed the command-line argument limit.
         // Ignore classification is optional in non-git workspaces or when git is unavailable.
-        const ignored = new Set<string>();
-        for (let offset = 0; offset < entries.length; offset += 1000) {
-          const chunk = entries.slice(offset, offset + 1000);
-          const result = yield* vcsProcess
+        const checkIgnore = (paths: ReadonlyArray<string>) =>
+          vcsProcess
             .run({
               operation: "WorkspaceEntries.list",
               command: "git",
               args: ["-c", "core.fsmonitor=false", "check-ignore", "-z", "--stdin"],
               cwd: normalizedCwd,
-              stdin: `${chunk.map((entry) => entry.path).join("\0")}\0`,
+              stdin: `${paths.join("\0")}\0`,
               allowNonZeroExit: true,
               timeoutMs: 10_000,
               maxOutputBytes: 16 * 1024 * 1024,
             })
             .pipe(Effect.orElseSucceed(() => undefined));
+        // Git consults the index for every path it classifies, which costs hundreds of
+        // milliseconds for a `node_modules`-sized folder. Asking about the folder itself answers
+        // for every child: `check-ignore` exits 0 only when the folder is ignored and nothing
+        // under it is tracked, and an ignored folder hides all of its children. Git reads paths as
+        // pathspecs, so a folder whose path has magic (`:foo`) or glob (`[id]`) characters, or
+        // one reached through a symlink, can get a different answer per child and still asks git
+        // about each.
+        if (
+          entries.length > IGNORE_CHECK_CHUNK_SIZE &&
+          target.relativePath !== "" &&
+          !throughSymlink &&
+          !/^:|[*?[\\]/.test(target.relativePath) &&
+          (yield* checkIgnore([target.relativePath]))?.exitCode === 0
+        ) {
+          return {
+            entries: entries.map((entry) => ({ ...entry, ignored: true })),
+            truncated: false,
+          };
+        }
+        const ignored = new Set<string>();
+        for (let offset = 0; offset < entries.length; offset += IGNORE_CHECK_CHUNK_SIZE) {
+          const result = yield* checkIgnore(
+            entries.slice(offset, offset + IGNORE_CHECK_CHUNK_SIZE).map((entry) => entry.path),
+          );
           if (!result || (result.exitCode !== 0 && result.exitCode !== 1)) break;
           for (const ignoredPath of result.stdout.split("\0")) ignored.add(ignoredPath);
         }

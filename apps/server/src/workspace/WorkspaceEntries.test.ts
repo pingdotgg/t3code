@@ -134,6 +134,76 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("labels the children of wide folders exactly as git does for each child", () =>
+      Effect.gen(function* () {
+        // Above 1,000 children, listing first asks whether the whole folder is ignored.
+        const cwd = yield* makeTempDir({ git: true });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
+        yield* writeTextFile(
+          cwd,
+          ".gitignore",
+          "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
+        );
+        yield* Effect.forEach(
+          [
+            "node_modules",
+            "dist",
+            "[id]",
+            "src",
+            ...(platform !== "win32" ? [":foo"] : []),
+          ].flatMap((directory) =>
+            Array.from({ length: 1001 }, (_, index) => `${directory}/pkg-${index}.js`),
+          ),
+          (relativePath) => writeTextFile(cwd, relativePath),
+          { concurrency: 32, discard: true },
+        );
+        for (const relativePath of [
+          "dist/kept.js",
+          "dist/vendored/index.js",
+          "i/page.tsx",
+          "[id]/page.tsx",
+          "src/bundle.map",
+        ]) {
+          yield* writeTextFile(cwd, relativePath);
+        }
+        yield* git(cwd, ["add", "-f", "dist/kept.js", "dist/vendored/index.js", "i/page.tsx"]);
+        if (platform !== "win32") {
+          yield* fileSystem.symlink(path.join(cwd, "src"), path.join(cwd, "node_modules/link"));
+        }
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const { directoryPath, ignored, except } of [
+          { directoryPath: "node_modules", ignored: true, except: [] },
+          // A force-tracked file and a folder holding tracked files stay unignored.
+          { directoryPath: "dist", ignored: true, except: ["dist/kept.js", "dist/vendored"] },
+          // git reads `[id]/page.tsx` as a pathspec, which matches the tracked `i/page.tsx`.
+          { directoryPath: "[id]", ignored: true, except: ["[id]/page.tsx"] },
+          { directoryPath: "src", ignored: false, except: ["src/bundle.map"] },
+          ...(platform !== "win32"
+            ? [
+                // git refuses to classify paths beyond a symlink, so nothing there is labelled.
+                { directoryPath: "node_modules/link", ignored: false, except: [] },
+                // A leading `:` is pathspec magic, so git reads `:foo/pkg-0.js` as `foo/pkg-0.js`,
+                // which `!foo/` keeps unignored.
+                { directoryPath: ":foo", ignored: false, except: [] },
+              ]
+            : []),
+        ]) {
+          const { entries } = yield* workspaceEntries.list({ cwd, directoryPath });
+          expect(entries.length, directoryPath).toBeGreaterThan(1000);
+          expect(
+            entries
+              .filter((entry) => (entry.ignored === true) !== ignored)
+              .map((entry) => entry.path)
+              .toSorted(),
+            directoryPath,
+          ).toEqual(except);
+        }
+      }),
+    );
+
     it.effect("lists a host folder and its parent, each from its own root", () =>
       // Folder links outside the workspace browse by passing the host folder as
       // `cwd`; walking up passes the parent. Each stays bounded by its own root.
