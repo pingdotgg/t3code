@@ -164,25 +164,15 @@ async function main() {
   }
   const safeName = build.versionName.replace(/[^0-9A-Za-z.]+/g, "-").replace(/^-|-$/g, "");
   const apkName = `t3code-android-${channel}-${safeName}-${build.versionCode}.apk`;
-  const tag = outputDirectory ? undefined : requireEnv("RELEASE_TAG");
-  const snapshotTag = `android-beta-${build.versionCode}`;
-  const release = tag ? readRelease(tag) : undefined;
-  const snapshot = tag ? readRelease(snapshotTag) : undefined;
-  const hasApk = (value) =>
-    value &&
-    !value.isDraft &&
-    value.assets.some(
+  const tag = `android-beta-${build.versionCode}`;
+  const release = outputDirectory ? undefined : readRelease(tag);
+  if (
+    release &&
+    !release.isDraft &&
+    release.assets.some(
       (asset) => asset.name === apkName && asset.state === "uploaded" && asset.size > 0,
-    );
-  const pruneBetaAssets = () => {
-    for (const stale of release?.assets ?? []) {
-      if (stale.name.endsWith(".apk") && stale.name !== apkName) {
-        gh("release", "delete-asset", tag, stale.name, "--yes");
-      }
-    }
-  };
-  if (hasApk(release) && hasApk(snapshot)) {
-    pruneBetaAssets();
+    )
+  ) {
     console.log(`${apkName} is already published.`);
     return;
   }
@@ -209,16 +199,8 @@ async function main() {
       "",
       "These builds have been promoted for wider testing, but may still contain bugs. The beta is optional; the store app also works with Nightly servers.",
     ].join("\n");
-    // Publish the versioned beta first, then advance the stable download page.
     // The build number makes retries and unchanged hourly checks idempotent.
-    publishBeta(
-      snapshotTag,
-      apkPath,
-      notes,
-      `Android beta ${build.versionName} (${build.versionCode})`,
-    );
-    publishBeta(tag, apkPath, notes, "T3 Code for Android (beta)");
-    pruneBetaAssets();
+    publishBeta(tag, apkPath, notes, `Android beta ${build.versionName} (${build.versionCode})`);
   } finally {
     fs.rmSync(path.dirname(apkPath), { recursive: true, force: true });
   }

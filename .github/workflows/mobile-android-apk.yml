@@ -1,7 +1,7 @@
 name: Mobile Android APK
 
-# Checks closed testing hourly. New beta builds get a versioned prerelease and
-# update the android-beta download page. Unchanged checks publish nothing.
+# Checks closed testing hourly. Each new beta gets one versioned prerelease.
+# Unchanged checks publish nothing.
 on:
   schedule:
     # Avoid minute zero, when GitHub scheduled jobs are busiest.
@@ -21,7 +21,6 @@ jobs:
       contents: write
     env:
       PACKAGE_NAME: com.t3tools.t3code
-      RELEASE_TAG: android-beta
     steps:
       - id: credentials
         name: Check for Play credentials

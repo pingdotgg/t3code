@@ -321,9 +321,9 @@ unreleased major and get its first beta build approved.
 ## Android APK mirror
 
 `.github/workflows/mobile-android-apk.yml` checks the Google Play Alpha closed-testing
-track hourly. A new beta gets an `android-beta-<build-number>` prerelease and updates
-the `android-beta` download page. Both contain only the beta APK. Unchanged checks
-publish nothing, and interrupted draft uploads resume on the next check.
+track hourly. Each new beta gets one `android-beta-<build-number>` prerelease
+containing its APK. Unchanged checks publish nothing, and interrupted draft
+uploads resume on the next check.
 
 Normal Nightly releases include the newest processed internal-testing APK available
 when the release publishes. Internal builds do not create separate Android releases.
