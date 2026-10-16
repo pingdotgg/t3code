@@ -4950,11 +4950,88 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", 
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests,
         after?.pullRequests,
       );
+      // Later syncs of the same link supersede the ones between the first
+      // (kept for replay order) and the newest.
+      for (const [commandId, title] of [
+        ["compact-pr-sync-again", "Still open PR"],
+        ["compact-pr-sync-merged", "Merged PR"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(commandId),
+          threadId,
+          ...key,
+          number: 2,
+          snapshot: {
+            state: title === "Merged PR" ? "merged" : "open",
+            title,
+            headBranch: "feature/pr",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: null,
+            syncedAt: "2026-10-13T13:00:00.000Z",
+          },
+          stack: null,
+        });
+      }
+      const latest = yield* orchestrator.getThreadShell(threadId);
       yield* maintenance.compactEventStore;
+      const linkEvents = yield* sql<{ command_id: string }>`
+        SELECT command_id FROM orchestration_events
+        WHERE stream_id = ${threadId} AND event_type = 'thread.pull-request-link-updated'
+        ORDER BY sequence
+      `;
+      assert.deepEqual(
+        linkEvents.map((row) => row.command_id),
+        ["compact-pr-sync", "compact-pr-sync-merged"],
+      );
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests,
-        after?.pullRequests,
+        latest?.pullRequests,
+      );
+
+      // A later visit is read state only: clients keep updatedAt from the
+      // rename, so compaction must keep the rename. Two visits supersede each
+      // other, and a later rename supersedes a visit.
+      const threadEvents = () => sql<{ event_type: string }>`
+        SELECT event_type FROM orchestration_events
+        WHERE stream_id = ${threadId}
+          AND event_type IN ('thread.metadata-updated', 'thread.visited')
+        ORDER BY sequence
+      `;
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("compact-pr-rename"),
+        threadId,
+        title: "Renamed before visit",
+      });
+      for (const [commandId, visitedAt] of [
+        ["compact-pr-visit", "2026-10-13T14:00:00.000Z"],
+        ["compact-pr-visit-again", "2026-10-13T15:00:00.000Z"],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "thread.visit",
+          commandId: CommandId.make(commandId),
+          threadId,
+          visitedAt,
+        });
+      }
+      yield* maintenance.compactEventStore;
+      assert.deepEqual(
+        (yield* threadEvents()).map((row) => row.event_type),
+        ["thread.metadata-updated", "thread.visited"],
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("compact-pr-rename-again"),
+        threadId,
+        title: "Renamed after visit",
+      });
+      yield* maintenance.compactEventStore;
+      assert.deepEqual(
+        (yield* threadEvents()).map((row) => row.event_type),
+        ["thread.metadata-updated"],
       );
     }),
   );
