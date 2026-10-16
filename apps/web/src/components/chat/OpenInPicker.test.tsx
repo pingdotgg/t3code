@@ -252,6 +252,21 @@ describe("host editor access", () => {
 });
 
 describe("client editor links", () => {
+  it("includes the remote login user for the button and picker shortcut", async () => {
+    state.remote = {
+      mode: "remote-links",
+      host: { kind: "ssh-alias", host: "192.168.1.172", username: "admin-user" },
+    };
+    await renderPicker();
+    await act(async () => primaryButton().props.onClick());
+    await act(async () => state.keydown!(keyboardEvent()));
+    expect(state.openUrl.mock.calls).toEqual([
+      ["vscode://vscode-remote/ssh-remote+admin-user%40192.168.1.172/work/project"],
+      ["vscode://vscode-remote/ssh-remote+admin-user%40192.168.1.172/work/project"],
+    ]);
+    expect(state.run).not.toHaveBeenCalled();
+  });
+
   it("opens an SSH editor URL without host operate permission", async () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
     await renderPicker();

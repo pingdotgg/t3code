@@ -29,7 +29,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://127.0.0.1:8000"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -40,7 +40,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("https://sol.tail1234.ts.net"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -56,7 +56,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://172.29.112.1:14369"),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -71,7 +71,7 @@ describe("resolveRemoteOpenState", () => {
           label: "WSL (Ubuntu)",
           connectionId: "local:wsl-1",
         }),
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
@@ -86,11 +86,74 @@ describe("resolveRemoteOpenState", () => {
           label: "sol",
           connectionId: "ssh-1",
         }),
-        sshAlias: "sol",
+        sshTarget: { alias: "sol", username: null },
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
       }),
     ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
+  });
+
+  it("keeps the configured username for a desktop SSH target", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: new SshConnectionTarget({
+          environmentId,
+          label: "r2d2",
+          connectionId: "ssh-1",
+        }),
+        sshTarget: { alias: "r2d2", username: "r2d2" },
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+      }),
+    ).toEqual({
+      mode: "remote-links",
+      host: { kind: "ssh-alias", host: "r2d2", username: "r2d2" },
+    });
+  });
+
+  it.each([null, "admin-user"])(
+    "opens an SSH target entered as user@host once (resolved username: %s)",
+    (username) => {
+      const state = resolveRemoteOpenState({
+        target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
+        sshTarget: { alias: "admin-user@192.168.1.172", username },
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+      });
+      expect(state.mode).toBe("remote-links");
+      if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+      expect(
+        buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/home/admin-user" }),
+      ).toBe("vscode://vscode-remote/ssh-remote+admin-user%40192.168.1.172/home/admin-user");
+      expect(
+        buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/home/admin-user" }),
+      ).toBe("zed://ssh/admin-user@192.168.1.172/home/admin-user");
+      expect(
+        buildRemoteOpenUrl({ editor: "idea", ...state.host, absolutePath: "/home/admin-user" }),
+      ).toBe(
+        "jetbrains://gateway/ssh/environment?h=192.168.1.172&launchIde=true&ideHint=IU&projectHint=%2Fhome%2Fadmin-user&u=admin-user",
+      );
+    },
+  );
+
+  it.each([
+    new RelayConnectionTarget({ environmentId, label: "server" }),
+    new BearerConnectionTarget({ environmentId, label: "server", connectionId: "lan-1" }),
+    primaryTarget("https://server.tail1234.ts.net"),
+  ])("keeps the advertised username for a network connection ($._tag)", (target) => {
+    expect(
+      resolveRemoteOpenState({
+        target,
+        sshTarget: null,
+        isDesktopRenderer: false,
+        remoteOpenTargets: [
+          { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
+        ],
+      }),
+    ).toEqual({
+      mode: "remote-links",
+      host: { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
+    });
   });
 
   it("reports unavailable when a remote environment advertises no hosts", () => {
@@ -98,7 +161,7 @@ describe("resolveRemoteOpenState", () => {
       expect(
         resolveRemoteOpenState({
           target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-          sshAlias: null,
+          sshTarget: null,
           isDesktopRenderer: false,
           remoteOpenTargets,
         }),
@@ -110,7 +173,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: null,
-        sshAlias: null,
+        sshTarget: null,
         isDesktopRenderer: false,
         remoteOpenTargets: undefined,
       }),
@@ -133,6 +196,33 @@ describe("buildRemoteOpenUrl", () => {
     expect(buildRemoteOpenUrl({ editor: "cursor", host: "sol", absolutePath: "/tmp/x" })).toBe(
       "cursor://vscode-remote/ssh-remote+sol/tmp/x",
     );
+  });
+
+  it("includes the remote environment's login user", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "192.168.1.172",
+        username: "admin-user",
+        absolutePath: "/home/admin-user/project",
+      }),
+    ).toBe("vscode://vscode-remote/ssh-remote+admin-user%40192.168.1.172/home/admin-user/project");
+    expect(
+      buildRemoteOpenUrl({
+        editor: "cursor",
+        host: "r2d2",
+        username: "r2d2",
+        absolutePath: "/Users/r2d2/code",
+      }),
+    ).toBe("cursor://vscode-remote/ssh-remote+r2d2%40r2d2/Users/r2d2/code");
+    expect(
+      buildRemoteOpenUrl({
+        editor: "zed",
+        host: "r2d2",
+        username: "r2d2",
+        absolutePath: "/Users/r2d2/code",
+      }),
+    ).toBe("zed://ssh/r2d2@r2d2/Users/r2d2/code");
   });
 
   it("roots Windows paths", () => {
