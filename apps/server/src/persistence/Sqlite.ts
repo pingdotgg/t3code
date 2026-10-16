@@ -6,6 +6,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "./Migrations.ts";
+import { seedPlannerStatistics } from "./plannerStatistics.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 
@@ -39,10 +40,7 @@ const layerSetup = Layer.effectDiscard(
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
-    // Without sqlite_stat1 the planner guesses at index selectivity. 0x10012
-    // analyzes tables whose indexes lack stats or whose row count changed 10x,
-    // under a temporary analysis_limit. Otherwise it only checks table sizes.
-    yield* sql`PRAGMA optimize = 0x10012;`;
+    yield* seedPlannerStatistics;
   }),
 );
 

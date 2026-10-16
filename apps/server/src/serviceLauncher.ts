@@ -32,10 +32,10 @@ import {
 
 const HANDOFF_DELAY_MS = 2_000;
 /**
- * How long a trial has to report prepared. Migrations and the open-time
- * `PRAGMA optimize` count toward it and scale with the database: tens of GB on
- * a cold page cache take minutes. They run synchronously on the child's main
- * thread, so it cannot report progress meanwhile. A missed window rolls back
+ * How long a trial has to report prepared. Migrations count toward it and can
+ * scale with the database: tens of GB on a cold page cache take minutes. They
+ * run synchronously on the child's main thread, so it cannot report progress
+ * meanwhile. A missed window rolls back
  * the database, so the next attempt pays the same cost. Crashes are caught at
  * exit; this only bounds a trial that is alive but stuck.
  */

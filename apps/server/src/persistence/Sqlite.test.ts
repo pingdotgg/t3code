@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { PLANNER_STATISTICS } from "./plannerStatistics.ts";
 import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -66,31 +67,48 @@ it.effect("limits the WAL file size in the shared persistence setup", () =>
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("collects planner statistics for an existing database on open", () => {
+it.effect("gives every index planner statistics", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // An index added by a migration needs an entry in PLANNER_STATISTICS.
+    const missing = yield* sql<{ readonly name: string }>`
+      SELECT index_list.name FROM sqlite_schema AS index_list
+      WHERE index_list.type = 'index'
+        AND NOT EXISTS (SELECT 1 FROM sqlite_stat1 WHERE sqlite_stat1.idx = index_list.name)
+      ORDER BY index_list.name
+    `;
+    assert.deepEqual([...missing], []);
+    const indexes = yield* sql<{ readonly name: string }>`
+      SELECT name FROM sqlite_schema WHERE type = 'index'
+    `;
+    const names = new Set(indexes.map((row) => row.name));
+    assert.deepEqual(
+      Object.keys(PLANNER_STATISTICS).filter((name) => !names.has(name)),
+      [],
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("keeps planner statistics a database already has", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-stats-"));
   const dbPath = NodePath.join(tempDir, "state.sqlite");
   const persistence = () =>
     SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer));
+  const readStat = Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly stat: string }>`
+      SELECT stat FROM sqlite_stat1 WHERE idx = 'idx_orch_events_command_id'
+    `;
+    return rows.map((row) => row.stat);
+  });
 
   return Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`CREATE TABLE stats_probe(id INTEGER PRIMARY KEY, thread_id TEXT NOT NULL)`;
-      yield* sql`CREATE INDEX stats_probe_thread_idx ON stats_probe(thread_id)`;
-      yield* sql`
-        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000)
-        INSERT INTO stats_probe(thread_id) SELECT 'thread-' || (i % 10) FROM n
-      `;
+      yield* sql`UPDATE sqlite_stat1 SET stat = '1000 3' WHERE idx = 'idx_orch_events_command_id'`;
     }).pipe(Effect.provide(persistence()));
 
-    // A database written before statistics existed gets them on the next open.
-    yield* Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      const rows = yield* sql<{ readonly stat: string }>`
-        SELECT stat FROM sqlite_stat1 WHERE idx = 'stats_probe_thread_idx'
-      `;
-      assert.deepEqual([...rows], [{ stat: "1000 100" }]);
-    }).pipe(Effect.provide(persistence()));
+    assert.deepEqual(yield* readStat.pipe(Effect.provide(persistence())), ["1000 3"]);
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
