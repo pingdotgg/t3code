@@ -224,6 +224,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         processEnv,
       );
 
+      const resetCredits = yield* ClaudeResetCredits.makeThrottledResetCreditsReader((version) =>
+        ClaudeResetCredits.fetchClaudeResetCredits(configDir, version).pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        ),
+      );
+
       // Start the TTL-gated refresh without delaying provider readiness. The
       // next check observes a remote manifest after the background fetch lands.
       const checkProvider = catalogService.refreshInBackground.pipe(
@@ -237,12 +245,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 stateDir,
                 catalog,
                 scopedLimitNames,
-                (version) =>
-                  ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
-                    Effect.provideService(HttpClient.HttpClient, httpClient),
-                    Effect.provideService(FileSystem.FileSystem, fileSystem),
-                    Effect.provideService(Path.Path, path),
-                  ),
+                resetCredits.read,
               ),
             ),
             Effect.map(stampIdentity),
@@ -297,6 +300,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           const grantId = current.usageLimits?.resetCredits?.nextCreditId;
           if (!grantId || !current.version) return "noCredit" as const;
           const version = current.version;
+          // The count changes with a redeem: the re-probe after it must ask anew.
+          yield* resetCredits.forget;
           return yield* resetCreditCoordinator.redeem(
             configDir,
             (requestId) =>
@@ -331,6 +336,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
               yield* Cache.invalidateAll(capabilitiesProbeCache);
+              // A check during the redeem may have read the count from before it.
+              yield* resetCredits.forget;
               const refreshed = yield* snapshot.refresh;
               const after = refreshed.usageLimits?.checkedAt;
               if (

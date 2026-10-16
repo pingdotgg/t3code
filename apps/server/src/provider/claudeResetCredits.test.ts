@@ -257,3 +257,139 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
     }),
   );
 });
+
+describe("reading the banked resets at most once per interval", () => {
+  it("is due when never asked or when the last request is old enough", () => {
+    expect(ClaudeResetCredits.resetCreditsReadDue(null, 1_000)).toBe(true);
+    expect(
+      ClaudeResetCredits.resetCreditsReadDue(
+        1_000,
+        1_000 + ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS - 1,
+      ),
+    ).toBe(false);
+    expect(
+      ClaudeResetCredits.resetCreditsReadDue(
+        1_000,
+        1_000 + ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS,
+      ),
+    ).toBe(true);
+  });
+
+  it("waits twice as long after each refused request, at most an hour", () => {
+    const interval = ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS;
+    expect(ClaudeResetCredits.resetCreditsReadDue(0, interval, 1)).toBe(false);
+    expect(ClaudeResetCredits.resetCreditsReadDue(0, 2 * interval, 1)).toBe(true);
+    expect(ClaudeResetCredits.resetCreditsReadDue(0, 4 * interval - 1, 2)).toBe(false);
+    expect(
+      ClaudeResetCredits.resetCreditsReadDue(
+        0,
+        ClaudeResetCredits.RESET_CREDITS_READ_MAX_INTERVAL_MS,
+        9,
+      ),
+    ).toBe(true);
+  });
+
+  // `refused` stands for a failed request; any other entry is an answer.
+  const answering = (answers: ReadonlyArray<number | undefined | "refused">) => {
+    let calls = 0;
+    const read = () =>
+      Effect.suspend(() => {
+        const answer = answers[calls++];
+        return answer === "refused" ? Effect.fail("refused" as const) : Effect.succeed(answer);
+      });
+    return { read, calls: () => calls };
+  };
+
+  effectIt.effect("a successful answer without resets replaces the count and the wait", () =>
+    Effect.gen(function* () {
+      const source = answering([3, "refused", undefined, 4]);
+      const reader = yield* ClaudeResetCredits.makeThrottledResetCreditsReader(source.read);
+      expect(yield* reader.read("1.0.0")).toBe(3);
+      yield* TestClock.adjust(ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS);
+      expect(yield* reader.read("1.0.0")).toBe(3);
+      yield* TestClock.adjust(2 * ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS);
+      // The account answered that it has no resets: the old count goes.
+      expect(yield* reader.read("1.0.0")).toBeUndefined();
+      yield* TestClock.adjust(ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS);
+      expect(yield* reader.read("1.0.0")).toBe(4);
+      expect(source.calls()).toBe(4);
+    }),
+  );
+
+  effectIt.effect(
+    "a read still running when the count is forgotten does not store its answer",
+    () =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<void>();
+        const started = yield* Deferred.make<void>();
+        let calls = 0;
+        const reader = yield* ClaudeResetCredits.makeThrottledResetCreditsReader(() =>
+          Effect.gen(function* () {
+            calls += 1;
+            if (calls === 1) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return 3;
+            }
+            return 1;
+          }),
+        );
+        const inFlight = yield* Effect.forkChild(reader.read("1.0.0"));
+        yield* Deferred.await(started);
+        yield* reader.forget;
+        yield* Deferred.succeed(release, undefined);
+        expect(yield* Fiber.join(inFlight)).toBeUndefined();
+        // Nothing was stored, so the next read asks at once.
+        expect(yield* reader.read("1.0.0")).toBe(1);
+        expect(calls).toBe(2);
+      }),
+  );
+
+  effectIt.effect("two reads at once send one request", () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      const started = yield* Deferred.make<void>();
+      let calls = 0;
+      const reader = yield* ClaudeResetCredits.makeThrottledResetCreditsReader(() =>
+        Effect.gen(function* () {
+          calls += 1;
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+          return 2;
+        }),
+      );
+      const first = yield* Effect.forkChild(reader.read("1.0.0"));
+      yield* Deferred.await(started);
+      const second = yield* Effect.forkChild(reader.read("1.0.0"));
+      // Let the second read get as far as it can before the first one answers.
+      for (let i = 0; i < 5; i += 1) yield* Effect.yieldNow;
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(first)).toBe(2);
+      expect(yield* Fiber.join(second)).toBe(2);
+      expect(calls).toBe(1);
+    }),
+  );
+
+  effectIt.effect("asks once, keeps the answer, and keeps it through a refused request", () =>
+    Effect.gen(function* () {
+      const source = answering([3, "refused", 5, 6]);
+      const reader = yield* ClaudeResetCredits.makeThrottledResetCreditsReader(source.read);
+      expect(yield* reader.read("1.0.0")).toBe(3);
+      expect(yield* reader.read("1.0.0")).toBe(3);
+      expect(source.calls()).toBe(1);
+      yield* TestClock.adjust(ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS);
+      // Refused this time: the last known count stays, and the next request waits twice as long.
+      expect(yield* reader.read("1.0.0")).toBe(3);
+      expect(source.calls()).toBe(2);
+      yield* TestClock.adjust(ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS);
+      expect(yield* reader.read("1.0.0")).toBe(3);
+      expect(source.calls()).toBe(2);
+      yield* TestClock.adjust(ClaudeResetCredits.RESET_CREDITS_READ_INTERVAL_MS);
+      expect(yield* reader.read("1.0.0")).toBe(5);
+      // A redeem forgets the count, so the next read asks at once.
+      yield* reader.forget;
+      yield* reader.read("1.0.0");
+      expect(source.calls()).toBe(4);
+    }),
+  );
+});
