@@ -3,7 +3,7 @@ import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools
 import { Check } from "lucide-react";
 import { Check as CheckGlyph, CircleAlert } from "lucide";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { DialogClose } from "~/components/ui/dialog";
@@ -23,20 +23,42 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
+/**
+ * `hostStatus` only tracks this machine. A machine without simulator tooling never
+ * starts its own hub, so setup and the panel must also count remote device hosts.
+ */
+export function deviceHubReadiness(state: DeviceServiceState) {
+  const statuses = Object.values(state.hostStatuses).map((host) => host.status);
+  const ready = state.hostStatus === "ready" || statuses.includes("ready");
+  const busy =
+    !ready &&
+    [state.hostStatus, ...statuses].some(
+      (status) => status === "installing" || status === "starting",
+    );
+  return { ready, busy };
+}
+
 export function platformSetupStatus(state: DeviceServiceState, platform: DevicePlatform) {
-  const availability = state.hosts
-    .flatMap((host) => host.platforms)
-    .find((candidate) => candidate.platform === platform);
-  if (!availability?.available) {
+  const availabilities = state.hosts.flatMap((host) =>
+    host.platforms
+      .filter((candidate) => candidate.platform === platform)
+      .map((candidate) => ({ ...candidate, host })),
+  );
+  const supportingHosts = availabilities
+    .filter((candidate) => candidate.available)
+    .map((candidate) => candidate.host);
+  if (supportingHosts.length === 0) {
     return {
       ready: false,
-      message: availability?.reason ?? `${platformName(platform)} support was not detected.`,
+      message: availabilities[0]?.reason ?? `${platformName(platform)} support was not detected.`,
     };
   }
-  if (
-    state.hostStatus === "ready" &&
-    !state.devices.some((device) => device.platform === platform)
-  ) {
+  const readyHosts = supportingHosts.filter(
+    (host) =>
+      state.hostStatuses[host.id]?.status === "ready" ||
+      (host.kind === "local" && state.hostStatus === "ready"),
+  );
+  if (readyHosts.length > 0 && !state.devices.some((device) => device.platform === platform)) {
     return {
       ready: false,
       message:
@@ -45,12 +67,16 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
           : "The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.",
     };
   }
+  const remoteHost = supportingHosts.every((host) => host.kind !== "local")
+    ? supportingHosts[0]
+    : undefined;
+  const location = remoteHost ? ` on ${remoteHost.label}` : "";
   return {
     ready: true,
     message:
       platform === "ios"
-        ? "Xcode and iOS Simulator are available."
-        : "The Android SDK and Emulator are available.",
+        ? `Xcode and iOS Simulator are available${location}.`
+        : `The Android SDK and Emulator are available${location}.`,
   };
 }
 
@@ -65,10 +91,15 @@ export function DeviceSetup(props: {
   const [pending, setPending] = useState<"hub" | "check" | "agent" | "complete" | null>(null);
   const [step, setStep] = useState(0);
   const enabled = props.state.hostStatus !== "disabled";
-  const busy = props.state.hostStatus === "installing" || props.state.hostStatus === "starting";
+  const { ready, busy } = deviceHubReadiness(props.state);
   const localPlatformsUnavailable = props.state.hosts.some(
     (host) => host.kind === "local" && !host.platforms.some((platform) => platform.available),
   );
+
+  // Remote hosts report platforms only after a probe, like the Device panel's refresh on open.
+  useEffect(() => {
+    if (enabled) void list({ environmentId: props.environmentId, input: {} });
+  }, [enabled, list, props.environmentId]);
 
   const update = async (
     kind: NonNullable<typeof pending>,
@@ -181,15 +212,12 @@ export function DeviceSetup(props: {
           </Button>
         )}
         {step < 2 ? (
-          <Button
-            disabled={props.state.hostStatus !== "ready" || pending !== null}
-            onClick={() => setStep(step + 1)}
-          >
+          <Button disabled={!ready || pending !== null} onClick={() => setStep(step + 1)}>
             Continue
           </Button>
         ) : (
           <Button
-            disabled={!canConfigure || props.state.hostStatus !== "ready" || pending !== null}
+            disabled={!canConfigure || !ready || pending !== null}
             onClick={() => void update("complete", { onboardingCompleted: true })}
           >
             {pending === "complete" ? "Saving…" : "Done"}
@@ -209,7 +237,7 @@ export function DeviceHubSetupStatus({
   readonly pending: boolean;
   readonly compact?: boolean;
 }) {
-  if (!pending && state.hostStatus !== "ready") return null;
+  if (!pending && !deviceHubReadiness(state).ready) return null;
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
       {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
@@ -278,7 +306,7 @@ export function AgentDeviceSetupStatus(props: {
   }
   if (
     props.state.agentAccessEnabled &&
-    props.state.hostStatus === "ready" &&
+    deviceHubReadiness(props.state).ready &&
     props.state.hosts.some((host) => host.agentDeviceInstalled)
   ) {
     return (

@@ -20,7 +20,7 @@ import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup } from "./DeviceSetup";
+import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -138,12 +138,7 @@ export function DevicePanel(props: {
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
-  const hostReady = Object.values(state.hostStatuses).some((host) => host.status === "ready");
-  const hostBusy =
-    !hostReady &&
-    Object.values(state.hostStatuses).some(
-      (host) => host.status === "installing" || host.status === "starting",
-    );
+  const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const unavailablePlatforms = state.hosts.flatMap((host) =>
     host.platforms
       .filter((platform) => !platform.available)
