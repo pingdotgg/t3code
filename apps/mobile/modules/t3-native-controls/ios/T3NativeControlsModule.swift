@@ -20,6 +20,18 @@ public final class T3NativeControlsModule: Module {
       }
       return ["supportsWorkspaceColumns": false]
     }
+    View(T3SegmentedControlView.self) {
+      ViewName("SegmentedControl")
+      Events("onSelectionChange")
+      Prop("labels") { (view: T3SegmentedControlView, value: [String]) in view.labels = value }
+      Prop("selectedIndex") { (view: T3SegmentedControlView, value: Int) in view.selectedIndex = value }
+      Prop("trackColor") { (view: T3SegmentedControlView, value: UIColor) in view.trackColor = value }
+      Prop("selectedColor") { (view: T3SegmentedControlView, value: UIColor) in view.selectedColor = value }
+      Prop("textColor") { (view: T3SegmentedControlView, value: UIColor) in view.textColor = value }
+      Prop("mutedColor") { (view: T3SegmentedControlView, value: UIColor) in view.mutedColor = value }
+      Prop("appearance") { (view: T3SegmentedControlView, value: String) in view.appearance = value }
+    }
+
     View(T3LayoutMetricsView.self) {
       ViewName("LayoutMetrics")
       Events("onMetricsChange")
