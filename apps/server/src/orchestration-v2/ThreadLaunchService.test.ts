@@ -755,19 +755,26 @@ it.effect("keeps native maintenance commands out of steering and restart message
         const targetRun = before.runs[0];
         if (targetRun === undefined) return yield* Effect.die("Launch must create a run");
         const commandId = CommandId.make(`${scenario.name}:message`);
-        const failure = yield* threads
-          .dispatch({
-            type: "message.dispatch",
-            commandId,
-            threadId: launched.threadId,
-            messageId: MessageId.make(`${scenario.name}:message`),
-            createdBy: "user",
-            creationSource: "web",
-            text: scenario.next,
-            attachments: [],
-            dispatchMode: { type: scenario.mode, targetRunId: targetRun.id },
-          })
-          .pipe(Effect.flip);
+        const dispatch = threads.dispatch({
+          type: "message.dispatch",
+          commandId,
+          threadId: launched.threadId,
+          messageId: MessageId.make(`${scenario.name}:message`),
+          createdBy: "user",
+          creationSource: "web",
+          text: scenario.next,
+          attachments: [],
+          dispatchMode: { type: scenario.mode, targetRunId: targetRun.id },
+        });
+        // A steer sent while a maintenance turn runs waits as a queued follow-up.
+        if (scenario.name.startsWith("steer-")) {
+          yield* dispatch;
+          const queued = (yield* threads.getThreadProjection(launched.threadId)).runs[1];
+          assert.equal(queued?.status, "queued");
+          assert.equal(queued?.userMessageId, MessageId.make(`${scenario.name}:message`));
+          continue;
+        }
+        const failure = yield* dispatch.pipe(Effect.flip);
         assert.include(
           String(failure.cause).toLowerCase(),
           scenario.name.includes("logout") ? "sign" : "context compaction",

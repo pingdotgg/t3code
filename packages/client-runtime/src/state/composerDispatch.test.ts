@@ -64,6 +64,19 @@ describe("resolveComposerDispatchMode", () => {
     },
   );
 
+  it("queues with or without the modifier while steering is unavailable", () => {
+    for (const alternateModifier of [false, true]) {
+      expect(
+        resolveComposerDispatchMode({
+          running: true,
+          alternateModifier,
+          activeTurnDefault: "steer",
+          canSteer: false,
+        }),
+      ).toBe("queue");
+    }
+  });
+
   it("names the alternate action so the affordance can be labelled", () => {
     expect(alternateComposerDispatchAction("queue")).toBe("steer");
     expect(alternateComposerDispatchAction("steer")).toBe("queue");
