@@ -310,6 +310,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             admonitions: true,
           }}
           enableTaskListItemToggle={false}
+          enableCodeBlockWrapToggle
           spoilerOverlay="solid"
           onLinkPress={props.onLinkPress ? ({ url }) => props.onLinkPress?.(url) : undefined}
           onLinkLongPress={onLinkLongPress}
