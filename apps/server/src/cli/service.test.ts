@@ -102,6 +102,7 @@ function makeTestService(serviceStatus: BootService.BootServiceStatus) {
   const restarts: Array<true> = [];
   const service = BootService.BootService.of({
     status: Effect.succeed(serviceStatus),
+    withStopped: (operation) => operation,
     restart: Effect.sync(() => {
       restarts.push(true);
       return serviceStatus.installed;

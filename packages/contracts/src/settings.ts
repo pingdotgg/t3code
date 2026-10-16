@@ -1074,6 +1074,9 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "sidebarAutoSettleAfterDays",
 ]);
 
+/** Reclaimable bytes from which the offline `t3 doctor` repair is worth suggesting. */
+export const DATABASE_COMPACTION_RECOMMENDED_BYTES = 1024 ** 3;
+
 export const StorageCleanupReportEntry = Schema.Struct({
   kind: Schema.Literals(["worktree", "browser-artifacts", "logs"]),
   outcome: Schema.Literals(["removed", "kept", "failed"]),
