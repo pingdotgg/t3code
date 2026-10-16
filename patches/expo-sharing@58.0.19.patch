@@ -1,8 +1,8 @@
 diff --git a/android/src/main/java/expo/modules/sharing/SharingRecords.kt b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
-index 0b87b53..65f1c57 100644
+index 1113a0a..e89529a 100644
 --- a/android/src/main/java/expo/modules/sharing/SharingRecords.kt
 +++ b/android/src/main/java/expo/modules/sharing/SharingRecords.kt
-@@ -52,7 +52,8 @@ enum class ContentType(val value: String) : Enumerable {
+@@ -51,7 +51,8 @@ enum class ContentType(val value: String) : Enumerable {
  internal data class SharePayload(
    @Field var value: String = "",
    @Field var shareType: ShareType = ShareType.Text,
