@@ -615,8 +615,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
+  // The thread a newly mounted list opened on. That list's initialScrollAtEnd
+  // keeps retargeting the end while rows measure, and an imperative
+  // scrollToEnd would replace it with one that stops at the estimated end.
+  const listMountedForIdentityRef = useRef<string | null>(null);
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
+    listMountedForIdentityRef.current = null;
     setPositionedThreadKey(null);
     previousLatestRunRef.current = latestRun;
     setSettlingListIdentity(listIdentityKey);
@@ -953,7 +958,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
               viewOffset: -position.offsetWithinRow,
             })
           : list.scrollToOffset({ offset: position.scrollOffset, animated: false })
-        : list.scrollToEnd({ animated: false });
+        : listMountedForIdentityRef.current === listIdentityKey
+          ? undefined
+          : list.scrollToEnd({ animated: false });
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (position?.atEnd !== false || index < 0) {
@@ -1417,6 +1424,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const registerTimeline = canvas?.registerTimeline;
   const setTimelineList = useCallback(
     (list: LegendListRef | null) => {
+      if (list && listRef.current !== list) {
+        listMountedForIdentityRef.current = listIdentityRef.current;
+      }
       listRef.current = list;
       registerTimeline?.(list?.getScrollableNode() ?? null);
     },

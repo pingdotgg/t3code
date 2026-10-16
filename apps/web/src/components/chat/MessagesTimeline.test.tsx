@@ -90,9 +90,12 @@ beforeEach(() => {
 const legendListTestState = vi.hoisted(() => ({
   data: undefined as unknown,
   onScroll: undefined as (() => void) | undefined,
+  // When set, each mounted list attaches this handle through its ref.
+  handle: undefined as LegendListRef | undefined,
 }));
 
 vi.mock("@legendapp/list/react", async () => {
+  const { useLayoutEffect } = await import("react");
   const legendListTestId = "legend-list";
 
   const LegendList = (props: {
@@ -132,6 +135,15 @@ vi.mock("@legendapp/list/react", async () => {
   }) => {
     legendListTestState.data = props.data;
     legendListTestState.onScroll = props.onScroll;
+    useLayoutEffect(() => {
+      const { handle } = legendListTestState;
+      const { ref } = props;
+      if (!handle || typeof ref !== "function") return;
+      ref(handle);
+      return () => {
+        ref(null);
+      };
+    }, []);
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
@@ -882,6 +894,42 @@ describe("MessagesTimeline", () => {
         scrollOffset: 1300,
       });
     } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
+  it("lets a newly mounted list open at its own end, and moves a reused list to the end", async () => {
+    const timeline = stubFollowTimeline("environment-local:empty-before-open");
+    const scrollToEnd = vi.fn(async () => {});
+    const listeners = { addEventListener: () => {}, removeEventListener: () => {} };
+    const viewport = { ...listeners, scrollTop: 0, ownerDocument: listeners };
+    legendListTestState.handle = {
+      getScrollableNode: () => viewport,
+      getState: () => ({ data: legendListTestState.data }),
+      scrollToEnd,
+    } as unknown as LegendListRef;
+    const render = (routeThreadKey: string, hasEntries: boolean) => (
+      <MessagesTimeline
+        {...timeline.props}
+        routeThreadKey={routeThreadKey}
+        timelineEntries={hasEntries ? [buildUserTimelineEntry("First prompt")] : []}
+        hideEmptyPlaceholder
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(render("environment-local:empty-before-open", false));
+      });
+      // The list mounts for this thread, so initialScrollAtEnd owns its end.
+      await act(() => renderer?.update(render("environment-local:opened-from-empty", true)));
+      expect(scrollToEnd).not.toHaveBeenCalled();
+
+      // The same list now shows another thread and must be moved there.
+      await act(() => renderer?.update(render("environment-local:opened-from-list", true)));
+      expect(scrollToEnd).toHaveBeenCalledTimes(1);
+    } finally {
+      legendListTestState.handle = undefined;
       await act(() => renderer?.unmount());
     }
   });
