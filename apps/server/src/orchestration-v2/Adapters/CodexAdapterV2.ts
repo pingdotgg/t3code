@@ -4714,6 +4714,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
         });
 
+        // Codex unloads an unsubscribed idle thread after shutting down its
+        // terminals, without completing each command item. The shared session
+        // stays alive, so its retained commands need their own terminal events.
+        yield* client.handleServerNotification("thread/closed", (payload) =>
+          Effect.gen(function* () {
+            const completedAt = yield* DateTime.now;
+            for (const context of (yield* Ref.get(settledTurns)).values()) {
+              if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
+              yield* terminalizeRunningCommandItems(
+                context,
+                context.nativeTurnId,
+                "interrupted",
+                completedAt,
+              );
+              yield* Ref.update(runningCommandItemsByTurn, (current) => {
+                const updated = new Map(current);
+                updated.delete(context.nativeTurnId);
+                return updated;
+              });
+              yield* releaseSettledTurnIfIdle(context.nativeTurnId);
+            }
+          }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
+        );
+
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);

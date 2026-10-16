@@ -31,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexError from "effect-codex-app-server/errors";
@@ -4690,6 +4691,131 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("ends retained commands when Codex closes their native thread", () =>
+    Effect.gen(function* () {
+      const unsubscribe = (id: number, closedThreadId?: string) => [
+        {
+          type: "expect_outbound" as const,
+          label: `unsubscribe-${id}`,
+          frame: {
+            id,
+            method: "thread/unsubscribe",
+            params: { threadId: BG_NATIVE_THREAD },
+          },
+        },
+        ...(closedThreadId === undefined
+          ? []
+          : [
+              {
+                type: "emit_inbound" as const,
+                label: `closed-${id}`,
+                frame: { method: "thread/closed", params: { threadId: closedThreadId } },
+              },
+            ]),
+        {
+          type: "emit_inbound" as const,
+          label: `unsubscribe-result-${id}`,
+          frame: { id, result: { status: "notSubscribed" } },
+        },
+      ];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-background-thread-closed",
+        entries: [
+          ...backgroundExecTranscript.entries.slice(0, -1),
+          ...unsubscribe(4),
+          ...unsubscribe(5, "another-native-thread"),
+          ...unsubscribe(6, BG_NATIVE_THREAD),
+          // A duplicate closure and a delayed item completion must not wake
+          // the completed root or restore the command after it was ended.
+          ...unsubscribe(7, BG_NATIVE_THREAD).slice(0, -1),
+          {
+            type: "emit_inbound",
+            label: "late-command-completion",
+            frame: {
+              method: "item/completed",
+              params: {
+                item: backgroundCommandItem("completed"),
+                threadId: BG_NATIVE_THREAD,
+                turnId: BG_NATIVE_TURN,
+                completedAtMs: 1782622465500,
+              },
+            },
+          },
+          ...unsubscribe(7).slice(-1),
+        ],
+      });
+      const interrupted = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM &&
+        event.turnItem.status === "interrupted"
+          ? Deferred.succeed(interrupted, undefined)
+          : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-thread-closed"),
+          text: BG_PROMPT,
+        }),
+      );
+      yield* harness.firstTerminal;
+      const unload = harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+      yield* unload;
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      // The reply follows the notification on the same input reader, so it
+      // also fences notification handling without a sleep or a polling loop.
+      yield* unload;
+      assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      yield* unload;
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      assert.isFalse(
+        yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+      );
+      yield* Deferred.await(interrupted);
+      yield* unload;
+      assert.lengthOf(harness.continuationRequests, 0);
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+      const commandUpdates = harness.events.filter(
+        (
+          event,
+        ): event is Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { type: "turn_item.updated" }
+        > =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === BG_COMMAND_ITEM,
+      );
+      assert.deepEqual(
+        commandUpdates.map((event) => event.turnItem.status),
+        ["running", "interrupted"],
+      );
+      assert.deepEqual(
+        derivePendingBackgroundWork({
+          latestRun: { id: RunId.make("completed-root"), ordinal: 1, status: "completed" },
+          providerThreads: [],
+          turnItems: commandUpdates.slice(-1).map((event) => event.turnItem),
+        }),
+        [],
+      );
+      const endedNode = harness.events.findLast(
+        (event) =>
+          event.type === "node.updated" && event.node.nativeItemRef?.nativeId === BG_COMMAND_ITEM,
+      );
+      assert.isTrue(endedNode?.type === "node.updated" && endedNode.node.status === "interrupted");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   // "thread_unloaded": the thread was settled, so T3 unsubscribed and Codex
