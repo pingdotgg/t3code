@@ -186,6 +186,7 @@ const makeSupervisor = Effect.fn("CommandPerformance.makeSupervisor")(function* 
     subscribeServerConfig: (requestInput) => client.subscribeServerConfig(requestInput),
     ready: Effect.void,
     probe: Effect.void,
+    receivedFrames: Effect.succeed(0),
     closed: Effect.never,
   };
   return EnvironmentSupervisor.EnvironmentSupervisor.of({

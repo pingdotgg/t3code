@@ -1115,6 +1115,43 @@ describe("RpcSessionFactory", () => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("counts frames as they arrive while a full stream holds up the read loop", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      // The consumer takes one event and stops pulling, so the stream buffer
+      // fills and the read loop stops taking frames.
+      const consuming = yield* Deferred.make<void>();
+      const streamFiber = yield* session.client[WS_METHODS.subscribeServerConfig]({}).pipe(
+        Stream.runForEach(() =>
+          Deferred.succeed(consuming, undefined).pipe(Effect.andThen(Effect.never)),
+        ),
+        Effect.forkChild,
+      );
+      const streamRequest = yield* awaitRequest(socket, 1);
+      const snapshot = { version: 1, type: "snapshot", config: ENCODED_SERVER_CONFIG };
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Chunk",
+          requestId: streamRequest.id,
+          values: Array.from({ length: 64 }, () => snapshot),
+        }),
+      );
+      yield* Deferred.await(consuming);
+
+      const before = yield* session.receivedFrames;
+      socket.serverMessage(encodeJson({ _tag: "Pong" }));
+      expect(yield* session.receivedFrames).toBe(before + 1);
+      yield* Fiber.interrupt(streamFiber);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps reading replies after closing a stream with a full buffer", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

@@ -52,6 +52,8 @@ export interface RpcSession {
   ) => ServerConfigSubscription;
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
+  /** How many WebSocket frames have arrived, pongs included. A rising count means the link still delivers. */
+  readonly receivedFrames: Effect.Effect<number>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
 }
 
@@ -194,9 +196,23 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
+    // Counted as each frame arrives, not when the RPC read loop takes it, so a
+    // loop held up by a full stream buffer still shows a link that delivers.
+    let receivedFrames = 0;
+    const countFrame = () => {
+      receivedFrames += 1;
+    };
     const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(Socket.WebSocketConstructor, (url, options) => {
+          const socket = webSocketConstructor(url, options);
+          socket.addEventListener("message", countFrame);
+          return socket;
+        }),
+      ),
+    );
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
@@ -392,6 +408,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.raceFirst(Deferred.await(disconnected)),
       ),
       probe,
+      receivedFrames: Effect.sync(() => receivedFrames),
       closed: Effect.raceFirst(
         Deferred.await(disconnected),
         Deferred.await(configSubscriptionClosed),

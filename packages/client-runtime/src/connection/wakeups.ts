@@ -6,6 +6,10 @@ export type ConnectionWakeup =
   | "application-active"
   | "application-active-probe"
   | "application-active-reconnect"
+  // The app came back from an inactive state, such as Control Center or Face
+  // ID, without a background visit. Inactive apps keep running, so the socket
+  // was never suspended, but a pending retry should still run now.
+  | "application-refocused"
   | "credentials-changed"
   // The device moved to a different network (another Wi-Fi, Wi-Fi to
   // cellular) while staying online. Saved routes may have changed reach.
@@ -15,7 +19,8 @@ function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
     reason === "application-active" ||
     reason === "application-active-probe" ||
-    reason === "application-active-reconnect"
+    reason === "application-active-reconnect" ||
+    reason === "application-refocused"
   );
 }
 
@@ -25,6 +30,7 @@ export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
 }
 
 // A long resume replaces the session, and the new session subscribes on its own.
+// A refocus never suspended the socket, so its streams are still live.
 export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {
   return reason === "application-active" || reason === "application-active-probe";
 }
