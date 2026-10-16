@@ -320,7 +320,7 @@ function PullRequestBadge({
       >
         {/* The viewport pads 8px inline and 4px block; pull the rows out so their hover
             highlight sits 4px from every edge. */}
-        <div className="-mx-1">
+        <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
           {visibleThreadPullRequests(pullRequests).length > 0 ? (
             <ThreadPullRequestsMiniList
               pullRequests={pullRequests}
