@@ -1,10 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
-import {
-  type CuaWindowPreviewFrame,
-  FILL_PREVIEW_VIEWPORT,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
@@ -70,6 +66,7 @@ import type { ComputerUsePreview } from "./computerUsePreview";
 import { previewBridge } from "./previewBridge";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { showPreviewPopup } from "./showPreviewPopup";
+import { useComputerPreviewFrame } from "./useComputerPreviewFrame";
 import {
   type PreviewMiniPlayerGesture,
   settlePreviewMiniPlayerResize,
@@ -264,35 +261,10 @@ function ComputerMiniPlayer({
 }: Props & { readonly preview: ComputerUsePreview | null }) {
   const gt = useGT();
   const live = useCuaWindowPreview(threadRef);
-  const [decoded, setDecoded] = useState<{
-    frame: CuaWindowPreviewFrame;
-    src: string;
-  } | null>(null);
   const liveFrame = live.status === "live" ? (live.frame ?? null) : null;
-  if (live.status === "live" && !liveFrame && decoded !== null) setDecoded(null);
-  useEffect(() => {
-    if (!liveFrame) return;
-    let cancelled = false;
-    const image = new Image();
-    const src = `data:${liveFrame.mimeType};base64,${liveFrame.dataBase64}`;
-    image.src = src;
-    // Keep the visible frame until the replacement is ready to paint.
-    void image.decode().then(
-      () => {
-        if (!cancelled) setDecoded({ frame: liveFrame, src });
-      },
-      () => {
-        // A malformed frame must not erase the last successfully decoded one.
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [liveFrame]);
-  const visible =
-    live.status === "unavailable" || (live.status === "live" && !liveFrame) ? null : decoded;
-  const frame = visible?.frame ?? null;
-  const src = visible?.src ?? null;
+  const painted = useComputerPreviewFrame(liveFrame);
+  const frame =
+    live.status === "unavailable" || (live.status === "live" && !liveFrame) ? null : painted.frame;
   const sourceSize =
     frame && frame.width > 0 && frame.height > 0
       ? { width: frame.width, height: frame.height }
@@ -310,12 +282,12 @@ function ComputerMiniPlayer({
       true,
     );
   }, [viewportKey, sourceSize.width, sourceSize.height]);
-  const label = frame?.appName ?? preview?.appName ?? gt("Computer");
+  const label = frame?.appName ?? gt("Computer");
   const caption =
     frame?.windowTitle && frame.windowTitle !== label ? `${label} · ${frame.windowTitle}` : label;
   const appIcon = useAssetUrlState(
     threadRef.environmentId,
-    preview?.app ? { _tag: "native-app-icon", app: preview.app } : null,
+    frame?.app ? { _tag: "native-app-icon", app: frame.app } : null,
   );
 
   return (
@@ -331,21 +303,19 @@ function ComputerMiniPlayer({
           className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit] bg-muted"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
         >
-          {src ? (
-            <img
-              src={src}
-              alt={caption}
-              decoding="sync"
-              draggable={false}
-              className="size-full select-none object-contain"
-            />
-          ) : (
+          <canvas
+            ref={painted.canvasRef}
+            role="img"
+            aria-label={caption}
+            className={cn("size-full select-none object-contain", !frame && "hidden")}
+          />
+          {!frame ? (
             <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
               {live.status === "unavailable"
                 ? gt("Preview unavailable")
                 : gt("Waiting for the agent…")}
             </div>
-          )}
+          ) : null}
           {live.status === "unavailable" && live.detail ? (
             <div className="pointer-events-none absolute inset-x-0 top-0 truncate bg-background/80 px-2.5 py-1 text-2xs text-muted-foreground">
               {live.detail}

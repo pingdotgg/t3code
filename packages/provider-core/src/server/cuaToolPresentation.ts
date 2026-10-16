@@ -10,8 +10,8 @@ import { CUA_MCP_SERVER_NAME } from "./mcpSession.ts";
 /**
  * Shared presentation for Cua Driver tool calls, so every provider renders
  * them like Codex computer use: a "computer" surface, the target app's icon,
- * and a human title. Cua addresses apps by pid, so the directory learns
- * pid-to-app mappings from discovery results and resolves later calls.
+ * and a human title. The directory learns app and window identities from
+ * discovery results; Windows can host several apps inside one process.
  */
 export interface CuaToolPresentation {
   readonly title: string;
@@ -51,10 +51,12 @@ const MAX_APPS_PER_THREAD = 128;
 export interface CuaWindowTarget {
   readonly pid: number;
   readonly windowId: bigint;
+  readonly app?: CuaApp;
 }
 
 interface ThreadDirectory {
   readonly byPid: Map<number, CuaApp>;
+  readonly byWindow: Map<string, CuaApp>;
   lastApp: CuaApp | undefined;
   lastWindow: CuaWindowTarget | undefined;
 }
@@ -74,7 +76,12 @@ function directoryFor(threadId: ThreadId): ThreadDirectory {
     if (oldest === undefined) break;
     directories.delete(oldest);
   }
-  const created: ThreadDirectory = { byPid: new Map(), lastApp: undefined, lastWindow: undefined };
+  const created: ThreadDirectory = {
+    byPid: new Map(),
+    byWindow: new Map(),
+    lastApp: undefined,
+    lastWindow: undefined,
+  };
   directories.set(threadId, created);
   return created;
 }
@@ -91,7 +98,11 @@ export function clearCuaWindowTarget(threadId: ThreadId): void {
 
 /** Last window the agent targeted in this thread, if any tool call named one. */
 export function readCuaWindowTarget(threadId: ThreadId): CuaWindowTarget | undefined {
-  return directories.get(threadId)?.lastWindow;
+  const directory = directories.get(threadId);
+  const target = directory?.lastWindow;
+  if (!target) return undefined;
+  const app = directory.byWindow.get(`${target.pid}:${target.windowId}`);
+  return { ...target, ...(app ? { app } : {}) };
 }
 
 function asWindowId(value: unknown): bigint | undefined {
@@ -124,7 +135,7 @@ function asText(value: unknown, maxLength: number): string | undefined {
 const asAppName = (value: unknown) => asText(value, 160);
 const asBundleId = (value: unknown) => {
   const id = asText(value, 512);
-  return id && /^[A-Za-z0-9._-]+$/u.test(id) ? id : undefined;
+  return id && /^[A-Za-z0-9._-]+(?:![A-Za-z0-9._-]+)?$/u.test(id) ? id : undefined;
 };
 
 /** Accepts tool result text, MCP content arrays, or already-parsed objects. */
@@ -167,13 +178,39 @@ function rememberApp(directory: ThreadDirectory, pid: number | undefined, app: C
 }
 
 function learnFromRecord(directory: ThreadDirectory, record: Record<string, unknown>): void {
-  const name = asAppName(record.app_name) ?? asAppName(record.name);
+  const pid = asPid(record.pid);
+  const reportedName = asAppName(record.app_name) ?? asAppName(record.name);
+  const sharedHost = /^(?:ApplicationFrameHost|WWAHost)(?:\.exe)?$/iu.test(reportedName ?? "");
+  const knownApp = !sharedHost && pid !== undefined ? directory.byPid.get(pid) : undefined;
+  const name = sharedHost
+    ? (asAppName(record.window_title) ?? asAppName(record.title))
+    : /\.exe$/iu.test(reportedName ?? "") && knownApp?.name && !/\.exe$/iu.test(knownApp.name)
+      ? knownApp.name
+      : reportedName;
   const bundleId = asBundleId(record.bundle_id);
+  if (sharedHost && pid !== undefined) {
+    rememberApp(directory, pid, {});
+    directory.byPid.set(pid, {});
+  }
   if (!name && !bundleId) return;
-  rememberApp(directory, asPid(record.pid), {
+  const app = {
+    ...knownApp,
     ...(name ? { name } : {}),
     ...(bundleId ? { bundleId } : {}),
-  });
+  };
+  const windowId = asWindowId(record.window_id);
+  if (pid !== undefined && windowId !== undefined) {
+    const key = `${pid}:${windowId}`;
+    const known = directory.byWindow.get(key);
+    directory.byWindow.delete(key);
+    directory.byWindow.set(key, { ...known, ...app });
+    if (directory.byWindow.size > MAX_APPS_PER_THREAD) {
+      const oldest = directory.byWindow.keys().next().value;
+      if (oldest !== undefined) directory.byWindow.delete(oldest);
+    }
+  }
+  // A Windows host PID can own Calculator and Settings at the same time.
+  if (!sharedHost) rememberApp(directory, pid, app);
 }
 
 /**
@@ -206,6 +243,30 @@ export function rememberCuaToolResult(
   if (requestedBundleId && pid !== undefined && toolName === "launch_app") {
     rememberApp(directory, pid, { bundleId: requestedBundleId });
   }
+  if (toolName === "launch_app") {
+    const name = appNameFromLaunchTarget(asRecord(args)?.name);
+    if (name) {
+      learnFromRecord(directory, { ...parsed, name });
+      if (Array.isArray(parsed.windows)) {
+        for (const window of parsed.windows.slice(0, MAX_APPS_PER_THREAD)) {
+          const record = asRecord(window);
+          if (record) learnFromRecord(directory, { ...parsed, ...record, name });
+        }
+      }
+    }
+  }
+}
+
+// `launch_app` also accepts a `.app` bundle or executable path as its name.
+function appNameFromLaunchTarget(value: unknown): string | undefined {
+  const name = asAppName(value);
+  if (!name || !/[\\/]/u.test(name)) return name;
+  return asAppName(
+    name
+      .split(/[\\/]/u)
+      .findLast((part) => part.length > 0)
+      ?.replace(/\.(?:app|exe)$/iu, ""),
+  );
 }
 
 function humanizeBundleId(bundleId: string): string | undefined {
@@ -219,12 +280,23 @@ function resolveApp(
   trackWindow: boolean,
 ): CuaApp | undefined {
   const directory = directories.get(threadId);
-  const pid = asPid(args?.pid);
+  const target = asRecord(args?.target);
+  const pid = asPid(args?.pid) ?? asPid(target?.pid);
   const bundleId = asBundleId(args?.bundle_id);
-  const name = asAppName(args?.app_name) ?? asAppName(args?.app);
-  const known = pid !== undefined ? directory?.byPid.get(pid) : undefined;
-  const windowId = asWindowId(args?.window_id);
-  if (trackWindow && pid !== undefined && windowId !== undefined) {
+  const name =
+    asAppName(args?.app_name) ?? asAppName(args?.app) ?? appNameFromLaunchTarget(args?.name);
+  const windowId = asWindowId(args?.window_id) ?? asWindowId(target?.window_id);
+  const targetedWindow =
+    windowId ??
+    (pid !== undefined && directory?.lastWindow?.pid === pid
+      ? directory.lastWindow.windowId
+      : undefined);
+  const windowApp =
+    pid !== undefined && targetedWindow !== undefined
+      ? directory?.byWindow.get(`${pid}:${targetedWindow}`)
+      : undefined;
+  const known = windowApp ?? (pid !== undefined ? directory?.byPid.get(pid) : undefined);
+  if (trackWindow && pid !== undefined && windowId !== undefined && args?.display_only !== true) {
     directoryFor(threadId).lastWindow = { pid, windowId };
   }
   const app: CuaApp = {
@@ -234,7 +306,7 @@ function resolveApp(
   };
   if (app.name || app.bundleId) {
     if (directory) {
-      if (pid !== undefined) rememberApp(directory, pid, app);
+      if (pid !== undefined && !windowApp) rememberApp(directory, pid, app);
       directory.lastApp = app;
     }
     return app;
@@ -475,7 +547,11 @@ export function cuaToolPresentation(input: {
   // Restoring the user's foreground window must not redirect the live preview.
   const app = TOOLS_WITHOUT_APP.has(tool)
     ? undefined
-    : resolveApp(input.threadId, targetArgs, tool !== "bring_to_front" && input.status !== "failed");
+    : resolveApp(
+        input.threadId,
+        targetArgs,
+        tool !== "bring_to_front" && input.status !== "failed",
+      );
   const appName = app?.name ?? (app?.bundleId ? humanizeBundleId(app.bundleId) : undefined);
   const reference = app ? nativeApp(app) : undefined;
   const icon = reference ? ({ _tag: "native-app", app: reference } as const) : undefined;

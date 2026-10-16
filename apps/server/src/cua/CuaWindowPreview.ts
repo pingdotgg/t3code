@@ -167,8 +167,19 @@ const captureFrame = Effect.fn("CuaWindowPreview.capture")(function* (
       cause: "Window capture is unavailable.",
     });
   }
+  const appName =
+    target.app?.name ??
+    (/^(ApplicationFrameHost|WWAHost)(\.exe)?$/iu.test(window.appName ?? "")
+      ? window.windowTitle
+      : window.appName);
+  const app = target.app?.bundleId
+    ? { _tag: "app-id" as const, appId: target.app.bundleId }
+    : appName
+      ? { _tag: "display-name" as const, displayName: appName.slice(0, 160) }
+      : undefined;
   return {
-    ...(window.appName ? { appName: window.appName } : {}),
+    ...(app ? { app } : {}),
+    ...(appName ? { appName } : {}),
     ...(window.windowTitle ? { windowTitle: window.windowTitle } : {}),
     width: window.screenshotWidth ?? 0,
     height: window.screenshotHeight ?? 0,
@@ -293,7 +304,10 @@ export const make = Effect.fn("CuaWindowPreview.make")(function* (
               previous.width === frame.width &&
               previous.height === frame.height &&
               previous.appName === frame.appName &&
-              previous.windowTitle === frame.windowTitle;
+              previous.windowTitle === frame.windowTitle &&
+              previous.app?._tag === frame.app?._tag &&
+              (previous.app?._tag === "app-id" ? previous.app.appId : previous.app?.displayName) ===
+                (frame.app?._tag === "app-id" ? frame.app.appId : frame.app?.displayName);
             previousTarget = target;
             unchangedFrames = unchanged ? Math.min(unchangedFrames + 1, 3) : 0;
             return unchanged ? Effect.void : publish(preview, { status: "live", frame });

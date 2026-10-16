@@ -15,6 +15,7 @@ import { describe, expect } from "vite-plus/test";
 import {
   clearCuaToolContext,
   cuaToolPresentation,
+  rememberCuaToolResult,
 } from "@t3tools/provider-core/server/cuaToolPresentation";
 import type { McpProviderSessionConfig } from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -34,7 +35,7 @@ const turnEvent = (type: "turn.started" | "turn.completed") =>
 const makeHarness = Effect.fn(function* (
   windowFailure?: "missing" | "throw" | "transient",
   onWindowCapture?: () => void | Promise<void>,
-  options: { displayOnly?: boolean; image?: () => string } = {},
+  options: { displayOnly?: boolean; image?: () => string; appName?: string } = {},
 ) {
   const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const captures: string[] = [];
@@ -80,7 +81,7 @@ const makeHarness = Effect.fn(function* (
       return Promise.resolve({
         pid: input.pid,
         windowId: input.windowId,
-        appName: "Calendar",
+        appName: options.appName ?? "Calendar",
         windowTitle: "December 2026",
         screenshotWidth: 640,
         screenshotHeight: 400,
@@ -316,13 +317,26 @@ describe("CuaWindowPreview", () => {
   it.live("prefers the window the agent last targeted", () =>
     Effect.gen(function* () {
       yield* setCuaSession;
+      rememberCuaToolResult(
+        threadId,
+        "launch_app",
+        { name: "Calendar" },
+        {
+          pid: 42,
+          bundle_id: "Microsoft.Calendar_8wekyb3d8bbwe!App",
+          windows: [{ window_id: 7, title: "Calendar" }],
+        },
+      );
       cuaToolPresentation({
         threadId,
         rawToolName: "cua-driver/click",
         args: { pid: 42, window_id: "7", x: 1, y: 1 },
         status: "completed",
       });
-      const harness = yield* makeHarness();
+      const harness = yield* makeHarness(undefined, undefined, {
+        displayOnly: true,
+        appName: "ApplicationFrameHost.exe",
+      });
       const first = yield* harness.service.stream(threadId).pipe(
         Stream.filter((state) => state.status === "live"),
         Stream.runHead,
@@ -335,6 +349,7 @@ describe("CuaWindowPreview", () => {
       if (state._tag !== "Some") return;
       expect(state.value.frame).toMatchObject({
         appName: "Calendar",
+        app: { _tag: "app-id", appId: "Microsoft.Calendar_8wekyb3d8bbwe!App" },
         windowTitle: "December 2026",
         width: 640,
         height: 400,

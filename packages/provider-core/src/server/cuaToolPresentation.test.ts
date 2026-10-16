@@ -37,6 +37,100 @@ describe("parseCuaToolName", () => {
 });
 
 describe("cuaToolPresentation", () => {
+  it("retains a discovered app's display name and icon identity in window listings", () => {
+    clearCuaToolContext(threadId);
+    rememberCuaToolResult(
+      threadId,
+      "list_apps",
+      {},
+      { apps: [{ pid: 12, name: "Helium", bundle_id: "net.imput.helium" }] },
+    );
+    rememberCuaToolResult(
+      threadId,
+      "list_windows",
+      {},
+      { windows: [{ pid: 12, window_id: 34, app_name: "chrome.exe", title: "Releases - Helium" }] },
+    );
+    const presentation = cuaToolPresentation({
+      threadId,
+      rawToolName: "cua-driver/get_window_state",
+      args: { pid: 12, window_id: 34 },
+      status: "completed",
+    });
+    NodeAssert.equal(presentation?.title, "Looked at Helium");
+    NodeAssert.deepEqual(presentation?.toolIcon, {
+      _tag: "native-app",
+      app: { _tag: "app-id", appId: "net.imput.helium" },
+    });
+  });
+
+  it("keeps identities for Windows apps sharing a host PID separate", () => {
+    clearCuaToolContext(threadId);
+    rememberCuaToolResult(
+      threadId,
+      "launch_app",
+      { name: "Calculator" },
+      {
+        pid: 11804,
+        name: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        bundle_id: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+        windows: [{ window_id: 10, title: "Calculator" }],
+      },
+    );
+    rememberCuaToolResult(
+      threadId,
+      "list_windows",
+      {},
+      {
+        windows: [
+          { pid: 11804, window_id: 10, app_name: "ApplicationFrameHost.exe", title: "Calculator" },
+          { pid: 11804, window_id: 20, app_name: "ApplicationFrameHost.exe", title: "Settings" },
+        ],
+      },
+    );
+    for (const [windowId, expected] of [
+      [10, "Calculator"],
+      [20, "Settings"],
+      [10, "Calculator"],
+    ] as const) {
+      rememberCuaToolResult(
+        threadId,
+        "get_window_state",
+        { pid: 11804, window_id: windowId },
+        {
+          pid: 11804,
+          window_id: windowId,
+          app_name: "ApplicationFrameHost.exe",
+          window_title: expected,
+        },
+      );
+      const viewed = cuaToolPresentation({
+        threadId,
+        rawToolName: "cua-driver/get_window_state",
+        args:
+          windowId === 20
+            ? { target: { kind: "window", pid: 11804, window_id: windowId } }
+            : { pid: 11804, window_id: windowId },
+        status: "completed",
+      });
+      NodeAssert.equal(viewed?.title, `Looked at ${expected}`);
+      const clicked = cuaToolPresentation({
+        threadId,
+        rawToolName: "cua-driver/click",
+        args: { pid: 11804, element_token: "snapshot:1" },
+        status: "completed",
+      });
+      NodeAssert.equal(clicked?.title, `Clicked in ${expected}`);
+      NodeAssert.deepEqual(clicked?.toolIcon, {
+        _tag: "native-app",
+        app:
+          expected === "Calculator"
+            ? { _tag: "app-id", appId: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" }
+            : { _tag: "display-name", displayName: "Settings" },
+      });
+    }
+  });
+
   it("resolves apps by pid from earlier discovery results", () => {
     clearCuaToolContext(threadId);
     rememberCuaToolResult(
@@ -165,6 +259,15 @@ describe("cuaToolPresentation", () => {
       })?.title,
       "Typed text in Safari",
     );
+    NodeAssert.equal(
+      cuaToolPresentation({
+        threadId,
+        rawToolName: "mcp__cua-driver__launch_app",
+        args: { name: "/Applications/Visual Studio Code.app" },
+        status: "inProgress",
+      })?.title,
+      "Launching Visual Studio Code",
+    );
   });
 
   it("returns nothing for tools outside Cua", () => {
@@ -279,6 +382,21 @@ describe("readCuaWindowTarget", () => {
     clearCuaToolContext(threadId);
   });
 
+  it("keeps display-only inspections from redirecting the preview", () => {
+    clearCuaToolContext(threadId);
+    for (const args of [
+      { pid: 42, window_id: 7 },
+      { pid: 99, window_id: 8, display_only: true },
+    ]) {
+      cuaToolPresentation({
+        threadId,
+        rawToolName: "cua-driver/get_window_state",
+        args,
+        status: "completed",
+      });
+    }
+    NodeAssert.deepEqual(readCuaWindowTarget(threadId), { pid: 42, windowId: 7n });
+  });
   it("remembers the last pid and window id a tool call addressed", () => {
     clearCuaToolContext(threadId);
     NodeAssert.equal(readCuaWindowTarget(threadId), undefined);
