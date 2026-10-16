@@ -120,9 +120,12 @@ const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 /**
  * Palettes published by the primary environment's machine. Only the primary
  * environment: a client follows the machine it is anchored to, not every
- * environment it happens to be connected to.
+ * environment it happens to be connected to. Null until the first config
+ * arrives, so "not connected yet" is not mistaken for "publishes nothing".
  */
 export const primaryServerEnvironmentThemesAtom = Atom.make(
-  (get): ReadonlyArray<EnvironmentTheme> =>
-    get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+  (get): ReadonlyArray<EnvironmentTheme> | null => {
+    const config = get(primaryServerConfigAtom);
+    return config === null ? null : (config.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES);
+  },
 ).pipe(Atom.withLabel("web-primary-server-environment-themes"));

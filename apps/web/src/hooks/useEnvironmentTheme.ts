@@ -110,6 +110,9 @@ export function useEnvironmentThemeSync(): void {
   const lastPublished = useRef<ReadonlyArray<EnvironmentTheme> | null>(null);
 
   useEffect(() => {
+    // Before the first config the cached palettes from the last session stay
+    // in place, so a reload does not drop the selected theme.
+    if (published === null) return;
     // Every reconnect snapshot delivers a fresh but usually identical array;
     // regenerating palettes and repainting the document for it is exactly the
     // wasted-frame class this codebase audits for.
