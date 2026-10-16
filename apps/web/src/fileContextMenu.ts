@@ -14,6 +14,7 @@ import {
 import { useCallback, useMemo } from "react";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
+import { useRemoteOpenState } from "./remoteOpen";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -116,9 +117,14 @@ export function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const remote = useRemoteOpenState(environmentId);
 
   return useMemo(() => {
     const availableEditors = serverConfig?.availableEditors ?? [];
+    const editorIds =
+      remote.mode === "remote-links"
+        ? availableEditors.filter((editorId) => editorId !== "default-editor")
+        : availableEditors;
     const capabilities: FileContextMenuCapabilities = {
       // The reveal wording comes from the server because on WSL the reveal can
       // run through Windows File Explorer even though the host reports Linux.
@@ -131,7 +137,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
             : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
           : undefined,
       canOpenDefault: availableEditors.includes("file-manager"),
-      editorIds: availableEditors,
+      editorIds,
     };
 
     const activate = async (
@@ -190,7 +196,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       activate,
       show,
     };
-  }, [environmentId, openInEditor, serverConfig]);
+  }, [environmentId, openInEditor, remote.mode, serverConfig]);
 }
 
 /** Convenience callback for onContextMenu handlers. */
