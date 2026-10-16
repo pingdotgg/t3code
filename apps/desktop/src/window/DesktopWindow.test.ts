@@ -109,7 +109,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -137,6 +137,7 @@ function makeFakeBrowserWindow() {
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
     isMinimized: window.isMinimized,
+    close: window.close,
     loadURL: window.loadURL,
     maximize: window.maximize,
     openDevTools: webContents.openDevTools,
@@ -352,7 +353,10 @@ function layerTest(input: {
 // currentMainOrFirst mirrors the real fallback to the first live window (the
 // splash, before any main is registered). Reveal targets are recorded so tests
 // can assert what activation actually surfaced.
-const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | null)[]) =>
+const makeSplashScenario = (
+  createOutcomes: readonly (Electron.BrowserWindow | null)[],
+  settings: DesktopAppSettings.DesktopSettings = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+) =>
   Effect.gen(function* () {
     const createdWindows = yield* Ref.make<Electron.BrowserWindow[]>([]);
     const createCalls = yield* Ref.make(0);
@@ -427,7 +431,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
             shutdown: Effect.void,
           }),
           layerDesktopEnvironment,
-          DesktopAppSettings.layerTest(),
+          DesktopAppSettings.layerTest(settings),
           layerDesktopClientSettings,
           layerDesktopServerExposure,
           layerElectronApp,
@@ -1492,6 +1496,56 @@ describe("DesktopWindow", () => {
           assert.equal(Option.getOrThrow(registeredMain), main.window);
         }).pipe(Effect.provide(scenario.layer));
       }),
+  );
+
+  it.effect("closes the connecting splash once the real main window reveals", () =>
+    Effect.gen(function* () {
+      const splash = makeFakeBrowserWindow();
+      const main = makeFakeBrowserWindow();
+      const scenario = yield* makeSplashScenario([splash.window, main.window]);
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.equal(splash.close.mock.calls.length, 0);
+        const readyToShow = main.windowListeners.get("ready-to-show");
+        if (!readyToShow) {
+          return yield* Effect.die("main ready-to-show listener was not registered");
+        }
+        readyToShow();
+        assert.equal(splash.close.mock.calls.length, 1);
+      }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("labels the connecting splash for the backend it is waiting on", () =>
+    Effect.gen(function* () {
+      const primarySplash = makeFakeBrowserWindow();
+      const primaryScenario = yield* makeSplashScenario([primarySplash.window]);
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+      }).pipe(Effect.provide(primaryScenario.layer));
+
+      const wslSplash = makeFakeBrowserWindow();
+      const wslScenario = yield* makeSplashScenario([wslSplash.window], {
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        wslOnly: true,
+        wslBackendEnabled: true,
+      });
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.showConnectingSplash;
+      }).pipe(Effect.provide(wslScenario.layer));
+
+      const splashText = (splash: ReturnType<typeof makeFakeBrowserWindow>) =>
+        decodeURIComponent(splash.loadURL.mock.calls[0]?.[0] ?? "");
+      assert.include(splashText(primarySplash), "Starting T3 Code…");
+      assert.notInclude(splashText(primarySplash), "WSL");
+      assert.include(splashText(wslSplash), "Connecting to WSL…");
+    }),
   );
 
   it.effect(
