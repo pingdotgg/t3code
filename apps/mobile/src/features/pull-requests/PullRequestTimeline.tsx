@@ -1,4 +1,9 @@
 import { PullRequestEntryRow } from "./PullRequestEntryRow";
+import {
+  pullRequestCommentReplies,
+  groupPullRequestComments,
+  type PullRequestCommentReplyContext,
+} from "@t3tools/client-runtime/pull-request-comment-replies";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
@@ -57,7 +62,13 @@ function TimelineEvent(props: {
   );
 }
 
-function TimelineComment({ comment }: { comment: PullRequestComment }) {
+function TimelineComment({
+  comment,
+  reply,
+}: {
+  comment: PullRequestComment;
+  reply: PullRequestCommentReplyContext | undefined;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { themeVariables: colors } = useAppearancePreferences();
   const long = comment.body.length > 450 || comment.body.split("\n").length > 8;
@@ -69,10 +80,7 @@ function TimelineComment({ comment }: { comment: PullRequestComment }) {
   const approved = comment.reviewState === "APPROVED";
   const changes = comment.reviewState === "CHANGES_REQUESTED";
   return (
-    <TimelineEvent
-      icon={approved ? "checkmark" : changes ? "doc.text" : "text.bubble"}
-      tone={approved ? "success" : changes ? "danger" : undefined}
-    >
+    <View className="gap-2">
       <View className="flex-row items-center gap-2">
         <PullRequestAvatar actor={comment.author} size={22} />
         <View className="min-w-0 flex-1">
@@ -85,6 +93,16 @@ function TimelineComment({ comment }: { comment: PullRequestComment }) {
         </View>
         <Text className="text-2xs text-foreground-tertiary">{relativeTime(comment.createdAt)}</Text>
       </View>
+      {reply ? (
+        <View className="gap-1 border-l-2 border-border-subtle pl-3">
+          <Text className="text-xs font-t3-medium text-foreground-muted" numberOfLines={1}>
+            Reply to {reply.author}
+          </Text>
+          <Text className="text-xs text-foreground-tertiary" numberOfLines={2}>
+            {reply.excerpt}
+          </Text>
+        </View>
+      ) : null}
       {comment.path ? (
         <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={2}>
           {comment.path}
@@ -169,7 +187,7 @@ function TimelineComment({ comment }: { comment: PullRequestComment }) {
           ) : null}
         </View>
       ) : null}
-    </TimelineEvent>
+    </View>
   );
 }
 
@@ -177,18 +195,78 @@ export function pullRequestTimelineRows(
   activity: PullRequestActivity,
   params: PullRequestParams,
   navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate" | "dispatch">,
+  fullActivity: PullRequestActivity = activity,
+  canReply = false,
 ) {
+  const replies = pullRequestCommentReplies(fullActivity);
   const discussionIds = new Set(
     activity.reviewThreads.flatMap((thread) => thread.comments.map((comment) => comment.id)),
   );
   const events = [
-    ...activity.comments
-      .filter((comment) => !discussionIds.has(comment.id))
-      .map((comment) => ({
-        key: `comment:${comment.id}`,
-        date: comment.createdAt,
-        content: <TimelineComment comment={comment} />,
-      })),
+    ...(activity.events ?? []).map((event) => ({
+      key: event.id,
+      date: event.createdAt,
+      content: (
+        <TimelineEvent icon="text.bubble">
+          <Text className="text-sm text-foreground-muted">{event.body}</Text>
+        </TimelineEvent>
+      ),
+    })),
+    ...groupPullRequestComments({
+      comments: activity.comments.filter((comment) => !discussionIds.has(comment.id)),
+      reviewThreads: [],
+    }).map((discussion) => {
+      const original = discussion.comments[0]!;
+      const approved = original.reviewState === "APPROVED";
+      const changes = original.reviewState === "CHANGES_REQUESTED";
+      return {
+        key: discussion.id,
+        date: discussion.comments.at(-1)!.createdAt,
+        content: (
+          <TimelineEvent
+            icon={approved ? "checkmark" : changes ? "doc.text" : "text.bubble"}
+            tone={approved ? "success" : changes ? "danger" : undefined}
+          >
+            <View className="gap-3 rounded-2xl border border-border-subtle bg-grouped-card p-3">
+              <TimelineComment comment={original} reply={replies.get(original.id)} />
+              {discussion.comments.length > 1 ? (
+                <View className="gap-3 border-t border-border-subtle pt-3">
+                  <Text className="text-xs font-t3-medium text-foreground-muted">
+                    {discussion.comments.length - 1}{" "}
+                    {discussion.comments.length === 2 ? "reply" : "replies"}
+                  </Text>
+                  <View className="ml-3 gap-3 border-l-2 border-border-subtle pl-3">
+                    {discussion.comments.slice(1).map((comment) => (
+                      <TimelineComment key={comment.id} comment={comment} reply={undefined} />
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+              {discussion.threadId !== undefined ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    canReply ? "Reply to this discussion" : "View this discussion"
+                  }
+                  className="min-h-11 flex-row items-center justify-end gap-2 border-t border-border-subtle pt-2 active:opacity-60"
+                  onPress={() =>
+                    navigation.navigate("PullRequestDiscussion", {
+                      ...params,
+                      discussionId: discussion.threadId!,
+                    })
+                  }
+                >
+                  <SymbolView name="text.bubble" size={15} tintColorClassName="accent-icon-muted" />
+                  <Text className="text-sm font-t3-medium">
+                    {canReply ? "Reply" : "View discussion"}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </TimelineEvent>
+        ),
+      };
+    }),
     ...activity.reviewThreads.map((thread) => ({
       key: `discussion:${thread.id}`,
       date: thread.comments[0]?.createdAt ?? "",
@@ -220,7 +298,9 @@ export function pullRequestTimelineRows(
               <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
               <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
                 {thread.path}
-                {thread.line ? `:${thread.line}` : ""}
+                {thread.line
+                  ? `:${thread.line}${thread.endLine && thread.endLine !== thread.line ? `–${thread.endLine}` : ""}`
+                  : ""}
               </Text>
               <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
             </View>

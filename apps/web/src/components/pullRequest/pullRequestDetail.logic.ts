@@ -1,3 +1,4 @@
+import { pullRequestReviewerState } from "@t3tools/client-runtime/pull-request-reviewer-state";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 
@@ -7,6 +8,7 @@ import {
   pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
+  type PullRequestReviewer,
   type PullRequestBaseComparison,
   type PullRequestCheck,
   type PullRequestChecksState as ContractPullRequestChecksState,
@@ -91,8 +93,9 @@ export function resolvePullRequestPrimaryControl(input: {
 }): PullRequestPrimaryControl {
   if (input.state === "merged") return "merged";
   if (input.state === "closed") return "closed";
+  if (input.isDraft && input.canMarkReady) return "ready";
   if (input.mergeability === "conflicting") return "resolve";
-  if (input.isDraft) return input.canMarkReady ? "ready" : null;
+  if (input.isDraft) return null;
   if (input.autoMergeEnabled) return "auto-merge-armed";
   if (!input.hasMergeMethod) return null;
   if (
@@ -332,6 +335,8 @@ export function classifyPullRequestChecks(
 
 export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
+  const total = checks.filter((check) => check.status !== "skipped").length;
+  if (total === 0) return "All checks skipped";
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
@@ -339,13 +344,13 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
   const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
-  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
-  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
+  if (pending > 0) parts.push(`${pending} of ${total} pending`);
+  if (actionRequired > 0) parts.push(`${actionRequired} of ${total} awaiting action`);
   if (failed > 0) {
-    parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
+    parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${total} failing`);
   }
   if (parts.length === 0) {
-    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+    return passed === total ? "All checks passed" : `${passed} of ${total} passing`;
   }
   return parts.join(" · ");
 }
@@ -377,13 +382,6 @@ export function resolveThreadPanelPullRequestAction(
     allowedPullRequestMergeMethods(detail).length > 0
     ? "merge"
     : null;
-}
-
-export function orderPullRequestComments<T extends { readonly createdAt: string }>(
-  comments: ReadonlyArray<T>,
-  order: "newest" | "oldest",
-): ReadonlyArray<T> {
-  return order === "newest" ? comments.toReversed() : comments;
 }
 
 export type PullRequestReviewOutcome = "approved" | "changes-requested" | "dismissed";
@@ -441,23 +439,24 @@ export interface PullRequestReviewOutcomeEntry {
   readonly key: string;
   readonly actor: PullRequestActor | null;
   readonly outcome: PullRequestReviewOutcome;
-  readonly at: string;
+  readonly at: string | null;
   readonly stale: boolean;
 }
 
 export function latestPullRequestReviewOutcomes(
   comments: ReadonlyArray<PullRequestComment>,
   commits: ReadonlyArray<PullRequestCommit> = [],
+  reviewers: ReadonlyArray<PullRequestReviewer> = [],
 ): ReadonlyArray<PullRequestReviewOutcomeEntry> {
   const newestCommitAt = newestPullRequestCommitAt(commits);
   const latest = new Map<string, PullRequestReviewOutcomeEntry>();
   for (const comment of comments) {
     const outcome = pullRequestReviewOutcome(comment.reviewState);
     if (outcome === null) continue;
-    const login = comment.author?.login ?? `ghost:${comment.id}`;
+    const login = comment.author?.login.toLowerCase() ?? `ghost:${comment.id}`;
     const current = latest.get(login);
     // Not every host returns its reviews in order, so the newest wins rather than the last read.
-    if (current !== undefined && instant(current.at) > instant(comment.createdAt)) continue;
+    if (current?.at && instant(current.at) > instant(comment.createdAt)) continue;
     latest.set(login, {
       key: login,
       actor: comment.author,
@@ -466,13 +465,21 @@ export function latestPullRequestReviewOutcomes(
       stale: isPullRequestVerdictStale(comment.createdAt, newestCommitAt),
     });
   }
+  for (const reviewer of reviewers) {
+    const state = pullRequestReviewerState(reviewer.reviewState);
+    if (state === undefined) continue;
+    const key = reviewer.login.toLowerCase();
+    latest.delete(key);
+    if (state.outcome !== null)
+      latest.set(key, { key, actor: reviewer, outcome: state.outcome, at: null, stale: false });
+  }
   return [...latest.values()].filter((entry) => entry.outcome !== "dismissed");
 }
 
 export interface PullRequestTimelineEvent {
   readonly id: string;
   readonly at: string;
-  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed";
+  readonly kind: "opened" | "commit" | "comment" | "review" | "merged" | "closed" | "activity";
   readonly title: string;
   readonly body: string | null;
   readonly markdown: boolean;
@@ -490,23 +497,58 @@ export type PullRequestTimelineRow =
   | { readonly kind: "event"; readonly event: PullRequestTimelineEvent }
   | { readonly kind: "comments"; readonly events: ReadonlyArray<PullRequestTimelineEvent> };
 
+/**
+ * Consecutive comments are one conversation section. Commits and pull-request lifecycle updates
+ * stay first-class rows and split those sections, so expanding a conversation never hides the
+ * work that happened between two review rounds.
+ *
+ * A verdict is a first-class row too. Whether the change was approved is the question a reader
+ * opens the timeline with, and folding the answer into a collapsed "9 comments" section hides it
+ * behind a press — the one thing on the page that must be readable without one.
+ *
+ * A threaded discussion — one the host gives a thread, or a comment with replies — is a section
+ * of its own instead, placed at its latest comment and read oldest first, so a reply posted after
+ * later commits still sits with the question it answers.
+ */
 export function groupPullRequestTimelineConversations(
   events: ReadonlyArray<PullRequestTimelineEvent>,
+  discussions: ReadonlyArray<{
+    readonly threadId: string | undefined;
+    readonly comments: ReadonlyArray<{ readonly id: string }>;
+  }> = [],
 ): ReadonlyArray<PullRequestTimelineRow> {
-  const rows: PullRequestTimelineRow[] = [];
+  const threadByCommentId = new Map<string, PullRequestTimelineEvent[]>();
+  for (const discussion of discussions) {
+    if (discussion.threadId === undefined && discussion.comments.length < 2) continue;
+    const thread: PullRequestTimelineEvent[] = [];
+    for (const comment of discussion.comments) threadByCommentId.set(comment.id, thread);
+  }
+  const isConversation = (event: PullRequestTimelineEvent) =>
+    (event.kind === "comment" || event.kind === "review") &&
+    pullRequestReviewOutcome(event.reviewState) === null;
   for (const event of events) {
-    if (
-      (event.kind === "comment" || event.kind === "review") &&
-      pullRequestReviewOutcome(event.reviewState) === null
-    ) {
-      const last = rows.at(-1);
-      if (last?.kind === "comments") {
-        rows[rows.length - 1] = { kind: "comments", events: [...last.events, event] };
-      } else {
-        rows.push({ kind: "comments", events: [event] });
+    if (isConversation(event)) threadByCommentId.get(event.id)?.push(event);
+  }
+  for (const thread of new Set(threadByCommentId.values())) {
+    thread.sort((a, b) => instant(a.at) - instant(b.at));
+  }
+  const rows: PullRequestTimelineRow[] = [];
+  let section: PullRequestTimelineEvent[] | null = null;
+  for (const event of events) {
+    const thread = isConversation(event) ? threadByCommentId.get(event.id) : undefined;
+    if (thread !== undefined) {
+      if (thread.at(-1) !== event) continue;
+      rows.push({ kind: "comments", events: thread });
+      section = null;
+    } else if (isConversation(event)) {
+      if (section === null) {
+        section = [];
+        rows.push({ kind: "comments", events: section });
       }
+      section.push(event);
     } else {
       rows.push({ kind: "event", event });
+      section = null;
     }
   }
   return rows;
@@ -529,7 +571,7 @@ export function visibleBody(body: string): string | null {
 export function buildPullRequestTimeline(
   detail: Pick<
     PullRequestDetailView,
-    "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
+    "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt" | "events"
   >,
 ): ReadonlyArray<PullRequestTimelineEvent> {
   return [
@@ -549,6 +591,22 @@ export function buildPullRequestTimeline(
       reviewState: null,
       reactions: [],
     },
+    ...(detail.events ?? []).map((event) => ({
+      id: event.id,
+      at: event.createdAt,
+      kind: "activity" as const,
+      title: event.body,
+      body: null,
+      markdown: false,
+      url: null,
+      actor: event.actor,
+      commitAuthors: [],
+      additions: null,
+      deletions: null,
+      path: null,
+      reviewState: null,
+      reactions: [],
+    })),
     ...detail.commits.map((commit) => ({
       id: commit.oid,
       at: commit.committedDate,

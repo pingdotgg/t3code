@@ -1,3 +1,12 @@
+import {
+  PULL_REQUEST_CONTEXT_SCRIPT,
+  PATCH_PULL_REQUEST_SCRIPT,
+  withAzureSdkErrors,
+  UPLOAD_ATTACHMENT_SCRIPT,
+  AUTHENTICATED_IDENTITY_SCRIPT,
+  RESOLVE_IDENTITIES_SCRIPT,
+  NOTIFICATION_SUBSCRIPTIONS_SCRIPT,
+} from "./azureDevOpsSdk.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -20,6 +29,11 @@ import {
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const decodeAuthenticatedIdentity = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ id: TrimmedNonEmptyString, login: TrimmedNonEmptyString, name: Schema.String }),
+  ),
+);
 
 const azureDevOpsCommandErrorFields = {
   operation: Schema.Literal("execute"),
@@ -47,7 +61,7 @@ export class AzureDevOpsCliAuthenticationError extends Schema.TaggedError<AzureD
   azureDevOpsCommandErrorFields,
 ) {
   get detail(): string {
-    return "Azure DevOps CLI is not authenticated. Run `az devops login` and retry.";
+    return "Azure DevOps authentication failed or this credential lacks the required scope. Check its access and run `az devops login` if it needs to be renewed.";
   }
 
   override get message(): string {
@@ -130,6 +144,23 @@ export class AzureDevOpsCommandFailedError extends Schema.TaggedError<AzureDevOp
   }
 }
 
+export class AzureDevOpsNativeRequestError extends Schema.TaggedError<AzureDevOpsNativeRequestError>()(
+  "AzureDevOpsNativeRequestError",
+  {
+    ...azureDevOpsCommandErrorFields,
+    reason: Schema.Literals(["permission-denied", "failed"]),
+  },
+) {
+  get detail(): string {
+    return this.reason === "permission-denied"
+      ? "Your Azure credential lacks the required scope or permission for this action."
+      : "Azure refused this operation.";
+  }
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 const azureDevOpsDecodeErrorFields = {
   command: Schema.Literal("az"),
   cwd: Schema.String,
@@ -197,6 +228,7 @@ export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsCliRateLimitError,
   AzureDevOpsPullRequestNotFoundError,
   AzureDevOpsCommandFailedError,
+  AzureDevOpsNativeRequestError,
   AzureDevOpsPullRequestListDecodeError,
   AzureDevOpsPullRequestDecodeError,
   AzureDevOpsRepositoryDecodeError,
@@ -212,6 +244,47 @@ export interface AzureDevOpsRepositoryCloneUrls {
 export class AzureDevOpsCli extends Context.Service<
   AzureDevOpsCli,
   {
+    readonly pullRequestContext: (input: {
+      cwd: string;
+      project: string;
+      repository: string;
+      number: number;
+      operation: "permissions" | "visit";
+      hashes?: ReadonlyArray<string>;
+      viewed?: boolean;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
+    readonly uploadAttachment: (input: {
+      cwd: string;
+      routeValues: { project: string; repositoryId: string; pullRequestId: string };
+      fileName: string;
+      data: string;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
+    readonly notificationSubscriptions: (input: {
+      cwd: string;
+      method: "GET" | "POST" | "DELETE";
+      viewerId?: string;
+      subscriptionId?: string;
+      bodyFile?: string;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
+    readonly resolveIdentities: (input: {
+      cwd: string;
+      descriptors: ReadonlyArray<string>;
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
+    readonly authenticatedIdentity: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<
+      { readonly id: string; readonly login: string; readonly name: string },
+      AzureDevOpsCliError
+    >;
+    readonly patchPullRequest: (input: {
+      readonly cwd: string;
+      readonly bodyFile: string;
+      readonly routeValues: {
+        readonly project: string;
+        readonly repositoryId: string;
+        readonly pullRequestId: string;
+      };
+    }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
     readonly execute: (input: {
       readonly cwd: string;
       readonly args: ReadonlyArray<string>;
@@ -378,6 +451,128 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const decodeSdkFailure = Schema.decodeUnknownOption(
+    Schema.fromJsonString(
+      Schema.Struct({ _t3SdkError: Schema.Struct({ message: Schema.String }) }),
+    ),
+  );
+  let pythonPath: string | undefined;
+  const encodePatchRequest = Schema.encodeEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        bodyFile: Schema.String,
+        routeValues: Schema.Struct({
+          project: Schema.String,
+          repositoryId: Schema.String,
+          pullRequestId: Schema.String,
+        }),
+      }),
+    ),
+  );
+  const runSdk = Effect.fn("AzureDevOpsCli.runSdk")(function* (input: {
+    cwd: string;
+    script: string;
+    stdin?: string;
+  }) {
+    if (pythonPath === undefined) {
+      const version = yield* execute({ cwd: input.cwd, args: ["--version"] });
+      pythonPath = /Python location ['"]([^'"\r\n]+)['"]/.exec(
+        `${version.stdout}\n${version.stderr}`,
+      )?.[1];
+      if (pythonPath === undefined)
+        return yield* new AzureDevOpsCommandFailedError({
+          operation: "execute",
+          command: "az",
+          cwd: input.cwd,
+          argumentCount: 1,
+          cause: "Azure CLI did not report its Python runtime.",
+        });
+    }
+    return yield* process
+      .run({
+        operation: "AzureDevOpsCli.runSdk",
+        command: pythonPath,
+        args: ["-I", "-c", withAzureSdkErrors(input.script)],
+        cwd: input.cwd,
+        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        maxOutputBytes: 4 * 1024 * 1024,
+      })
+      .pipe(
+        Effect.flatMap((output) => {
+          const failure = decodeSdkFailure(output.stdout);
+          return failure._tag === "Some"
+            ? Effect.fail(
+                new AzureDevOpsNativeRequestError({
+                  operation: "execute",
+                  command: "az",
+                  cwd: input.cwd,
+                  argumentCount: 3,
+                  reason:
+                    /access denied|not authorized|requires user authentication|TF401027|required Azure DevOps scope|lacks.*permission/i.test(
+                      failure.value._t3SdkError.message,
+                    )
+                      ? "permission-denied"
+                      : "failed",
+                  cause: failure.value._t3SdkError.message,
+                }),
+              )
+            : Effect.succeed(output);
+        }),
+        Effect.mapError((error) =>
+          error._tag === "AzureDevOpsNativeRequestError"
+            ? error
+            : AzureDevOpsCommandFailedError.fromVcsError(
+                { operation: "execute", command: "az", cwd: input.cwd, argumentCount: 3 },
+                error,
+              ),
+        ),
+      );
+  });
+
+  const patchPullRequest: AzureDevOpsCli["Service"]["patchPullRequest"] = Effect.fn(
+    "AzureDevOpsCli.patchPullRequest",
+  )(function* (input) {
+    const stdin = yield* encodePatchRequest({
+      bodyFile: input.bodyFile,
+      routeValues: input.routeValues,
+    }).pipe(Effect.orDie);
+    return yield* runSdk({ cwd: input.cwd, script: PATCH_PULL_REQUEST_SCRIPT, stdin });
+  });
+  const encodeSdkRequest = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+  const notificationSubscriptions: AzureDevOpsCli["Service"]["notificationSubscriptions"] =
+    Effect.fn("AzureDevOpsCli.notificationSubscriptions")(function* (input) {
+      const stdin = yield* encodeSdkRequest(input).pipe(Effect.orDie);
+      return yield* runSdk({ cwd: input.cwd, script: NOTIFICATION_SUBSCRIPTIONS_SCRIPT, stdin });
+    });
+  const uploadAttachment: AzureDevOpsCli["Service"]["uploadAttachment"] = Effect.fn(
+    "AzureDevOpsCli.uploadAttachment",
+  )(function* (input) {
+    const stdin = yield* encodeSdkRequest(input).pipe(Effect.orDie);
+    return yield* runSdk({ cwd: input.cwd, script: UPLOAD_ATTACHMENT_SCRIPT, stdin });
+  });
+  const resolveIdentities: AzureDevOpsCli["Service"]["resolveIdentities"] = Effect.fn(
+    "AzureDevOpsCli.resolveIdentities",
+  )(function* (input) {
+    const stdin = yield* encodeSdkRequest({ descriptors: input.descriptors }).pipe(Effect.orDie);
+    return yield* runSdk({ cwd: input.cwd, script: RESOLVE_IDENTITIES_SCRIPT, stdin });
+  });
+  const authenticatedIdentity: AzureDevOpsCli["Service"]["authenticatedIdentity"] = (input) =>
+    runSdk({ cwd: input.cwd, script: AUTHENTICATED_IDENTITY_SCRIPT }).pipe(
+      Effect.flatMap((output) => decodeAuthenticatedIdentity(output.stdout)),
+      Effect.mapError((cause) =>
+        cause._tag === "AzureDevOpsNativeRequestError"
+          ? cause
+          : new AzureDevOpsCommandFailedError({
+              operation: "execute",
+              command: "az",
+              cwd: input.cwd,
+              argumentCount: 3,
+              cause,
+            }),
+      ),
+    );
+
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({
       ...input,
@@ -385,6 +580,18 @@ export const make = Effect.gen(function* () {
     });
 
   return AzureDevOpsCli.of({
+    patchPullRequest,
+    authenticatedIdentity,
+    resolveIdentities,
+    pullRequestContext: (input) =>
+      encodeSdkRequest(input).pipe(
+        Effect.orDie,
+        Effect.flatMap((stdin) =>
+          runSdk({ cwd: input.cwd, script: PULL_REQUEST_CONTEXT_SCRIPT, stdin }),
+        ),
+      ),
+    notificationSubscriptions,
+    uploadAttachment,
     execute,
     listPullRequests: (input) =>
       executeJson({

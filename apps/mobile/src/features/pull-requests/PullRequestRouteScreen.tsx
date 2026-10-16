@@ -1,6 +1,9 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
+import { usePullRequestPreviousVisit } from "./usePullRequestPreviousVisit";
+import { AzureDevOpsPullRequestActions } from "./AzureDevOpsPullRequestActions";
+import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
@@ -77,6 +80,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import {
   isNativeReviewDiffDrawEvent,
@@ -138,13 +142,29 @@ function PullRequestTabScrollView(props: ScrollViewProps) {
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
   const result = useEnvironmentQuery(composerPullRequests.activity(requestTarget(params)));
+  const previousVisit = usePullRequestPreviousVisit(params, result.isSuccess);
+  const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(params)));
+  const { canReply } = usePullRequestPermissions(params, detail.data);
   const filtered = useMemo(
-    () => (result.data ? filterPullRequestActivity(result.data, filter) : null),
-    [result.data, filter],
+    () =>
+      result.data
+        ? filterPullRequestActivity(
+            result.data,
+            { ...filter, since: previousVisit },
+            detail.data ?? undefined,
+          )
+        : null,
+    [result.data, filter, previousVisit, detail.data],
   );
   const rows = useMemo(() => {
-    if (!filtered) return [];
-    const rows = pullRequestTimelineRows(filtered.activity, params, navigation);
+    if (!filtered || !result.data) return [];
+    const rows = pullRequestTimelineRows(
+      filtered.activity,
+      params,
+      navigation,
+      result.data,
+      canReply,
+    );
     if (filter.newestFirst) {
       const notice = rows.at(-1)?.key === "truncated" ? rows.pop() : undefined;
       rows.reverse();
@@ -161,10 +181,12 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
         ),
       });
     return rows;
-  }, [filtered, filter.newestFirst, params, navigation]);
+  }, [filtered, filter.newestFirst, params, navigation, result.data, canReply]);
   return {
     rows,
     hiddenCount: filtered?.hiddenCount ?? 0,
+    azureCounts: filtered && "counts" in filtered ? filtered.counts : undefined,
+    countsTruncated: result.data?.commentsTruncated || result.data?.reviewThreadsTruncated,
     pending: result.isPending,
     error: result.error,
   };
@@ -335,9 +357,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const descriptionY = useRef(0);
   const pendingDescriptionJump = useRef(false);
   const pendingFilesJump = useRef(false);
-  const detailAtom = composerPullRequests.detail(requestTarget(params));
+  const target = requestTarget(params);
+  const detailAtom = composerPullRequests.detail(target);
   const result = useEnvironmentQuery(detailAtom);
   const pullRefresh = usePullToRefresh(detailAtom);
+  const invalidate = useAtomCommand(composerPullRequests.invalidate, { reportFailure: false });
+  const [invalidating, setInvalidating] = useState(false);
   const { refresh: refreshDetail } = result;
   useFocusEffect(useCallback(() => refreshDetail(), [refreshDetail]));
   const pr = result.data;
@@ -354,9 +379,18 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches and worktrees are not changed.`,
     );
   const stack = usePullRequestStack(params, pr);
-  const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));
-  const refreshGuide = useAtomRefresh(composerPullRequests.reviewGuide(requestTarget(params)));
-  const refresh = () => {
+  const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
+  const refreshGuide = useAtomRefresh(composerPullRequests.reviewGuide(target));
+  // A pull skips the server's cache and clears the permission denials it learned, so the re-reads
+  // wait for the invalidation. If it fails, they still run against the cache.
+  const refresh = async () => {
+    if (invalidating) return;
+    setInvalidating(true);
+    try {
+      await invalidate({ environmentId: target.environmentId, input: { reference: target.input } });
+    } finally {
+      setInvalidating(false);
+    }
     pullRefresh.onRefresh();
     if (guidesEnabled) refreshGuide();
     stack.refresh();
@@ -378,10 +412,51 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       if (filesY.current > 0) requestAnimationFrame(jumpToFiles);
     }
   };
+  const headerActions = [
+    ...(permissions.verdicts.length
+      ? [
+          {
+            accessibilityLabel: "Submit review",
+            icon: "text.bubble" as const,
+            onPress: () => navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
+          },
+        ]
+      : []),
+    ...(permissions.canComment
+      ? [
+          {
+            accessibilityLabel: "Add comment",
+            icon: "plus.bubble" as const,
+            onPress: () => navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
+          },
+        ]
+      : []),
+    ...(pr
+      ? [
+          {
+            accessibilityLabel: openOnProviderLabel(pr.provider),
+            icon: "arrow.up.right" as const,
+            onPress: () => void Linking.openURL(pr.url),
+          },
+        ]
+      : []),
+    ...(showsDeleteBranch
+      ? [
+          {
+            accessibilityLabel: PR_ACTION_LABELS["delete-branch"],
+            icon: PR_ACTION_ICONS["delete-branch"],
+            disabled: !action.available("delete-branch"),
+            destructive: true,
+            overflowOnly: true,
+            onPress: confirmDeleteBranch,
+          },
+        ]
+      : []),
+  ];
   return (
     <PullRequestMarkdownRepository
       params={params}
-      value={pr?.provider === "github" ? pr.url : null}
+      value={pr?.provider === "github" || pr?.provider === "azure-devops" ? pr.url : null}
     >
       <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
         <NativeStackScreenOptions
@@ -393,110 +468,109 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
               : `${params.repository} · Offline`,
           }}
         />
-        {Platform.OS === "android" ? (
-          <AndroidScreenHeader
-            title={`#${params.number}${connected ? "" : " · Offline"}`}
-            subtitle={params.repository}
-            onBack={layout.usesSplitView ? undefined : returnToList}
-            leading={layout.usesSplitView ? <AndroidWorkspaceSidebarButton /> : undefined}
-            actions={[
-              ...(permissions.verdicts.length
-                ? [
-                    {
-                      accessibilityLabel: "Submit review",
-                      icon: "text.bubble" as const,
-                      onPress: () =>
-                        navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
-                    },
-                  ]
-                : []),
-              ...(permissions.canComment
-                ? [
-                    {
-                      accessibilityLabel: "Add comment",
-                      icon: "plus.bubble" as const,
-                      onPress: () =>
-                        navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
-                    },
-                  ]
-                : []),
-              ...(pr
-                ? [
-                    {
-                      accessibilityLabel: openOnProviderLabel(pr.provider),
-                      icon: "arrow.up.right" as const,
-                      onPress: () => void Linking.openURL(pr.url),
-                    },
-                  ]
-                : []),
-              ...(showsDeleteBranch
-                ? [
-                    {
-                      accessibilityLabel: PR_ACTION_LABELS["delete-branch"],
-                      icon: PR_ACTION_ICONS["delete-branch"],
-                      disabled: !action.available("delete-branch"),
-                      destructive: true,
-                      overflowOnly: true,
-                      onPress: confirmDeleteBranch,
-                    },
-                  ]
-                : []),
-            ]}
-          />
-        ) : null}
-        <Toolbar placement="right">
-          <Toolbar.Menu
-            title="Pull request"
-            accessibilityLabel="Pull request actions"
-            icon="ellipsis"
-          >
-            {permissions.verdicts.length ? (
-              <Toolbar.MenuAction
-                icon="text.bubble"
-                onPress={() =>
-                  navigation.navigate("PullRequestReview", { ...params, mode: "review" })
-                }
-              >
-                <Toolbar.Label>Submit review</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canComment ? (
-              <Toolbar.MenuAction
-                icon="plus.bubble"
-                onPress={() =>
-                  navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
-                }
-              >
-                <Toolbar.Label>Add comment</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {pr ? (
-              <Toolbar.MenuAction
-                icon="arrow.up.right"
-                onPress={() => void Linking.openURL(pr.url)}
-              >
-                <Toolbar.Label>{openOnProviderLabel(pr.provider)}</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {showsDeleteBranch ? (
-              <Toolbar.MenuAction
-                icon={PR_ACTION_ICONS["delete-branch"]}
-                destructive
-                disabled={!action.available("delete-branch")}
-                subtitle={
-                  action.busy
-                    ? "Deleting…"
-                    : connected
-                      ? pr.headBranch
-                      : "Reconnect to delete this branch."
-                }
-                onPress={confirmDeleteBranch}
-              >
-                <Toolbar.Label>{PR_ACTION_LABELS["delete-branch"]}</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-          </Toolbar.Menu>
-        </Toolbar>
+        <AzureDevOpsPullRequestActions pr={pr} params={params}>
+          {(azure) => (
+            <>
+              {Platform.OS === "android" ? (
+                <AndroidScreenHeader
+                  title={`#${params.number}${connected ? "" : " · Offline"}`}
+                  subtitle={params.repository}
+                  onBack={layout.usesSplitView ? undefined : returnToList}
+                  leading={layout.usesSplitView ? <AndroidWorkspaceSidebarButton /> : undefined}
+                  actions={azure ? headerActions.slice(0, 1) : headerActions}
+                  trailing={
+                    azure ? (
+                      <AndroidAnchoredMenu
+                        actions={[
+                          ...headerActions.slice(1).map((action, index) => ({
+                            id: `header:${index}`,
+                            title: action.accessibilityLabel,
+                            attributes: {
+                              disabled: "disabled" in action ? action.disabled : false,
+                              destructive: "destructive" in action ? action.destructive : false,
+                            },
+                          })),
+                          ...azure.actions,
+                        ]}
+                        onPressAction={({ nativeEvent }) => {
+                          const id = nativeEvent.event;
+                          if (id.startsWith("header:")) {
+                            const selected = headerActions.slice(1)[Number(id.slice(7))];
+                            if (selected && !("disabled" in selected && selected.disabled))
+                              selected.onPress();
+                          } else azure.onSelect(id);
+                        }}
+                      >
+                        {(open) => (
+                          <IconButton
+                            accessibilityLabel="More actions"
+                            icon="ellipsis"
+                            tintColorClassName="accent-header-foreground"
+                            onPress={open}
+                          />
+                        )}
+                      </AndroidAnchoredMenu>
+                    ) : undefined
+                  }
+                />
+              ) : null}
+              <Toolbar placement="right">
+                <Toolbar.Menu
+                  title="Pull request"
+                  accessibilityLabel="Pull request actions"
+                  icon="ellipsis"
+                >
+                  {permissions.verdicts.length ? (
+                    <Toolbar.MenuAction
+                      icon="text.bubble"
+                      onPress={() =>
+                        navigation.navigate("PullRequestReview", { ...params, mode: "review" })
+                      }
+                    >
+                      <Toolbar.Label>Submit review</Toolbar.Label>
+                    </Toolbar.MenuAction>
+                  ) : null}
+                  {permissions.canComment ? (
+                    <Toolbar.MenuAction
+                      icon="plus.bubble"
+                      onPress={() =>
+                        navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
+                      }
+                    >
+                      <Toolbar.Label>Add comment</Toolbar.Label>
+                    </Toolbar.MenuAction>
+                  ) : null}
+                  {pr ? (
+                    <Toolbar.MenuAction
+                      icon="arrow.up.right"
+                      onPress={() => void Linking.openURL(pr.url)}
+                    >
+                      <Toolbar.Label>{openOnProviderLabel(pr.provider)}</Toolbar.Label>
+                    </Toolbar.MenuAction>
+                  ) : null}
+                  {showsDeleteBranch ? (
+                    <Toolbar.MenuAction
+                      icon={PR_ACTION_ICONS["delete-branch"]}
+                      destructive
+                      disabled={!action.available("delete-branch")}
+                      subtitle={
+                        action.busy
+                          ? "Deleting…"
+                          : connected
+                            ? pr.headBranch
+                            : "Reconnect to delete this branch."
+                      }
+                      onPress={confirmDeleteBranch}
+                    >
+                      <Toolbar.Label>{PR_ACTION_LABELS["delete-branch"]}</Toolbar.Label>
+                    </Toolbar.MenuAction>
+                  ) : null}
+                  {azure?.nativeMenu}
+                </Toolbar.Menu>
+              </Toolbar>
+            </>
+          )}
+        </AzureDevOpsPullRequestActions>
         <View
           style={{
             flex: 1,
@@ -540,8 +614,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
                   refreshControl={
                     <RefreshControl
-                      refreshing={section === tab && pullRefresh.refreshing}
-                      onRefresh={refresh}
+                      refreshing={section === tab && (invalidating || pullRefresh.refreshing)}
+                      onRefresh={() => void refresh()}
                     />
                   }
                   alwaysBounceVertical
@@ -619,6 +693,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               value={activityFilter}
                               onChange={setActivityFilter}
                               hiddenCount={tabContent.hiddenCount}
+                              azureCounts={tabContent.azureCounts}
+                              countsTruncated={tabContent.countsTruncated}
                             />
                           ) : null}
                           {tab === "activity" ? (
@@ -730,10 +806,10 @@ export function PullRequestFilesRouteScreen({ route }: StaticScreenProps<PullReq
       <PullRequestFiles
         params={route.params}
         groupByDirectory
-        onSelectFile={(path) =>
+        onSelectFile={(path, comparison) =>
           navigation.dispatch(
             StackActions.popTo("PullRequestFile", {
-              ...route.params,
+              ...comparison,
               path,
               fileSelectionId,
             }),
@@ -759,6 +835,12 @@ export function PullRequestFileRouteScreen({
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
+  const historical = Boolean(commit || route.params.iterationRange);
+  const comparisonKey =
+    commit ??
+    (route.params.iterationRange
+      ? `${route.params.iterationRange.from}-${route.params.iterationRange.to}`
+      : "all");
   const result = usePullRequestDiff(route.params);
   const filter = usePullRequestFileFilter(
     result.parsed,
@@ -770,7 +852,7 @@ export function PullRequestFileRouteScreen({
   const { loadMore } = result;
   const parsed = filter.parsed;
   const reviewDraft = usePullRequestReviewDraft(route.params);
-  const viewed = usePullRequestFilesViewed(route.params, commit ? null : detail.data);
+  const viewed = usePullRequestFilesViewed(route.params, historical ? null : detail.data);
   const [commitViewedPaths, setCommitViewedPaths] = useState<ReadonlySet<string>>(() => new Set());
   const permissions = usePullRequestPermissions(route.params, detail.data);
   const scopeKey = pullRequestReviewKey(route.params);
@@ -778,11 +860,11 @@ export function PullRequestFileRouteScreen({
   if (diffHead.scopeKey !== scopeKey || (!diffHead.sha && detail.data?.headSha))
     setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
   const staleDiff = Boolean(
-    !commit && diffHead.sha && detail.data?.headSha && diffHead.sha !== detail.data.headSha,
+    !historical && diffHead.sha && detail.data?.headSha && diffHead.sha !== detail.data.headSha,
   );
   const canCommentOnDiff =
     permissions.canInlineComment &&
-    !commit &&
+    !historical &&
     !staleDiff &&
     !detail.isPending &&
     !result.isPending &&
@@ -793,14 +875,14 @@ export function PullRequestFileRouteScreen({
     () =>
       annotatePullRequestDiff(
         baseData,
-        staleDiff || commit ? [] : (activity.data?.reviewThreads ?? []),
-        commit ? [] : reviewDraft.draft.comments,
+        staleDiff || historical ? [] : (activity.data?.reviewThreads ?? []),
+        historical ? [] : reviewDraft.draft.comments,
         diffHead.sha ?? undefined,
       ),
-    [baseData, activity.data, reviewDraft.draft.comments, diffHead.sha, staleDiff, commit],
+    [baseData, activity.data, reviewDraft.draft.comments, diffHead.sha, staleDiff, historical],
   );
   const viewedIds = data.files
-    .filter((file) => (commit ? commitViewedPaths.has(file.path) : viewed.isViewed(file.path)))
+    .filter((file) => (historical ? commitViewedPaths.has(file.path) : viewed.isViewed(file.path)))
     .map((file) => file.id);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const selectedRow = data.rows.find((row) => row.id === selectedRowId);
@@ -878,7 +960,7 @@ export function PullRequestFileRouteScreen({
   const { themeAppearance, appearance, setCodeWordBreak } = useAppearancePreferences();
   const bridge = useNativeReviewDiffBridge({
     threadKey: null,
-    sectionId: `pull-request:${route.params.repository}:${route.params.number}:${commit ?? "all"}`,
+    sectionId: `pull-request:${route.params.repository}:${route.params.number}:${comparisonKey}`,
     diff: result.patch,
     data,
     collapsedFileIds: collapsedIds,
@@ -1125,8 +1207,8 @@ export function PullRequestFileRouteScreen({
               }}
               onToggleViewedFile={(event) => {
                 const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
-                if (!file || (!commit && !viewed.canToggle)) return;
-                const wasViewed = commit
+                if (!file || (!historical && !viewed.canToggle)) return;
+                const wasViewed = historical
                   ? commitViewedPaths.has(file.path)
                   : viewed.isViewed(file.path);
                 setCollapsedIds((ids) =>
@@ -1136,7 +1218,7 @@ export function PullRequestFileRouteScreen({
                       ? ids
                       : [...ids, file.id],
                 );
-                if (commit)
+                if (historical)
                   setCommitViewedPaths((current) => {
                     const next = new Set(current);
                     if (next.has(file.path)) next.delete(file.path);
@@ -1171,7 +1253,7 @@ export function PullRequestFileRouteScreen({
               contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
               contentInsetTop={Platform.OS === "ios" ? (staleDiff ? 0 : insets.top) : undefined}
               contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
-              contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
+              contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${comparisonKey}`}
             />
           </View>
         ) : filter.hiddenCount > 0 &&

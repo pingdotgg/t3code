@@ -5,8 +5,8 @@ import { useState, type RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
-import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
+import { PullRequestPermissionButton as Button } from "./PullRequestPermissionButton";
+import { PullRequestTextarea as Textarea } from "./PullRequestTextarea";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
@@ -50,7 +50,14 @@ export function PullRequestCommentForm({
 
   const submit = async (action: "comment" | "close" | "reopen") => {
     const trimmed = body.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
+    if (
+      detail.viewerPermissions.deniedActions?.comment ||
+      detail.viewerPermissions.deniedActions?.[action] ||
+      trimmed.length === 0 ||
+      submitting !== null ||
+      actionPending
+    )
+      return;
     setSubmitting(action);
     if (action !== "comment") {
       const result = await onCommentAction(trimmed, action);
@@ -108,6 +115,10 @@ export function PullRequestCommentForm({
       <div className="flex flex-wrap justify-end gap-2">
         {followUpAction === null ? null : (
           <Button
+            reason={
+              detail.viewerPermissions.deniedActions?.comment ??
+              detail.viewerPermissions.deniedActions?.[followUpAction]
+            }
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
             disabled={body.trim().length === 0 || submitting !== null || actionPending}
@@ -128,6 +139,7 @@ export function PullRequestCommentForm({
           </Button>
         )}
         <Button
+          reason={detail.viewerPermissions.deniedActions?.comment}
           size="xs"
           variant="outline"
           disabled={body.trim().length === 0 || submitting !== null || actionPending}

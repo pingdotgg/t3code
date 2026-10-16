@@ -1,11 +1,15 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
+
+const mockedIdentity = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["authenticatedIdentity"]>();
 
 const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>();
 
@@ -14,8 +18,12 @@ const layer = it.layer(
     Layer.provide(
       Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
         execute: mockedExecute,
+        pullRequestContext: () =>
+          Effect.succeed(output(JSON.stringify({ credentialKey: "test-pat", permissions: {} }))),
+        authenticatedIdentity: mockedIdentity,
       }),
     ),
+    Layer.provideMerge(NodeFileSystem.layer),
   ),
 );
 
@@ -173,6 +181,271 @@ afterEach(() => {
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
+  it.effect("retains Azure line ranges, deleted-side anchors, and whole-file discussions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const bodies: unknown[] = [];
+      mockedExecute.mockImplementation((input) =>
+        Effect.gen(function* () {
+          if (input.args.includes("pullRequestIterations"))
+            return output(JSON.stringify(oneIteration));
+          if (input.args.includes("pullRequestIterationChanges"))
+            return output(
+              JSON.stringify({
+                changeEntries: ["file.ts", "old.ts"].map((path) => ({
+                  changeTrackingId: 12,
+                  changeType: "edit",
+                  item: { path: "/" + path },
+                })),
+              }),
+            );
+          bodies.push(
+            JSON.parse(
+              yield* fs
+                .readFileString(input.args[input.args.indexOf("--in-file") + 1]!)
+                .pipe(Effect.orDie),
+            ),
+          );
+          return output("{}");
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      yield* cli.createThreads({
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        number: 42,
+        threads: [
+          {
+            path: "file.ts",
+            position: { kind: "added" as const, newLine: 7 },
+            startLine: 3,
+            body: "Test",
+          },
+          {
+            path: "old.ts",
+            position: { kind: "deleted" as const, oldLine: 9 },
+            startLine: 5,
+            body: "Test",
+          },
+          {
+            path: "file.ts",
+            position: { kind: "added" as const, newLine: 1 },
+            fileLevel: true,
+            body: "Test",
+          },
+        ].map((comment) => ({ body: comment.body, comment })),
+      });
+      // One review resolves its anchors once, however many comments it carries.
+      for (const resource of ["pullRequestIterations", "pullRequestIterationChanges"])
+        expect(
+          mockedExecute.mock.calls.filter(([input]) => input.args.includes(resource)),
+        ).toHaveLength(1);
+      expect(bodies).toEqual([
+        expect.objectContaining({
+          pullRequestThreadContext: {
+            changeTrackingId: 12,
+            iterationContext: { firstComparingIteration: 1, secondComparingIteration: 1 },
+          },
+          threadContext: {
+            filePath: "/file.ts",
+            rightFileStart: { line: 3, offset: 1 },
+            rightFileEnd: { line: 7, offset: 1 },
+          },
+        }),
+        expect.objectContaining({
+          threadContext: {
+            filePath: "/old.ts",
+            leftFileStart: { line: 5, offset: 1 },
+            leftFileEnd: { line: 9, offset: 1 },
+          },
+        }),
+        expect.objectContaining({ threadContext: { filePath: "/file.ts" } }),
+      ]);
+    }),
+  );
+
+  it.effect("uses the preview policy API when requeueing an evaluation", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((input) =>
+        Effect.succeed(
+          output(
+            JSON.stringify(
+              input.args.includes("show")
+                ? {
+                    pullRequestId: 42,
+                    status: "active",
+                    repository: {
+                      id: "repo",
+                      webUrl: "https://dev.azure.com/a/p/_git/web",
+                      project: { id: "project" },
+                    },
+                    reviewers: [],
+                  }
+                : { value: [] },
+            ),
+          ),
+        ),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      yield* cli.runHostAction({
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        number: 42,
+        action: { type: "requeue-policy", evaluationId: "evaluation" },
+      });
+      expect(
+        mockedExecute.mock.calls.find(([input]) => input.args.includes("PATCH"))?.[0].args,
+      ).toEqual(
+        expect.arrayContaining(["--api-version", "7.1-preview", "evaluationId=evaluation"]),
+      );
+    }),
+  );
+
+  it.effect("posts a UTF-8 reply to the existing thread and removes its temporary body", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let bodyFile = "";
+      const body = 'Réponse avec **markdown**\nQuotes: "hello" and `code`.';
+      mockedExecute.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          bodyFile = input.args[input.args.indexOf("--in-file") + 1]!;
+          expect(JSON.parse(yield* fs.readFileString(bodyFile).pipe(Effect.orDie))).toEqual({
+            content: body,
+            parentCommentId: 1,
+            commentType: 1,
+          });
+          return output("{}");
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      yield* cli.replyToThread({
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        number: 42,
+        threadId: "7734",
+        body,
+      });
+      expect(argsOfCall(0)).toEqual([
+        "devops",
+        "invoke",
+        "--detect",
+        "true",
+        "--area",
+        "git",
+        "--resource",
+        "pullRequestThreadComments",
+        "--api-version",
+        "7.1",
+        "--route-parameters",
+        "project=platform",
+        "repositoryId=web",
+        "pullRequestId=42",
+        "threadId=7734",
+        "--http-method",
+        "POST",
+        "--in-file",
+        bodyFile,
+        "--encoding",
+        "utf-8",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+      expect(yield* fs.exists(bodyFile)).toBe(false);
+    }),
+  );
+
+  it.effect("edits, deletes, and changes Azure discussion status using native routes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const bodies: unknown[] = [];
+      mockedExecute.mockImplementation((input) =>
+        Effect.gen(function* () {
+          const index = input.args.indexOf("--in-file");
+          if (index >= 0)
+            bodies.push(
+              JSON.parse(yield* fs.readFileString(input.args[index + 1]!).pipe(Effect.orDie)),
+            );
+          return output(input.args.includes("DELETE") ? "" : "{}");
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const ref = {
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        number: 42,
+        threadId: "7734",
+      };
+      yield* cli.updateComment({
+        ...ref,
+        commentId: "3",
+        body: "This is a test for the app t3code — edited.",
+      });
+      yield* cli.deleteComment({ ...ref, commentId: "3" });
+      for (const status of [
+        "active",
+        "pending",
+        "fixed",
+        "wontFix",
+        "closed",
+        "byDesign",
+      ] as const) {
+        yield* cli.setThreadStatus({ ...ref, status });
+      }
+      expect(bodies).toEqual([
+        { content: "This is a test for the app t3code — edited." },
+        ...["active", "pending", "fixed", "wontFix", "closed", "byDesign"].map((status) => ({
+          status,
+        })),
+      ]);
+      expect(argsOfCall(0)).toEqual(
+        expect.arrayContaining([
+          "PATCH",
+          "pullRequestThreadComments",
+          "threadId=7734",
+          "commentId=3",
+        ]),
+      );
+      expect(argsOfCall(1)).toEqual(
+        expect.arrayContaining(["DELETE", "pullRequestThreadComments", "commentId=3"]),
+      );
+      expect(argsOfCall(2)).toEqual(
+        expect.arrayContaining(["PATCH", "pullRequestThreads", "threadId=7734"]),
+      );
+    }),
+  );
+
+  it.effect("keeps a refused reply as a failure and cleans up its temporary body", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let bodyFile = "";
+      const failure = new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+        operation: "execute",
+        command: "az",
+        cwd: "/w",
+        argumentCount: 0,
+        cause: "refused",
+      });
+      mockedExecute.mockImplementationOnce((input) => {
+        bodyFile = input.args[input.args.indexOf("--in-file") + 1]!;
+        return Effect.fail(failure);
+      });
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      expect(
+        yield* Effect.flip(
+          cli.replyToThread({
+            cwd: "/w",
+            location: { project: "platform", repository: "web" },
+            number: 42,
+            threadId: "7734",
+            body: "Reply",
+          }),
+        ),
+      ).toBe(failure);
+      expect(yield* fs.exists(bodyFile)).toBe(false);
+    }),
+  );
+
   it.effect("asks for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));
@@ -408,72 +681,33 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads the signed-in account, which az reports as a bare value", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(JSON.stringify({ name: "bilal@acme.dev", type: "user" }))),
-      );
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const viewer = yield* cli.getViewer({ cwd: "/w" });
-
-      assert.strictEqual(viewer, "bilal@acme.dev");
-      expect(argsOfCall(0)).toEqual([
-        "account",
-        "show",
-        "--query",
-        "user",
-        "--only-show-errors",
-        "--output",
-        "json",
-      ]);
-    }),
+  it.effect(
+    "uses the authenticated DevOps identity even when the user has never authored a PR",
+    () =>
+      Effect.gen(function* () {
+        mockedIdentity.mockReturnValueOnce(
+          Effect.succeed({ id: "viewer-id", login: "bilal@acme.dev", name: "Bilal" }),
+        );
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+        expect(yield* cli.getViewer({ cwd: "/w" })).toBe("bilal@acme.dev");
+        expect(mockedExecute).not.toHaveBeenCalled();
+      }),
   );
-
-  it.effect("names a token sign-in by the viewer's own pull request", () =>
-    Effect.gen(function* () {
-      const notLoggedIn = new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
-        operation: "execute",
-        command: "az",
-        cwd: "/w",
-        argumentCount: 7,
-        cause: new Error("Please run 'az login' to setup account."),
-      });
-      mockedExecute
-        .mockReturnValueOnce(Effect.fail(notLoggedIn))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              JSON.stringify([{ ...pullRequestRow, createdBy: { uniqueName: "bilal@acme.dev" } }]),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(Effect.succeed(output("")))
-        .mockReturnValueOnce(Effect.succeed(output("[]")));
-      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      assert.strictEqual(yield* cli.getViewer({ cwd: "/w" }), "bilal@acme.dev");
-      expect(argsOfCall(1)).toEqual(expect.arrayContaining(["--creator", "me", "--top", "1"]));
-      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
-      assert.strictEqual(error._tag, "AzureDevOpsViewerUnavailableError");
-    }),
-  );
-
-  it.effect("fails when no sign-in can read pull requests", () =>
+  it.effect("does not substitute a cloud identity when DevOps authentication fails", () =>
     Effect.gen(function* () {
       const signedOut = new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
         operation: "execute",
         command: "az",
         cwd: "/w",
-        argumentCount: 7,
-        cause: new Error("signed out"),
+        argumentCount: 2,
+        cause: "signed out",
       });
-      mockedExecute.mockReturnValue(Effect.fail(signedOut));
+      mockedIdentity.mockReturnValueOnce(Effect.fail(signedOut));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-      const error = yield* Effect.flip(cli.getViewer({ cwd: "/w" }));
-
-      assert.strictEqual(error._tag, "AzureDevOpsCliAuthenticationError");
+      expect((yield* Effect.flip(cli.getViewer({ cwd: "/w" })))._tag).toBe(
+        "AzureDevOpsCliAuthenticationError",
+      );
+      expect(mockedExecute).not.toHaveBeenCalled();
     }),
   );
 
@@ -621,10 +855,16 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
   it.effect("rewrites through the provider, which says it takes one", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+      mockedExecute.mockImplementation((input) =>
+        Effect.succeed(output(JSON.stringify(input.args.includes("show") ? pullRequestRow : {}))),
+      );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
 
-      expect(provider.capabilities.edit).toEqual({ changeRequest: true, comment: false });
+      expect(provider.capabilities.edit).toEqual({
+        changeRequest: true,
+        comment: true,
+        deleteComment: true,
+      });
       assert.isDefined(provider.updateChangeRequest);
       yield* provider.updateChangeRequest({
         cwd: "/w",
@@ -634,8 +874,12 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         title: "Add the page",
       });
 
-      expect(argsOfCall(0)).toContain("--title=Add the page");
-      expect(argsOfCall(0)).not.toContain("--description");
+      expect(
+        argsOfCall(mockedExecute.mock.calls.findIndex(([input]) => input.args.includes("update"))),
+      ).toContain("--title=Add the page");
+      expect(
+        argsOfCall(mockedExecute.mock.calls.findIndex(([input]) => input.args.includes("update"))),
+      ).not.toContain("--description");
     }),
   );
 
@@ -692,7 +936,10 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
 
-      assert.strictEqual(provider.capabilities.viewedFiles, "environment");
+      // Kept here rather than on Azure: its own record of what a reader has read is behind an
+      // undocumented endpoint, so the marks belong to this environment and need a revision of
+      // their own to tell a re-push from a file still as it was read.
+      assert.strictEqual(provider.capabilities.viewedFiles, "host");
       assert.isDefined(provider.getFileRevisions);
       const answer = yield* provider.getFileRevisions({
         cwd: "/w",
@@ -1423,4 +1670,50 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
   );
+});
+
+layer("Azure comment likes", (it) => {
+  it.effect("adds and removes a like using the comment likes route", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("")));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const ref = {
+        cwd: "/w",
+        location: { project: "platform", repository: "web" },
+        number: 42,
+        threadId: "7734",
+        commentId: "2",
+      };
+      yield* cli.setCommentLike({ ...ref, liked: true });
+      yield* cli.setCommentLike({ ...ref, liked: false });
+      expect(argsOfCall(0)).toEqual(
+        expect.arrayContaining(["pullRequestCommentLikes", "threadId=7734", "commentId=2", "POST"]),
+      );
+      expect(argsOfCall(1)).toEqual(
+        expect.arrayContaining([
+          "pullRequestCommentLikes",
+          "threadId=7734",
+          "commentId=2",
+          "DELETE",
+        ]),
+      );
+    }),
+  );
+});
+
+it("keeps raw read failures out of display text and preserves bounded refusal messages", () => {
+  const cause = "remote response containing private details";
+  const fields = { command: "az" as const, cwd: "/w", operation: "read", cause };
+  const unreadable = new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError(fields);
+  expect(unreadable.detail).toBe("Azure CLI returned an unreadable read response.");
+  expect(unreadable.message).not.toContain(cause);
+  expect(unreadable.cause).toBe(cause);
+  const refused = new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+    ...fields,
+    reason: "stale-suggestion",
+  });
+  expect(refused.detail).toBe(
+    "The source branch changed. Refresh the pull request before applying this suggestion.",
+  );
+  expect(refused.cause).toBe(cause);
 });

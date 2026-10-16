@@ -24,13 +24,54 @@ import {
 import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequestStack";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { usePullRequestAction } from "./usePullRequestAction";
 import type { PullRequestStackState } from "./usePullRequestStack";
 
-export function PullRequestMergeControls(props: {
+type PullRequestMergeControlsProps = {
   readonly pr: PullRequestDetail;
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
-}) {
+};
+
+export function PullRequestMergeControls(props: PullRequestMergeControlsProps) {
+  return props.pr.provider === "azure-devops" && props.pr.state === "open" && props.pr.isDraft ? (
+    <PullRequestPublishControl pr={props.pr} params={props.params} />
+  ) : (
+    <PullRequestMergeActions {...props} />
+  );
+}
+
+function PullRequestPublishControl({
+  pr,
+  params,
+}: Pick<PullRequestMergeControlsProps, "pr" | "params">) {
+  const action = usePullRequestAction(params, pr);
+  const permissions = usePullRequestPermissions(params, pr);
+  const reason =
+    pr.viewerPermissions.deniedActions?.ready ??
+    (!permissions.connected
+      ? "Reconnect to publish."
+      : !permissions.canWrite
+        ? "This connection does not allow pull request changes."
+        : !canPerformPullRequestAction(pr, "ready")
+          ? "You do not have permission to publish this pull request."
+          : undefined);
+  return (
+    <View className="gap-2 border-t border-border-subtle p-3">
+      <Button
+        label={action.busy ? "Publishing…" : "Publish"}
+        tone="primary"
+        fullWidth
+        loading={action.busy}
+        disabled={action.busy || Boolean(reason)}
+        onPress={() => void action.perform("ready")}
+      />
+      {reason ? <Text className="text-xs text-foreground-muted">{reason}</Text> : null}
+    </View>
+  );
+}
+
+function PullRequestMergeActions(props: PullRequestMergeControlsProps) {
   const { pr, stack } = props;
   const target = pullRequestTarget(props.params);
   const permissions = usePullRequestPermissions(props.params, pr);
@@ -61,6 +102,7 @@ export function PullRequestMergeControls(props: {
   const checkingStack =
     permissions.connected && stack.supportsStackActions && !stack.isFresh && !stack.error;
   const reason =
+    pr.viewerPermissions.deniedActions?.merge ??
     (!permissions.connected
       ? "Reconnect to merge."
       : mergeUnavailableReason(pr, permissions.canWrite)) ??
@@ -83,6 +125,7 @@ export function PullRequestMergeControls(props: {
     : "Merge unavailable";
   const autoAction = pr.autoMergeEnabled ? "disable-auto-merge" : "enable-auto-merge";
   const canAutoMerge =
+    !pr.viewerPermissions.deniedActions?.[autoAction] &&
     !busy &&
     (autoAction === "disable-auto-merge" || (!stack.stack && canMergeSingle)) &&
     permissions.canWrite &&

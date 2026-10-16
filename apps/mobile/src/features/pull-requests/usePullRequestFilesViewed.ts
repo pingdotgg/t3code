@@ -79,7 +79,7 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
     query.data?.files.some((file) => file.path === path && file.state === "viewed") ??
     false;
   const toggle = async (path: string) => {
-    if (!supported || !allowed || !query.data) return;
+    if (!supported || !allowed || !query.data || query.data.disabledReason) return;
     const viewed = !(
       pressed.current[path] ??
       query.data.files.some((file) => file.path === path && file.state === "viewed")
@@ -109,10 +109,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
   };
   return {
     supported,
-    canToggle: supported && allowed && Boolean(query.data),
+    canToggle: supported && allowed && Boolean(query.data) && !query.data?.disabledReason,
     isViewed,
     toggle,
-    error: error ?? query.error,
+    error: error ?? query.error ?? query.data?.disabledReason ?? null,
     truncated: query.data?.truncated,
   };
 }

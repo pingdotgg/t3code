@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitPullRequestBody } from "./pullRequestMarkdown.ts";
+import { reusePullRequestIdentities, splitPullRequestBody } from "./pullRequestMarkdown.ts";
+
+describe("pull request mention identities", () => {
+  it("preserves the reference across activity refreshes with unchanged names", () => {
+    const previous = { alice: "Alice", bob: "Bob" };
+    expect(reusePullRequestIdentities(previous, { bob: "Bob", alice: "Alice" })).toBe(previous);
+  });
+
+  it("updates renamed, added, and removed identities", () => {
+    const previous = { alice: "Alice" };
+    for (const next of [{ alice: "Alicia" }, { alice: "Alice", bob: "Bob" }, {}]) {
+      expect(reusePullRequestIdentities(previous, next)).toBe(next);
+    }
+  });
+});
 
 describe("pull request body segmentation", () => {
   it("keeps a plain body as a single markdown run", () => {

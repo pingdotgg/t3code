@@ -9,7 +9,7 @@ import { cn } from "~/lib/utils";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
+import { PullRequestTextarea as Textarea } from "./PullRequestTextarea";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 

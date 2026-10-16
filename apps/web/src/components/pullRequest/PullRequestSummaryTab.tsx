@@ -1,4 +1,17 @@
+import { pullRequestReviewerState } from "@t3tools/client-runtime/pull-request-reviewer-state";
+import {
+  azureDevOpsDiscussionFilters,
+  filterAzureDevOpsDiscussions,
+  type AzureDevOpsDiscussionFilter,
+} from "@t3tools/client-runtime/azure-devops-discussion-filter";
+import { PullRequestReviewContext } from "./PullRequestReviewContext";
+import { pullRequestThreadStatusLabels } from "@t3tools/client-runtime/pull-request-comment-replies";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  pullRequestCommentReplies,
+  groupPullRequestComments,
+  type PullRequestCommentReplyContext,
+} from "@t3tools/client-runtime/pull-request-comment-replies";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -18,7 +31,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useRef, useState, type ReactNode } from "react";
+import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -32,6 +45,8 @@ import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collaps
 import {
   Menu,
   MenuCheckboxItem,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuGroup,
   MenuGroupLabel,
   MenuPopup,
@@ -45,6 +60,7 @@ import {
   pullRequestCheckStatusLabel,
   PullRequestLabelChip,
   PullRequestReviewOutcomeBadge,
+  PullRequestReviewOutcomeIcon,
   pullRequestReviewOutcomeLabel,
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
@@ -54,7 +70,6 @@ import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
   latestPullRequestReviewOutcomes,
-  orderPullRequestComments,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
@@ -64,8 +79,12 @@ import {
   canEditPullRequestChangeRequest,
   canEditPullRequestComment,
 } from "./pullRequestEditing.logic";
-import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestMarkdown, PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
+import { PullRequestCommentReply } from "./PullRequestCommentReply";
+import { PullRequestDiscussionStatus } from "./PullRequestDiscussionStatus";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
+import { PullRequestDiscussionReplyForm } from "./PullRequestDiscussionReplyForm";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
@@ -124,7 +143,9 @@ function CommentLocation({
 }) {
   const path = thread?.path ?? comment.path;
   if (!path) return null;
-  const label = `${path}${thread?.line ? `:${thread.line}` : ""}`;
+  const line = thread?.line ?? thread?.originalLine;
+  const end = thread?.endLine ?? thread?.originalEndLine;
+  const label = `${path}${line ? `:${line}${end && end !== line ? `–${end}` : ""}` : ""}`;
   return (
     <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
       <Tooltip>
@@ -145,6 +166,11 @@ interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef | null;
+  readonly canLike: boolean;
+  readonly suggestionHead: string | undefined;
+  readonly canDelete: (comment: PullRequestComment) => boolean;
+  readonly reference: PullRequestRef;
+  readonly onRefresh: () => void;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
   readonly saving: boolean;
@@ -186,29 +212,53 @@ function CommentBody({
         environmentId={editing.environmentId}
         threadRef={editing.threadRef}
       />
-      {editing.canEdit(comment) ? (
-        <PullRequestEditButton aria-label="Edit comment" onClick={() => editing.onEdit(comment)} />
-      ) : null}
     </div>
   );
 }
 
+function CommentActions({
+  comment,
+  editing,
+}: {
+  comment: PullRequestComment;
+  editing: CommentEditing;
+}) {
+  return (
+    <PullRequestCommentActions
+      comment={comment}
+      environmentId={editing.environmentId}
+      reference={editing.reference}
+      threadRef={editing.threadRef}
+      canEdit={editing.canEdit(comment)}
+      canDelete={editing.canDelete(comment)}
+      canLike={editing.canLike}
+      suggestionHead={editing.suggestionHead}
+      onEdit={() => editing.onEdit(comment)}
+    />
+  );
+}
+
+/** Finished work — a resolved conversation or a dismissed review — opens collapsed. */
 function CollapsedComment({
   comment,
+  reply,
   editing,
   label,
   body,
   reactionBar,
   detail,
   thread,
+  children,
 }: {
   comment: PullRequestComment;
+  reply: PullRequestCommentReplyContext | undefined;
   editing: CommentEditing;
   label: string;
   body: string | null;
   reactionBar: ReactNode;
   detail: PullRequestDetailView;
   thread: PullRequestReviewThread | undefined;
+  children?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
@@ -218,6 +268,7 @@ function CollapsedComment({
         <div className="p-3">
           <div className="flex flex-wrap items-start gap-2">
             <CommentIdentity comment={comment} detail={detail} />
+            <CommentActions comment={comment} editing={editing} />
             <CollapsibleTrigger
               ref={statusTriggerRef}
               className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -231,6 +282,7 @@ function CollapsedComment({
             {reactionBar}
           </div>
           <CommentLocation comment={comment} thread={thread} />
+          <PullRequestCommentReply reply={reply} />
           {!open && body ? (
             <CollapsibleTrigger
               className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
@@ -253,6 +305,7 @@ function CollapsedComment({
               {body === null && !editing.canEdit(comment) ? null : (
                 <CommentBody className="mt-2" comment={comment} editing={editing} />
               )}
+              {children}
             </div>
           ) : null}
         </CollapsiblePanel>
@@ -324,7 +377,7 @@ function Section({
     >
       <div
         ref={headingRef}
-        className="sticky top-0 z-10 flex w-full items-center bg-background pr-4"
+        className="sticky top-0 z-10 flex w-full flex-wrap items-center bg-background pr-4"
       >
         <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
           <span>{title}</span>
@@ -383,7 +436,23 @@ export function PullRequestSummaryTab({
   onRefreshChecks?: () => void;
 }) {
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
-  const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
+  const shownDiscussions = shown.url === detail.url ? shown.count : COMMENT_PAGE;
+  const identities = useContext(PullRequestMarkdownContext)?.identities;
+  const replies = useMemo(
+    () =>
+      pullRequestCommentReplies({
+        comments: detail.comments,
+        reviewThreads: detail.reviewThreads,
+        identities,
+      }),
+    [detail.comments, detail.reviewThreads, identities],
+  );
+  // Only a comment's own thread or reply link makes a discussion. GitHub repeats every line remark
+  // in a review thread, and grouping by those would turn each remark into a reply thread here.
+  const discussions = useMemo(
+    () => groupPullRequestComments({ comments: detail.comments, reviewThreads: [] }),
+    [detail.comments],
+  );
   const [commentFilter, setCommentFilter] = useLocalStorage(
     COMMENT_FILTER_STORAGE_KEY,
     DEFAULT_COMMENT_FILTER,
@@ -396,36 +465,85 @@ export function PullRequestSummaryTab({
   );
 
   const isFinished = (comment: PullRequestComment) =>
+    (comment.threadStatus !== undefined && !["active", "pending"].includes(comment.threadStatus)) ||
     threadByCommentId.get(comment.id)?.isResolved === true ||
     pullRequestReviewOutcome(comment.reviewState) === "dismissed";
   const isBot = (comment: PullRequestComment) =>
     comment.author?.isBot === true || comment.author?.login.endsWith("[bot]") === true;
-  const filteredComments = detail.comments.filter(
-    (comment) =>
-      (commentFilter.bots || !isBot(comment)) && (commentFilter.resolved || !isFinished(comment)),
+  const previousVisit = useContext(PullRequestReviewContext)?.previousVisit;
+  const [newOnly, setNewOnly] = useState(false);
+  const [azureFilter, setAzureFilter] = useState<{
+    url: string;
+    value: AzureDevOpsDiscussionFilter;
+  }>({ url: detail.url, value: "all" });
+  const selectedAzureFilter = azureFilter.url === detail.url ? azureFilter.value : "all";
+  const azureDiscussions = useMemo(
+    () =>
+      detail.provider === "azure-devops"
+        ? filterAzureDevOpsDiscussions(detail, selectedAzureFilter, {
+            viewer: detail.viewer,
+            since: previousVisit,
+          })
+        : null,
+    [detail, selectedAzureFilter, previousVisit],
   );
+  const filteredDiscussions =
+    azureDiscussions?.discussions ??
+    discussions.filter(
+      (discussion) =>
+        (!newOnly ||
+          !previousVisit ||
+          discussion.comments.some(
+            (comment) =>
+              Date.parse(comment.editedAt ?? comment.createdAt) > Date.parse(previousVisit),
+          )) &&
+        (commentFilter.bots || discussion.comments.some((comment) => !isBot(comment))) &&
+        (commentFilter.resolved || !discussion.comments.every(isFinished)),
+    );
+  const filteredComments = filteredDiscussions.flatMap((discussion) => discussion.comments);
+  // The one count the filter shows. Per-kind counts would overlap, since a resolved bot comment
+  // is both kinds and needs both shown.
   const filteredOutCount = detail.comments.length - filteredComments.length;
-  const recentComments = filteredComments.slice(
-    Math.max(0, filteredComments.length - shownComments),
-  );
-  const hiddenCommentCount = filteredComments.length - recentComments.length;
+  // Page whole discussions so a reply never loses its original to a filter or page boundary.
+  const items = [
+    ...filteredDiscussions.map((discussion) => ({
+      kind: "discussion" as const,
+      id: discussion.id,
+      at: discussion.comments.at(-1)!.createdAt,
+      discussion,
+    })),
+    ...(azureDiscussions?.activity.events ?? []).map((event) => ({
+      kind: "event" as const,
+      id: event.id,
+      at: event.createdAt,
+      event,
+    })),
+  ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+  const recentDiscussions = items.slice(Math.max(0, items.length - shownDiscussions));
+  const hiddenDiscussionCount = items.length - recentDiscussions.length;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
-  const visibleComments = orderPullRequestComments(recentComments, commentOrder);
-  const showOldestCommentsButton =
-    hiddenCommentCount > 0 ? (
+  const visibleDiscussions =
+    commentOrder === "newest" ? recentDiscussions.toReversed() : recentDiscussions;
+  const showOlderDiscussionsButton =
+    hiddenDiscussionCount > 0 ? (
       <Button
         size="sm"
         variant="outline"
         className="w-full"
-        onClick={() => setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })}
+        onClick={() => setShown({ url: detail.url, count: shownDiscussions + COMMENT_PAGE })}
       >
-        Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} older comment
-        {hiddenCommentCount === 1 ? "" : "s"} ({hiddenCommentCount} hidden)
+        Show {Math.min(hiddenDiscussionCount, COMMENT_PAGE)} older{" "}
+        {azureDiscussions ? "item" : "discussion"}
+        {hiddenDiscussionCount === 1 ? "" : "s"} ({hiddenDiscussionCount} hidden)
       </Button>
     ) : null;
   // Read from the whole conversation, not the window shown below it: a verdict older than the
   // visible comments still stands.
-  const reviewOutcomes = latestPullRequestReviewOutcomes(detail.comments, detail.commits);
+  const reviewOutcomes = latestPullRequestReviewOutcomes(
+    detail.comments,
+    detail.commits,
+    detail.reviewers,
+  );
   // Hosts do not promise one casing for a login across two fields of the same response, and
   // none of them lets `Octocat` and `octocat` be two people — so matching on the literal string
   // would show one reviewer twice and drop the verdict off both.
@@ -441,6 +559,7 @@ export function PullRequestSummaryTab({
     ...detail.reviewers.map((actor) => ({
       key: actor.login,
       actor,
+      label: pullRequestReviewerState(actor.reviewState)?.label,
       outcome: outcomeByLogin.get(reviewerKey(actor.login))?.outcome ?? null,
       stale: outcomeByLogin.get(reviewerKey(actor.login))?.stale ?? false,
     })),
@@ -455,6 +574,7 @@ export function PullRequestSummaryTab({
       .map((entry) => ({
         key: entry.key,
         actor: entry.actor,
+        label: undefined,
         outcome: entry.outcome,
         stale: entry.stale,
       })),
@@ -502,7 +622,14 @@ export function PullRequestSummaryTab({
     cwd: detail.workspaceRoot,
     environmentId,
     threadRef,
+    canLike: detail.capabilities.commentLikes === true,
+    suggestionHead: detail.provider === "azure-devops" ? detail.headSha : undefined,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
+    canDelete: (comment) =>
+      detail.capabilities.edit?.deleteComment === true &&
+      canEditPullRequestComment(detail, comment),
+    reference,
+    onRefresh,
     editingId: editingCommentId,
     saving: commentSaving,
     onEdit: (comment) =>
@@ -524,31 +651,46 @@ export function PullRequestSummaryTab({
     },
   };
 
-  const renderComment = (comment: PullRequestComment) => {
+  const renderComment = (
+    comment: PullRequestComment,
+    inDiscussion = false,
+    children?: ReactNode,
+  ) => {
     const thread = threadByCommentId.get(comment.id);
     const body = visibleBody(comment.body);
-    if (isFinished(comment)) {
+    if (isFinished(comment) && !inDiscussion) {
       return (
         <CollapsedComment
           key={`${detail.url}:${comment.id}`}
           comment={comment}
+          reply={replies.get(comment.id)}
           editing={commentEditing}
           detail={detail}
           thread={thread}
-          label={thread?.isResolved ? "Resolved" : "Review dismissed"}
+          label={
+            comment.threadStatus
+              ? pullRequestThreadStatusLabels[comment.threadStatus]
+              : thread?.isResolved
+                ? "Resolved"
+                : "Review dismissed"
+          }
           body={body}
           reactionBar={
-            <PullRequestReactionBar
-              className="ml-auto justify-end"
-              reactions={comment.reactions ?? []}
-              canReact={detail.capabilities.reactions === true}
-              subjectId={comment.id}
-              environmentId={environmentId}
-              reference={reference}
-              onRefresh={onRefresh}
-            />
+            detail.capabilities.commentLikes ? null : (
+              <PullRequestReactionBar
+                className="ml-auto justify-end"
+                reactions={comment.reactions ?? []}
+                canReact={detail.capabilities.reactions === true}
+                subjectId={comment.id}
+                environmentId={environmentId}
+                reference={reference}
+                onRefresh={onRefresh}
+              />
+            )
           }
-        />
+        >
+          {children}
+        </CollapsedComment>
       );
     }
     const outcome = pullRequestReviewOutcome(comment.reviewState);
@@ -560,7 +702,7 @@ export function PullRequestSummaryTab({
             ? null
             : { kind: "comment", comment }
           : { kind: "thread", thread };
-    const reactionBar = (
+    const reactionBar = detail.capabilities.commentLikes ? null : (
       <PullRequestReactionBar
         reactions={comment.reactions ?? []}
         canReact={detail.capabilities.reactions === true}
@@ -571,12 +713,17 @@ export function PullRequestSummaryTab({
         className="ml-auto justify-end"
       />
     );
+    const Container = inDiscussion ? "div" : "article";
     return (
-      <article
+      <Container
         key={`${detail.url}:${comment.id}`}
         // Offscreen comments skip style, layout and paint. Bot comments carry pages of
         // highlighted code, and the conversation is below the description either way.
-        className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        className={
+          inDiscussion
+            ? "group"
+            : "group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+        }
       >
         <div className="flex flex-wrap items-start gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -587,6 +734,9 @@ export function PullRequestSummaryTab({
               <span>{reviewStateLabel(comment.reviewState)}</span>
             ) : null}
           </div>
+          <CommentActions comment={comment} editing={commentEditing} />
+          {/* Review remarks only. A plain conversation comment is talk, not a finding,
+                      and offering to fix one would promise more than it says. */}
           {onFixFinding && finding ? (
             <Button
               size="xs"
@@ -602,12 +752,14 @@ export function PullRequestSummaryTab({
           {reactionBar}
         </div>
         <div className="px-3">
-          <CommentLocation comment={comment} thread={thread} />
+          {!inDiscussion ? <PullRequestCommentReply reply={replies.get(comment.id)} /> : null}
+          {!inDiscussion ? <CommentLocation comment={comment} thread={thread} /> : null}
         </div>
         {body === null && !commentEditing.canEdit(comment) ? null : (
           <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
         )}
-      </article>
+        {children}
+      </Container>
     );
   };
 
@@ -658,23 +810,36 @@ export function PullRequestSummaryTab({
                           ) : null}
                         </TooltipTrigger>
                         <TooltipPopup side="bottom">
-                          {entry.outcome
-                            ? `${named} — ${
-                                entry.stale
-                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
-                                  : pullRequestReviewOutcomeLabel(entry.outcome)
-                              }`
-                            : named}
+                          {entry.label
+                            ? `${named} — ${entry.label}`
+                            : entry.outcome
+                              ? `${named} — ${
+                                  entry.stale
+                                    ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
+                                    : pullRequestReviewOutcomeLabel(entry.outcome)
+                                }`
+                              : named}
                         </TooltipPopup>
                       </Tooltip>
                     );
                   })}
                 </span>
               )}
-              {/*
-               * Azure DevOps is the exception — it takes a reviewer but will not
-                  say who could be one, so there is nothing to open.
-               */}
+              {detail.provider === "azure-devops" && reviewOutcomes.length > 0 ? (
+                <span className="flex flex-wrap gap-2 text-xs">
+                  {(["approved", "changes-requested"] as const).map((outcome) => {
+                    const count = reviewOutcomes.filter(
+                      (entry) => entry.outcome === outcome && !entry.stale,
+                    ).length;
+                    return count > 0 ? (
+                      <span key={outcome} className="inline-flex items-center gap-1">
+                        <PullRequestReviewOutcomeIcon outcome={outcome} /> {count}{" "}
+                        {outcome === "approved" ? "approved" : "requested changes"}
+                      </span>
+                    ) : null;
+                  })}
+                </span>
+              ) : null}
               {detail.capabilities.reviewers.request &&
               detail.capabilities.reviewers.listCandidates ? (
                 <PullRequestReviewerPicker
@@ -739,6 +904,7 @@ export function PullRequestSummaryTab({
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <PullRequestEditButton
+                  reason={detail.viewerPermissions.deniedActions?.edit}
                   aria-label="Edit description"
                   onClick={() => setBodyScope(detail.url)}
                 />
@@ -777,7 +943,12 @@ export function PullRequestSummaryTab({
                   )}
                 >
                   <PullRequestCheckStatusIcon status={check.status} />
-                  <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>}
+                    />
+                    <TooltipPopup>{check.description ?? check.name}</TooltipPopup>
+                  </Tooltip>
                   <span className="shrink-0 text-muted-foreground">
                     {pullRequestCheckStatusLabel(check)}
                   </span>
@@ -805,35 +976,68 @@ export function PullRequestSummaryTab({
       <Section
         title={`Comments (${detail.commentCount})`}
         actions={
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex flex-wrap items-center gap-1">
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}
                 aria-label="Filter comments"
               >
                 <ListFilterIcon aria-hidden className="size-3" />
-                {filteredOutCount > 0 ? `${filteredOutCount} hidden` : "Filter"}
+                {azureDiscussions
+                  ? `${azureDevOpsDiscussionFilters.find((item) => item.id === selectedAzureFilter)?.label} (${azureDiscussions.counts[selectedAzureFilter]}${detail.commentsTruncated || detail.reviewThreadsTruncated ? "+" : ""})`
+                  : filteredOutCount > 0
+                    ? `${filteredOutCount} hidden`
+                    : "Filter"}
               </MenuTrigger>
               <MenuPopup align="end">
-                <MenuGroup>
-                  <MenuGroupLabel>Show</MenuGroupLabel>
-                  <MenuCheckboxItem
-                    checked={commentFilter.bots}
-                    closeOnClick={false}
-                    onCheckedChange={(bots) => setCommentFilter((value) => ({ ...value, bots }))}
+                {azureDiscussions ? (
+                  <MenuRadioGroup
+                    value={selectedAzureFilter}
+                    onValueChange={(value) => {
+                      const selected = azureDevOpsDiscussionFilters.find(
+                        (item) => item.id === value,
+                      );
+                      if (selected) {
+                        setAzureFilter({ url: detail.url, value: selected.id });
+                        setShown({ url: detail.url, count: COMMENT_PAGE });
+                      }
+                    }}
                   >
-                    Bot comments
-                  </MenuCheckboxItem>
-                  <MenuCheckboxItem
-                    checked={commentFilter.resolved}
-                    closeOnClick={false}
-                    onCheckedChange={(resolved) =>
-                      setCommentFilter((value) => ({ ...value, resolved }))
-                    }
-                  >
-                    Resolved or dismissed
-                  </MenuCheckboxItem>
-                </MenuGroup>
+                    {azureDevOpsDiscussionFilters.map((item) => (
+                      <MenuRadioItem key={item.id} value={item.id} closeOnClick>
+                        {item.label} ({azureDiscussions.counts[item.id]}
+                        {detail.commentsTruncated || detail.reviewThreadsTruncated ? "+" : ""})
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                ) : (
+                  <MenuGroup>
+                    <MenuGroupLabel>Show</MenuGroupLabel>
+                    <MenuCheckboxItem
+                      checked={newOnly}
+                      closeOnClick={false}
+                      onCheckedChange={setNewOnly}
+                    >
+                      What's new since your last visit
+                    </MenuCheckboxItem>
+                    <MenuCheckboxItem
+                      checked={commentFilter.bots}
+                      closeOnClick={false}
+                      onCheckedChange={(bots) => setCommentFilter((value) => ({ ...value, bots }))}
+                    >
+                      Bot comments
+                    </MenuCheckboxItem>
+                    <MenuCheckboxItem
+                      checked={commentFilter.resolved}
+                      closeOnClick={false}
+                      onCheckedChange={(resolved) =>
+                        setCommentFilter((value) => ({ ...value, resolved }))
+                      }
+                    >
+                      Resolved or dismissed
+                    </MenuCheckboxItem>
+                  </MenuGroup>
+                )}
               </MenuPopup>
             </Menu>
             <Button
@@ -864,27 +1068,101 @@ export function PullRequestSummaryTab({
                 {detail.comments.length} are here; open it on the host to read the rest.
               </p>
             ) : null}
-            {detail.comments.length === 0 ? (
+            {detail.comments.length === 0 && !azureDiscussions?.counts.all ? (
               <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
-            ) : filteredComments.length === 0 ? (
+            ) : items.length === 0 ? (
               <p className="py-2 text-xs text-muted-foreground">
-                {filteredOutCount === 1
-                  ? "The only comment is hidden by the filter."
-                  : `All ${filteredOutCount} comments are hidden by the filter.`}
+                {azureDiscussions
+                  ? "No activity matches this filter."
+                  : filteredOutCount === 1
+                    ? "The only comment is hidden by the filter."
+                    : `All ${filteredOutCount} comments are hidden by the filter.`}
               </p>
             ) : (
               <div className="space-y-3">
-                {commentOrder === "oldest" ? showOldestCommentsButton : null}
-                {visibleComments.map(renderComment)}
-                {commentOrder === "newest" ? showOldestCommentsButton : null}
-                {shownComments > COMMENT_PAGE ? (
+                {commentOrder === "oldest" ? showOlderDiscussionsButton : null}
+                {visibleDiscussions.map((item) => {
+                  if (item.kind === "event")
+                    return (
+                      <div
+                        key={item.id}
+                        className="rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground"
+                      >
+                        <div className="mb-1 flex items-center gap-2">
+                          <PullRequestActorLabel actor={item.event.actor} />
+                          <time dateTime={item.at}>{formatRelativeTimeLabel(item.at)}</time>
+                        </div>
+                        <PullRequestMarkdown
+                          text={item.event.body}
+                          cwd={detail.workspaceRoot}
+                          environmentId={environmentId}
+                          threadRef={threadRef}
+                        />
+                      </div>
+                    );
+                  const discussion = item.discussion;
+                  const [original, ...answers] = discussion.comments;
+                  if (original === undefined) return null;
+                  return renderComment(
+                    original,
+                    false,
+                    <>
+                      {answers.length > 0 ? (
+                        <div className="border-t border-border/60 bg-muted/10 py-2">
+                          <p className="px-3 pb-2 text-xs font-medium text-muted-foreground">
+                            {answers.length} {answers.length === 1 ? "reply" : "replies"}
+                          </p>
+                          <div className="ml-5 divide-y divide-border/60 border-l-2 border-border">
+                            {answers.map((answer) => renderComment(answer, true))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {discussion.threadId &&
+                      discussion.comments[0]?.threadStatus &&
+                      detail.capabilities.review.threadStatuses &&
+                      detail.viewerPermissions.resolve ? (
+                        <div className="border-t border-border/60 px-3 py-2">
+                          <PullRequestDiscussionStatus
+                            key={discussion.threadId}
+                            environmentId={environmentId}
+                            reference={reference}
+                            threadId={discussion.threadId}
+                            status={discussion.comments[0].threadStatus}
+                            statuses={detail.capabilities.review.threadStatuses}
+                          />
+                        </div>
+                      ) : null}
+                      {discussion.threadId !== undefined &&
+                      detail.capabilities.review.reply &&
+                      detail.viewerPermissions.comment ? (
+                        <div className="border-t border-border/60 px-3 py-2">
+                          <PullRequestDiscussionReplyForm
+                            environmentId={environmentId}
+                            reference={reference}
+                            threadId={discussion.threadId}
+                            canResolve={
+                              detail.capabilities.review.resolve &&
+                              detail.viewerPermissions.resolve &&
+                              (original.threadStatus === undefined ||
+                                original.threadStatus === "active" ||
+                                original.threadStatus === "pending")
+                            }
+                            onReplied={onRefresh}
+                          />
+                        </div>
+                      ) : null}
+                    </>,
+                  );
+                })}
+                {commentOrder === "newest" ? showOlderDiscussionsButton : null}
+                {shownDiscussions > COMMENT_PAGE ? (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="w-full"
                     onClick={() => setShown({ url: detail.url, count: COMMENT_PAGE })}
                   >
-                    Show only {COMMENT_PAGE} recent comments
+                    Show only {COMMENT_PAGE} recent discussions
                   </Button>
                 ) : null}
               </div>

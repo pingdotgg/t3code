@@ -1,3 +1,4 @@
+import { pullRequestReviewerState } from "@t3tools/client-runtime/pull-request-reviewer-state";
 import type {
   PullRequestActivity,
   PullRequestCheck,
@@ -76,11 +77,12 @@ export function checkStatus(check: PullRequestCheck) {
 }
 
 export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) {
+  const total = pr.checks.filter((check) => check.status !== "skipped").length;
   const failed = pr.checks.filter((check) => check.status === "failure").length;
   const required = pr.checks.filter((check) => check.status === "action-required").length;
   const pending = pr.checks.filter((check) => check.status === "pending").length;
   const passed = pr.checks.filter((check) => check.status === "success").length;
-  const count = pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined;
+  const count = total ? `${passed} of ${total}` : undefined;
   if (failed)
     return {
       label: `${failed} ${failed === 1 ? "check" : "checks"} failing`,
@@ -100,22 +102,27 @@ export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) 
   if (pending)
     return {
       label: `${pending} pending`,
-      title: "Checks running",
+      title: "Checks pending",
       count: `${pending} pending`,
       icon: "clock",
       tint: "accent-warning-foreground",
     } as const;
   if (passed)
     return {
-      label: `${passed} of ${pr.checks.length} passed`,
-      title: passed === pr.checks.length ? "All checks passed" : "Checks completed",
+      label: `${passed} of ${total} passed`,
+      title: passed === total ? "All checks passed" : "Checks completed",
       count,
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
+  const title = !pr.checks.length
+    ? "No checks reported"
+    : total === 0
+      ? "All checks skipped"
+      : "Checks completed";
   return {
-    label: pr.checks.length ? `${pr.checks.length} completed` : "No checks reported",
-    title: pr.checks.length ? "Checks completed" : "No checks reported",
+    label: total ? `${total} completed` : title,
+    title,
     count,
     icon: "minus",
     tint: "accent-icon-muted",
@@ -131,7 +138,7 @@ export function pullRequestReviewSummary(
   for (const review of activity?.comments ?? []) {
     if (review.kind !== "review" || !review.reviewState) continue;
     const state = review.reviewState.toUpperCase().replaceAll("-", "_");
-    const key = review.author?.login ?? review.id;
+    const key = review.author?.login.toLowerCase() ?? review.id;
     if (state === "COMMENTED") {
       const previous = comments.get(key);
       if (!previous || Date.parse(review.createdAt) >= Date.parse(previous.createdAt))
@@ -143,9 +150,34 @@ export function pullRequestReviewSummary(
     if (!previous || Date.parse(review.createdAt) >= Date.parse(previous.createdAt))
       latest.set(key, { ...review, reviewState: state });
   }
+  const current = new Map(
+    pr.reviewers
+      .filter((reviewer) => reviewer.reviewState !== undefined)
+      .map((reviewer) => [reviewer.login.toLowerCase(), reviewer]),
+  );
   const reviews = [
-    ...[...latest.values()].filter((review) => review.reviewState !== "DISMISSED"),
-    ...[...comments.entries()].filter(([key]) => !latest.has(key)).map(([, review]) => review),
+    ...[...latest.values()].filter(
+      (review) =>
+        review.reviewState !== "DISMISSED" &&
+        !current.has(review.author?.login.toLowerCase() ?? review.id),
+    ),
+    ...[...comments.entries()]
+      .filter(([key]) => !latest.has(key) && !current.has(key))
+      .map(([, review]) => review),
+    ...[...current.values()].flatMap((reviewer) => {
+      const state = pullRequestReviewerState(reviewer.reviewState);
+      return !state?.outcome
+        ? []
+        : [
+            {
+              id: `reviewer:${reviewer.login}`,
+              author: reviewer,
+              createdAt: null,
+              reviewState: state.outcome === "approved" ? "APPROVED" : "CHANGES_REQUESTED",
+              label: state.label,
+            },
+          ];
+    }),
   ];
   const requested = reviews.filter((review) => review.reviewState === "CHANGES_REQUESTED");
   const newestCommit = Math.max(
@@ -153,7 +185,9 @@ export function pullRequestReviewSummary(
     ...(activity?.commits.map((commit) => Date.parse(commit.committedDate)) ?? []),
   );
   const approved = reviews.filter(
-    (review) => review.reviewState === "APPROVED" && Date.parse(review.createdAt) >= newestCommit,
+    (review) =>
+      review.reviewState === "APPROVED" &&
+      (review.createdAt === null || Date.parse(review.createdAt) >= newestCommit),
   );
   if (requested.length)
     return {

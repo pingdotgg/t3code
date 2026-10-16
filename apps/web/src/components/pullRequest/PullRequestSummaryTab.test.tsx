@@ -6,13 +6,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: {} }));
+vi.mock("./PullRequestCommentActions", () => ({ PullRequestCommentActions: () => null }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
-vi.mock("./PullRequestMarkdown", () => ({
+vi.mock("./PullRequestMarkdown", async () => ({
   PullRequestMarkdown: ({ text }: { text: string }) => <p>{text}</p>,
+  PullRequestMarkdownContext: (await import("react")).createContext(null),
 }));
 vi.mock("../ui/menu", () => ({
   Menu: "div",
   MenuCheckboxItem: "div",
+  MenuRadioGroup: "div",
+  MenuRadioItem: "div",
   MenuGroup: "div",
   MenuGroupLabel: "div",
   MenuPopup: "div",
@@ -20,7 +24,12 @@ vi.mock("../ui/menu", () => ({
 }));
 vi.mock("../ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render, children }: { render?: ReactNode; children?: ReactNode }) => (
+    <>
+      {render}
+      {children}
+    </>
+  ),
   TooltipPopup: () => null,
 }));
 
@@ -113,6 +122,101 @@ function render(value = detail) {
   );
 }
 
+function renderedText() {
+  return renderer.root
+    .findAll((node) => typeof node.type === "string")
+    .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+    .join(" ");
+}
+
+it("shows a current Azure approval without review comments and removes it after reset", () => {
+  const azure = {
+    ...detail,
+    provider: SourceControlProviderKind.make("azure-devops"),
+    reviewers: [
+      { login: "reviewer", name: "Reviewer", avatarUrl: null, reviewState: "approved" as const },
+    ],
+  };
+  act(() => {
+    renderer = create(render(azure));
+  });
+  expect(renderedText()).toContain("Approved");
+  act(() => {
+    renderer.update(
+      render({ ...azure, reviewers: [{ ...azure.reviewers[0]!, reviewState: "none" }] }),
+    );
+  });
+  expect(renderedText()).not.toContain("Approved");
+});
+
+it("switches Azure discussion filters without losing the parent of a matching reply", () => {
+  const base = {
+    kind: "issue-comment" as const,
+    path: null,
+    url: null,
+    reviewState: null,
+    createdAt: "2026-09-01T00:00:00Z",
+  };
+  const azure: PullRequestDetailView = {
+    ...detail,
+    provider: SourceControlProviderKind.make("azure-devops"),
+    commentCount: 3,
+    comments: [
+      {
+        ...base,
+        id: "root",
+        threadId: "a",
+        threadStatus: "active",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        body: "Original question",
+      },
+      {
+        ...base,
+        id: "reply",
+        threadId: "a",
+        replyToCommentId: "root",
+        threadStatus: "active",
+        author: detail.author,
+        body: "My answer",
+      },
+      {
+        ...base,
+        id: "resolved",
+        threadId: "r",
+        threadStatus: "fixed",
+        author: detail.author,
+        body: "Finished question",
+      },
+    ],
+    events: [
+      { id: "event", actor: detail.author, createdAt: base.createdAt, body: "Pushed an update" },
+    ],
+  };
+  act(() => {
+    renderer = create(render(azure));
+  });
+  const select = (value: string) =>
+    act(() =>
+      renderer.root
+        .findAllByType("div")
+        .find((node) => typeof node.props.onValueChange === "function")!
+        .props.onValueChange(value),
+    );
+  expect(renderedText()).toContain("Pushed an update");
+  select("comments");
+  expect(renderedText()).not.toContain("Pushed an update");
+  select("active");
+  expect(renderedText()).toContain("Original question");
+  expect(renderedText()).toContain("My answer");
+  expect(renderedText()).not.toContain("Finished question");
+  select("resolved");
+  expect(renderedText()).toContain("Finished question");
+  expect(renderedText()).not.toContain("Original question");
+  select("mine");
+  expect(renderedText()).toContain("Original question");
+  expect(renderedText()).toContain("My answer");
+});
+
 function heading(title: string) {
   const section = renderer.root
     .findAllByType("section")
@@ -180,6 +284,61 @@ function filterItem(label: string) {
     (node) => typeof node.props.onCheckedChange === "function" && node.children.includes(label),
   );
 }
+
+it("keeps an Azure discussion in one card with the original before its replies", () => {
+  const original = {
+    id: "17:1",
+    kind: "issue-comment" as const,
+    author: { login: "reviewer", name: "Reviewer", avatarUrl: null },
+    body: "Could you cover the empty state?",
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  const value: PullRequestDetailView = {
+    ...detail,
+    provider: SourceControlProviderKind.make("azure-devops"),
+    comments: [
+      original,
+      {
+        ...original,
+        id: "17:2",
+        replyToCommentId: "17:1",
+        author: detail.author,
+        body: "Added coverage.",
+        createdAt: "2026-09-01T00:01:00Z",
+      },
+    ],
+    commentCount: 2,
+  };
+  act(() => {
+    renderer = create(render(value));
+  });
+  expect(renderer.root.findAllByType("article")).toHaveLength(1);
+  expect(texts()).not.toContain("Reply to Reviewer");
+  expect(texts()).toContain("Could you cover the empty state?");
+  expect(texts()).toContain("Added coverage.");
+  expect(texts().indexOf("Could you cover the empty state?")).toBeLessThan(
+    texts().indexOf("Added coverage."),
+  );
+
+  act(() =>
+    renderer.root.findByProps({ "aria-label": "Show oldest comments first" }).props.onClick(),
+  );
+  expect(renderer.root.findAllByType("article")).toHaveLength(1);
+  expect(texts().indexOf("Could you cover the empty state?")).toBeLessThan(
+    texts().indexOf("Added coverage."),
+  );
+
+  act(() =>
+    renderer.update(
+      render({ ...value, comments: value.comments.slice(1), commentsTruncated: true }),
+    ),
+  );
+  expect(texts()).toContain("Reply to earlier comment");
+  expect(texts()).toContain("Original comment isn’t loaded.");
+});
 
 it("hides bot and resolved comments until the filter shows them, and remembers the choice", () => {
   const comment = (index: number, login: string, body: string, isBot = false) => ({

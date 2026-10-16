@@ -15,6 +15,10 @@ const buttonVariants = cva(
       variant: "default",
     },
     variants: {
+      groupPosition: {
+        start: "rounded-r-none before:rounded-r-none",
+        end: "-ml-px rounded-l-none before:rounded-l-none",
+      },
       size: {
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
@@ -76,15 +80,16 @@ type ButtonSize = NonNullable<VariantProps<typeof buttonVariants>["size"]>;
 interface ButtonProps extends useRender.ComponentProps<"button"> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  groupPosition?: VariantProps<typeof buttonVariants>["groupPosition"];
 }
 
-function Button({ className, variant, size, render, ...props }: ButtonProps) {
+function Button({ className, variant, size, groupPosition, render, ...props }: ButtonProps) {
   const typeValue: React.ButtonHTMLAttributes<HTMLButtonElement>["type"] = render
     ? undefined
     : "button";
 
   const defaultProps = {
-    className: cn(buttonVariants({ className, size, variant })),
+    className: cn(buttonVariants({ className, size, variant, groupPosition })),
     "data-slot": "button",
     type: typeValue,
   };

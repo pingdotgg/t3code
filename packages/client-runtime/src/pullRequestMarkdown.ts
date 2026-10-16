@@ -1,3 +1,13 @@
+export function reusePullRequestIdentities(
+  previous: Readonly<Record<string, string>>,
+  next: Readonly<Record<string, string>>,
+) {
+  return Object.keys(previous).length === Object.keys(next).length &&
+    Object.entries(next).every(([id, name]) => previous[id] === name)
+    ? previous
+    : next;
+}
+
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
   | { readonly id: string; readonly kind: "markdown"; readonly text: string }

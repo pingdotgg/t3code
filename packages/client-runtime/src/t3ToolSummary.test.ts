@@ -28,6 +28,19 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Created 1 thread");
   });
 
+  it("summarizes pull request host reads and actions without counting failed actions as applied", () => {
+    expect(summarizeT3ToolCalls("read-pr-host-details", [completed({ number: 1 })])).toEqual({
+      label: "Read pull request host details 1 time",
+      failedCount: 0,
+    });
+    expect(
+      summarizeT3ToolCalls("run-pr-host-action", [
+        completed({ number: 1, action: { type: "vote", vote: "approve" } }),
+        { input: { number: 1 }, output: { isError: true }, outcome: "completed" },
+      ]),
+    ).toEqual({ label: "Applied 1 pull request action", failedCount: 1 });
+  });
+
   it("reports review guides by outcome, and a call where none started as a failure", () => {
     const guides = (...outcomes: ReadonlyArray<string>) => ({
       guides: outcomes.map((outcome, index) => ({ number: index + 1, outcome })),

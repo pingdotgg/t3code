@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./pull-request-comment-replies": {
+      "types": "./src/pullRequestCommentReplies.ts",
+      "default": "./src/pullRequestCommentReplies.ts"
+    },
+    "./pull-request-update-comparison": {
+      "types": "./src/pullRequestUpdateComparison.ts",
+      "default": "./src/pullRequestUpdateComparison.ts"
+    },
+    "./azure-devops-pull-request-actions": {
+      "types": "./src/azureDevOpsPullRequestActions.ts",
+      "default": "./src/azureDevOpsPullRequestActions.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
@@ -422,6 +434,14 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./pull-request-reviewer-state": {
+      "types": "./src/pullRequestReviewerState.ts",
+      "default": "./src/pullRequestReviewerState.ts"
+    },
+    "./azure-devops-discussion-filter": {
+      "types": "./src/azureDevOpsDiscussionFilter.ts",
+      "default": "./src/azureDevOpsDiscussionFilter.ts"
     }
   },
   "scripts": {

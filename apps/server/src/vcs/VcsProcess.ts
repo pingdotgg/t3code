@@ -66,6 +66,7 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
 
   if (
     normalized.includes("authentication failed") ||
+    (command === "az" && normalized.includes("requires user authentication")) ||
     normalized.includes("not logged in") ||
     normalized.includes("gh auth login") ||
     normalized.includes("glab auth login") ||

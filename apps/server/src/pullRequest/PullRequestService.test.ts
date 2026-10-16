@@ -4,7 +4,7 @@ import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -20,6 +20,7 @@ import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
   ProjectId,
+  PullRequestHostDetails,
   PullRequestReviewCapabilities,
   PullRequestReviewerCapabilities,
 } from "@t3tools/contracts";
@@ -130,6 +131,22 @@ function hostedChangeRequest(body: string, additions = 1) {
     },
   };
 }
+
+const azureHostDetails: PullRequestHostDetails = {
+  provider: "azure-devops",
+  viewerId: "101",
+  canDeclineReview: false,
+  canFlagReview: false,
+  following: false,
+  sourceBranchFavorite: false,
+  reviewers: [],
+  policies: [],
+  workItems: [],
+  attachments: [],
+  branches: [],
+  mergePreviewUrl: null,
+  warnings: [],
+};
 
 it.effect("caches narrow previews and invalidates them after refresh or mutation", () =>
   Effect.gen(function* () {
@@ -2635,6 +2652,45 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
+it.effect.each(["web", "org/project/_git/web"])(
+  "refreshes Azure draft state after actions through the %s reference",
+  (repository) =>
+    Effect.gen(function* () {
+      let isDraft = true;
+      const kind = SourceControlProviderKind.make("azure-devops");
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "azure",
+            title: "web",
+            workspaceRoot: "/azure",
+            provider: kind,
+            host: "dev.azure.com",
+            repository: "org/project/_git/web",
+          }),
+        ],
+        providers: [
+          fakeProvider(kind, {
+            getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("body"), isDraft }),
+            runAction: ({ action }) =>
+              Effect.sync(() => {
+                isDraft = action === "draft";
+              }),
+          }),
+        ],
+      });
+      const ref = { projectId: "azure" as ProjectId, host: "dev.azure.com", repository, number: 1 };
+      expect((yield* service.detail(ref)).isDraft).toBe(true);
+      expect((yield* service.summary(ref)).isDraft).toBe(true);
+      yield* service.runAction({ ...ref, action: "ready" });
+      expect((yield* service.detail(ref)).isDraft).toBe(false);
+      expect((yield* service.summary(ref)).isDraft).toBe(false);
+      yield* service.runAction({ ...ref, action: "draft" });
+      expect((yield* service.detail(ref)).isDraft).toBe(true);
+      expect((yield* service.summary(ref)).isDraft).toBe(true);
+    }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
@@ -5049,6 +5105,7 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
       "diff",
       "preview",
       "filesViewed",
+      "hostDetails",
     ] as const) {
       let credential = "broad";
       let calls = 0;
@@ -5068,7 +5125,9 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
             capabilities: {
               ...fakeProvider(SourceControlProviderKind.make("github")).capabilities,
               viewedFiles: "host",
+              hostActions: true,
             },
+            getHostDetails: () => read().pipe(Effect.as(azureHostDetails)),
             getFilesViewed: () =>
               read().pipe(
                 Effect.as({
@@ -7713,4 +7772,426 @@ it.effect.each([
       });
       assert.deepStrictEqual(calls, [expected]);
     }),
+);
+
+it.effect("gates comment deletion by host capability and retains native comment identity", () =>
+  Effect.gen(function* () {
+    const removed: string[] = [];
+    const provider = fakeProvider(SourceControlProviderKind.make("github"), {
+      deleteComment: (input) =>
+        Effect.sync(() => {
+          removed.push(input.commentId);
+        }),
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      commentId: "7734:3",
+      kind: "issue-comment" as const,
+    };
+    expect((yield* service.deleteComment(input).pipe(Effect.flip)).message).toContain(
+      "cannot delete",
+    );
+    expect(removed).toEqual([]);
+    const enabled = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        {
+          ...provider,
+          capabilities: {
+            ...provider.capabilities,
+            edit: { changeRequest: true, comment: true, deleteComment: true },
+          },
+        },
+      ],
+    });
+    yield* enabled.deleteComment(input);
+    expect(removed).toEqual(["7734:3"]);
+  }),
+);
+
+it.effect(
+  "rejects unsupported or contradictory discussion states before reaching the provider",
+  () =>
+    Effect.gen(function* () {
+      const statuses: unknown[] = [];
+      const provider = fakeProvider(SourceControlProviderKind.make("github"), {
+        setThreadResolution: (input) =>
+          Effect.sync(() => {
+            statuses.push(input.status);
+          }),
+      });
+      const make = (enabled: boolean) =>
+        makeService({
+          projects: [
+            project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+          ],
+          providers: [
+            {
+              ...provider,
+              capabilities: {
+                ...provider.capabilities,
+                review: {
+                  ...FULL_REVIEW,
+                  ...(enabled ? { threadStatuses: ["active", "fixed", "pending"] as const } : {}),
+                },
+              },
+            },
+          ],
+        });
+      const input = {
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        threadId: "7734",
+        resolved: true,
+        status: "fixed" as const,
+      };
+      expect(
+        (yield* (yield* make(false)).setThreadResolution(input).pipe(Effect.flip)).message,
+      ).toContain("discussion status");
+      const service = yield* make(true);
+      expect(
+        (yield* service.setThreadResolution({ ...input, resolved: false }).pipe(Effect.flip))
+          .message,
+      ).toContain("discussion status");
+      yield* service.setThreadResolution(input);
+      yield* service.setThreadResolution({ ...input, resolved: false, status: "pending" });
+      expect(statuses).toEqual(["fixed", "pending"]);
+    }),
+);
+
+it.effect("pauses host detail reads after a rate limit while allowing host actions", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    let actions = 0;
+    const kind = SourceControlProviderKind.make("github");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider(kind, {
+          capabilities: { ...fakeProvider(kind).capabilities, hostActions: true },
+          getHostDetails: () =>
+            Effect.suspend(() => {
+              reads++;
+              return Effect.fail(
+                new PullRequestProviderError({
+                  provider: kind,
+                  operation: "getHostDetails",
+                  reason: "rate-limited",
+                  detail: "API rate limit exceeded.",
+                }),
+              );
+            }),
+          runHostAction: () =>
+            Effect.sync(() => {
+              actions++;
+              return { message: "Updated.", url: null };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.hostDetails(ref).pipe(Effect.flip);
+    const paused = yield* service.hostDetails({ ...ref, number: 2 }).pipe(Effect.flip);
+    expect(paused.message).toContain("paused");
+    expect(reads).toBe(1);
+    yield* service.runHostAction({ ...ref, action: { type: "follow", enabled: true } });
+    expect(actions).toBe(1);
+  }),
+);
+
+it.effect("shares host detail reads and refreshes only the affected PR or project", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    let following = false;
+    const providerRefreshes: unknown[] = [];
+    const kind = SourceControlProviderKind.make("github");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider(kind, {
+          capabilities: { ...fakeProvider(kind).capabilities, hostActions: true },
+          invalidate: (input) =>
+            Effect.sync(() => {
+              providerRefreshes.push(input);
+            }),
+          getHostDetails: () =>
+            Effect.sync(() => {
+              reads++;
+              return { ...azureHostDetails, following };
+            }),
+          runHostAction: () =>
+            Effect.sync(() => {
+              following = true;
+              return { message: "Following", url: null };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* Effect.all([service.hostDetails(ref), service.hostDetails(ref)], { concurrency: 2 });
+    expect(reads).toBe(1);
+    yield* service.refreshAfterTurn("another-project" as ProjectId);
+    yield* service.hostDetails(ref);
+    expect(reads).toBe(1);
+    yield* service.refreshAfterTurn(ref.projectId);
+    yield* Effect.all([service.hostDetails(ref), service.hostDetails(ref)], { concurrency: 2 });
+    expect(reads).toBe(2);
+    yield* service.runHostAction({ ...ref, action: { type: "follow", enabled: true } });
+    expect((yield* service.hostDetails(ref))?.following).toBe(true);
+    expect(reads).toBe(3);
+    yield* service.invalidate({ reference: ref, filesViewedOnly: true });
+    yield* service.invalidate({ reference: ref });
+    expect(providerRefreshes).toEqual([]);
+    yield* service.invalidate({ reference: ref }, { refreshProvider: true });
+    expect(providerRefreshes).toEqual([
+      { cwd: "/w", host: "github.com", repository: "acme/web", number: 1 },
+    ]);
+    yield* service.hostDetails(ref);
+    expect(reads).toBe(4);
+  }),
+);
+
+it.effect("preserves native action results and invalidates the changed PR's cached reads", () =>
+  Effect.gen(function* () {
+    let revision = 0;
+    let reads = 0;
+    const kind = SourceControlProviderKind.make("github");
+    const provider = fakeProvider(kind, {
+      capabilities: { ...fakeProvider(kind).capabilities, hostActions: true },
+      getChangeRequestPreview: () =>
+        Effect.sync(() => {
+          reads++;
+          return { ...changeRequest(1, "2026-07-02T00:00:00Z"), title: `Revision ${revision}` };
+        }),
+      runHostAction: () =>
+        Effect.sync(() => {
+          revision++;
+          return { message: "Branch created.", url: "https://example.com/follow-up" };
+        }),
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [provider],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.preview(ref);
+    yield* service.preview(ref);
+    expect(reads).toBe(1);
+    const stateChanges = yield* service.subscribeStateChanges;
+    expect(
+      yield* service.runHostAction({ ...ref, action: { type: "retarget", branch: "test-base" } }),
+    ).toEqual({ message: "Branch created.", url: "https://example.com/follow-up" });
+    expect(Option.getOrThrow(yield* Stream.runHead(stateChanges))).toEqual({
+      host: "github.com",
+      repository: "acme/web",
+      number: 1,
+    });
+    expect((yield* service.preview(ref)).title).toBe("Revision 1");
+    expect(reads).toBe(2);
+    const denied = yield* service
+      .runHostAction({
+        ...ref,
+        action: {
+          type: "complete",
+          automatic: false,
+          strategy: "squash",
+          deleteSourceBranch: false,
+          transitionWorkItems: false,
+          message: "",
+          bypassPolicy: true,
+          bypassReason: " ",
+          waitForOptionalPolicies: false,
+        },
+      })
+      .pipe(Effect.flip);
+    expect(denied.message).toContain("reason");
+    expect(revision).toBe(1);
+  }),
+);
+
+it.effect(
+  "keeps a successful native action result if its project disappears during the write",
+  () =>
+    Effect.gen(function* () {
+      const projects = [
+        project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+      ];
+      const kind = SourceControlProviderKind.make("github");
+      const service = yield* makeService({
+        projects,
+        providers: [
+          fakeProvider(kind, {
+            capabilities: { ...fakeProvider(kind).capabilities, hostActions: true },
+            runHostAction: () =>
+              Effect.sync(() => {
+                projects.splice(0);
+                return { message: "Updated.", url: null };
+              }),
+          }),
+        ],
+      });
+      expect(
+        yield* service.runHostAction({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          action: { type: "retarget", branch: "base" },
+        }),
+      ).toEqual({ message: "Updated.", url: null });
+    }),
+);
+
+it.effect("announces Azure reads, reports, and native actions with the linked PR identity", () =>
+  Effect.gen(function* () {
+    const kind = SourceControlProviderKind.make("azure-devops");
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "azure",
+          title: "web",
+          workspaceRoot: "/azure",
+          provider: kind,
+          host: "dev.azure.com",
+          repository: "org/project/_git/web",
+        }),
+      ],
+      providers: [
+        fakeProvider(kind, {
+          capabilities: { ...fakeProvider(kind).capabilities, hostActions: true },
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("body")),
+          runHostAction: () => Effect.succeed({ message: "Updated.", url: null }),
+        }),
+      ],
+    });
+    const ref = { projectId: "azure" as ProjectId, repository: "web", number: 1 };
+    const announced = yield* (yield* service.subscribeStateChanges).pipe(
+      Stream.take(3),
+      Stream.runCollect,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    yield* service.detail(ref);
+    yield* service.reportState({ reference: ref, state: "closed" });
+    yield* service.runHostAction({ ...ref, action: { type: "retarget", branch: "base" } });
+    expect(yield* Fiber.join(announced)).toEqual(
+      Array.from({ length: 3 }, () => ({
+        host: "dev.azure.com",
+        repository: "org/project/_git/web",
+        number: 1,
+      })),
+    );
+  }),
+);
+
+it.effect("refuses native host actions when the provider did not advertise them", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          runHostAction: () => Effect.die("must not run"),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    expect(yield* service.hostDetails(ref)).toBeNull();
+    expect(
+      (yield* service
+        .runHostAction({ ...ref, action: { type: "restart-merge" } })
+        .pipe(Effect.flip)).message,
+    ).toContain("does not offer");
+  }),
+);
+
+it.effect("accepts an Azure reactivation even though its close-date fallback moves backwards", () =>
+  Effect.gen(function* () {
+    let reopened = false;
+    const kind = SourceControlProviderKind.make("azure-devops");
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "org/project/_git/web",
+          provider: kind,
+          host: "dev.azure.com",
+        }),
+      ],
+      providers: [
+        fakeProvider(kind, {
+          getChangeRequest: () =>
+            Effect.succeed({
+              ...hostedChangeRequest("Test"),
+              state: reopened ? "open" : "closed",
+              updatedAt: reopened ? "2026-07-01T00:00:00Z" : "2026-07-03T00:00:00Z",
+            }),
+          runAction: () =>
+            Effect.sync(() => {
+              reopened = true;
+            }),
+        }),
+      ],
+    });
+    const ref = {
+      projectId: "p1" as ProjectId,
+      host: "dev.azure.com",
+      repository: "web",
+      number: 1,
+    };
+    expect((yield* service.detail(ref)).state).toBe("closed");
+    yield* TestClock.adjust("1 second");
+    yield* service.runAction({ ...ref, action: "reopen" });
+    expect((yield* service.detail(ref)).state).toBe("open");
+    expect((yield* service.summary(ref)).state).toBe("open");
+  }),
+);
+
+it.effect("refreshes readers after a denied host mutation changes known permissions", () =>
+  Effect.gen(function* () {
+    let denied = false;
+    const kind = SourceControlProviderKind.make("github");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider(kind, {
+          capabilities: { ...fakeProvider(kind).capabilities, hostActions: true },
+          getChangeRequestPreview: () =>
+            Effect.succeed({
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              title: denied ? "Denied" : "Allowed",
+            }),
+          runHostAction: () =>
+            Effect.suspend(() => {
+              denied = true;
+              return Effect.fail(
+                new PullRequestProviderError({
+                  provider: kind,
+                  operation: "follow",
+                  reason: "unauthenticated",
+                  detail: "Your token does not allow this action.",
+                }),
+              );
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    expect((yield* service.preview(ref)).title).toBe("Allowed");
+    yield* service.refreshAfterTurn(ref.projectId);
+    const revision = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
+    yield* service
+      .runHostAction({ ...ref, action: { type: "follow", enabled: true } })
+      .pipe(Effect.flip);
+    expect(Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes))).toBeGreaterThan(
+      revision,
+    );
+    expect((yield* service.preview(ref)).title).toBe("Denied");
+  }),
 );

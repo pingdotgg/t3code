@@ -88,6 +88,21 @@ export const PullRequestActor = Schema.Struct({
 });
 export type PullRequestActor = typeof PullRequestActor.Type;
 
+export const PullRequestReviewer = Schema.Struct({
+  ...PullRequestActor.fields,
+  // A host's current vote overrides historical reviews, including after a reset.
+  reviewState: Schema.optional(
+    Schema.Literals([
+      "none",
+      "approved",
+      "approved-with-suggestions",
+      "waiting-for-author",
+      "rejected",
+    ]),
+  ),
+});
+export type PullRequestReviewer = typeof PullRequestReviewer.Type;
+
 export const PullRequestLabel = Schema.Struct({
   name: TrimmedNonEmptyString,
   color: Schema.NullOr(Schema.String),
@@ -145,8 +160,23 @@ export const PullRequestCommentKind = Schema.Literals([
 ]);
 export type PullRequestCommentKind = typeof PullRequestCommentKind.Type;
 
+export const PullRequestThreadStatus = Schema.Literals([
+  "active",
+  "pending",
+  "fixed",
+  "wontFix",
+  "closed",
+  "byDesign",
+]);
+export type PullRequestThreadStatus = typeof PullRequestThreadStatus.Type;
+
 export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
+  /** Parent id in this same conversation; optional for older servers and unthreaded hosts. */
+  replyToCommentId: Schema.optional(TrimmedNonEmptyString),
+  /** Host discussion identity, including conversations that are not attached to a diff. */
+  threadId: Schema.optional(TrimmedNonEmptyString),
+  threadStatus: Schema.optional(PullRequestThreadStatus),
   kind: PullRequestCommentKind,
   author: Schema.NullOr(PullRequestActor),
   body: Schema.String,
@@ -182,6 +212,11 @@ export const PullRequestReviewThread = Schema.Struct({
   id: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
   line: Schema.NullOr(PositiveInt),
+  endLine: Schema.optional(Schema.NullOr(PositiveInt)),
+  originalPath: Schema.optional(TrimmedNonEmptyString),
+  originalLine: Schema.optional(Schema.NullOr(PositiveInt)),
+  originalEndLine: Schema.optional(Schema.NullOr(PositiveInt)),
+  originalUpdate: Schema.optional(PositiveInt),
   side: PullRequestDiffSide,
   isResolved: Schema.Boolean,
   isOutdated: Schema.Boolean,
@@ -196,6 +231,9 @@ export const PullRequestReviewThread = Schema.Struct({
 });
 export type PullRequestReviewThread = typeof PullRequestReviewThread.Type;
 
+/**
+ * Whether a reviewer is a person or a group the host addresses as one.
+ */
 export const PullRequestReviewerKind = Schema.Literals(["user", "team"]);
 export type PullRequestReviewerKind = typeof PullRequestReviewerKind.Type;
 
@@ -240,13 +278,17 @@ export const PullRequestReviewCapabilities = Schema.Struct({
   inlineComment: Schema.Boolean,
   reply: Schema.Boolean,
   resolve: Schema.Boolean,
+  threadStatuses: Schema.optional(Schema.Array(PullRequestThreadStatus)),
+  /** The verdicts a submitted review can carry. Empty means reviews cannot be submitted. */
   verdicts: Schema.Array(PullRequestReviewVerdict),
 });
 export type PullRequestReviewCapabilities = typeof PullRequestReviewCapabilities.Type;
 
+/** What a host lets be changed after it has been posted. */
 export const PullRequestEditCapabilities = Schema.Struct({
   changeRequest: Schema.Boolean,
   comment: Schema.Boolean,
+  deleteComment: Schema.optional(Schema.Boolean),
 });
 export type PullRequestEditCapabilities = typeof PullRequestEditCapabilities.Type;
 
@@ -272,6 +314,13 @@ export const PullRequestCapabilities = Schema.Struct({
   updateMethods: Schema.optional(Schema.Array(PullRequestUpdateMethod)),
   search: Schema.Boolean,
   reactions: Schema.optional(Schema.Boolean),
+  /** The host supports likes on comments, without general emoji or PR reactions. */
+  commentLikes: Schema.optional(Schema.Boolean),
+  hostActions: Schema.optional(Schema.Boolean),
+  /**
+   * Where the reader's own marks are kept, or absent where they are kept nowhere and the
+   * checkbox is not offered at all. Optional for the same reason as `reactions`.
+   */
   viewedFiles: Schema.optional(PullRequestViewedFilesStore),
   review: PullRequestReviewCapabilities,
   reviewers: PullRequestReviewerCapabilities,
@@ -286,6 +335,8 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * A permission the host reports nothing about is granted rather than withheld.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  deniedActions: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /** May request remote stack rebases, including when this layer is already current. */
   stackRebase: Schema.optional(Schema.Boolean),
   actions: Schema.Array(PullRequestAction),
   comment: Schema.Boolean,
@@ -567,7 +618,7 @@ export const PullRequestDetail = Schema.Struct({
   observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
   closedAt: Schema.NullOr(IsoDateTime),
-  reviewers: Schema.Array(PullRequestActor),
+  reviewers: Schema.Array(PullRequestReviewer),
   labels: Schema.Array(PullRequestLabel),
   checks: Schema.Array(PullRequestCheck),
   mergeCapabilities: PullRequestMergeCapabilities,
@@ -591,9 +642,33 @@ export const PullRequestChecks = Schema.Struct({
 });
 export type PullRequestChecks = typeof PullRequestChecks.Type;
 
+export const PullRequestUpdate = Schema.Struct({
+  id: PositiveInt,
+  createdAt: Schema.NullOr(IsoDateTime),
+  author: Schema.NullOr(PullRequestActor),
+  description: Schema.String,
+});
+export type PullRequestUpdate = typeof PullRequestUpdate.Type;
+export const PullRequestActivityEvent = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  actor: Schema.NullOr(PullRequestActor),
+  body: Schema.String,
+});
+export type PullRequestActivityEvent = typeof PullRequestActivityEvent.Type;
+
+/**
+ * The slower, conversation-shaped half of a change request. It is read independently from the
+ * core detail so a host with a deeply paginated review history cannot hold the title, body,
+ * checks, and actions off screen. `author` and `reviewers` are optional enrichments: GitHub's
+ * conversation query carries avatars and completed reviewers that its basic detail does not.
+ */
 export const PullRequestActivity = Schema.Struct({
+  identities: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  events: Schema.optional(Schema.Array(PullRequestActivityEvent)),
+  updates: Schema.optional(Schema.Array(PullRequestUpdate)),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),
-  reviewers: Schema.optional(Schema.Array(PullRequestActor)),
+  reviewers: Schema.optional(Schema.Array(PullRequestReviewer)),
   comments: Schema.Array(PullRequestComment),
   commentCount: NonNegativeInt,
   commentsTruncated: Schema.Boolean,
@@ -608,7 +683,7 @@ export const PullRequestDetailView = Schema.Struct({
   ...PullRequestDetail.fields,
   ...PullRequestActivity.fields,
   author: Schema.NullOr(PullRequestActor),
-  reviewers: Schema.Array(PullRequestActor),
+  reviewers: Schema.Array(PullRequestReviewer),
 });
 export type PullRequestDetailView = typeof PullRequestDetailView.Type;
 
@@ -617,8 +692,19 @@ export type PullRequestDetailView = typeof PullRequestDetailView.Type;
  * at once — GitHub refuses outright past 300 files — and more than a viewer can lay out in one
  * go.
  */
+export const PullRequestIterationRange = Schema.Struct({
+  from: NonNegativeInt,
+  to: PositiveInt,
+}).check(Schema.makeFilter((range) => range.from < range.to));
+export type PullRequestIterationRange = typeof PullRequestIterationRange.Type;
+
 export const PullRequestDiffInput = Schema.Struct({
   ...PullRequestRef.fields,
+  iterationRange: Schema.optional(PullRequestIterationRange),
+  /**
+   * Where to carry on from. Absent asks for the first slice. Opaque to the reader: each host
+   * counts its files its own way, and only the provider that issued one knows what it means.
+   */
   cursor: Schema.optional(TrimmedNonEmptyString),
   commit: Schema.optional(TrimmedNonEmptyString),
 });
@@ -645,6 +731,8 @@ export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 
 export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
+  iterationRange: Schema.optional(PullRequestIterationRange),
+  /** One commit's own comparison; absent means the whole change request. */
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
   oldPath: TrimmedNonEmptyString,
@@ -675,6 +763,7 @@ export const PullRequestFileViewed = Schema.Struct({
 export type PullRequestFileViewed = typeof PullRequestFileViewed.Type;
 
 export const PullRequestFilesViewedResult = Schema.Struct({
+  disabledReason: Schema.optional(Schema.String),
   /** Only the files the host reported a state for. A file missing from this list is unviewed. */
   files: Schema.Array(PullRequestFileViewed),
   truncated: Schema.Boolean,
@@ -741,6 +830,14 @@ export const PullRequestCommentUpdateInput = Schema.Struct({
 });
 export type PullRequestCommentUpdateInput = typeof PullRequestCommentUpdateInput.Type;
 
+export const PullRequestCommentDeleteInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  commentId: TrimmedNonEmptyString,
+  kind: Schema.Literals(["issue-comment", "review-comment"]),
+});
+export type PullRequestCommentDeleteInput = typeof PullRequestCommentDeleteInput.Type;
+
+/** The coordinates of one line in a pull request diff. */
 export const PullRequestReviewPosition = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("added"),
@@ -767,6 +864,10 @@ export const PullRequestReviewCommentDraft = Schema.Struct({
    */
   oldPath: Schema.optional(TrimmedNonEmptyString),
   position: PullRequestReviewPosition,
+  /** First line of an Azure review range, ending at position. */
+  startLine: Schema.optional(PositiveInt),
+  /** Azure file discussion without a line anchor. */
+  fileLevel: Schema.optional(Schema.Boolean),
   body: CommentBody,
 });
 export type PullRequestReviewCommentDraft = typeof PullRequestReviewCommentDraft.Type;
@@ -803,6 +904,7 @@ export const PullRequestThreadResolutionInput = Schema.Struct({
   ...PullRequestRef.fields,
   threadId: TrimmedNonEmptyString,
   resolved: Schema.Boolean,
+  status: Schema.optional(PullRequestThreadStatus),
 });
 export type PullRequestThreadResolutionInput = typeof PullRequestThreadResolutionInput.Type;
 

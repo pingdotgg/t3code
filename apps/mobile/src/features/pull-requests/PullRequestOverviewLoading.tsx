@@ -36,7 +36,7 @@ export function PullRequestOverviewLoading({
               : summary.checksState === "failing"
                 ? "Checks failing"
                 : summary.checksState === "pending"
-                  ? "Checks running"
+                  ? "Checks pending"
                   : "Checks"
           }
           icon={

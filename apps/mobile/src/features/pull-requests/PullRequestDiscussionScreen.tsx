@@ -1,18 +1,32 @@
-import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { useAtomRefresh } from "@effect/atom-react";
+import * as Dialog from "../../components/ui/Dialog";
+import { PullRequestMentionInput as TextInput } from "./PullRequestMentionInput";
+import {
+  PullRequestPermissionButton,
+  PullRequestPermissionIconButton,
+} from "./PullRequestPermissionButton";
+import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { useAtomValue } from "@effect/atom-react";
+import { pullRequestSuggestion } from "@t3tools/shared/pullRequestSuggestion";
+import {
+  groupPullRequestComments,
+  pullRequestThreadStatusLabels as statusLabels,
+} from "@t3tools/client-runtime/pull-request-comment-replies";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { PullRequestThreadComment } from "@t3tools/contracts";
-import { useRef, useState } from "react";
-import { Platform, ScrollView, View } from "react-native";
+import type { PullRequestThreadComment, PullRequestThreadStatus } from "@t3tools/contracts";
+import { useMemo, useRef, useState } from "react";
+import { Linking, Platform, Pressable, ScrollView, View } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { Menu } from "../../components/ui/Menu";
 import { Button } from "../../components/ui/Button";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { GlassSurface } from "../../components/ui/GlassSurface";
+import { Toolbar } from "../../components/ui/Toolbar";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { relativeTime } from "../../lib/time";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -44,13 +58,33 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const permissions = usePullRequestPermissions(params, detail.data);
-  const refresh = useAtomRefresh(composerPullRequests.activity(target));
+  const nativeAllowed = useAtomValue(
+    composerPullRequests.runHostAction.permissionAtom(target.environmentId),
+  );
+  const nativeAction = useAtomCommand(composerPullRequests.runHostAction, { reportFailure: false });
   const reply = useAtomCommand(composerPullRequests.replyToThread, { reportFailure: false });
   const resolve = useAtomCommand(composerPullRequests.setThreadResolution, {
     reportFailure: false,
   });
+  const setReaction = useAtomCommand(composerPullRequests.setReaction, { reportFailure: false });
+  const updateComment = useAtomCommand(composerPullRequests.updateComment, {
+    reportFailure: false,
+  });
+  const deleteComment = useAtomCommand(composerPullRequests.deleteComment, {
+    reportFailure: false,
+  });
+  const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
   const loadMore = useAtomCommand(composerPullRequests.threadComments, { reportFailure: false });
   const thread = activity.data?.reviewThreads.find((thread) => thread.id === params.discussionId);
+  const discussion = useMemo(
+    () =>
+      thread === undefined && activity.data
+        ? groupPullRequestComments(activity.data).find(
+            (group) => group.threadId === params.discussionId,
+          )
+        : undefined,
+    [thread, activity.data, params.discussionId],
+  );
   const [body, setBody] = useState("");
   const [extra, setExtra] = useState<readonly PullRequestThreadComment[]>([]);
   const [cursor, setCursor] = useState<string | null | undefined>();
@@ -76,18 +110,27 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
       setBusy(false);
     }
   };
-  const post = () =>
+  const post = (resolveAfter = false) =>
     operation(async () => {
-      if (!permissions.canReply || !body.trim() || !thread) return;
+      if (!permissions.canReply || !body.trim() || (!thread && !discussion)) return;
       const submitted = body;
       const response = await reply({
         ...target,
-        input: { ...target.input, threadId: thread.id, body: submitted },
+        input: { ...target.input, threadId: params.discussionId, body: submitted },
       });
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
       setBody((current) => (current === submitted ? "" : current));
       setNotice("Reply posted.");
-      refresh();
+      if (resolveAfter && canReplyAndResolve) {
+        const resolved = await resolve({
+          ...target,
+          input: { ...target.input, threadId: params.discussionId, resolved: true },
+        });
+        if (resolved._tag === "Failure")
+          throw new Error(
+            "Your reply was posted, but the discussion could not be resolved. Use its status control to retry.",
+          );
+      }
     });
   const toggleResolved = () =>
     operation(async () => {
@@ -97,8 +140,198 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
         input: { ...target.input, threadId: thread.id, resolved: !thread.isResolved },
       });
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      refresh();
     });
+  const status =
+    activity.data?.comments.find((comment) => comment.threadId === params.discussionId)
+      ?.threadStatus ?? discussion?.comments[0]?.threadStatus;
+  // The shortcut is for an open general discussion; a code thread resolves from the header.
+  const canReplyAndResolve =
+    permissions.canResolve &&
+    !thread &&
+    Boolean(discussion) &&
+    (status === undefined || status === "active" || status === "pending");
+  const setStatus = (status: PullRequestThreadStatus) =>
+    operation(async () => {
+      if (!permissions.canResolve) return;
+      const response = await resolve({
+        ...target,
+        input: {
+          ...target.input,
+          threadId: params.discussionId,
+          status,
+          resolved: status !== "active" && status !== "pending",
+        },
+      });
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+    });
+  const ownComment = (comment: PullRequestThreadComment) =>
+    comment.canEdit ??
+    Boolean(
+      detail.data?.viewer &&
+      comment.author?.login.toLowerCase() === detail.data.viewer.toLowerCase(),
+    );
+  const commentKind = (comment: PullRequestThreadComment): "issue-comment" | "review-comment" =>
+    "kind" in comment && comment.kind === "issue-comment" ? "issue-comment" : "review-comment";
+  const saveComment = (comment: PullRequestThreadComment) =>
+    operation(async () => {
+      if (!editing?.body.trim() || !permissions.canEditComment || !ownComment(comment)) return;
+      const response = await updateComment({
+        ...target,
+        input: {
+          ...target.input,
+          commentId: comment.id,
+          kind: commentKind(comment),
+          body: editing.body,
+        },
+      });
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      setEditing(null);
+    });
+  const removeComment = (comment: PullRequestThreadComment) =>
+    Dialog.alert("Delete comment?", "This removes your comment from the pull request.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () =>
+          void operation(async () => {
+            if (!permissions.canDeleteComment || !ownComment(comment)) return;
+            const response = await deleteComment({
+              ...target,
+              input: {
+                ...target.input,
+                commentId: comment.id,
+                kind: commentKind(comment),
+              },
+            });
+            if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+          }),
+      },
+    ]);
+  const toggleLike = (comment: PullRequestThreadComment) =>
+    operation(async () => {
+      if (!permissions.canLikeComment) return;
+      const like = comment.reactions?.find((reaction) => reaction.content === "thumbs-up");
+      const response = await setReaction({
+        ...target,
+        input: {
+          ...target.input,
+          subjectId: comment.id,
+          content: "thumbs-up",
+          reacted: !like?.viewerHasReacted,
+        },
+      });
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+    });
+  const canSuggest = (comment: PullRequestThreadComment) =>
+    nativeAllowed &&
+    detail.data?.provider === "azure-devops" &&
+    detail.data.headSha !== undefined &&
+    Boolean(thread && !thread.isResolved) &&
+    pullRequestSuggestion(comment.body) !== null;
+  const applySuggestion = (comment: PullRequestThreadComment) =>
+    Dialog.alert(
+      "Apply suggestion?",
+      `Commit the suggested code to the source branch of PR #${params.number}.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Apply",
+          onPress: () =>
+            void operation(async () => {
+              if (!canSuggest(comment) || !detail.data?.headSha) return;
+              const result = await nativeAction({
+                ...target,
+                input: {
+                  ...target.input,
+                  action: {
+                    type: "apply-suggestion",
+                    commentId: comment.id,
+                    expectedHead: detail.data.headSha,
+                  },
+                },
+              });
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              setNotice(result.value.message);
+            }),
+        },
+      ],
+    );
+  const commentActions = (comment: PullRequestThreadComment) => [
+    ...(comment.url
+      ? [
+          { id: "copy-link", title: "Copy link" },
+          { id: "open", title: "Open on host" },
+        ]
+      : []),
+    { id: "copy-text", title: "Copy text" },
+    ...(canSuggest(comment) ? [{ id: "apply-suggestion", title: "Apply suggestion" }] : []),
+  ];
+  const onCommentAction = (comment: PullRequestThreadComment, action: string) => {
+    if (action === "copy-link" && comment.url)
+      copyTextWithHaptic(comment.url, { target: "comment link" });
+    if (action === "copy-text") copyTextWithHaptic(comment.body, { target: "comment text" });
+    if (action === "open" && comment.url) void Linking.openURL(comment.url);
+    if (action === "apply-suggestion") applySuggestion(comment);
+  };
+  const renderCommentActions = (comment: PullRequestThreadComment) => {
+    const like = comment.reactions?.find((reaction) => reaction.content === "thumbs-up");
+    return (
+      <View className="flex-row items-center justify-end gap-1">
+        {permissions.canLikeComment ? (
+          <View className="flex-row items-center">
+            <PullRequestPermissionIconButton
+              reason={detail.data?.viewerPermissions.deniedActions?.["like-comment"]}
+              accessibilityLabel={like?.viewerHasReacted ? "Unlike comment" : "Like comment"}
+              icon="hand.thumbsup"
+              selected={like?.viewerHasReacted === true}
+              variant={like?.viewerHasReacted ? "tonal" : "standard"}
+              disabled={busy}
+              onPress={() => void toggleLike(comment)}
+            />
+            {like && like.count > 0 ? (
+              <Text className="text-xs text-foreground-muted">{like.count}</Text>
+            ) : null}
+          </View>
+        ) : like && like.count > 0 ? (
+          <Text className="text-xs text-foreground-muted">👍 {like.count}</Text>
+        ) : null}
+        {ownComment(comment) && permissions.canEditComment ? (
+          <PullRequestPermissionIconButton
+            reason={detail.data?.viewerPermissions.deniedActions?.["edit-comment"]}
+            accessibilityLabel="Edit comment"
+            icon="pencil"
+            disabled={busy}
+            onPress={() => setEditing({ id: comment.id, body: comment.body })}
+          />
+        ) : null}
+        {ownComment(comment) && permissions.canDeleteComment ? (
+          <PullRequestPermissionIconButton
+            reason={detail.data?.viewerPermissions.deniedActions?.["delete-comment"]}
+            accessibilityLabel="Delete comment"
+            icon="trash"
+            disabled={busy}
+            tintColorClassName="accent-danger-foreground"
+            onPress={() => removeComment(comment)}
+          />
+        ) : null}
+        <Menu
+          title="Comment actions"
+          actions={commentActions(comment)}
+          onPressAction={({ nativeEvent }) => onCommentAction(comment, nativeEvent.event)}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Comment actions"
+            disabled={busy}
+            className="min-h-11 min-w-11 items-center justify-center"
+          >
+            <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
+          </Pressable>
+        </Menu>
+      </View>
+    );
+  };
   const nextCursor = cursor === undefined ? thread?.nextCommentsCursor : cursor;
   const more = () =>
     operation(async () => {
@@ -113,15 +346,22 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     });
   const comments = [
     ...new Map(
-      [...extra, ...(thread?.comments ?? [])].map((comment) => [comment.id, comment]),
+      [...extra, ...(thread?.comments ?? discussion?.comments ?? [])].map((comment) => [
+        comment.id,
+        comment,
+      ]),
     ).values(),
   ].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  const canReply = permissions.canReply && Boolean(thread);
+  const canReply = permissions.canReply && Boolean(thread || discussion);
   const resolveLabel = thread?.isResolved ? "Unresolve" : "Resolve";
   return (
     <PullRequestMarkdownRepository
       params={params}
-      value={detail.data?.provider === "github" ? detail.data.url : null}
+      value={
+        detail.data?.provider === "github" || detail.data?.provider === "azure-devops"
+          ? detail.data.url
+          : null
+      }
     >
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
         <NativeStackScreenOptions
@@ -165,12 +405,14 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               paddingBottom: canReply ? composerHeight + bottomInset + 24 : 24,
             }}
           >
-            {activity.isPending && !thread ? <AppActivityIndicator /> : null}
+            {activity.isPending && !thread && !discussion ? <AppActivityIndicator /> : null}
             {thread ? (
               <View className="gap-2 pb-4">
                 <Text selectable className="font-mono text-xs text-foreground-muted">
                   {thread.path}
-                  {thread.line ? `:${thread.line}` : ""}
+                  {thread.line
+                    ? `:${thread.line}${thread.endLine && thread.endLine !== thread.line ? `–${thread.endLine}` : ""}`
+                    : ""}
                 </Text>
                 <Text className="text-xs text-foreground-muted">
                   {thread.isResolved ? "Resolved" : "Unresolved"}
@@ -183,8 +425,46 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   }
                 />
               </View>
-            ) : !activity.isPending ? (
+            ) : !discussion && !activity.isPending ? (
               <Text>This discussion is no longer available.</Text>
+            ) : null}
+            {status ? (
+              <View className="gap-2 pb-4">
+                <Text className="text-xs text-foreground-muted">
+                  Status: {statusLabels[status]}
+                </Text>
+                {permissions.canResolve && detail.data?.capabilities.review.threadStatuses ? (
+                  <Menu
+                    title="Discussion status"
+                    actions={detail.data.capabilities.review.threadStatuses.map((value) => ({
+                      id: value,
+                      title: detail.data?.viewerPermissions.deniedActions?.resolve
+                        ? `${statusLabels[value]} — ${detail.data.viewerPermissions.deniedActions.resolve}`
+                        : statusLabels[value],
+                      state: value === status ? "on" : "off",
+                      attributes: {
+                        disabled:
+                          busy || Boolean(detail.data?.viewerPermissions.deniedActions?.resolve),
+                      },
+                    }))}
+                    onPressAction={({ nativeEvent }) => {
+                      const next = detail.data?.capabilities.review.threadStatuses?.find(
+                        (value) => value === nativeEvent.event,
+                      );
+                      if (next) void setStatus(next);
+                    }}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Change discussion status"
+                      disabled={busy}
+                      className="min-h-11 justify-center"
+                    >
+                      <Text className="text-primary-text">Change status</Text>
+                    </Pressable>
+                  </Menu>
+                ) : null}
+              </View>
             ) : null}
             {comments.map((comment) => (
               <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">
@@ -197,7 +477,31 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                     {relativeTime(comment.createdAt)}
                   </Text>
                 </View>
-                <PullRequestMarkdown markdown={comment.body} />
+                {editing?.id === comment.id ? (
+                  <View className="gap-2">
+                    <TextInput
+                      params={params}
+                      accessibilityLabel="Edit comment"
+                      multiline
+                      maxLength={65536}
+                      editable={!busy}
+                      value={editing.body}
+                      onChangeText={(body) => setEditing({ id: comment.id, body })}
+                      className="min-h-24 rounded-xl border border-border-subtle p-3 text-foreground"
+                    />
+                    <View className="flex-row gap-2">
+                      <Button
+                        label="Save comment"
+                        disabled={busy || !editing.body.trim()}
+                        onPress={() => void saveComment(comment)}
+                      />
+                      <Button label="Cancel" disabled={busy} onPress={() => setEditing(null)} />
+                    </View>
+                  </View>
+                ) : (
+                  <PullRequestMarkdown markdown={comment.body} />
+                )}
+                {renderCommentActions(comment)}
               </View>
             ))}
             {nextCursor ? (
@@ -223,6 +527,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               className="flex-row items-end gap-1 p-1"
             >
               <TextInput
+                params={params}
                 accessibilityLabel="Discussion reply"
                 multiline
                 maxLength={65536}
@@ -234,7 +539,19 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 className="max-h-36 min-h-12 min-w-0 flex-1 rounded-[24px] border-0 bg-transparent px-4 py-3 text-base text-foreground"
               />
               <View>
-                <Button
+                {canReplyAndResolve ? (
+                  <PullRequestPermissionButton
+                    reason={
+                      detail.data?.viewerPermissions.deniedActions?.comment ??
+                      detail.data?.viewerPermissions.deniedActions?.resolve
+                    }
+                    label="Reply & resolve"
+                    disabled={busy || !body.trim()}
+                    onPress={() => void post(true)}
+                  />
+                ) : null}
+                <PullRequestPermissionButton
+                  reason={detail.data?.viewerPermissions.deniedActions?.comment}
                   label={busy ? "Posting…" : "Reply"}
                   tone="contrast"
                   disabled={busy || !body.trim()}

@@ -7,6 +7,10 @@
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"
     },
+    "./pullRequestSuggestion": {
+      "types": "./src/pullRequestSuggestion.ts",
+      "import": "./src/pullRequestSuggestion.ts"
+    },
     "./authScopeOptions": {
       "types": "./src/authScopeOptions.ts",
       "import": "./src/authScopeOptions.ts"

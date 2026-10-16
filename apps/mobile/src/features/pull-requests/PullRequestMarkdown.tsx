@@ -1,4 +1,9 @@
-import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
+import { composerPullRequests } from "../../state/pull-requests";
+import { useEnvironmentQuery } from "../../state/query";
+import {
+  reusePullRequestIdentities,
+  splitPullRequestBody,
+} from "@t3tools/client-runtime/pull-request-markdown";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 import { useProject } from "../../state/entities";
@@ -10,7 +15,7 @@ import {
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useCallback, useMemo, useState } from "react";
-import { githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
+import { azureDevOpsMarkdownLinks, githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -26,6 +31,8 @@ import {
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 
+const NO_IDENTITIES: Readonly<Record<string, string>> = {};
+const AzureIdentities = createContext(NO_IDENTITIES);
 const RepositoryContext = createContext<string | null>(null);
 
 export function PullRequestMarkdownRepository(props: {
@@ -34,6 +41,15 @@ export function PullRequestMarkdownRepository(props: {
   readonly children: ReactNode;
 }) {
   const target = pullRequestTarget(props.params);
+  const activity = useEnvironmentQuery(
+    props.value?.includes("/_git/") ? composerPullRequests.activity(target) : null,
+  );
+  const [identities, setIdentities] = useState(NO_IDENTITIES);
+  const nextIdentities = reusePullRequestIdentities(
+    identities,
+    activity.data?.identities ?? NO_IDENTITIES,
+  );
+  if (nextIdentities !== identities) setIdentities(nextIdentities);
   const project = useProject({
     environmentId: target.environmentId,
     projectId: target.input.projectId,
@@ -45,7 +61,9 @@ export function PullRequestMarkdownRepository(props: {
   );
   return (
     <RepositoryContext value={props.value}>
-      <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      <AzureIdentities value={identities}>
+        <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      </AzureIdentities>
     </RepositoryContext>
   );
 }
@@ -104,10 +122,14 @@ function PullRequestMarkdownContent(props: {
   readonly imageGroupMarkdown?: string;
 }) {
   const repositoryUrl = useContext(RepositoryContext);
+  const identities = useContext(AzureIdentities);
   const mediaContext = useContext(PullRequestMediaContext);
   const markdown = useMemo(
-    () => githubMarkdownLinks(props.markdown, repositoryUrl),
-    [props.markdown, repositoryUrl],
+    () =>
+      repositoryUrl?.includes("/_git/")
+        ? azureDevOpsMarkdownLinks(props.markdown, repositoryUrl, identities)
+        : githubMarkdownLinks(props.markdown, repositoryUrl),
+    [props.markdown, repositoryUrl, identities],
   );
   const openPullRequest = useOpenPullRequest();
   const openLink = useCallback(

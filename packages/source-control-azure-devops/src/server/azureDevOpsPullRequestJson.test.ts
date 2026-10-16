@@ -9,6 +9,9 @@ import {
   decodePullRequestListJson,
   decodeThreadsJson,
   decodeViewerJson,
+  decodeDiscussionJson,
+  decodeCommitsJson,
+  decodeCommitChangesJson,
 } from "./azureDevOpsPullRequestJson.ts";
 
 const REST_URL =
@@ -41,6 +44,33 @@ function expectSuccess<A>(result: Result.Result<A, unknown>): A {
 const asJson = (value: unknown) => JSON.stringify(value);
 
 describe("decodePullRequestListJson", () => {
+  it.each([
+    [10, "approved"],
+    [5, "approved-with-suggestions"],
+    [0, "none"],
+    [-5, "waiting-for-author"],
+    [-10, "rejected"],
+    [99, undefined],
+  ])("preserves the current reviewer vote %s independently of comments", (vote, reviewState) => {
+    const result = expectSuccess(
+      decodePullRequestJson(
+        asJson(
+          pullRequest({
+            reviewers: [{ displayName: "Reviewer", uniqueName: "reviewer@acme.dev", vote }],
+          }),
+        ),
+      ),
+    );
+    expect(result?.reviewers).toEqual([
+      {
+        login: "reviewer@acme.dev",
+        name: "Reviewer",
+        avatarUrl: null,
+        ...(reviewState === undefined ? {} : { reviewState }),
+      },
+    ]);
+  });
+
   it("reads a pull request as a change request", () => {
     const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest()])));
 
@@ -140,7 +170,7 @@ describe("decodePullRequestJson", () => {
 
     expect(detail?.reviewRequestLogins).toEqual(["julius@acme.dev"]);
     expect(detail?.reviewers).toEqual([
-      { login: "julius@acme.dev", name: "Julius", avatarUrl: null },
+      { login: "julius@acme.dev", name: "Julius", avatarUrl: null, reviewState: "approved" },
     ]);
   });
 
@@ -231,6 +261,67 @@ describe("decodeViewerJson", () => {
 });
 
 describe("decodeThreadsJson", () => {
+  it("preserves reply targets within their Azure thread, including missing parents", () => {
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [17, 18].map((id) => ({
+            id,
+            comments: [
+              {
+                id: 1,
+                parentCommentId: 0,
+                content: "Original",
+                publishedDate: "2026-07-01T00:00:00Z",
+              },
+              {
+                id: 2,
+                parentCommentId: 1,
+                content: "Reply",
+                publishedDate: "2026-07-02T00:00:00Z",
+              },
+              {
+                id: 3,
+                parentCommentId: 2,
+                content: "Nested reply",
+                publishedDate: "2026-07-03T00:00:00Z",
+              },
+              {
+                id: 4,
+                parentCommentId: 99,
+                content: "Parent removed",
+                publishedDate: "2026-07-04T00:00:00Z",
+              },
+            ],
+          })),
+        }),
+      ),
+    );
+
+    expect(comments.filter((comment) => comment.body === "Original")).toEqual([
+      expect.not.objectContaining({ replyToCommentId: expect.any(String) }),
+      expect.not.objectContaining({ replyToCommentId: expect.any(String) }),
+    ]);
+    expect(comments.filter((comment) => comment.body !== "Original")).toMatchObject([
+      { id: "17:2", replyToCommentId: "17:1" },
+      { id: "18:2", replyToCommentId: "18:1" },
+      { id: "17:3", replyToCommentId: "17:2" },
+      { id: "18:3", replyToCommentId: "18:2" },
+      { id: "17:4", replyToCommentId: "17:99" },
+      { id: "18:4", replyToCommentId: "18:99" },
+    ]);
+    expect(comments.map((comment) => comment.threadId)).toEqual([
+      "17",
+      "18",
+      "17",
+      "18",
+      "17",
+      "18",
+      "17",
+      "18",
+    ]);
+  });
+
   it("takes every real comment of every thread, oldest first", () => {
     const comments = expectSuccess(
       decodeThreadsJson(
@@ -351,7 +442,7 @@ describe("decodeIterationsJson", () => {
     );
 
     expect(iterations.map((entry) => entry.id)).toEqual([1, 2]);
-    expect(iterations.at(-1)).toEqual({ id: 2, headCommit: "bbb", mergeBaseCommit: "base" });
+    expect(iterations.at(-1)).toMatchObject({ id: 2, headCommit: "bbb", mergeBaseCommit: "base" });
   });
 
   it("skips a push Azure could not place both ends of", () => {
@@ -569,6 +660,7 @@ describe("what az devops invoke answers with", () => {
         id: 1,
         headCommit: "f4031105213c68f197cd46ea303bb5e72acc889a",
         mergeBaseCommit: "acbc805382edd6c38b8d6de6ba9f9bba9da4ad35",
+        update: { id: 1, createdAt: null, author: null, description: "" },
       },
     ]);
   });
@@ -631,4 +723,243 @@ describe("what az devops invoke answers with", () => {
       ),
     ).toEqual({ contents: "# T3Demo\n", isBinary: false });
   });
+});
+
+it("retains Azure discussion status and edit time while omitting deleted remarks", () => {
+  for (const status of ["active", "pending", "fixed", "wontFix", "closed", "byDesign"]) {
+    const decoded = decodeThreadsJson(
+      JSON.stringify({
+        value: [
+          {
+            id: 7824,
+            status,
+            comments: [
+              {
+                id: 1,
+                content: "This is a test for the app t3code",
+                publishedDate: "2026-10-15T10:00:00Z",
+                lastContentUpdatedDate: "2026-10-15T10:01:00Z",
+                commentType: "text",
+              },
+              {
+                id: 2,
+                content: "Deleted reply",
+                publishedDate: "2026-10-15T10:00:00Z",
+                isDeleted: true,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(Result.isSuccess(decoded)).toBe(true);
+    if (!Result.isSuccess(decoded)) throw new Error("decode failed");
+    expect(decoded.success).toHaveLength(1);
+    expect(decoded.success[0]).toMatchObject({
+      id: "7824:1",
+      threadId: "7824",
+      threadStatus: status,
+      editedAt: "2026-10-15T10:01:00Z",
+    });
+  }
+});
+
+it("keeps nullable native identities, tracked ranges, and system activity", () => {
+  const date = "2026-10-15T10:00:00Z";
+  const decoded = expectSuccess(
+    decodeDiscussionJson(
+      JSON.stringify({
+        value: [
+          {
+            id: 1,
+            identities: null,
+            comments: [{ id: 1, content: "General comment", publishedDate: date }],
+          },
+          {
+            id: 2,
+            identities: null,
+            threadContext: {
+              filePath: "/renamed.ts",
+              rightFileStart: { line: 0 },
+              rightFileEnd: { line: 0 },
+            },
+            pullRequestThreadContext: {
+              iterationContext: { firstComparingIteration: 1, secondComparingIteration: 1 },
+              trackingCriteria: {
+                origFilePath: "/old.ts",
+                origRightFileStart: { line: 4 },
+                origRightFileEnd: { line: 8 },
+              },
+            },
+            comments: [{ id: 1, content: "Review range", publishedDate: date }],
+          },
+          {
+            id: 3,
+            comments: [
+              { id: 1, commentType: "system", content: "Branch updated", publishedDate: date },
+            ],
+          },
+        ],
+      }),
+    ),
+  );
+  expect(decoded.comments.map((comment) => comment.body)).toEqual([
+    "General comment",
+    "Review range",
+  ]);
+  expect(decoded.reviewThreads[0]).toMatchObject({
+    path: "renamed.ts",
+    side: "right",
+    line: null,
+    endLine: null,
+    isOutdated: true,
+    originalPath: "old.ts",
+    originalLine: 4,
+    originalEndLine: 8,
+    originalUpdate: 1,
+  });
+  expect(decoded.events).toEqual([
+    { id: "azure-event:3:1", createdAt: date, actor: null, body: "Branch updated" },
+  ]);
+});
+
+it("decodes likes against the DevOps viewer and excludes the viewer from named actors", () => {
+  const decoded = expectSuccess(
+    decodeThreadsJson(
+      JSON.stringify({
+        value: [
+          {
+            id: 8,
+            comments: [
+              {
+                id: 1,
+                content: "Test",
+                publishedDate: "2026-10-15T10:00:00Z",
+                usersLiked: [
+                  { uniqueName: "READER@example.com" },
+                  { uniqueName: "colleague@example.com" },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+      "reader@example.com",
+    ),
+  );
+  expect(decoded[0]?.reactions).toEqual([
+    { content: "thumbs-up", count: 2, viewerHasReacted: true, actors: ["colleague@example.com"] },
+  ]);
+});
+
+it("pins Azure inline threads to their native side and line while keeping general discussions unanchored", () => {
+  const decoded = decodeDiscussionJson(
+    JSON.stringify({
+      value: [
+        {
+          id: 1,
+          status: "fixed",
+          threadContext: { filePath: "/sample.ts", rightFileStart: { line: 2, offset: 1 } },
+          comments: [{ id: 1, content: "test", publishedDate: "2026-10-15T10:00:00Z" }],
+        },
+        {
+          id: 2,
+          status: "active",
+          threadContext: { filePath: "/removed.ts", leftFileStart: { line: 4, offset: 1 } },
+          comments: [{ id: 1, content: "old line", publishedDate: "2026-10-15T10:00:00Z" }],
+        },
+        {
+          id: 3,
+          status: "active",
+          comments: [{ id: 1, content: "general", publishedDate: "2026-10-15T10:00:00Z" }],
+        },
+      ],
+    }),
+  );
+  expect(Result.isSuccess(decoded)).toBe(true);
+  if (Result.isFailure(decoded)) return;
+  expect(decoded.success.comments).toHaveLength(3);
+  expect(decoded.success.reviewThreads).toMatchObject([
+    { id: "1", path: "sample.ts", line: 2, side: "right", isResolved: true },
+    { id: "2", path: "removed.ts", line: 4, side: "left", isResolved: false },
+  ]);
+});
+it("reads commit history and reports truncated commit diffs", () => {
+  const commits = decodeCommitsJson(
+    JSON.stringify({
+      value: [
+        {
+          commitId: "a".repeat(40),
+          comment: "First line\nBody",
+          committer: { date: "2026-10-15T10:00:00Z" },
+          author: { name: "Tester", email: "tester@example.com", date: "2026-10-15T10:00:00Z" },
+        },
+      ],
+    }),
+  );
+  expect(Result.isSuccess(commits) && commits.success[0]).toMatchObject({
+    messageHeadline: "First line",
+    authors: [{ login: "tester@example.com" }],
+  });
+  const changes = decodeCommitChangesJson(
+    JSON.stringify({
+      changes: [{ changeType: "edit", item: { path: "/sample.ts" } }],
+      allChangesIncluded: false,
+    }),
+  );
+  expect(Result.isSuccess(changes) && changes.success).toMatchObject({
+    truncated: true,
+    changes: [{ path: "sample.ts" }],
+  });
+});
+
+it("retains original anchors for later validation when Azure omits tracking criteria", () => {
+  const thread = {
+    id: 7913,
+    status: "active",
+    threadContext: {
+      filePath: "/tracking-example.txt",
+      rightFileStart: { line: 2, offset: 1 },
+      rightFileEnd: { line: 2, offset: 1 },
+    },
+    pullRequestThreadContext: {
+      changeTrackingId: 1,
+      iterationContext: { firstComparingIteration: 1, secondComparingIteration: 1 },
+    },
+    comments: [
+      {
+        id: 1,
+        content: "This is a test for the app t3code.",
+        publishedDate: "2026-10-15T10:00:00Z",
+      },
+    ],
+  };
+  const decode = (value: unknown, iteration: number) =>
+    expectSuccess(decodeDiscussionJson(JSON.stringify({ value: [value] }), undefined, iteration))
+      .reviewThreads[0];
+  expect(decode(thread, 1)?.isOutdated).toBe(false);
+  expect(decode(thread, 3)).toMatchObject({
+    isOutdated: false,
+    originalPath: "tracking-example.txt",
+    originalLine: 2,
+    originalUpdate: 1,
+  });
+  expect(
+    decode({ ...thread, threadContext: { filePath: "/tracking-example.txt" } }, 3)?.isOutdated,
+  ).toBe(false);
+  expect(
+    decode(
+      {
+        ...thread,
+        pullRequestThreadContext: {
+          ...thread.pullRequestThreadContext,
+          trackingCriteria: {
+            origFilePath: "/tracking-example.txt",
+            origRightFileStart: { line: 2, offset: 1 },
+          },
+        },
+      },
+      3,
+    )?.isOutdated,
+  ).toBe(false);
 });

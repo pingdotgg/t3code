@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ProjectId,
   type PullRequestDiffResult,
+  type PullRequestIterationRange,
   type PullRequestListEntry,
 } from "@t3tools/contracts";
 import { useAtomRefresh } from "@effect/atom-react";
@@ -26,7 +27,10 @@ export type PullRequestParams = {
   readonly initialSummary?: PullRequestListEntry;
 };
 
-export type PullRequestDiffParams = PullRequestParams & { readonly commit?: string };
+export type PullRequestDiffParams = PullRequestParams & {
+  readonly commit?: string;
+  readonly iterationRange?: PullRequestIterationRange;
+};
 
 export function pullRequestTarget(params: PullRequestParams) {
   return {
@@ -46,7 +50,11 @@ export function usePullRequestDiff(params: PullRequestDiffParams) {
   const reference = pullRequestTarget(params);
   const target = {
     ...reference,
-    input: { ...reference.input, ...(params.commit ? { commit: params.commit } : {}) },
+    input: {
+      ...reference.input,
+      ...(params.commit ? { commit: params.commit } : {}),
+      ...(params.iterationRange ? { iterationRange: params.iterationRange } : {}),
+    },
   };
   const key = JSON.stringify(target);
   const firstPageAtom = composerPullRequests.diff(target);

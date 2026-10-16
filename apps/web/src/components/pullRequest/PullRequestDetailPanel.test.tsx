@@ -8,26 +8,30 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { act, type ReactNode, type ReactElement, type ComponentProps } from "react";
+import { act, cloneElement, type ReactNode, type ReactElement, type ComponentProps } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
-  newThread: vi.fn(),
-  prepareThread: vi.fn(),
-  refresh: vi.fn(),
-  Wrapper: ({ children }: { children?: ReactNode }) => children,
-  Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
-    <>
-      {render}
-      {children}
-    </>
-  ),
-}));
+const { newThread, prepareThread, refresh, runAction, connection, Wrapper, Trigger } = vi.hoisted(
+  () => ({
+    newThread: vi.fn(),
+    prepareThread: vi.fn(),
+    refresh: vi.fn(),
+    runAction: vi.fn(),
+    connection: { writable: true },
+    Wrapper: ({ children }: { children?: ReactNode }) => children,
+    Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
+      <>
+        {render}
+        {children}
+      </>
+    ),
+  }),
+);
 vi.mock("~/state/session", async (original) => ({
   ...(await original<typeof import("~/state/session")>()),
-  useEnvironmentScope: () => true,
+  useEnvironmentScope: () => connection.writable,
   readEnvironmentScope: () => true,
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
@@ -47,7 +51,7 @@ vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => newThr
 vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: prepareThread, isAllowed: true, error: null }),
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => runAction }));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/pullRequests")>()),
   pullRequestEnvironment: {
@@ -56,6 +60,8 @@ vi.mock("~/state/pullRequests", async (importOriginal) => ({
 
     reviewGuide: () => "review-guide",
     generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
+    submitReview: { permissionAtom: () => "submit-review" },
+    runHostAction: { permissionAtom: () => "run-host-action" },
   },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
@@ -111,6 +117,10 @@ vi.mock("./PullRequestMarkdown", () => ({
 }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
 vi.mock("./PullRequestThreadLinks", () => ({ PullRequestThreadLinks: () => null }));
+vi.mock("./AzureDevOpsPullRequestActions", () => ({
+  AzureDevOpsPullRequestActions: ({ children }: { children: (menu: ReactNode) => ReactNode }) =>
+    children(null),
+}));
 vi.mock("./PullRequestSummaryTab", () => ({
   PullRequestSummaryTab: ({
     onFixFinding,
@@ -165,7 +175,7 @@ vi.mock("./PullRequestCodeTab", () => ({
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
 
-const detail: PullRequestDetailView = {
+const initialDetail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
   projectId: ProjectId.make("project"),
   projectTitle: "Project",
@@ -217,6 +227,8 @@ const detail: PullRequestDetailView = {
   },
 };
 
+let detail = initialDetail;
+
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
@@ -226,6 +238,9 @@ const newDraftId = DraftId.make("new-draft");
 let renderer: ReactTestRenderer;
 
 beforeEach(() => {
+  detail = initialDetail;
+  connection.writable = true;
+  runAction.mockReset().mockResolvedValue({ _tag: "Success", value: {} });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
@@ -433,3 +448,119 @@ it("changes the title only for the active tab's main scroller", async () => {
   await act(async () => mainScroll.props.onScrollCapture({ target: code }));
   expect(titleFold().props.inert).toBe(false);
 });
+
+function renderAzureDraft() {
+  detail = {
+    ...initialDetail,
+    provider: SourceControlProviderKind.make("azure-devops"),
+    isDraft: true,
+    capabilities: {
+      ...initialDetail.capabilities,
+      hostActions: true,
+      actions: ["ready", "draft"],
+      review: { ...initialDetail.capabilities.review, verdicts: ["comment", "approve"] },
+    },
+    viewerPermissions: { ...initialDetail.viewerPermissions, actions: ["ready", "draft"] },
+  };
+  return (
+    <PullRequestDetailPanel
+      environmentId={threadRef.environmentId}
+      reference={detail}
+      context="page"
+      shortcutsEnabled={false}
+      getShortcutContext={() => ({
+        terminalFocus: false,
+        terminalOpen: false,
+        previewFocus: false,
+        previewOpen: false,
+        isWeb: true,
+        isDesktop: false,
+      })}
+    />
+  );
+}
+
+const headerButton = (label: string) =>
+  renderer.root.findAllByType("button").find((button) => button.props["aria-label"] === label);
+const draftBadges = () =>
+  renderer.root.findAll(
+    (node) => node.props["data-slot"] === "badge" && node.children.includes("Draft"),
+  );
+
+it("publishes a visibly marked Azure draft before offering approval, and can return to draft", async () => {
+  const panel = renderAzureDraft();
+  await act(async () => {
+    renderer = create(panel);
+  });
+  expect(draftBadges()).toHaveLength(1);
+  expect(headerButton("Approve pull request")).toBeUndefined();
+  expect(headerButton("Publish")?.props.disabled).toBe(false);
+  runAction.mockImplementation(async ({ input }) => {
+    detail = { ...detail, isDraft: input.action === "draft" };
+    return { _tag: "Success", value: {} };
+  });
+  await click("Publish");
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(runAction).toHaveBeenCalledWith({
+    environmentId: threadRef.environmentId,
+    input: expect.objectContaining({ action: "ready", number: detail.number }),
+  });
+  expect(draftBadges()).toHaveLength(0);
+  expect(headerButton("Publish")).toBeUndefined();
+  expect(headerButton("Approve pull request")).toBeDefined();
+  await click("Convert to draft");
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(draftBadges()).toHaveLength(1);
+  expect(headerButton("Publish")).toBeDefined();
+  expect(headerButton("Approve pull request")).toBeUndefined();
+});
+
+it.each(["token", "connection", "account"])(
+  "keeps Publish visible but prevents it without %s permission",
+  async (denial) => {
+    const panel = renderAzureDraft();
+    if (denial === "token") {
+      detail = {
+        ...detail,
+        viewerPermissions: {
+          ...detail.viewerPermissions,
+          deniedActions: { ready: "Your token does not allow this action." },
+        },
+      };
+    } else if (denial === "account") {
+      detail = { ...detail, viewerPermissions: { ...detail.viewerPermissions, actions: [] } };
+    } else {
+      connection.writable = false;
+    }
+    await act(async () => {
+      renderer = create(panel);
+    });
+    expect(draftBadges()).toHaveLength(1);
+    expect(headerButton("Publish")?.props.disabled).toBe(true);
+    await click("Publish");
+    expect(runAction).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["github", "azure-devops", "gitlab", "bitbucket", "forgejo", "gitcafe"])(
+  "keeps draft conflict resolution reachable while publishing is primary on %s",
+  async (provider) => {
+    const panel = renderAzureDraft();
+    detail = {
+      ...detail,
+      provider: SourceControlProviderKind.make(provider),
+      mergeability: "conflicting",
+    };
+    await act(async () => {
+      renderer = create(panel);
+    });
+    expect(
+      headerButton(provider === "azure-devops" ? "Publish" : "Ready for review"),
+    ).toBeDefined();
+    await click("Resolve conflicts");
+    expect(newThread).toHaveBeenCalled();
+    const draft = useComposerDraftStore.getState().getComposerDraft(newDraftId);
+    expect(draft?.prompt).toContain("resolve every conflict");
+    expect(runAction).not.toHaveBeenCalled();
+  },
+);

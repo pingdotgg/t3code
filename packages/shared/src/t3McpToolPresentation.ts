@@ -61,6 +61,8 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "read-pr-host-details"
+  | "run-pr-host-action"
   | "browser"
   | "device"
   | "html-preview"
@@ -118,6 +120,16 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   read_pull_request_guide: tool(
     ["Read", "Reading", "Read", "a review guide"],
     "read-pr-guide",
+    "pull-request",
+  ),
+  read_pull_request_host_details: tool(
+    ["Read", "Reading", "Read", "pull request host details"],
+    "read-pr-host-details",
+    "pull-request",
+  ),
+  run_pull_request_host_action: tool(
+    ["Apply", "Applying", "Applied", "a pull request action"],
+    "run-pr-host-action",
     "pull-request",
   ),
   orchestrator_capabilities: tool(

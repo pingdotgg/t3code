@@ -1,4 +1,12 @@
+import { useContext } from "react";
+import { PullRequestReviewContext } from "./PullRequestReviewContext";
 import { useAtomCommand } from "~/state/use-atom-command";
+import {
+  pullRequestCommentExcerpt,
+  pullRequestCommentReplies,
+  groupPullRequestComments,
+  type PullRequestCommentReplyContext,
+} from "@t3tools/client-runtime/pull-request-comment-replies";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -14,7 +22,7 @@ import {
   GitCommitHorizontalIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -22,7 +30,6 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
-import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -36,7 +43,11 @@ import {
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
-import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestMarkdown, PullRequestMarkdownContext } from "./PullRequestMarkdown";
+import { PullRequestCommentReply } from "./PullRequestCommentReply";
+import { PullRequestDiscussionStatus } from "./PullRequestDiscussionStatus";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
+import { PullRequestDiscussionReplyForm } from "./PullRequestDiscussionReplyForm";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import {
@@ -51,6 +62,8 @@ import {
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 interface ReactionSurface {
+  detail: PullRequestDetailView;
+  readonly commentsById: ReadonlyMap<string, PullRequestComment>;
   readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef | null;
@@ -174,17 +187,21 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
 
 function ConversationCard({
   event,
+  reply,
   editable,
   cwd,
   onOpen,
   reactions,
 }: {
   event: PullRequestTimelineEvent;
+  reply: PullRequestCommentReplyContext | undefined;
+  /** The remark behind this entry, only where this reader may rewrite it. */
   editable: PullRequestComment | null;
   cwd: string;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const originalComment = reactions.commentsById.get(event.id);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -229,14 +246,25 @@ function ConversationCard({
               ) : null}
             </PullRequestMetaLine>
           </div>
-          {editable !== null && !editing ? (
-            <PullRequestEditButton
-              className="-mt-1"
-              aria-label="Edit comment"
-              onClick={() => setEditing(true)}
+          {!editing && originalComment ? (
+            <PullRequestCommentActions
+              comment={originalComment}
+              environmentId={reactions.environmentId}
+              reference={reactions.reference}
+              threadRef={reactions.threadRef}
+              canEdit={editable !== null}
+              canDelete={
+                editable !== null && reactions.detail.capabilities.edit?.deleteComment === true
+              }
+              canLike={reactions.detail.capabilities.commentLikes === true}
+              suggestionHead={
+                reactions.detail.provider === "azure-devops" ? reactions.detail.headSha : undefined
+              }
+              onEdit={() => setEditing(true)}
             />
           ) : null}
-          {reactions.canReact || event.reactions.length > 0 ? (
+          {reactions.detail.capabilities.commentLikes !== true &&
+          (reactions.canReact || event.reactions.length > 0) ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
               reactions={event.reactions}
@@ -249,6 +277,7 @@ function ConversationCard({
           ) : null}
           <OpenOnHostButton url={event.url} onOpen={onOpen} />
         </div>
+        <PullRequestCommentReply reply={reply} />
       </div>
       {editing && editable !== null ? (
         <div className="px-2 pb-2 pt-3">
@@ -289,21 +318,29 @@ function uniqueConversationActors(events: ReadonlyArray<PullRequestTimelineEvent
 
 function ConversationGroup({
   events,
+  replies,
   editable,
   cwd,
   onOpen,
   reactions,
+  replyThreadId,
 }: {
   events: ReadonlyArray<PullRequestTimelineEvent>;
+  replies: ReadonlyMap<string, PullRequestCommentReplyContext>;
   editable: ReadonlyMap<string, PullRequestComment>;
   cwd: string;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
+  replyThreadId: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const identities = useContext(PullRequestMarkdownContext)?.identities;
   const actors = uniqueConversationActors(events);
   const first = events[0];
   if (first === undefined) return null;
+  const latest = events.at(-1)!;
+  const status = reactions.detail.comments.find((comment) => comment.id === first.id)?.threadStatus;
+  const preview = first.body ? pullRequestCommentExcerpt(first.body, identities) : "";
 
   return (
     <div className="relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
@@ -314,7 +351,7 @@ function ConversationGroup({
         muted={!open}
       />
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div>
+        <div className="rounded-lg border border-border/60 bg-background px-3">
           <CollapsibleTrigger
             className={cn(
               "flex w-full min-w-0 items-center gap-3 py-2 text-left transition-opacity hover:opacity-100",
@@ -322,12 +359,13 @@ function ConversationGroup({
             )}
           >
             <span className="min-w-0 flex-1">
-              <span className="block text-xs font-semibold">
-                {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"}
+              <span className="block truncate text-xs font-semibold">
+                {open ? "Discussion" : preview || "Discussion"}
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
+                {events.length.toLocaleString()} {events.length === 1 ? "comment" : "comments"} ·{" "}
                 {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                {formatRelativeTimeLabel(first.at)}
+                {formatRelativeTimeLabel(latest.at)}
               </span>
             </span>
             <ChevronDownIcon
@@ -341,19 +379,54 @@ function ConversationGroup({
           <CollapsiblePanel>
             {open ? (
               <div className="mt-1 space-y-1">
-                {events.map((event) => (
-                  <ConversationCard
-                    // Named with the pull request too: a remark's id is the host's own, and two
-                    // pull requests can hand out the same one — which would leave one card's open
-                    // editor standing over the other's remark.
-                    key={`${reactions.reference.projectId}#${reactions.reference.number}:${event.id}`}
-                    event={event}
-                    editable={editable.get(event.id) ?? null}
-                    cwd={cwd}
-                    onOpen={onOpen}
-                    reactions={reactions}
-                  />
+                {events.map((event, index) => (
+                  <div
+                    key={event.id}
+                    className={index > 0 ? "ml-5 border-l-2 border-border pl-3" : undefined}
+                  >
+                    <ConversationCard
+                      // Named with the pull request too: a remark's id is the host's own, and two
+                      // pull requests can hand out the same one — which would leave one card's open
+                      // editor standing over the other's remark.
+                      key={`${reactions.reference.projectId}#${reactions.reference.number}:${event.id}`}
+                      event={event}
+                      reply={index === 0 ? replies.get(event.id) : undefined}
+                      editable={editable.get(event.id) ?? null}
+                      cwd={cwd}
+                      onOpen={onOpen}
+                      reactions={reactions}
+                    />
+                  </div>
                 ))}
+                {replyThreadId &&
+                status &&
+                reactions.detail.viewerPermissions.resolve &&
+                reactions.detail.capabilities.review.threadStatuses ? (
+                  <div className="border-t border-border/60 py-2">
+                    <PullRequestDiscussionStatus
+                      environmentId={reactions.environmentId}
+                      reference={reactions.reference}
+                      threadId={replyThreadId}
+                      status={status}
+                      statuses={reactions.detail.capabilities.review.threadStatuses}
+                    />
+                  </div>
+                ) : null}
+                {replyThreadId !== undefined ? (
+                  <div className="border-t border-border/60 py-2">
+                    <PullRequestDiscussionReplyForm
+                      environmentId={reactions.environmentId}
+                      reference={reactions.reference}
+                      threadId={replyThreadId}
+                      canResolve={
+                        reactions.detail.capabilities.review.resolve &&
+                        reactions.detail.viewerPermissions.resolve &&
+                        (status === undefined || status === "active" || status === "pending")
+                      }
+                      onReplied={reactions.onRefresh}
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </CollapsiblePanel>
@@ -405,20 +478,22 @@ function CommitEvent({
 
 function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
   const presentation =
-    event.kind === "opened"
-      ? {
-          icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
-          label: "Pull request opened",
-        }
-      : event.kind === "merged"
+    event.kind === "activity"
+      ? { icon: <PullRequestGlyph.pullRequest className="size-3.5" />, label: event.title }
+      : event.kind === "opened"
         ? {
-            icon: <PullRequestGlyph.merged className="size-3.5" />,
-            label: "Pull request merged",
+            icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
+            label: "Pull request opened",
           }
-        : {
-            icon: <PullRequestGlyph.closed className="size-3.5" />,
-            label: "Pull request closed",
-          };
+        : event.kind === "merged"
+          ? {
+              icon: <PullRequestGlyph.merged className="size-3.5" />,
+              label: "Pull request merged",
+            }
+          : {
+              icon: <PullRequestGlyph.closed className="size-3.5" />,
+              label: "Pull request closed",
+            };
 
   return (
     <div className="relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
@@ -539,8 +614,26 @@ export function PullRequestTimelineTab({
   onRefresh: () => void;
 }) {
   const events = buildPullRequestTimeline(detail);
+  const previousVisit = useContext(PullRequestReviewContext)?.previousVisit;
+  const [newOnly, setNewOnly] = useState(false);
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
+  const identities = useContext(PullRequestMarkdownContext)?.identities;
+  const replies = useMemo(
+    () =>
+      pullRequestCommentReplies({
+        comments: detail.comments,
+        reviewThreads: detail.reviewThreads,
+        identities,
+      }),
+    [detail.comments, detail.reviewThreads, identities],
+  );
+  const commentsById = useMemo(
+    () => new Map(detail.comments.map((comment) => [comment.id, comment])),
+    [detail.comments],
+  );
   const reactions: ReactionSurface = {
+    detail,
+    commentsById,
     canReact: detail.capabilities.reactions === true,
     environmentId,
     threadRef,
@@ -552,8 +645,34 @@ export function PullRequestTimelineTab({
       .filter((comment) => canEditPullRequestComment(detail, comment))
       .map((comment) => [comment.id, comment] as const),
   );
+  // Only a comment's own thread or reply link makes a discussion. GitHub repeats every line remark
+  // in a review thread, and grouping by those would split each remark out of its section.
+  const discussions = useMemo(
+    () => groupPullRequestComments({ comments: detail.comments, reviewThreads: [] }),
+    [detail.comments],
+  );
+  const replyThreadByCommentId = useMemo(
+    () =>
+      new Map(
+        discussions.flatMap((discussion) =>
+          discussion.comments.map((comment) => [comment.id, discussion.threadId] as const),
+        ),
+      ),
+    [discussions],
+  );
   const orderedEvents = order === "newest" ? events : events.toReversed();
-  const rows = groupPullRequestTimelineConversations(orderedEvents);
+  const rows = groupPullRequestTimelineConversations(orderedEvents, discussions).filter(
+    (row) =>
+      !newOnly ||
+      !previousVisit ||
+      (row.kind === "comments"
+        ? row.events.some(
+            (event) =>
+              Date.parse(commentsById.get(event.id)?.editedAt ?? event.at) >
+              Date.parse(previousVisit),
+          )
+        : Date.parse(row.event.at) > Date.parse(previousVisit)),
+  );
   const openOnHost = (url: string) => {
     void readLocalApi()?.shell.openExternal(url);
   };
@@ -561,6 +680,16 @@ export function PullRequestTimelineTab({
   return (
     <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
       <div className="mx-auto max-w-3xl">
+        <div className="mb-3 flex justify-end">
+          <Button
+            size="xs"
+            variant={newOnly ? "secondary" : "ghost-muted"}
+            aria-pressed={newOnly}
+            onClick={() => setNewOnly((value) => !value)}
+          >
+            What's new
+          </Button>
+        </div>
         <div className="relative">
           <span aria-hidden className="absolute bottom-5 left-[15px] top-1 w-px bg-border/45" />
           {rows.map((row) => {
@@ -569,10 +698,16 @@ export function PullRequestTimelineTab({
                 <ConversationGroup
                   key={`comments:${row.events[0]?.id ?? "empty"}`}
                   events={row.events}
+                  replies={replies}
                   editable={editable}
                   cwd={detail.workspaceRoot}
                   onOpen={openOnHost}
                   reactions={reactions}
+                  replyThreadId={
+                    detail.capabilities.review.reply && detail.viewerPermissions.comment
+                      ? replyThreadByCommentId.get(row.events[0]?.id ?? "")
+                      : undefined
+                  }
                 />
               );
             }

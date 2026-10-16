@@ -55,6 +55,14 @@ const observedPullRequestSummaryAtom = Atom.family((key: string) =>
 function compareSummaries(current: PullRequestSummary, incoming: PullRequestSummary): number {
   const merged = Number(incoming.state === "merged") - Number(current.state === "merged");
   if (merged !== 0) return merged;
+  // Azure clears closedDate on reactivation and exposes no monotonic PR update timestamp.
+  if (
+    incoming.provider === "azure-devops" &&
+    current.provider === "azure-devops" &&
+    (incoming.observedAt !== undefined || current.observedAt !== undefined)
+  ) {
+    return (incoming.observedAt ?? -Infinity) - (current.observedAt ?? -Infinity);
+  }
   const updated = Date.parse(incoming.updatedAt) - Date.parse(current.updatedAt);
   if (updated !== 0) return updated;
   if (current.observedAt === undefined && incoming.observedAt === undefined) return 0;

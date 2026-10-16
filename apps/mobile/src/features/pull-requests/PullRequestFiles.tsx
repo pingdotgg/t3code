@@ -1,5 +1,9 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
+import {
+  resolvePullRequestUpdateComparison,
+  type PullRequestUpdateComparison,
+} from "@t3tools/client-runtime/pull-request-update-comparison";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
@@ -23,6 +27,7 @@ import {
 } from "./usePullRequestDiff";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
+import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 
 function fileDirectory(path: string) {
   const separator = path.lastIndexOf("/");
@@ -31,18 +36,42 @@ function fileDirectory(path: string) {
 
 export function usePullRequestFilesContent(props: {
   readonly params: PullRequestDiffParams;
-  readonly onSelectFile?: (path: string) => void;
+  readonly onSelectFile?: (path: string, params: PullRequestDiffParams) => void;
   readonly groupByDirectory?: boolean;
 }) {
   const navigation = useNavigation();
-  const result = usePullRequestDiff(props.params);
+  const activity = useEnvironmentQuery(composerPullRequests.activity(requestTarget(props.params)));
+  // A screen can stay mounted while its route moves to another pull request, so a pick only
+  // applies to the one it was made on; until then the route's own commit or range does.
+  const reviewKey = pullRequestReviewKey(props.params);
+  const [picked, setPicked] = useState<{
+    readonly key: string;
+    readonly comparison: PullRequestUpdateComparison;
+  } | null>(null);
+  const pickedComparison = picked?.key === reviewKey ? picked.comparison : undefined;
+  const { commit, iterationRange: initialRange, ...currentParams } = props.params;
+  const updates = activity.data?.updates ?? [];
+  const latestUpdateId = updates.at(-1)?.id;
+  const { comparison, iterationRange: range } = resolvePullRequestUpdateComparison(
+    pickedComparison ?? initialRange,
+    latestUpdateId,
+  );
+  const pick = (next: Partial<PullRequestUpdateComparison>) =>
+    setPicked({ key: reviewKey, comparison: { ...comparison, ...next } });
+  const params: PullRequestDiffParams = range
+    ? { ...currentParams, iterationRange: range }
+    : { ...currentParams, ...(commit && !pickedComparison ? { commit } : {}) };
+  const result = usePullRequestDiff(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(props.params)));
-  const viewed = usePullRequestFilesViewed(props.params, props.params.commit ? null : detail.data);
+  const viewed = usePullRequestFilesViewed(
+    props.params,
+    params.commit || params.iterationRange ? null : detail.data,
+  );
   const filter = usePullRequestFileFilter(result.parsed);
   const parsed = filter.parsed;
   const loading = result.isPending && parsed.kind === "empty" && !result.error;
-  const fileCount = props.params.commit ? undefined : detail.data?.changedFiles;
-  const summary = props.params.commit ? undefined : (detail.data ?? props.params.initialSummary);
+  const fileCount = params.commit || range ? undefined : detail.data?.changedFiles;
+  const summary = params.commit || range ? undefined : (detail.data ?? props.params.initialSummary);
   const [collapsedDirectories, setCollapsedDirectories] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -96,10 +125,10 @@ export function usePullRequestFilesContent(props: {
               accessibilityRole="button"
               accessibilityLabel={`View diff for ${file.path}, ${file.additions} additions, ${file.deletions} deletions`}
               onPress={() => {
-                if (props.onSelectFile) props.onSelectFile(file.path);
+                if (props.onSelectFile) props.onSelectFile(file.path, params);
                 else
                   navigation.navigate("PullRequestFile", {
-                    ...props.params,
+                    ...params,
                     path: file.path,
                   });
               }}
@@ -163,6 +192,48 @@ export function usePullRequestFilesContent(props: {
     header: (
       <>
         <PullRequestReadStatus pending={false} error={result.error} />
+        {latestUpdateId !== undefined ? (
+          <View className="flex-row gap-2 py-2">
+            <Menu
+              title="Compare from update"
+              actions={[
+                { id: "0", title: "Base" },
+                ...updates
+                  .filter((update) => update.id < (range?.to ?? latestUpdateId))
+                  .map((update) => ({ id: String(update.id), title: `Update ${update.id}` })),
+              ]}
+              onPressAction={({ nativeEvent }) => pick({ from: Number(nativeEvent.event) })}
+            >
+              <View pointerEvents="none">
+                <Button
+                  onPress={() => {}}
+                  label={comparison.from ? `From update ${comparison.from}` : "From base"}
+                />
+              </View>
+            </Menu>
+            <Menu
+              title="Compare to update"
+              actions={[
+                { id: "latest", title: "Latest" },
+                ...updates
+                  .filter((update) => update.id > comparison.from)
+                  .map((update) => ({ id: String(update.id), title: `Update ${update.id}` })),
+              ]}
+              onPressAction={({ nativeEvent }) =>
+                pick({
+                  to: nativeEvent.event === "latest" ? "latest" : Number(nativeEvent.event),
+                })
+              }
+            >
+              <View pointerEvents="none">
+                <Button
+                  onPress={() => {}}
+                  label={comparison.to === "latest" ? "To latest" : `To update ${comparison.to}`}
+                />
+              </View>
+            </Menu>
+          </View>
+        ) : null}
         {loading ? (
           <View
             accessibilityLabel="Loading changed files"

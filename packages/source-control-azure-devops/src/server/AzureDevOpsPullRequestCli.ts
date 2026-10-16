@@ -1,11 +1,28 @@
+import type {
+  PullRequestReviewerCandidateList,
+  PullRequestLabelCandidateList,
+} from "@t3tools/contracts";
+import { makeAzureDevOpsPullRequestTools } from "./azureDevOpsPullRequestTools.ts";
+import type {
+  PullRequestHostAction,
+  PullRequestHostActionResult,
+  PullRequestHostDetails,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
+  PullRequestActivityEvent,
   PullRequestAction,
+  PullRequestCommit,
+  PullRequestReviewThread,
+  PullRequestReviewCommentDraft,
+  PullRequestThreadStatus,
   PullRequestComment,
+  PullRequestCheck,
   PullRequestInvolvement,
   PullRequestListState,
   PullRequestMergeMethod,
@@ -19,7 +36,10 @@ import {
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
-  decodeViewerJson,
+  decodeDiscussionJson,
+  decodeCommitsJson,
+  decodeCommitJson,
+  decodeCommitChangesJson,
   type AzureDevOpsChangeEntry,
   type AzureDevOpsItemContent,
   type AzureDevOpsIteration,
@@ -28,17 +48,69 @@ import {
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
 
+const refusalDetails = {
+  "permission-denied": "Your Azure account does not have permission for this action.",
+  inactive: "This pull request is no longer active.",
+  "root-commit": "A root commit cannot be compared with its parent.",
+  "review-position-unavailable":
+    "The file's current review position is unavailable. Refresh the pull request before commenting.",
+  "stale-suggestion":
+    "The source branch changed. Refresh the pull request before applying this suggestion.",
+  "invalid-suggestion-anchor":
+    "Only a suggestion anchored to the current source file can be applied.",
+  "outdated-suggestion": "The lines this suggestion was written for are no longer in the file.",
+  "binary-suggestion": "A suggestion cannot be applied to a binary file.",
+  "changed-suggestion":
+    "The lines this suggestion targets changed after it was written. Review the current code before applying it.",
+  "invalid-suggestion": "Choose a comment containing exactly one suggestion on a valid line range.",
+  "already-applied-suggestion": "This suggestion is already present in the source file.",
+  "reviewer-ineligible":
+    "Only an optional reviewer with no vote can decline. Authors cannot decline or flag their own review.",
+  "draft-vote": "Publish this draft before voting.",
+  "draft-completion": "Publish this draft before completing it.",
+  "not-completed": "Only a completed pull request can be reverted.",
+  "branch-operation-failed": "Azure could not complete the branch operation.",
+  "branch-operation-id-missing": "Azure omitted the branch operation id.",
+} as const;
+
+/**
+ * Names the read that produced unusable output, so a failure reports the call it came from
+ * rather than borrowing another operation's message.
+ */
 export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDevOpsPullRequestReadError>()(
   "AzureDevOpsPullRequestReadError",
   {
     command: Schema.Literal("az"),
     cwd: Schema.String,
     operation: Schema.String,
+    reason: Schema.optional(
+      Schema.Literals([
+        "permission-denied",
+        "inactive",
+        "root-commit",
+        "review-position-unavailable",
+        "stale-suggestion",
+        "invalid-suggestion-anchor",
+        "outdated-suggestion",
+        "binary-suggestion",
+        "changed-suggestion",
+        "invalid-suggestion",
+        "already-applied-suggestion",
+        "reviewer-ineligible",
+        "draft-vote",
+        "draft-completion",
+        "not-completed",
+        "branch-operation-failed",
+        "branch-operation-id-missing",
+      ]),
+    ),
     cause: Schema.Defect(),
   },
 ) {
   get detail(): string {
-    return `Azure CLI returned an unreadable ${this.operation} response.`;
+    return this.reason
+      ? refusalDetails[this.reason]
+      : `Azure CLI returned an unreadable ${this.operation} response.`;
   }
 
   override get message(): string {
@@ -62,6 +134,22 @@ export class AzureDevOpsViewerUnavailableError extends Schema.TaggedError<AzureD
   }
 }
 
+export class AzureDevOpsDiscussionPreparationError extends Schema.TaggedError<AzureDevOpsDiscussionPreparationError>()(
+  "AzureDevOpsDiscussionPreparationError",
+  { cwd: Schema.String, cause: Schema.Defect() },
+) {
+  get detail(): string {
+    return "Could not prepare the Azure DevOps discussion update.";
+  }
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/**
+ * Not a decode failure either: az answered with a well-formed pull request that simply carries
+ * no branch or link, which is a response this cannot place rather than one it cannot read.
+ */
 export class AzureDevOpsPullRequestIncompleteError extends Schema.TaggedError<AzureDevOpsPullRequestIncompleteError>()(
   "AzureDevOpsPullRequestIncompleteError",
   {
@@ -95,14 +183,64 @@ export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOps
   }
 }
 
+type AzureDevOpsMergeStrategies = NonNullable<PullRequestHostDetails["allowedMergeStrategies"]>;
+
 export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsCli.AzureDevOpsCliError
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
   | AzureDevOpsReviewerNameError
-  | AzureDevOpsViewerUnavailableError;
+  | AzureDevOpsViewerUnavailableError
+  | AzureDevOpsDiscussionPreparationError;
 
 const REST_API_VERSION = "7.1";
+const encodeReplyBody = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      content: Schema.String,
+      parentCommentId: Schema.Literal(1),
+      commentType: Schema.Literal(1),
+    }),
+  ),
+);
+const encodeCommentBody = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ content: Schema.String })),
+);
+const encodeStatusBody = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ status: Schema.String })),
+);
+const encodeNewThreadBody = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      comments: Schema.Array(
+        Schema.Struct({
+          content: Schema.String,
+          commentType: Schema.Literal(1),
+          parentCommentId: Schema.Literal(0),
+        }),
+      ),
+      status: Schema.Literal("active"),
+      pullRequestThreadContext: Schema.optional(
+        Schema.Struct({
+          changeTrackingId: Schema.Int,
+          iterationContext: Schema.Struct({
+            firstComparingIteration: Schema.Int,
+            secondComparingIteration: Schema.Int,
+          }),
+        }),
+      ),
+      threadContext: Schema.optional(
+        Schema.Struct({
+          filePath: Schema.String,
+          leftFileStart: Schema.optional(Schema.Struct({ line: Schema.Int, offset: Schema.Int })),
+          leftFileEnd: Schema.optional(Schema.Struct({ line: Schema.Int, offset: Schema.Int })),
+          rightFileStart: Schema.optional(Schema.Struct({ line: Schema.Int, offset: Schema.Int })),
+          rightFileEnd: Schema.optional(Schema.Struct({ line: Schema.Int, offset: Schema.Int })),
+        }),
+      ),
+    }),
+  ),
+);
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /**
  * A full page of change entries is two thousand files, each carrying its path, its url and
@@ -139,6 +277,48 @@ export interface AzureDevOpsIterationChanges {
 export class AzureDevOpsPullRequestCli extends Context.Service<
   AzureDevOpsPullRequestCli,
   {
+    /** Policies and statuses, and the merge strategies the policies allow. */
+    readonly listChecks: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+      iterationId: number | null;
+    }) => Effect.Effect<
+      {
+        checks: ReadonlyArray<PullRequestCheck>;
+        allowedMergeStrategies: AzureDevOpsMergeStrategies;
+      },
+      AzureDevOpsPullRequestCliError
+    >;
+    /** Only the policy read behind `allowedMergeStrategies`, for checking a completion. */
+    readonly listMergeStrategies: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+    }) => Effect.Effect<AzureDevOpsMergeStrategies, AzureDevOpsPullRequestCliError>;
+    readonly listLabelCandidates: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+    }) => Effect.Effect<PullRequestLabelCandidateList, AzureDevOpsPullRequestCliError>;
+    readonly setLabels: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+      labels: ReadonlyArray<string>;
+      applied: boolean;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+    readonly getHostDetails: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+    }) => Effect.Effect<PullRequestHostDetails, AzureDevOpsPullRequestCliError>;
+    readonly runHostAction: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+      action: PullRequestHostAction;
+    }) => Effect.Effect<PullRequestHostActionResult, AzureDevOpsPullRequestCliError>;
     readonly getViewer: (input: {
       readonly cwd: string;
     }) => Effect.Effect<string, AzureDevOpsPullRequestCliError>;
@@ -164,17 +344,122 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       AzureDevOpsPullRequestCliError
     >;
 
+    readonly listReviewerCandidates: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+    }) => Effect.Effect<PullRequestReviewerCandidateList, AzureDevOpsPullRequestCliError>;
+
+    readonly readVisit: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+      hashes?: ReadonlyArray<string>;
+      viewed?: boolean;
+    }) => Effect.Effect<
+      { hashes: Readonly<Record<string, number>>; denied: boolean },
+      AzureDevOpsPullRequestCliError
+    >;
+    readonly readAccess: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+    }) => Effect.Effect<
+      { credentialKey: string; permissions: Readonly<Record<string, boolean | null>> },
+      AzureDevOpsPullRequestCliError
+    >;
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
     /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
+    readonly readDiscussion: (input: {
+      iterationId?: number;
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+      viewer?: string;
+    }) => Effect.Effect<
+      {
+        comments: ReadonlyArray<PullRequestComment>;
+        reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+        events?: ReadonlyArray<PullRequestActivityEvent>;
+        identities?: Readonly<Record<string, string>>;
+        untrackedThreadIds?: ReadonlyArray<string>;
+      },
+      AzureDevOpsPullRequestCliError
+    >;
+    readonly listCommits: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestCommit>, AzureDevOpsPullRequestCliError>;
+    readonly getCommitScope: (input: {
+      cwd: string;
+      location: AzureDevOpsRepositoryLocation;
+      commit: string;
+    }) => Effect.Effect<
+      { iteration: AzureDevOpsIteration; changes: AzureDevOpsIterationChanges },
+      AzureDevOpsPullRequestCliError
+    >;
     readonly listThreads: (input: {
+      readonly viewer?: string;
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+
+    readonly setCommentLike: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly commentId: string;
+      readonly liked: boolean;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+    /**
+     * Starts one discussion per entry. Every line anchor is resolved against the latest push
+     * before anything is posted, so a review whose anchor is gone posts none of its comments.
+     */
+    readonly createThreads: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threads: ReadonlyArray<{
+        readonly body: string;
+        readonly comment?: PullRequestReviewCommentDraft;
+      }>;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+    readonly updateComment: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly commentId: string;
+      readonly body: string;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+    readonly deleteComment: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly commentId: string;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+    readonly setThreadStatus: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly status: PullRequestThreadStatus;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
+    readonly replyToThread: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+      readonly threadId: string;
+      readonly body: string;
+    }) => Effect.Effect<void, AzureDevOpsPullRequestCliError>;
 
     /**
      * Azure hangs the changed files off an iteration rather than off the pull
@@ -191,6 +476,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
      * which is the whole of the pull request rather than the latest slice of it.
      */
     readonly listIterationChanges: (input: {
+      readonly compareTo?: number;
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
@@ -306,8 +592,46 @@ function isReviewerName(value: string): boolean {
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
+const decodeAccess = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      credentialKey: Schema.String,
+      permissions: Schema.Record(Schema.String, Schema.NullOr(Schema.Boolean)),
+    }),
+  ),
+);
+const decodeVisit = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      denied: Schema.optional(Schema.Boolean),
+      dataProviders: Schema.optional(
+        Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            visit: Schema.optional(
+              Schema.NullOr(
+                Schema.Struct({
+                  viewedState: Schema.optional(Schema.NullOr(Schema.String)),
+                }),
+              ),
+            ),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
+const decodeViewedState = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      hashes: Schema.Union([Schema.Record(Schema.String, Schema.Int), Schema.Array(Schema.Never)]),
+    }),
+  ),
+);
+
+const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   // The remote takes three shapes and only `az` knows how to read all of them.
   const detectArgs = ["--detect", "true"] as const;
@@ -329,6 +653,85 @@ export const make = Effect.gen(function* () {
    * other tenant answers that with a sign-in page, which arrives here as unreadable output
    * rather than as a failure.
    */
+  const writeResponse = (input: {
+    cwd: string;
+    resource: string;
+    routeParameters: ReadonlyArray<string>;
+    area?: string;
+    method: "POST" | "PATCH" | "DELETE" | "PUT";
+    body?: string;
+  }) =>
+    Effect.gen(function* () {
+      let bodyFile: string | undefined;
+      if (input.body !== undefined) {
+        bodyFile = yield* fileSystem
+          .makeTempFileScoped({ prefix: "t3-azure-comment-", suffix: ".json" })
+          .pipe(
+            Effect.mapError(
+              (cause) => new AzureDevOpsDiscussionPreparationError({ cwd: input.cwd, cause }),
+            ),
+          );
+        yield* fileSystem
+          .writeFileString(bodyFile, input.body)
+          .pipe(
+            Effect.mapError(
+              (cause) => new AzureDevOpsDiscussionPreparationError({ cwd: input.cwd, cause }),
+            ),
+          );
+      }
+      if (input.area === "notification" && (input.method === "POST" || input.method === "DELETE")) {
+        const subscriptionId = input.routeParameters
+          .find((value) => value.startsWith("subscriptionId="))
+          ?.slice("subscriptionId=".length);
+        return yield* azure.notificationSubscriptions({
+          cwd: input.cwd,
+          method: input.method,
+          ...(subscriptionId === undefined ? {} : { subscriptionId }),
+          ...(bodyFile === undefined ? {} : { bodyFile }),
+        });
+      }
+      if (input.resource === "pullRequests" && input.method === "PATCH" && bodyFile !== undefined) {
+        const parameters = new Map(
+          input.routeParameters.map((parameter) => {
+            const index = parameter.indexOf("=");
+            return [parameter.slice(0, index), parameter.slice(index + 1)] as const;
+          }),
+        );
+        return yield* azure.patchPullRequest({
+          cwd: input.cwd,
+          bodyFile,
+          routeValues: {
+            project: parameters.get("project")!,
+            repositoryId: parameters.get("repositoryId")!,
+            pullRequestId: parameters.get("pullRequestId")!,
+          },
+        });
+      }
+      return yield* executeJson({
+        cwd: input.cwd,
+        args: [
+          "devops",
+          "invoke",
+          ...detectArgs,
+          "--area",
+          input.area ?? "git",
+          "--resource",
+          input.resource,
+          "--api-version",
+          input.area === "policy" ? "7.1-preview" : REST_API_VERSION,
+          ...(input.routeParameters.length === 0
+            ? []
+            : ["--route-parameters", ...input.routeParameters]),
+          "--http-method",
+          input.method,
+          ...(bodyFile === undefined ? [] : ["--in-file", bodyFile, "--encoding", "utf-8"]),
+        ],
+      });
+    }).pipe(Effect.scoped);
+
+  const write = (input: Parameters<typeof writeResponse>[0]) =>
+    writeResponse(input).pipe(Effect.asVoid);
+
   const invoke = <A>(input: {
     readonly cwd: string;
     readonly operation: string;
@@ -484,60 +887,94 @@ export const make = Effect.gen(function* () {
     );
   };
 
-  return AzureDevOpsPullRequestCli.of({
-    getViewer: (input) =>
-      executeJson({ cwd: input.cwd, args: ["account", "show", "--query", "user"] }).pipe(
-        Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-          const decoded = decodeViewerJson(`{"user":${result.stdout.trim() || "null"}}`);
-          if (!Result.isSuccess(decoded)) {
-            return Effect.fail(
+  const tools = makeAzureDevOpsPullRequestTools({
+    listIterations: (input) => api.listIterations(input),
+    readItemContent: (input) => api.readItemContent(input),
+    resolveIdentities: (input) => azure.resolveIdentities(input),
+    execute: executeJson,
+    write,
+    writeJson: (input) => writeResponse(input).pipe(Effect.map((output) => output.stdout)),
+    identity: (input) => azure.authenticatedIdentity(input),
+    uploadAttachment: (input) =>
+      azure.uploadAttachment({
+        cwd: input.cwd,
+        fileName: input.fileName,
+        data: input.data,
+        routeValues: {
+          project: input.location.project,
+          repositoryId: input.location.repository,
+          pullRequestId: String(input.number),
+        },
+      }),
+    subscriptions: (input) => azure.notificationSubscriptions({ ...input, method: "GET" }),
+    failure: (input) => new AzureDevOpsPullRequestReadError(input),
+  });
+
+  const api: AzureDevOpsPullRequestCli["Service"] = AzureDevOpsPullRequestCli.of({
+    readAccess: (input) =>
+      azure
+        .pullRequestContext({
+          ...input,
+          project: input.location.project,
+          repository: input.location.repository,
+          operation: "permissions",
+        })
+        .pipe(
+          Effect.flatMap((output) => decodeAccess(output.stdout)),
+          Effect.mapError(
+            (cause) =>
               new AzureDevOpsPullRequestReadError({
-                command: "az",
                 cwd: input.cwd,
-                operation: "getViewer",
-                cause: decoded.failure,
+                command: "az",
+                operation: "read permissions",
+                cause,
               }),
-            );
-          }
-          return decoded.success === null
-            ? Effect.fail(new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }))
-            : Effect.succeed(decoded.success);
-        }),
-        // `az devops login` signs in with a personal access token, which `az account show` knows
-        // nothing about, and nothing in `az` prints whose token it is. `--creator me` is resolved
-        // by the extension itself, so the viewer's own pull request names them.
-        Effect.catchIf(
-          (error) => error._tag !== "AzureDevOpsCliUnavailableError",
-          () =>
-            executeJson({
-              cwd: input.cwd,
-              args: [
-                "repos",
-                "pr",
-                "list",
-                ...detectArgs,
-                "--creator",
-                "me",
-                "--status",
-                "all",
-                "--top",
-                "1",
-              ],
-            }).pipe(
-              Effect.flatMap((result): Effect.Effect<string, AzureDevOpsPullRequestCliError> => {
-                const decoded = decodePullRequestListJson(result.stdout.trim() || "[]");
-                const login = Result.isSuccess(decoded)
-                  ? decoded.success.items[0]?.author?.login
-                  : undefined;
-                return login === undefined
-                  ? Effect.fail(
-                      new AzureDevOpsViewerUnavailableError({ command: "az", cwd: input.cwd }),
-                    )
-                  : Effect.succeed(login);
-              }),
-            ),
+          ),
         ),
-      ),
+    readVisit: (input) =>
+      azure
+        .pullRequestContext({
+          ...input,
+          project: input.location.project,
+          repository: input.location.repository,
+          operation: "visit",
+        })
+        .pipe(
+          Effect.flatMap((output) => decodeVisit(output.stdout)),
+          Effect.flatMap((data) => {
+            const value =
+              data.dataProviders?.["ms.vss-code-web.pr-detail-visit-data-provider"]?.visit
+                ?.viewedState;
+            return value
+              ? decodeViewedState(value).pipe(
+                  Effect.map((state) => ({
+                    hashes: Array.isArray(state.hashes)
+                      ? {}
+                      : (state.hashes as Readonly<Record<string, number>>),
+                    denied: false,
+                  })),
+                )
+              : Effect.succeed({ hashes: {}, denied: data.denied ?? false });
+          }),
+          Effect.mapError(
+            (cause) =>
+              new AzureDevOpsPullRequestReadError({
+                cwd: input.cwd,
+                command: "az",
+                operation: "read viewed files",
+                cause,
+              }),
+          ),
+        ),
+    listReviewerCandidates: tools.reviewerCandidates,
+    listLabelCandidates: tools.labelCandidates,
+    listChecks: tools.checks,
+    listMergeStrategies: tools.mergeStrategies,
+    setLabels: tools.setLabels,
+    getHostDetails: tools.details,
+    runHostAction: tools.run,
+    getViewer: (input) =>
+      azure.authenticatedIdentity(input).pipe(Effect.map((identity) => identity.login)),
 
     listPullRequests: (input) =>
       listPullRequestPage({
@@ -583,6 +1020,66 @@ export const make = Effect.gen(function* () {
         ),
       ),
 
+    readDiscussion: (input) =>
+      invoke({
+        cwd: input.cwd,
+        operation: "readDiscussion",
+        queryParameters:
+          input.iterationId === undefined
+            ? []
+            : [`$iteration=${input.iterationId}`, "$baseIteration=0"],
+        resource: "pullRequestThreads",
+        routeParameters: pullRequestRoute(input),
+        maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
+        decode: (raw) => decodeDiscussionJson(raw, input.viewer, input.iterationId),
+      }),
+    listCommits: (input) =>
+      invoke({
+        cwd: input.cwd,
+        operation: "listCommits",
+        resource: "pullRequestCommits",
+        routeParameters: pullRequestRoute(input),
+        queryParameters: ["$top=1000"],
+        maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
+        decode: decodeCommitsJson,
+      }),
+    getCommitScope: Effect.fn("AzureDevOpsPullRequestCli.getCommitScope")(function* (input) {
+      const commit = yield* invoke({
+        cwd: input.cwd,
+        operation: "getCommit",
+        resource: "commits",
+        routeParameters: [...repositoryRoute(input.location), `commitId=${input.commit}`],
+        decode: decodeCommitJson,
+      });
+      const parent = commit.parents?.[0];
+      if (!parent)
+        return yield* new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "commit parent",
+          reason: "root-commit",
+          cause: "A root commit cannot be compared with its parent.",
+        });
+      const changes = yield* invoke({
+        cwd: input.cwd,
+        operation: "commitChanges",
+        resource: "commitDiffs",
+        routeParameters: repositoryRoute(input.location),
+        queryParameters: [
+          `baseVersion=${parent}`,
+          "baseVersionType=commit",
+          `targetVersion=${commit.commitId}`,
+          "targetVersionType=commit",
+          "$top=2000",
+        ],
+        maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
+        decode: decodeCommitChangesJson,
+      });
+      return {
+        iteration: { id: 1, headCommit: commit.commitId, mergeBaseCommit: parent },
+        changes,
+      };
+    }),
     listThreads: (input) =>
       invoke({
         cwd: input.cwd,
@@ -590,7 +1087,130 @@ export const make = Effect.gen(function* () {
         resource: "pullRequestThreads",
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
-        decode: decodeThreadsJson,
+        decode: (raw) => decodeThreadsJson(raw, input.viewer),
+      }),
+
+    setCommentLike: (input) =>
+      write({
+        cwd: input.cwd,
+        resource: "pullRequestCommentLikes",
+        routeParameters: [
+          ...pullRequestRoute(input),
+          `threadId=${input.threadId}`,
+          `commentId=${input.commentId}`,
+        ],
+        method: input.liked ? "POST" : "DELETE",
+      }),
+    createThreads: Effect.fn(function* (input) {
+      const anchored = input.threads.some((thread) => thread.comment !== undefined);
+      const latest = anchored ? (yield* api.listIterations(input)).at(-1) : undefined;
+      const changes =
+        latest === undefined
+          ? []
+          : (yield* api.listIterationChanges({ ...input, iterationId: latest.id })).changes;
+      const bodies: string[] = [];
+      for (const { body, comment } of input.threads) {
+        const change = changes.find((change) => change.path === comment?.path.replace(/^\//, ""));
+        if (latest && comment && change?.changeTrackingId === undefined) {
+          return yield* new AzureDevOpsPullRequestReadError({
+            cwd: input.cwd,
+            command: "az",
+            operation: "anchor review comment",
+            reason: "review-position-unavailable",
+            cause:
+              "The file's current review position is unavailable. Refresh the pull request before commenting.",
+          });
+        }
+        bodies.push(
+          encodeNewThreadBody({
+            comments: [{ content: body, parentCommentId: 0, commentType: 1 }],
+            status: "active",
+            ...(latest && change?.changeTrackingId !== undefined
+              ? {
+                  pullRequestThreadContext: {
+                    changeTrackingId: change.changeTrackingId,
+                    iterationContext: {
+                      firstComparingIteration: latest.id,
+                      secondComparingIteration: latest.id,
+                    },
+                  },
+                }
+              : {}),
+            ...(comment === undefined
+              ? {}
+              : {
+                  threadContext: (() => {
+                    if (comment.fileLevel) return { filePath: toItemPath(comment.path) };
+                    const position = comment.position;
+                    const left =
+                      position.kind === "deleted" ||
+                      (position.kind === "context" && position.side === "left");
+                    const line = left ? position.oldLine : position.newLine;
+                    const startLine = Math.min(comment.startLine ?? line, line);
+                    return {
+                      filePath: toItemPath(comment.path),
+                      ...(left
+                        ? {
+                            leftFileStart: { line: startLine, offset: 1 },
+                            leftFileEnd: { line, offset: 1 },
+                          }
+                        : {
+                            rightFileStart: { line: startLine, offset: 1 },
+                            rightFileEnd: { line, offset: 1 },
+                          }),
+                    };
+                  })(),
+                }),
+          }),
+        );
+      }
+      for (const body of bodies)
+        yield* write({
+          cwd: input.cwd,
+          resource: "pullRequestThreads",
+          routeParameters: pullRequestRoute(input),
+          method: "POST",
+          body,
+        });
+    }),
+    replyToThread: (input) =>
+      write({
+        cwd: input.cwd,
+        resource: "pullRequestThreadComments",
+        routeParameters: [...pullRequestRoute(input), `threadId=${input.threadId}`],
+        method: "POST",
+        body: encodeReplyBody({ content: input.body, parentCommentId: 1, commentType: 1 }),
+      }),
+    updateComment: (input) =>
+      write({
+        cwd: input.cwd,
+        resource: "pullRequestThreadComments",
+        routeParameters: [
+          ...pullRequestRoute(input),
+          `threadId=${input.threadId}`,
+          `commentId=${input.commentId}`,
+        ],
+        method: "PATCH",
+        body: encodeCommentBody({ content: input.body }),
+      }),
+    deleteComment: (input) =>
+      write({
+        cwd: input.cwd,
+        resource: "pullRequestThreadComments",
+        routeParameters: [
+          ...pullRequestRoute(input),
+          `threadId=${input.threadId}`,
+          `commentId=${input.commentId}`,
+        ],
+        method: "DELETE",
+      }),
+    setThreadStatus: (input) =>
+      write({
+        cwd: input.cwd,
+        resource: "pullRequestThreads",
+        routeParameters: [...pullRequestRoute(input), `threadId=${input.threadId}`],
+        method: "PATCH",
+        body: encodeStatusBody({ status: input.status }),
       }),
 
     listIterations: (input) =>
@@ -610,7 +1230,13 @@ export const make = Effect.gen(function* () {
           operation: "listIterationChanges",
           resource: "pullRequestIterationChanges",
           routeParameters: [...pullRequestRoute(input), `iterationId=${input.iterationId}`],
-          queryParameters: [`$top=${CHANGE_ENTRIES_PER_PAGE}`, `$skip=${skip}`],
+          // Azure pages this route at 1000 entries by default; this is its own maximum per page,
+          // and it names where the next page starts rather than answering with the whole change.
+          queryParameters: [
+            `$top=${CHANGE_ENTRIES_PER_PAGE}`,
+            `$skip=${skip}`,
+            ...(input.compareTo === undefined ? [] : [`$compareTo=${input.compareTo}`]),
+          ],
           maxOutputBytes: CHANGE_ENTRIES_MAX_OUTPUT_BYTES,
           decode: decodeIterationChangesJson,
         });
@@ -720,6 +1346,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.asVoid),
   });
+  return api;
 });
 
 export const layer = Layer.effect(AzureDevOpsPullRequestCli, make);

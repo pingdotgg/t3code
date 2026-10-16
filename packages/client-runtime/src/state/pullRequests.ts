@@ -314,6 +314,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             input.repository,
             input.number,
             input.commit ?? null,
+            input.iterationRange ?? null,
             input.changeType,
             input.oldPath,
             input.newPath,
@@ -411,6 +412,50 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       execute: (input) => routedRequest(WS_METHODS.pullRequestsComment, input),
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
+    }),
+    hostDetails: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:host-details",
+      tag: WS_METHODS.pullRequestsHostDetails,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsHostDetails, input),
+      staleTimeMs: 30_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
+    runHostAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:run-host-action",
+      tag: WS_METHODS.pullRequestsRunHostAction,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsRunHostAction, input),
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        // These operations create a separate branch and poll Azure without changing the PR.
+        key: ({ environmentId, input }) =>
+          input.action.type === "cherry-pick" || input.action.type === "revert"
+            ? JSON.stringify([
+                "branch-operation",
+                environmentId,
+                input.projectId,
+                input.host?.toLowerCase() ?? null,
+                input.repository,
+                input.number,
+              ])
+            : environmentId,
+      },
+    }),
+    deleteComment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:delete-comment",
+      tag: WS_METHODS.pullRequestsDeleteComment,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsDeleteComment, input),
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+      onSuccess: ({ environmentId, input: { projectId, host, repository, number } }, registry) =>
+        Effect.sync(() =>
+          registry.refresh(
+            activity({
+              environmentId,
+              input: { projectId, ...(host === undefined ? {} : { host }), repository, number },
+            }),
+          ),
+        ),
     }),
     updateComment: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:update-comment",

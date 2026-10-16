@@ -26,6 +26,7 @@ import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -185,6 +186,7 @@ function projectForPullRequest(
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
+  const pullRequests = yield* PullRequestService.PullRequestService;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
 
   const projects = yield* ProjectService.ProjectService;
@@ -313,7 +315,7 @@ const make = Effect.gen(function* () {
           failure: null,
         })),
         Effect.catch((error) =>
-          Effect.succeed({ input, target: null, project: undefined, failure: error.message }),
+          Effect.succeed({ input, target: null, project: undefined, failure: error }),
         ),
       ),
     );
@@ -336,7 +338,29 @@ const make = Effect.gen(function* () {
     handle: (params: P) => Effect.Effect<A, E, R>,
   ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
+  const hostReference = Effect.fn("PullRequestsToolkit.hostReference")(function* (
+    input: Omit<PullRequestTargetInput, "threadId">,
+  ) {
+    const [entry] = yield* locateAll([input]);
+    if (entry?.target === null) return yield* entry.failure;
+    if (!entry || !entry.project)
+      return yield* new PullRequestProjectNotFoundError({
+        repository: entry?.target?.repository ?? input.repository ?? "",
+      });
+    return guideReference(entry.project, entry.target!);
+  });
+
   return {
+    read_pull_request_host_details: McpToolAccess.reads((input) =>
+      hostReference(input).pipe(Effect.flatMap((reference) => pullRequests.hostDetails(reference))),
+    ),
+    run_pull_request_host_action: McpToolAccess.writesWithCapability((input) =>
+      hostReference(input).pipe(
+        Effect.flatMap((reference) =>
+          pullRequests.runHostAction({ ...reference, action: input.action }),
+        ),
+      ),
+    ),
     link_pull_request: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestLinkFailedError, input.threadId);
@@ -421,7 +445,7 @@ const make = Effect.gen(function* () {
                   number: entry.input.number ?? 0,
                   url: entry.input.url ?? "",
                   outcome: "failed" as const,
-                  detail: entry.failure,
+                  detail: entry.failure.message,
                 };
               }
               const identity = {
@@ -463,7 +487,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const [entry] = yield* locateAll([input]);
         if (entry !== undefined && entry.target === null) {
-          return yield* new PullRequestGuideFailedError({ detail: entry.failure ?? "" });
+          return yield* entry.failure;
         }
         if (entry === undefined || entry.target === null || entry.project === undefined) {
           return yield* new PullRequestProjectNotFoundError({

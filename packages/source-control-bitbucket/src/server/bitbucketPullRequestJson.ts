@@ -456,6 +456,7 @@ export function decodeCommentsJson(raw: string): Result.Result<BitbucketComments
     const path = trimmed(comment.inline?.path);
     comments.push({
       id: String(comment.id),
+      ...(comment.parent == null ? {} : { replyToCommentId: String(comment.parent.id) }),
       kind: path === null ? "issue-comment" : "review-comment",
       author: toActor(comment.user),
       body,

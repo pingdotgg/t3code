@@ -63,7 +63,9 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     composerPullRequests.requestReviewers.permissionAtom(target.environmentId),
   );
   const connected = usePullRequestConnected(route.params.environmentId);
+  const deniedReason = pr?.viewerPermissions.deniedActions?.reviewers;
   const allowed =
+    !deniedReason &&
     connected &&
     canWrite &&
     pr?.state === "open" &&
@@ -113,10 +115,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         },
       });
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      if (!pr?.capabilities.reviewers.listCandidates) {
-        setQuery("");
-        detail.refresh();
-      }
+      if (!pr?.capabilities.reviewers.listCandidates) setQuery("");
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Couldn't update this review request. Try again.",
@@ -199,7 +198,8 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               ) : null}
               {!allowed ? (
                 <Text className="text-xs text-foreground-muted">
-                  Requesting reviews requires write access and an open pull request.
+                  {deniedReason ??
+                    "Requesting reviews requires write access and an open pull request."}
                 </Text>
               ) : null}
               {error ? (

@@ -9,6 +9,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
+import { usePullRequestDeniedActions } from "./PullRequestReviewContext";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 
@@ -30,6 +31,7 @@ export function PullRequestLabelPicker({
   reference: PullRequestRef;
   allowed: boolean;
 }) {
+  const denial = usePullRequestDeniedActions()["labels"];
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
@@ -73,8 +75,8 @@ export function PullRequestLabelPicker({
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
       label="Change labels"
-      allowed={allowed}
-      disabledReason="Changing labels needs triage access on this repository"
+      allowed={allowed && !denial}
+      disabledReason={denial ?? "Changing labels needs triage access on this repository"}
       open={open}
       onOpenChange={setOpen}
       query={query}

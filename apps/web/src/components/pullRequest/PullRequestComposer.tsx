@@ -1,5 +1,10 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestDetailView,
+  PullRequestRef,
+  PullRequestReviewVerdict,
+} from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -34,7 +39,7 @@ export function PullRequestComposer({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onReviewSubmitted: () => void;
-  openReviewRequest?: number | undefined;
+  openReviewRequest?: { verdict?: PullRequestReviewVerdict } | null;
 }) {
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
@@ -158,6 +163,7 @@ export function PullRequestComposer({
               textareaRef={reviewRef}
               pending={reviewPending}
               onPendingChange={setReviewPending}
+              verdictRequest={openReviewRequest ?? null}
               onSubmitted={() => {
                 setOpen(false);
                 onReviewSubmitted();

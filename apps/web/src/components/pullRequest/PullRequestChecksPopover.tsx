@@ -6,7 +6,6 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
@@ -64,60 +63,45 @@ function ChecksBody({
   threadRef: ScopedThreadRef | null;
 }) {
   const openLink = useOpenLink(threadRef);
-  const [showAll, setShowAll] = useState(false);
   const { attention, running, completed } = groupPullRequestChecks(checks);
-  const canCollapse = attention.length + running.length > 0 && completed.length > 0;
-  const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
+  const visibleChecks = [...attention, ...running, ...completed];
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
   return (
-    <>
-      <ScrollArea className="max-h-64">
-        <ul className="flex flex-col gap-1">
-          {}
-          {visibleChecks.map((check, index) => (
-            <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
-              <PullRequestCheckStatusIcon status={check.status} />
-              <Tooltip>
-                <TooltipTrigger
-                  render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
-                />
-                <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-              </Tooltip>
-              <span className="shrink-0 text-muted-foreground">
-                {pullRequestCheckStatusLabel(check)}
-              </span>
-              {check.url === null ? null : (
-                <button
-                  type="button"
-                  className="shrink-0 text-primary hover:underline"
-                  onClick={() => {
-                    if (!check.url) return;
-                    void openLink(check.url).catch((error: unknown) => {
-                      console.error(error);
-                      toastManager.add({ type: "error", title: "Unable to open check details" });
-                    });
-                  }}
-                >
-                  Details
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      </ScrollArea>
-      {canCollapse ? (
-        <Button
-          variant="ghost"
-          size="xs"
-          aria-expanded={showAll}
-          onClick={() => setShowAll(!showAll)}
-        >
-          {showAll ? "Show less" : "Show all"}
-        </Button>
-      ) : null}
-    </>
+    <ScrollArea className="max-h-64">
+      <ul className="flex flex-col gap-1">
+        {visibleChecks.map((check, index) => (
+          <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
+            <PullRequestCheckStatusIcon status={check.status} />
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
+              />
+              <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+            </Tooltip>
+            <span className="shrink-0 text-muted-foreground">
+              {pullRequestCheckStatusLabel(check)}
+            </span>
+            {check.url === null ? null : (
+              <button
+                type="button"
+                className="shrink-0 text-primary hover:underline"
+                onClick={() => {
+                  if (!check.url) return;
+                  void openLink(check.url).catch((error: unknown) => {
+                    console.error(error);
+                    toastManager.add({ type: "error", title: "Unable to open check details" });
+                  });
+                }}
+              >
+                Details
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </ScrollArea>
   );
 }
 
@@ -143,6 +127,7 @@ export function PullRequestChecksPopover({
   render?: React.ReactElement;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
+  const checkCount = checks?.filter((check) => check.status !== "skipped").length ?? 0;
   const runningCount = checks?.filter((check) => check.status === "pending").length ?? 0;
   const failedCount =
     checks?.filter((check) => check.status === "failure" || check.status === "cancelled").length ??
@@ -178,7 +163,7 @@ export function PullRequestChecksPopover({
           <>
             {checks !== undefined && runningCount > 0 ? (
               <span className="tabular-nums">
-                {runningCount}/{checks.length}
+                {runningCount}/{checkCount}
               </span>
             ) : failedCount > 0 ? (
               <span className="tabular-nums">{failedCount} failed</span>

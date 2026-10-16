@@ -2496,6 +2496,12 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.update(input)),
         [WS_METHODS.pullRequestsComment]: (input) =>
           withPullRequestViewer(input, pullRequests.comment(input)),
+        [WS_METHODS.pullRequestsHostDetails]: (input) =>
+          withPullRequestViewer(input, pullRequests.hostDetails(input)),
+        [WS_METHODS.pullRequestsRunHostAction]: (input) =>
+          withPullRequestViewer(input, pullRequests.runHostAction(input)),
+        [WS_METHODS.pullRequestsDeleteComment]: (input) =>
+          withPullRequestViewer(input, pullRequests.deleteComment(input)),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
           withPullRequestViewer(input, pullRequests.updateComment(input)),
         [WS_METHODS.pullRequestsSubmitReview]: (input) =>
@@ -2508,19 +2514,19 @@ const layerWsRpc = (
           withPullRequestViewer(input, pullRequests.setReaction(input)),
         [WS_METHODS.pullRequestsReportState]: (input) => pullRequests.reportState(input),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
-          pullRequests
-            .invalidate(input, { notifyReaders: true })
-            .pipe(
-              Effect.andThen(
-                input.reference === undefined || input.filesViewedOnly === true
-                  ? Effect.void
-                  : resolvePullRequestSyncKey(input.reference).pipe(
-                      Effect.flatMap((key) =>
-                        key === null ? Effect.void : pullRequestSync.requestSync(key),
-                      ),
+          pullRequests.invalidate(input, { notifyReaders: true, refreshProvider: true }).pipe(
+            // A reader asking for fresh host state also wants the thread badges it feeds to
+            // catch up, including a merged link the sweep would otherwise never revisit.
+            Effect.andThen(
+              input.reference === undefined || input.filesViewedOnly === true
+                ? Effect.void
+                : resolvePullRequestSyncKey(input.reference).pipe(
+                    Effect.flatMap((key) =>
+                      key === null ? Effect.void : pullRequestSync.requestSync(key),
                     ),
-              ),
+                  ),
             ),
+          ),
         [WS_METHODS.pullRequestsSubscribeRefreshes]: () => pullRequests.subscribeRefreshes,
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
           withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),

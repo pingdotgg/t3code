@@ -1,3 +1,4 @@
+import { PullRequestMentionInput as TextInput } from "./PullRequestMentionInput";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -9,8 +10,8 @@ import { Platform, Pressable, View } from "react-native";
 import { clearSubmittedReview } from "./pullRequestReviewDrafts";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
-import { Button } from "../../components/ui/Button";
+import { AppText as Text } from "../../components/ui/AppText";
+import { PullRequestPermissionButton as Button } from "./PullRequestPermissionButton";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -135,6 +136,11 @@ export function PullRequestReviewSheet({
       busy={submission.busy}
       footer={
         <Button
+          reason={
+            result.data?.viewerPermissions.deniedActions?.[
+              params.mode === "review" ? "vote" : "comment"
+            ]
+          }
           label={
             submission.busy
               ? "Submitting…"
@@ -168,6 +174,7 @@ export function PullRequestReviewSheet({
         {reviewing ? "Summary" : "Comment"}
       </Text>
       <TextInput
+        params={params}
         multiline
         accessibilityLabel={reviewing ? "Review summary" : "Comment"}
         placeholder={

@@ -121,6 +121,59 @@ describe("command permissions", () => {
       }),
     ),
   );
+  it.effect(
+    "requires source-control write in the destination environment to delete PR comments",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const command = createCommandPermissions(runtime, WS_METHODS.pullRequestsDeleteComment);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(command.permissionAtom(env))).toBe(false);
+          expect(
+            (yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthSourceControlWriteScope);
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthSourceControlWriteScope],
+              permissions: [AuthSourceControlWriteScope],
+            }),
+          );
+          yield* command.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(command.permissionAtom(other))).toBe(false);
+        }),
+      ),
+  );
+  it.effect(
+    "requires source-control write in the destination environment to run native Azure PR actions",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const registry = yield* setup;
+          const command = createCommandPermissions(runtime, WS_METHODS.pullRequestsRunHostAction);
+          registry.set(sessions(env), AsyncResult.success(grant(true)));
+          expect(registry.get(command.permissionAtom(env))).toBe(false);
+          expect(
+            (yield* command.authorize(registry, env).pipe(Effect.flip)).requiredPermission,
+          ).toBe(AuthSourceControlWriteScope);
+          registry.set(
+            sessions(env),
+            AsyncResult.success({
+              ...grant(false),
+              scopes: [AuthSourceControlWriteScope],
+              permissions: [AuthSourceControlWriteScope],
+            }),
+          );
+          yield* command.authorize(registry, env);
+          registry.set(sessions(other), AsyncResult.success(grant(false)));
+          expect(registry.get(command.permissionAtom(other))).toBe(false);
+        }),
+      ),
+  );
+
   it.effect("waits for an initial grant", () =>
     Effect.scoped(
       Effect.gen(function* () {

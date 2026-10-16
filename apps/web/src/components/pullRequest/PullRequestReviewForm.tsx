@@ -5,9 +5,10 @@ import { useState, type ReactNode, type RefObject } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
-import { Button } from "../ui/button";
+import { PullRequestPermissionButton as Button } from "./PullRequestPermissionButton";
+import { usePullRequestDeniedActions } from "./PullRequestReviewContext";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
-import { Textarea } from "../ui/textarea";
+import { PullRequestTextarea as Textarea } from "./PullRequestTextarea";
 import { toastManager } from "../ui/toast";
 import {
   pullRequestReviewKey,
@@ -50,6 +51,7 @@ export function PullRequestReviewForm({
   pending,
   onPendingChange,
   onSubmitted,
+  verdictRequest,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -59,8 +61,17 @@ export function PullRequestReviewForm({
   pending: boolean;
   onPendingChange: (pending: boolean) => void;
   onSubmitted: () => void;
+  verdictRequest?: { verdict?: PullRequestReviewVerdict } | null;
 }) {
-  const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>("comment");
+  const [requestedVerdict, setRequestedVerdict] = useState<PullRequestReviewVerdict>(
+    verdictRequest?.verdict ?? "comment",
+  );
+  const [answeredVerdictRequest, setAnsweredVerdictRequest] = useState(verdictRequest);
+  if (verdictRequest !== answeredVerdictRequest) {
+    setAnsweredVerdictRequest(verdictRequest);
+    if (verdictRequest?.verdict) setRequestedVerdict(verdictRequest.verdict);
+  }
+  const denied = usePullRequestDeniedActions();
   const comments = usePendingReviewComments(reference);
   const reviewKey = pullRequestReviewKey(reference);
   // The panel stays mounted while the selected pull request changes. Keeping summaries beside
@@ -79,7 +90,7 @@ export function PullRequestReviewForm({
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
   const submit = async (verdict: (typeof VERDICTS)[number]) => {
-    if (pending) return;
+    if (pending || denied.vote) return;
     const submittedBody = body;
     const submittedComments = comments;
     onPendingChange(true);
@@ -158,6 +169,7 @@ export function PullRequestReviewForm({
           </Select>
         ) : null}
         <Button
+          reason={denied.vote}
           size="xs"
           disabled={
             pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value, body)

@@ -15,6 +15,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { groupPullRequestComments } from "@t3tools/client-runtime/pull-request-comment-replies";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
 
@@ -43,7 +44,6 @@ import {
   latestPullRequestReviewOutcomes,
   newestPullRequestCommitAt,
   mergePullRequestThreadComments,
-  orderPullRequestComments,
   pullRequestActionMenuHasGroup,
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
@@ -61,6 +61,7 @@ import {
   buildPullRequestTimeline,
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
+  type PullRequestTimelineRow,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -324,6 +325,9 @@ describe("pull request primary control", () => {
       "resolve",
     );
     expect(resolvePullRequestPrimaryControl({ ...open, isDraft: true })).toBe("ready");
+    expect(
+      resolvePullRequestPrimaryControl({ ...open, isDraft: true, mergeability: "conflicting" }),
+    ).toBe("ready");
   });
 });
 
@@ -368,20 +372,33 @@ describe("stacked pull request classification", () => {
   });
 });
 
-describe("ordering comments", () => {
-  it("reverses the chronological list for newest first, and leaves oldest first alone", () => {
-    const comments = [{ createdAt: "a" }, { createdAt: "b" }, { createdAt: "c" }];
-    expect(orderPullRequestComments(comments, "newest")).toEqual([
-      { createdAt: "c" },
-      { createdAt: "b" },
-      { createdAt: "a" },
-    ]);
-    expect(orderPullRequestComments(comments, "oldest")).toEqual(comments);
-    expect(comments).toEqual([{ createdAt: "a" }, { createdAt: "b" }, { createdAt: "c" }]);
-  });
-});
-
 describe("review verdicts", () => {
+  it("uses current votes without inventing review timestamps and honors resets", () => {
+    const reviewer = { login: "Reviewer", name: "Reviewer", avatarUrl: null };
+    const old: PullRequestComment = {
+      id: "old",
+      kind: "review",
+      author: { ...reviewer, login: "reviewer" },
+      body: "",
+      createdAt: "2026-07-01T00:00:00Z",
+      path: null,
+      url: null,
+      reviewState: "APPROVED",
+    };
+    const commits = [
+      { oid: "new", messageHeadline: "New push", committedDate: "2026-07-02T00:00:00Z" },
+    ];
+    expect(
+      latestPullRequestReviewOutcomes([], commits, [{ ...reviewer, reviewState: "approved" }]),
+    ).toMatchObject([{ actor: reviewer, outcome: "approved", at: null, stale: false }]);
+    expect(
+      latestPullRequestReviewOutcomes([old], commits, [{ ...reviewer, reviewState: "none" }]),
+    ).toEqual([]);
+    expect(
+      latestPullRequestReviewOutcomes([old], commits, [{ ...reviewer, reviewState: "rejected" }]),
+    ).toMatchObject([{ outcome: "changes-requested", stale: false }]);
+  });
+
   it("reads the same three verdicts however a host spells them", () => {
     expect(pullRequestReviewOutcome("APPROVED")).toBe("approved");
     expect(pullRequestReviewOutcome("approved")).toBe("approved");
@@ -718,6 +735,102 @@ describe("pull request timeline", () => {
       ["event", "1baf7bdcafe"],
       ["event", "created"],
     ]);
+  });
+
+  it("keeps a threaded discussion whole at its latest reply, in either reading order", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [
+        { ...TIMELINE_SOURCE.comments[0]!, id: "root", createdAt: "2026-07-01T12:00:00Z" },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "before", createdAt: "2026-07-04T00:00:00Z" },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "reply", createdAt: "2026-07-05T00:00:00Z" },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "after", createdAt: "2026-07-06T00:00:00Z" },
+        // A host thread with a single comment is still its own discussion.
+        { ...TIMELINE_SOURCE.comments[0]!, id: "single", createdAt: "2026-07-07T00:00:00Z" },
+      ],
+    });
+    const discussions = [
+      { threadId: undefined, comments: [{ id: "root" }, { id: "reply" }] },
+      { threadId: "7", comments: [{ id: "single" }] },
+      { threadId: undefined, comments: [{ id: "before" }] },
+      { threadId: undefined, comments: [{ id: "after" }] },
+    ];
+    const ids = (rows: ReadonlyArray<PullRequestTimelineRow>) =>
+      rows.map((row) =>
+        row.kind === "comments" ? row.events.map((event) => event.id) : row.event.id,
+      );
+    expect(ids(groupPullRequestTimelineConversations(events, discussions))).toEqual([
+      ["single"],
+      ["after"],
+      ["root", "reply"],
+      ["before"],
+      "1baf7bdcafe",
+      "created",
+    ]);
+    expect(ids(groupPullRequestTimelineConversations(events.toReversed(), discussions))).toEqual([
+      "created",
+      "1baf7bdcafe",
+      ["before"],
+      ["root", "reply"],
+      ["after"],
+      ["single"],
+    ]);
+  });
+
+  it("joins the comments either side of a thread's earlier remark into one section", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      commits: [],
+      comments: [
+        { ...TIMELINE_SOURCE.comments[0]!, id: "root", createdAt: "2026-07-02T00:00:00Z" },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "first", createdAt: "2026-07-01T06:00:00Z" },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "second", createdAt: "2026-07-03T00:00:00Z" },
+        { ...TIMELINE_SOURCE.comments[0]!, id: "reply", createdAt: "2026-07-04T00:00:00Z" },
+      ],
+    });
+    const rows = groupPullRequestTimelineConversations(events, [
+      { threadId: "1", comments: [{ id: "root" }, { id: "reply" }] },
+    ]);
+    expect(
+      rows.map((row) =>
+        row.kind === "comments" ? row.events.map((event) => event.id) : row.event.id,
+      ),
+    ).toEqual([["root", "reply"], ["second", "first"], "created"]);
+  });
+
+  it("keeps GitHub line remarks in one section and groups only explicit host threads", () => {
+    const comment = (id: string, createdAt: string, extra: Partial<PullRequestComment> = {}) => ({
+      ...TIMELINE_SOURCE.comments[0]!,
+      id,
+      createdAt,
+      ...extra,
+    });
+    const remark = { kind: "review-comment" as const, path: "src/a.ts" };
+    const github: PullRequestComment[] = [
+      comment("review", "2026-07-03T00:00:00Z", { kind: "review", reviewState: "COMMENTED" }),
+      comment("i1", "2026-07-03T00:00:01Z", remark),
+      comment("i2", "2026-07-03T00:00:02Z", remark),
+      comment("i3", "2026-07-03T00:00:03Z", remark),
+      comment("issue", "2026-07-04T00:00:00Z"),
+    ];
+    const azure: PullRequestComment[] = [
+      comment("a1", "2026-07-03T00:00:00Z", { threadId: "a" }),
+      comment("x", "2026-07-04T00:00:00Z"),
+      comment("a2", "2026-07-05T00:00:00Z", { threadId: "a" }),
+      comment("single", "2026-07-06T00:00:00Z", { threadId: "s" }),
+    ];
+    // As both tabs group: GitHub also repeats each line remark in a review thread, which must not
+    // split it from the review it belongs to.
+    const rows = (comments: PullRequestComment[]) =>
+      groupPullRequestTimelineConversations(
+        buildPullRequestTimeline({ ...TIMELINE_SOURCE, commits: [], comments }),
+        groupPullRequestComments({ comments, reviewThreads: [] }),
+      ).map((row) =>
+        row.kind === "comments" ? row.events.map((event) => event.id) : row.event.id,
+      );
+
+    expect(rows(github)).toEqual([["issue", "i3", "i2", "i1", "review"], "created"]);
+    expect(rows(azure)).toEqual([["single"], ["a1", "a2"], ["x"], "created"]);
   });
 });
 
@@ -1743,14 +1856,25 @@ describe("the compact row's single action slot", () => {
     expect(describePullRequestChecks([check("success"), check("success")])).toBe(
       "All checks passed",
     );
-    expect(describePullRequestChecks([check("success"), check("skipped")])).toBe("1 of 2 passing");
+    expect(describePullRequestChecks([check("success"), check("skipped")])).toBe(
+      "All checks passed",
+    );
+    expect(describePullRequestChecks([check("success"), check("neutral"), check("skipped")])).toBe(
+      "1 of 2 passing",
+    );
+    expect(describePullRequestChecks([check("pending"), check("skipped")])).toBe("1 of 1 pending");
+    expect(describePullRequestChecks([check("failure"), check("skipped")])).toBe("1 of 1 failing");
+    expect(describePullRequestChecks([check("action-required"), check("skipped")])).toBe(
+      "1 of 1 awaiting action",
+    );
+    expect(describePullRequestChecks([check("skipped")])).toBe("All checks skipped");
     expect(
       describePullRequestChecks([
         ...Array.from({ length: 7 }, () => check("pending")),
         ...Array.from({ length: 8 }, () => check("success")),
         check("failure"),
       ]),
-    ).toBe("7 of 16 running · 1 failed");
+    ).toBe("7 of 16 pending · 1 failed");
     expect(describePullRequestChecks([check("failure"), check("success")])).toBe("1 of 2 failing");
     expect(describePullRequestChecks([check("action-required")])).toBe("1 of 1 awaiting action");
     expect(describePullRequestChecks([check("action-required"), check("failure")])).toBe(

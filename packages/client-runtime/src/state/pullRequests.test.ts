@@ -1178,6 +1178,64 @@ it.effect("keeps concurrent diff file reads on different hosts separate", () =>
   ),
 );
 
+it.effect.each(["cherry-pick", "revert"] as const)(
+  "keeps other PR actions available while %s waits for Azure",
+  (type) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const calls: string[] = [];
+        const client = {
+          [WS_METHODS.pullRequestsRunHostAction]: () =>
+            Effect.gen(function* () {
+              calls.push(type);
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              return { message: "Branch created." };
+            }),
+          [WS_METHODS.pullRequestsComment]: () =>
+            Effect.sync(() => {
+              calls.push("comment");
+            }),
+        } as unknown as WsRpcProtocolClient;
+        const { atoms, registry } = yield* makeTestRuntime(client);
+        const target = {
+          environmentId: TARGET.environmentId,
+          input: {
+            projectId: ProjectId.make("project-1"),
+            host: "dev.azure.com",
+            repository: "acme/web",
+            number: 1,
+          },
+        };
+        const branch = () =>
+          atoms.runHostAction.run(registry, {
+            ...target,
+            input: {
+              ...target.input,
+              action: { type, targetBranch: "main", newBranch: "test-branch" },
+            },
+          });
+        const first = branch();
+        yield* Deferred.await(started);
+        const second = branch();
+        const comment = yield* Effect.promise(() =>
+          atoms.comment.run(registry, {
+            ...target,
+            input: { ...target.input, number: 2, body: "A separate discussion" },
+          }),
+        );
+        expect(AsyncResult.isSuccess(comment)).toBe(true);
+        expect(calls).toEqual([type, "comment"]);
+        yield* Deferred.succeed(release, undefined);
+        const results = yield* Effect.promise(() => Promise.all([first, second]));
+        expect(results.every(AsyncResult.isSuccess)).toBe(true);
+        expect(calls).toEqual([type, "comment", type]);
+      }),
+    ),
+);
+
 it.effect("queues merge preparation with actions without restarting it on refresh", () =>
   Effect.scoped(
     Effect.gen(function* () {

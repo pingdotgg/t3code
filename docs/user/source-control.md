@@ -191,8 +191,25 @@ for ten minutes during a GitHub outage; new credentials must be verified first. 
 an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
 PR creation from Git actions continue to use the project's environment.
 
-For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
-declined pull request.
+For Azure DevOps, comments stay grouped in discussions, including replies on lines of the diff.
+You can like comments, edit or delete your own, and copy a comment’s link. Resolve a discussion after replying, or choose another Azure status. Filter discussions to focus on active, resolved, or your own comments and replies. **Show everything** also includes system updates. Resolved discussions open collapsed; expand one to read or reactivate it. Applying a code suggestion commits
+it to the source branch; refresh first if someone has pushed new changes.
+
+Compare Azure updates in the **Code** tab to review what changed between pushes. Line discussions
+follow their code; comments whose original lines have changed appear as outdated. **What's new**
+shows activity since your previous visit on this device and keeps replies with their discussion.
+Type `@` in a comment to mention a person; work item references (`#123`) and PR references (`!123`)
+link to Azure.
+
+Open the PR's **⋯ → Azure DevOps** menu to vote, manage review requirements and linked work items,
+or choose completion options. Auto-complete waits for the selected policies and can be cancelled from the
+PR actions menu. Revert and cherry-pick can create a branch and follow-up PR. You can also upload
+attachments and copy their Markdown links into comments. Azure enforces your account’s permissions;
+a credential that can review code may need additional scopes for notifications or work items.
+Known permission restrictions disable the affected actions and explain why. Some token restrictions
+can only be detected when Azure refuses an action; replace the credential and refresh to retry.
+
+Bitbucket does not support reopening a declined pull request.
 
 ### Review guides
 
@@ -235,7 +252,8 @@ running count. A tick belongs to the pull request rather than to a commit, so sc
 single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
 
 On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
-in either direction. Forgejo, GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the
+in either direction. Azure uses its own review progress when the credential can access it; the
+control explains when Azure refuses that access. Forgejo, GitLab, and Bitbucket expose no record T3 Code can read, so the
 server you are connected to keeps them instead: they follow you across the apps connected to that
 server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
 

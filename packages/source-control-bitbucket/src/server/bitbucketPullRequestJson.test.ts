@@ -255,6 +255,26 @@ describe("decodeCommentsJson", () => {
 
     expect(decoded.comments[0]).toMatchObject({ kind: "review-comment", path: "src/app.ts" });
   });
+
+  it("preserves the parent of a general discussion reply", () => {
+    const decoded = expectSuccess(
+      decodeCommentsJson(
+        page([
+          {
+            id: 6,
+            parent: { id: 5 },
+            content: { raw: "Agreed." },
+            created_on: "2026-05-15T02:00:00+00:00",
+          },
+        ]),
+      ),
+    );
+    expect(decoded.comments[0]).toMatchObject({
+      id: "6",
+      replyToCommentId: "5",
+      kind: "issue-comment",
+    });
+  });
 });
 
 describe("decodeCommitsJson", () => {

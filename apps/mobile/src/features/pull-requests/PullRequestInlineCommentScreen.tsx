@@ -1,9 +1,10 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { PullRequestMentionInput as TextInput } from "./PullRequestMentionInput";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useRef, useState } from "react";
 import { View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -102,6 +103,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         </Text>
       </View>
       <TextInput
+        params={params}
         multiline
         editable={store.ready && !busy}
         autoFocus

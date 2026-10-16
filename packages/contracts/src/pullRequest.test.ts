@@ -1,3 +1,4 @@
+import { PullRequestHostAction } from "./pullRequestHost.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
@@ -5,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestComment,
   PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
@@ -20,6 +22,31 @@ const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerReques
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
 const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
+
+it("carries reply targets through the comment wire codec and accepts older comments", () => {
+  const original: PullRequestComment = {
+    id: "17:1",
+    kind: "issue-comment",
+    author: null,
+    body: "Question",
+    createdAt: "2026-10-15T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  const codec = Schema.toCodecJson(PullRequestComment);
+  const roundTrip = Schema.decodeSync(codec);
+  const encode = Schema.encodeSync(codec);
+  expect(roundTrip(encode(original))).toEqual(original);
+  const reply = {
+    ...original,
+    id: "17:2",
+    threadId: "17",
+    replyToCommentId: original.id,
+    body: "Answer",
+  };
+  expect(roundTrip(encode(reply))).toEqual(reply);
+});
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -349,4 +376,17 @@ describe("naming the file a tick belongs to", () => {
       }),
     ).toThrow();
   });
+});
+
+it("accepts native attachment names without allowing paths or control characters", () => {
+  const decode = Schema.decodeUnknownSync(PullRequestHostAction);
+  for (const fileName of ["test.txt", "réponse.txt", "test app.png"])
+    expect(() => decode({ type: "attachment-upload", fileName, data: "VGVzdA==" })).not.toThrow();
+  for (const fileName of [
+    "../test.txt",
+    "folder/test.txt",
+    "folder" + String.fromCharCode(92) + "test.txt",
+    "bad" + String.fromCharCode(0) + ".txt",
+  ])
+    expect(() => decode({ type: "attachment-delete", fileName })).toThrow();
 });

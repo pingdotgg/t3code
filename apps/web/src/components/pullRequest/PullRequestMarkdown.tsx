@@ -1,3 +1,4 @@
+import { azureDevOpsMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
@@ -14,6 +15,7 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
+  identities?: Readonly<Record<string, string>>;
   repositoryUrl: string | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
@@ -62,12 +64,19 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
-  const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
+  const identities = context?.identities;
+  const segments = useMemo(
+    () => splitPullRequestBody(azureDevOpsMarkdownLinks(text, repositoryUrl ?? null, identities)),
+    [text, repositoryUrl, identities],
+  );
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
-    () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
+    () =>
+      repositoryUrl && !repositoryUrl.includes("/_git/")
+        ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
+        : [],
     [repositoryUrl],
   );
   return (

@@ -25,6 +25,7 @@ import {
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -172,6 +173,14 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
+    }),
+    Layer.mock(PullRequestService.PullRequestService)({
+      hostDetails: (input) =>
+        Ref.update(guideRequests, (values) => [...values, input]).pipe(Effect.as(null)),
+      runHostAction: (input) =>
+        Ref.update(guideRequests, (values) => [...values, input]).pipe(
+          Effect.as({ message: "Pull request updated.", url: null }),
+        ),
     }),
     Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({
       get: () => Effect.succeed(NO_GUIDE),
@@ -751,3 +760,62 @@ it("keeps failure diagnostics as the cause rather than exposing them in the tool
   expect(failure.message).toBe("Could not link the pull request.");
   expect(failure.cause).toBe(cause);
 });
+
+it.effect("preserves typed resolution failures for host reads and actions", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const input = { url: "https://example.com/private?token=secret" };
+    const readFailure = yield* harness
+      .call("read_pull_request_host_details", input)
+      .pipe(Effect.flip);
+    const actionFailure = yield* harness
+      .call("run_pull_request_host_action", {
+        ...input,
+        action: { type: "vote", vote: "reset" },
+      })
+      .pipe(Effect.flip);
+    const guideFailure = yield* harness.call("read_pull_request_guide", input).pipe(Effect.flip);
+    for (const failure of [readFailure, actionFailure, guideFailure]) {
+      expect(failure).toMatchObject({ _tag: "PullRequestUrlInvalidError" });
+      expect(failure.message).not.toContain(input.url);
+      expect(failure).not.toHaveProperty("operation");
+    }
+    expect(yield* Ref.get(harness.guideRequests)).toEqual([]);
+  }),
+);
+
+it.effect(
+  "routes native PR reads and writes through the matching project and requires its capability",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.call("read_pull_request_host_details", {
+        url: "https://github.com/t3tools/t3code/pull/7",
+      });
+      yield* harness.call("run_pull_request_host_action", {
+        url: "https://github.com/t3tools/t3code/pull/7",
+        action: { type: "vote", vote: "reset" },
+      });
+      expect(yield* Ref.get(harness.guideRequests)).toEqual([
+        { projectId: PROJECT_ID, host: "github.com", repository: "t3tools/t3code", number: 7 },
+        {
+          projectId: PROJECT_ID,
+          host: "github.com",
+          repository: "t3tools/t3code",
+          number: 7,
+          action: { type: "vote", vote: "reset" },
+        },
+      ]);
+      yield* harness
+        .call(
+          "run_pull_request_host_action",
+          {
+            url: "https://github.com/t3tools/t3code/pull/7",
+            action: { type: "vote", vote: "reset" },
+          },
+          [],
+        )
+        .pipe(Effect.flip);
+      expect(yield* Ref.get(harness.guideRequests)).toHaveLength(2);
+    }),
+);
