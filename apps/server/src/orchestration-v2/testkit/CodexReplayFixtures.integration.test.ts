@@ -246,6 +246,19 @@ const scenarioExpectations = {
     turnCompletedCount: 1,
     approvalRequestCount: 0,
   },
+  command_output_streaming: {
+    outgoing: ["initialize", "initialized", "thread/start", "turn/start"],
+    incoming: [
+      "turn/started",
+      "item/started",
+      "item/commandExecution/outputDelta",
+      "item/completed",
+      "turn/completed",
+    ],
+    turnStartCount: 1,
+    turnCompletedCount: 1,
+    approvalRequestCount: 0,
+  },
   turn_interrupt_mid_tool: {
     outgoing: [
       "initialize",

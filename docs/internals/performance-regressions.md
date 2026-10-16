@@ -34,6 +34,13 @@ The v2 checks pin these invariants:
   Explicit cross-environment transcript exports preserve full tool bodies so the destination
   agent can read the context. The export rejects timeline JSON above the file attachment limit
   before sending it; the client still applies its attachment limit to the complete file.
+- Live command output reaches a client only through `orchestration.subscribeCommandOutput`, which
+  an expanded command row opens and closes with itself. Raw output deltas are never orchestration
+  events: adapters send them to the
+  [command output hub](../../apps/server/src/orchestration-v2/CommandOutputHub.ts) ahead of
+  ingestion, which keeps one bounded tail per running command and throttles each subscriber. Do not
+  route output deltas through `turn_item.updated`: a busy command would flood the event store and
+  block ingestion for every other thread.
 - The initial shell contains active navigation rows only. Archived rows use the dedicated archive
   query, and transcript message bodies stay in thread detail regardless of message size.
 - Shell resume sends deltas plus compact repository-enrichment metadata, not another full project
