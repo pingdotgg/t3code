@@ -22,6 +22,11 @@ export function createReviewEnvironmentAtoms<R, E>(
   const patchReads = Semaphore.makeUnsafe(4);
   const diffFileScheduler = createAtomCommandScheduler();
   return {
+    branchCommits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:review:branch-commits",
+      tag: WS_METHODS.reviewGetBranchCommits,
+      staleTimeMs: 5_000,
+    }),
     diffPreview: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:review:diff-preview",
       tag: WS_METHODS.reviewGetDiffPreview,

@@ -10,6 +10,11 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+On web and desktop, open the Diff pane source picker and choose **Commits** to review one local
+commit at a time. The list shows up to 100 of the newest commits in the current branch comparison. A merge
+commit shows its changes against its first parent. If the branch changes, select a commit again to
+refresh the view.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

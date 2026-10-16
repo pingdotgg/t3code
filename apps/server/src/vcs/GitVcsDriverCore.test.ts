@@ -40,6 +40,7 @@ import {
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
+const decodeReviewDiffPreviewInput = Schema.decodeSync(ReviewDiffPreviewInput);
 
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -1528,6 +1529,209 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("lists only branch-range commits with bounded metadata", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/commits"]);
+        for (let index = 0; index < 102; index++) {
+          yield* git(cwd, ["commit", "--allow-empty", "-m", `feature ${index}`]);
+        }
+        const result = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
+        assert.strictEqual(result.commits.length, 100);
+        assert.strictEqual(result.truncated, true);
+        assert.strictEqual(result.commits[0]?.subject, "feature 101");
+        assert.strictEqual(result.commits[99]?.subject, "feature 2");
+        assert.match(result.commits[0]?.sha ?? "", /^[0-9a-f]{40}$/);
+        assert.match(result.commits[0]?.committedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+        assert.deepStrictEqual(
+          (yield* driver.getReviewBranchCommits({ cwd, baseRef: "HEAD" })).commits,
+          [],
+        );
+      }),
+    );
+
+    it.effect("keeps complete commit records when metadata output is truncated", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/large-subjects"]);
+        for (const subject of ["A".repeat(90_000), "B".repeat(90_000)]) {
+          yield* writeTextFile(cwd, ".git/commit-message", `${subject}\n`);
+          yield* git(cwd, ["commit", "--allow-empty", "-F", ".git/commit-message"]);
+        }
+
+        const result = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
+        assert.strictEqual(result.truncated, true);
+        assert.strictEqual(result.commits.length, 1);
+        assert.strictEqual(result.commits[0]?.subject, "B".repeat(300));
+        const error = yield* driver
+          .getReviewBranchCommits({ cwd, baseRef: "missing-base" })
+          .pipe(Effect.flip);
+        assert.strictEqual(error._tag, "GitCommandError");
+      }),
+    );
+
+    it.effect("shows a merge against its first parent and loads commit contents from Git", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/merge-preview"]);
+        yield* git(cwd, ["checkout", "-b", "feature/side"]);
+        yield* writeTextFile(cwd, "README.md", "# side commit\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "side change"]);
+        yield* git(cwd, ["checkout", "feature/merge-preview"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature commit\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature change"]);
+        const firstParent = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["merge", "--no-ff", "--no-edit", "feature/side"]);
+        const mergeSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* writeTextFile(cwd, "README.md", "# dirty tree\n");
+
+        const list = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
+        assert.strictEqual(list.commits[0]?.sha, mergeSha);
+        assert.strictEqual(list.truncated, false);
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          commitSha: mergeSha,
+        });
+        const source = preview.sources[0]!;
+        assert.strictEqual(source.kind, "commit");
+        assert.strictEqual(source.baseRef, firstParent);
+        assert.strictEqual(source.headRef, mergeSha);
+        assert.deepStrictEqual(
+          source.files?.map((file) => file.path),
+          ["README.md"],
+        );
+        assert.include(source.diff, "+# side commit");
+        assert.notInclude(source.diff, "dirty tree");
+        assert.notInclude(source.diff, "feature.txt");
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            baseRef: source.baseRef,
+            headRef: source.headRef,
+          }),
+        );
+        assert.deepStrictEqual(contents, {
+          oldContents: "# test\n",
+          newContents: "# side commit\n",
+        });
+      }),
+    );
+
+    it.effect("shows a mode-only commit even when numstat has no files", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/mode-only"]);
+        yield* writeTextFile(cwd, "mode.sh", "echo unchanged\n");
+        yield* git(cwd, ["add", "mode.sh"]);
+        yield* git(cwd, ["commit", "-m", "add file"]);
+        yield* git(cwd, ["update-index", "--chmod=+x", "mode.sh"]);
+        yield* git(cwd, ["commit", "-m", "make executable"]);
+        const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          commitSha,
+        });
+        assert.include(preview.sources[0]?.diff, "old mode 100644");
+        assert.include(preview.sources[0]?.diff, "new mode 100755");
+      }),
+    );
+
+    it.effect("loads a large selected file patch after the summary truncates", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/large-patch"]);
+        const contents = `${"content".repeat(30_000)}\n`;
+        yield* writeTextFile(cwd, "large.txt", contents);
+        yield* git(cwd, ["add", "large.txt"]);
+        yield* git(cwd, ["commit", "-m", "large file"]);
+        const commitSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const summary = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          commitSha,
+        });
+        assert.strictEqual(summary.sources[0]?.truncated, true);
+        assert.deepStrictEqual(
+          summary.sources[0]?.files?.map((file) => file.path),
+          ["large.txt"],
+        );
+        const patch = yield* driver.getReviewDiffPreview({
+          cwd,
+          baseRef: initialBranch,
+          commitSha,
+          file: { path: "large.txt", previousPath: null, sourceKind: "commit" },
+        });
+        assert.strictEqual(patch.sources[0]?.truncated, false);
+        assert.include(patch.sources[0]?.diff, contents.trim());
+        const expanded = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "commit",
+            changeType: "new",
+            baseRef: patch.sources[0]!.baseRef,
+            headRef: commitSha,
+            oldPath: "large.txt",
+            newPath: "large.txt",
+          }),
+        );
+        assert.deepStrictEqual(expanded, { oldContents: "", newContents: contents });
+      }),
+    );
+
+    it.effect("rejects invalid and stale commit selections", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const initialSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/stale-preview"]);
+        yield* writeTextFile(cwd, "README.md", "# feature\n");
+        yield* git(cwd, ["add", "README.md"]);
+        yield* git(cwd, ["commit", "-m", "feature"]);
+        const featureSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        assert.throws(() =>
+          decodeReviewDiffPreviewInput({ cwd, baseRef: initialBranch, commitSha: "" }),
+        );
+        for (const commitSha of ["", "bad-sha", initialSha]) {
+          const error = yield* driver
+            .getReviewDiffPreview({ cwd, baseRef: initialBranch, commitSha })
+            .pipe(Effect.flip);
+          assert.strictEqual(error._tag, "GitCommandError");
+        }
+        yield* git(cwd, ["checkout", initialBranch]);
+        const stale = yield* driver
+          .getReviewDiffPreview({ cwd, commitSha: featureSha })
+          .pipe(Effect.flip);
+        assert.strictEqual(stale._tag, "GitCommandError");
+        const staleContents = yield* driver
+          .getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, {
+              sourceKind: "commit",
+              baseRef: initialSha,
+              headRef: featureSha,
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.strictEqual(staleContents._tag, "GitCommandError");
+      }),
+    );
+
     it.effect("loads repository-relative files from a nested project directory", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2034,6 +2238,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["add", "."]);
         yield* git(cwd, ["update-index", "--chmod=+x", "mode-only.sh"]);
         yield* git(cwd, ["commit", "-m", "rename and add files"]);
+        yield* git(cwd, ["restore", "--worktree", "--source=HEAD", "--", "mode-only.sh"]);
         const preview = yield* driver.getReviewDiffPreview({
           cwd,
           baseRef: initialBranch,

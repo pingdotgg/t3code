@@ -79,6 +79,16 @@ describe("buildReviewSectionItems", () => {
         diffHash: "hash-base",
         truncated: false,
       },
+      {
+        id: "abc123",
+        kind: "commit",
+        title: "Commit abc123",
+        baseRef: "parent",
+        headRef: "abc123",
+        diff: "diff --git a/a.ts b/a.ts",
+        diffHash: "hash-commit",
+        truncated: false,
+      },
     ];
 
     const loadedTurnId = getReviewSectionIdForCheckpoint(checkpoints[0]!);

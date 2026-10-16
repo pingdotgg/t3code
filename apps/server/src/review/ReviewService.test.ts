@@ -90,6 +90,25 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("rejects commit list cwd outside the configured workspace roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const outsideRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-outside-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getBranchCommits({ cwd: outsideRoot }).pipe(Effect.flip);
+      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, detectCalls })));
+
+      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      assert.strictEqual(error.operation, "ReviewService.getBranchCommits");
+      assert.deepStrictEqual(detectCalls, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("attributes file-content workspace violations to the file-content operation", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
