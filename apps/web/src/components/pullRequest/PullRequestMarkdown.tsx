@@ -18,13 +18,6 @@ export const PullRequestMarkdownContext = createContext<{
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
-// Both asset hooks key on the resource's identity; the compiler cannot cache a value
-// across successive hook calls in the component itself.
-function useGitHubMediaResource(cwd: string, fetchUrl: string): AssetResource {
-  "use memo";
-  return { _tag: "github-media", cwd, url: fetchUrl };
-}
-
 function PullRequestGitHubVideo({
   environmentId,
   cwd,
@@ -36,7 +29,7 @@ function PullRequestGitHubVideo({
   url: string;
   fetchUrl: string;
 }) {
-  const resource = useGitHubMediaResource(cwd, fetchUrl);
+  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
