@@ -7,7 +7,7 @@ import type * as Path from "effect/Path";
 
 import { type VcsError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
-export const JJ_REPOSITORY_DETECTION_ENABLED = false;
+export const JJ_REPOSITORY_DETECTION_ENABLED = true;
 
 export type VcsMarker = "jj" | "git";
 
@@ -51,6 +51,23 @@ export const isBareGitRepository = Effect.fn("JjRepo.isBareGitRepository")(funct
     )) &&
     (yield* isDirectory(fileSystem, path.join(root, "objects"))) &&
     (yield* isDirectory(fileSystem, path.join(root, "refs")))
+  );
+});
+
+/** A gitdir file alone can also be a submodule or separate Git directory, not a linked worktree. */
+export const isGitLinkedWorktree = Effect.fn("JjRepo.isGitLinkedWorktree")(function* (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  workspaceRoot: string,
+): Effect.fn.Return<boolean, never> {
+  const pointer = yield* fileSystem
+    .readFileString(path.join(workspaceRoot, ".git"))
+    .pipe(Effect.orElseSucceed(() => ""));
+  const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+  if (!gitDir) return false;
+  return yield* fileSystem.stat(path.join(path.resolve(workspaceRoot, gitDir), "commondir")).pipe(
+    Effect.map((info) => info.type === "File"),
+    Effect.orElseSucceed(() => false),
   );
 });
 

@@ -11,7 +11,12 @@ import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { selectTerminology, selectUnsupportedReason, vcsEnvironment } from "../../state/vcs";
+import {
+  selectNotice,
+  selectTerminology,
+  selectUnsupportedReason,
+  vcsEnvironment,
+} from "../../state/vcs";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -441,6 +446,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         });
   const vcsTerminology = useEnvironmentQuerySelector(vcsStatusAtom, selectTerminology);
   const vcsUnsupportedReason = useEnvironmentQuerySelector(vcsStatusAtom, selectUnsupportedReason);
+  const vcsNotice = useEnvironmentQuerySelector(vcsStatusAtom, selectNotice);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
   // Android can swallow the IME hide callbacks when the app is backgrounded mid keyboard-hide
@@ -1114,6 +1120,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         selectedThread={props.selectedThread}
         showContent={showContent}
       />
+      {vcsNotice ? (
+        <Text className="border-b border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          {vcsNotice}
+        </Text>
+      ) : null}
       {vcsUnsupportedReason ? (
         <Text
           accessibilityRole="alert"

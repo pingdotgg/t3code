@@ -264,6 +264,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         ) : undefined
       }
     >
+      {gitStatus.data?.vcs?.kind === "git" ? (
+        <Text className="text-muted-foreground">{gitStatus.data.vcs.notice}</Text>
+      ) : null}
       {vcsUnsupportedReason ? (
         <Text accessibilityRole="alert" className="text-warning-foreground">
           {vcsUnsupportedReason}

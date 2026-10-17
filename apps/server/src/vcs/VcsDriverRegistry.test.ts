@@ -9,8 +9,8 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as JjVcsDriver from "./JjVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
-import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import type * as JjRepo from "./JjRepo.ts";
 import { describeJj, seedJjRepo } from "./testing/JjTestSupport.ts";
 
@@ -37,12 +37,12 @@ describe("VcsDriverRegistry", () => {
   it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
     const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(JjVcsDriver.layer),
-      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
         }),
       ),
+      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProcess.VcsProcess)({
           run: () => Effect.succeed(processOutput("")),
@@ -61,12 +61,12 @@ describe("VcsDriverRegistry", () => {
   const makeDiskBackedLayer = (rootDir: string, calls: string[]) =>
     Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
       Layer.provide(JjVcsDriver.layer),
-      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
         }),
       ),
+      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProcess.VcsProcess)({
           run: (input) =>

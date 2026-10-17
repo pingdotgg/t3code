@@ -225,7 +225,7 @@ describeJj("JjVcsDriver reads", () => {
           path.join(root, ".jj", "repo", "config.toml"),
           '[template-aliases]\ncommit_id = "false"\nempty = \'"wrong"\'\n' +
             'description = \'"wrong"\'\nparents = "false"\nlocal_bookmarks = "false"\n' +
-            'name = \'"wrong"\'\nroot = \'"wrong"\'\npath = \'"wrong"\'\n',
+            "name = '\"wrong\"'\nroot = '\"wrong\"'\npath = '\"wrong\"'\n",
         );
         assert.isTrue((yield* driver.currentChange(root)).empty);
         assert.equal((yield* driver.changeAt(root, "@-"))?.description, "original\n");
@@ -250,7 +250,10 @@ describeJj("JjVcsDriver reads", () => {
         assert.equal(error._tag, "VcsProcessOutputReadError");
         assert.notInclude(error.message, "credential-secret");
         if (error._tag === "VcsProcessOutputReadError") {
-          assert.equal(error.cause instanceof Error && error.cause.message, "Malformed jj output at root.");
+          assert.equal(
+            error.cause instanceof Error && error.cause.message,
+            "Malformed jj output at root.",
+          );
           assert.notInclude(String(error.cause), "credential-secret");
         }
       }),
@@ -511,11 +514,12 @@ describeJj("JjVcsDriver usability", () => {
           path.join(root, ".jj", "repo", "config.toml"),
           "invalid = [\n",
         );
-        const error = yield* driver.currentChange(root).pipe(Effect.flip);
+        const error = yield* driver.ensureUsable("JjVcsDriver.test", root).pipe(Effect.flip);
         assert.equal(error._tag, "VcsUnsupportedOperationError");
         if (error._tag === "VcsUnsupportedOperationError") {
           assert.include(error.detail, "Config error");
           assert.notInclude(error.detail, "not installed");
+          assert.notInclude(error.detail, "not found on the server’s PATH");
         }
       }),
     ),

@@ -80,6 +80,13 @@ function layer(input: {
     Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)(input.jj ?? {})),
     Layer.provide(
       Layer.mock(JjVcsDriver.JjVcsDriver)({
+        ensureUsable: (_operation, cwd) =>
+          Effect.succeed({
+            workspaceRoot: cwd,
+            mainWorkspaceRoot: cwd,
+            gitDir: `${cwd}/.git`,
+            isSecondaryWorkspace: false,
+          }),
         capabilities: {
           kind: "jj",
           supportsWorktrees: true,

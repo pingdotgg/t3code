@@ -7,7 +7,11 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
-import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
+import {
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+  VcsProcessOutputLimitError,
+} from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
 import * as SourceControlDiscovery from "../sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -100,7 +104,10 @@ describe("makeJjAvailability", () => {
       }),
     ).pipe(
       Effect.map((availability) => {
-        assert.equal(availability._tag, "broken");
+        assert.deepStrictEqual(availability, {
+          _tag: "broken",
+          detail: "jj could not be executed",
+        });
       }),
     ),
   );
@@ -120,11 +127,38 @@ describe("makeJjAvailability", () => {
       }),
     ).pipe(
       Effect.map((availability) => {
-        assert.equal(availability._tag, "broken");
+        assert.deepStrictEqual(availability, {
+          _tag: "broken",
+          detail: "jj did not respond within 5 seconds",
+        });
       }),
     ),
   );
 
+  it.effect("reports excessive version output without process internals", () =>
+    probeOnce(
+      Layer.mock(VcsProcess.VcsProcess)({
+        run: (input) =>
+          Effect.fail(
+            new VcsProcessOutputLimitError({
+              operation: input.operation,
+              command: input.command,
+              cwd: input.cwd,
+              stream: "stdout",
+              maxBytes: 4_096,
+              observedBytes: 4_097,
+            }),
+          ),
+      }),
+    ).pipe(
+      Effect.map((availability) => {
+        assert.deepStrictEqual(availability, {
+          _tag: "broken",
+          detail: "jj returned too much version output",
+        });
+      }),
+    ),
+  );
   for (const stderr of ["", "version wrapper is broken"]) {
     it.effect(
       `reports a successful malformed executable as broken (${stderr || "no stderr"})`,
@@ -309,6 +343,20 @@ describe("jjUnsupportedReason", () => {
     });
     assert.include(reason, "jj git colocation enable");
     assert.notInclude(reason, "jj git init");
+  });
+
+  it("prioritizes colocation over a missing binary and describes the server PATH", () => {
+    const reason = JjAvailability.jjUnsupportedReason({
+      availability: { _tag: "missing" },
+      colocated: false,
+    });
+    assert.include(reason, "jj git colocation enable");
+    assert.include(reason, "not found on the server’s PATH");
+    assert.isBelow(reason!.indexOf("colocated"), reason!.indexOf("not found"));
+    assert.include(
+      JjAvailability.jjUnsupportedReason({ availability: { _tag: "missing" }, colocated: true }),
+      "not found on the server’s PATH",
+    );
   });
 
   it("reports a reason for every unusable repository and stays silent for a usable one", () => {

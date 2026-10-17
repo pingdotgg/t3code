@@ -548,18 +548,30 @@ export const make = Effect.gen(function* () {
                 .pipe(Effect.map((result) => result.stdout.trim().length > 0)),
             jj: jjWorkflow.hasRefNamed,
           })(input),
-    status: routeOr(
-      "GitWorkflowService.status",
-      statusRouting,
-      () => Effect.succeed(nonRepositoryStatus()),
-      { git: gitManager.status, jj: jjWorkflow.status },
-    ),
-    localStatus: routeOr(
-      "GitWorkflowService.localStatus",
-      statusRouting,
-      () => Effect.succeed(nonRepositoryLocalStatus()),
-      { git: gitManager.localStatus, jj: jjWorkflow.localStatus },
-    ),
+    status: (input) =>
+      Effect.gen(function* () {
+        const handle = yield* registry
+          .detect({ cwd: input.cwd })
+          .pipe(undetectableWorkflow("GitWorkflowService.status", input.cwd, true));
+        if (handle === null || handle.kind === "unknown") return nonRepositoryStatus();
+        if (handle.kind === "jj") return yield* jjWorkflow.status(input);
+        const result = yield* gitManager.status(input);
+        return handle.notice
+          ? { ...result, vcs: { kind: "git" as const, notice: handle.notice } }
+          : result;
+      }),
+    localStatus: (input) =>
+      Effect.gen(function* () {
+        const handle = yield* registry
+          .detect({ cwd: input.cwd })
+          .pipe(undetectableWorkflow("GitWorkflowService.localStatus", input.cwd, true));
+        if (handle === null || handle.kind === "unknown") return nonRepositoryLocalStatus();
+        if (handle.kind === "jj") return yield* jjWorkflow.localStatus(input);
+        const result = yield* gitManager.localStatus(input);
+        return handle.notice
+          ? { ...result, vcs: { kind: "git" as const, notice: handle.notice } }
+          : result;
+      }),
     remoteStatus: (input, options) =>
       routeOr("GitWorkflowService.remoteStatus", statusRouting, () => Effect.succeed(null), {
         git: (statusInput: VcsStatusInput) => gitManager.remoteStatus(statusInput, options),

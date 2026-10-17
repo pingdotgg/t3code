@@ -172,7 +172,7 @@ describe("GitRunStackedActionInput", () => {
 });
 
 describe("VcsStatusLocalResult", () => {
-  it("restricts non-Git status metadata to Jujutsu", () => {
+  it("accepts only supported VCS descriptors and requires informational Git notice", () => {
     const status = {
       isRepo: true,
       hasPrimaryRemote: false,
@@ -182,6 +182,9 @@ describe("VcsStatusLocalResult", () => {
       workingTree: { files: [], insertions: 0, deletions: 0 },
     };
     expect(decodeVcsStatusLocalResult({ ...status, vcs: { kind: "jj" } }).vcs?.kind).toBe("jj");
+    expect(
+      decodeVcsStatusLocalResult({ ...status, vcs: { kind: "git", notice: "Using Git." } }).vcs,
+    ).toEqual({ kind: "git", notice: "Using Git." });
     expect(() => decodeVcsStatusLocalResult({ ...status, vcs: { kind: "unknown" } })).toThrow();
     expect(() => decodeVcsStatusLocalResult({ ...status, vcs: { kind: "git" } })).toThrow();
     expect(decodeVcsStatusLocalResult(status).vcs).toBeUndefined();

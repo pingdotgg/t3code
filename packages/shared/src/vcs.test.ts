@@ -13,6 +13,11 @@ describe("VCS presentation and explicit capability", () => {
     assert.isTrue(supportsVcsActions(null));
     assert.isTrue(supportsVcsActions(undefined));
     assert.isTrue(supportsVcsActions({ vcs: { kind: "jj" } }));
+    assert.isTrue(supportsVcsActions({ vcs: { kind: "git", notice: "Using Git." } }));
+    assert.strictEqual(
+      resolveVcsTerminology({ vcs: { kind: "git", notice: "Using Git." } }),
+      GIT_VCS_TERMINOLOGY,
+    );
     assert.isFalse(
       supportsVcsActions({ vcs: { kind: "jj", unsupportedReason: "Enable colocation." } }),
     );

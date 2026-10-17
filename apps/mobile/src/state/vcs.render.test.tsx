@@ -542,6 +542,13 @@ it.each(["ThreadDetailScreen", "ReviewSheet"] as const)(
           expect.objectContaining({ vcsKind: null, enabled: true }),
         );
       }
+      if (screen === "ThreadDetailScreen") {
+        const notice = "Jujutsu could not run: Config error: invalid configuration";
+        await publish(AsyncResult.success({ ...gitStatus, vcs: { kind: "git", notice } }), 1);
+        expect(container.textContent).toContain(notice);
+        await publish(AsyncResult.success(gitStatus), 1);
+        expect(container.textContent).not.toContain(notice);
+      }
     } finally {
       await act(() => root.unmount());
       registry.dispose();

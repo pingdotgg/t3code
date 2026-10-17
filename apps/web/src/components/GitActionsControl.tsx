@@ -1603,6 +1603,11 @@ export default function GitActionsControl({
 
   return (
     <>
+      {gitStatusForActions?.vcs?.kind === "git" && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {gitStatusForActions.vcs.notice}
+        </p>
+      )}
       {unsupportedReason !== null && (
         <p role="alert" className="text-sm text-warning">
           {unsupportedReason}

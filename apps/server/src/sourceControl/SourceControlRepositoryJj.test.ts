@@ -100,7 +100,8 @@ describeJj("public Jujutsu repository publishing", () => {
           }).pipe(Effect.provide(JjWorkflow.layer.pipe(Layer.provideMerge(registry))));
           const localStatus = yield* workflow.localStatus({ cwd: repo.root });
           const status = yield* workflow.status({ cwd: repo.root });
-          const reason = localStatus.vcs?.unsupportedReason;
+          const reason =
+            localStatus.vcs?.kind === "jj" ? localStatus.vcs.unsupportedReason : undefined;
           assert.include(reason, "jj git colocation enable");
           assert.deepStrictEqual(status.vcs, localStatus.vcs);
           for (const surface of ["web", "mobile"] as const) {

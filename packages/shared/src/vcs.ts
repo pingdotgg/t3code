@@ -133,7 +133,8 @@ export function resolveVcsTerminology(
 export function resolveVcsUnsupportedReason(
   status: Pick<VcsStatusLocalResult, "vcs"> | null | undefined,
 ): string | null {
-  return status?.vcs?.unsupportedReason ?? null;
+  const vcs = status?.vcs;
+  return vcs && "unsupportedReason" in vcs ? (vcs.unsupportedReason ?? null) : null;
 }
 
 /** Unknown status retains the original controls; only an explicit unsupported reason blocks them. */

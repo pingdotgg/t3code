@@ -113,7 +113,6 @@ describeJj("JjStatus.localStatus", () => {
     ),
   );
 
-
   it.effect("returns orphan-history status without optional branch totals", () =>
     withRepo({}, ({ root, status, fileSystem, path }) =>
       Effect.gen(function* () {
@@ -375,7 +374,10 @@ describeJj("JjStatus.localStatus", () => {
         const local = yield* status.localStatus({ cwd: root });
 
         assert.equal(local.vcs?.kind, "jj");
-        assert.include(local.vcs?.unsupportedReason ?? "", "colocated Jujutsu repositories");
+        assert.include(
+          local.vcs?.kind === "jj" ? (local.vcs.unsupportedReason ?? "") : "",
+          "colocated Jujutsu repositories",
+        );
         assert.equal(local.refName, null);
         assert.equal(local.hasWorkingTreeChanges, false);
       }),

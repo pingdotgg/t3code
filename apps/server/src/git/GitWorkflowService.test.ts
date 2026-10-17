@@ -653,6 +653,51 @@ it.layer(NodeServices.layer)("GitWorkflowService", (it) => {
     );
   }
 
+  it.effect(
+    "preserves Git results and attaches an informational fallback notice to both status shapes",
+    () => {
+      const local = {
+        isRepo: true,
+        hasPrimaryRemote: true,
+        isDefaultRef: true,
+        refName: "main",
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+      };
+      const full = {
+        ...local,
+        hasUpstream: false,
+        aheadCount: 0,
+        behindCount: 0,
+        aheadOfDefaultCount: 0,
+        pr: null,
+      };
+      const vcs = {
+        kind: "git" as const,
+        notice:
+          "Jujutsu was not found on the server’s PATH. Using Git for this colocated repository.",
+      };
+      const detect = vi.fn(() => Effect.succeed({ ...handleFor("git"), notice: vcs.notice }));
+      return Effect.gen(function* () {
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        assert.deepStrictEqual(yield* workflow.localStatus({ cwd: "/repo" }), { ...local, vcs });
+        expect(detect).toHaveBeenCalledExactlyOnceWith({ cwd: "/repo" });
+        detect.mockClear();
+        assert.deepStrictEqual(yield* workflow.status({ cwd: "/repo" }), { ...full, vcs });
+        expect(detect).toHaveBeenCalledExactlyOnceWith({ cwd: "/repo" });
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            detect,
+            gitManager: {
+              localStatus: () => Effect.succeed(local),
+              status: () => Effect.succeed(full),
+            },
+          }),
+        ),
+      );
+    },
+  );
   it.effect("returns an empty local status when no VCS repository is detected", () =>
     Effect.gen(function* () {
       const workflow = yield* GitWorkflowService.GitWorkflowService;

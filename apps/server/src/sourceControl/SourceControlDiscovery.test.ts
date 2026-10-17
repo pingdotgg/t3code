@@ -11,6 +11,13 @@ import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
+import { vi } from "vite-plus/test";
+import type * as JjRepo from "../vcs/JjRepo.ts";
+
+vi.mock("../vcs/JjRepo.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof JjRepo>()),
+  JJ_REPOSITORY_DETECTION_ENABLED: true,
+}));
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
@@ -176,7 +183,7 @@ it.effect("reports implemented tools separately from locally available executabl
       })),
       [
         { kind: "git", implemented: true, status: "available" },
-        { kind: "jj", implemented: false, status: "missing" },
+        { kind: "jj", implemented: true, status: "missing" },
       ],
     );
     assert.deepStrictEqual(

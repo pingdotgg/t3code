@@ -25,6 +25,10 @@ export const selectUnsupportedReason = (
 ) => resolveVcsUnsupportedReason(Option.getOrNull(AsyncResult.value(result)));
 export const selectKind = (result: AsyncResult.AsyncResult<VcsStatusLocalResult, unknown>) =>
   Option.getOrNull(AsyncResult.value(result))?.vcs?.kind ?? null;
+export const selectNotice = (result: AsyncResult.AsyncResult<VcsStatusLocalResult, unknown>) => {
+  const vcs = Option.getOrNull(AsyncResult.value(result))?.vcs;
+  return vcs?.kind === "git" ? (vcs.notice ?? null) : null;
+};
 
 /** Terminology readers use local status so they never keep remote polling alive. */
 export function useVcsTerminology(

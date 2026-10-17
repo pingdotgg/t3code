@@ -997,7 +997,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         detection.enabled = true;
-        const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          importedWorkspaceRoots: [workspace],
+        }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
               detection.enabled = false;

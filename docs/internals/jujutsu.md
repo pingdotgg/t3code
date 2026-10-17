@@ -5,8 +5,23 @@
 [`findVcsMarkerRoot`](../../apps/server/src/vcs/JjRepo.ts) walks up and stops at the first `.jj` or
 `.git`, nearest wins. A `.jj` a few levels up must not hijack a nearer Git checkout.
 A missing directory returns no marker root; it cannot climb into an unrelated repository above it.
+Marker discovery and synchronous repository identity resolve real paths before walking, so aliases
+retain the same nearest-marker boundary.
 [`VcsProjectConfig`](../../apps/server/src/vcs/VcsProjectConfig.ts) resolves the repository's
-`.t3code/vcs.json` preference before driver detection.
+`.t3code/vcs.json` preference before driver detection. A Git pin selects Git without a notice;
+a jj pin selects jj without automatic fallback; auto and unknown use nearest-marker detection and fallback.
+**Known gap:** jj automatically tracks this configuration file, so the preference can land in pushes.
+Missing, too-old, or broken jj falls back only to usable Git at that colocated root, with an
+optional informational `vcs: { kind: "git", notice }` status descriptor. Broken-probe notices
+include the first real error line of jj's diagnostic, skipping blank, `Warning:` and `Hint:` lines.
+Ordinary Git omits the descriptor; a notice never
+disables actions. Explicit Git or jj API driver requests bypass automatic fallback; unknown behaves as auto.
+Automatic Git fallback uses the bounded detection cache and canonicalizes both roots before
+checking colocation. Repeated status reads do not repeat Git discovery; availability rescan
+still reselects jj immediately after installation or upgrade.
+Non-colocated repositories report the colocation requirement first, followed by the precise
+server PATH diagnostic and installation/rescan advice when jj is also missing.
+Onboarding excludes unregistered secondary jj workspaces, including nested paths and symlink aliases.
 
 ## `git.abandon-unreachable-commits=false` on every command we run
 
@@ -119,15 +134,26 @@ preserves that guidance through the public repository-service error. Local jj pr
 such as an undescribed change, retain their actionable explanation instead. The remote remains
 for retry. Git's error mapper and publishing implementation are unchanged.
 
-## Unusable is not Git
+## Unavailable and unsupported repositories
 
-Missing `jj`, older than 0.46.0 ([`JJ_MINIMUM_VERSION`](../../apps/server/src/vcs/JjAvailability.ts)), or not
-colocated: detection still says jj. Falling back to Git would write a Git worktree into a jj repo.
-Every op instead fails with a named reason that reaches clients as
-`VcsStatusLocalResult.vcs.unsupportedReason`. Web and mobile show the reason and disable
-source-control actions, Changes, bookmark/workspace selection and creation, and queued setup
-dispatch. Already-open dialogs recheck support before dispatch. Missing or loading status alone
-does not disable otherwise available controls. Mobile can leave an unsupported saved or default
+Missing `jj` or a version older than 0.46.0
+([`JJ_MINIMUM_VERSION`](../../apps/server/src/vcs/JjAvailability.ts)) selects Git only when a usable
+Git checkout exists at the same colocated root. Status includes an informational Git notice;
+actions remain available. Broken installation or configuration errors also fall back when
+colocated Git is usable, with the first real error line in the notice (skipping `Warning:` and `Hint:` lines).
+An explicit jj preference refuses broken jj through the same wire-safe unsupported path, using
+the notice's diagnostic text without the Git-fallback sentence; status retains jj and that reason.
+Automatic detection also retains Git when a user initializes jj inside a Git linked worktree
+(the `.git` gitdir file points to shared `commondir` metadata, unlike a submodule or separate Git directory).
+The notice explains that jj in linked Git worktrees is unsupported. An explicit jj pin still
+refuses, with the same explanation. Neither path recommends enabling colocation, which cannot turn
+that checkout into a supported jj workspace. The Git fallback must resolve to the same workspace root.
+
+Without usable colocated Git, detection still says jj. Operations refuse with a named
+`VcsStatusLocalResult.vcs.unsupportedReason`. Web and mobile disable source-control actions,
+Changes, bookmark/workspace selection and creation, and queued setup dispatch for this unsupported
+descriptor only. Already-open dialogs recheck support before dispatch. Missing or loading status
+alone does not disable otherwise available controls. Mobile can leave an unsupported saved or default
 workspace selection for local chat; only entering workspace mode requires source-control support.
 
 Fresh drafts keep main's controls and subscription keys; they do not add a status stream to predict

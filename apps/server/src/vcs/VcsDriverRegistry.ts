@@ -11,9 +11,11 @@ import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/co
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as JjVcsDriver from "./JjVcsDriver.ts";
+import { jjBrokenReason, JJ_LINKED_GIT_WORKTREE_UNSUPPORTED_REASON } from "./JjAvailability.ts";
 import {
   findVcsMarkerRoot,
   isBareGitRepository,
+  isGitLinkedWorktree,
   JJ_REPOSITORY_DETECTION_ENABLED,
 } from "./JjRepo.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
@@ -36,6 +38,7 @@ export interface VcsDriverHandle {
   readonly kind: VcsDriverKind;
   readonly repository: VcsRepositoryIdentity;
   readonly driver: VcsDriver.VcsDriver["Service"];
+  readonly notice?: string;
 }
 
 export class VcsDriverRegistry extends Context.Service<
@@ -139,6 +142,49 @@ export const make = Effect.gen(function* () {
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
+  const selectAvailableDriver = Effect.fn("VcsDriverRegistry.selectAvailableDriver")(function* (
+    handle: VcsDriverHandle | null,
+    input: VcsDriverResolveInput,
+  ) {
+    if (
+      !handle ||
+      handle.kind !== "jj" ||
+      (input.requestedKind && input.requestedKind !== "auto" && input.requestedKind !== "unknown")
+    ) {
+      return handle;
+    }
+    const paths = yield* jj.repoPaths(handle.repository.rootPath);
+    const linkedGitWorktree =
+      !paths.isSecondaryWorkspace &&
+      paths.gitDir === null &&
+      (yield* isGitLinkedWorktree(fileSystem, path, paths.workspaceRoot));
+    let notice: string;
+    if (linkedGitWorktree) {
+      notice = `${JJ_LINKED_GIT_WORKTREE_UNSUPPORTED_REASON} Using Git for this repository.`;
+    } else {
+      const installation = yield* jj.availability(handle.repository.rootPath);
+      if (installation._tag === "available") return handle;
+      notice =
+        installation._tag === "missing"
+          ? "Jujutsu was not found on the server’s PATH. Using Git for this colocated repository."
+          : installation._tag === "broken"
+            ? `${jjBrokenReason(installation.detail)} Using Git for this colocated repository.`
+            : `Jujutsu ${installation.version} is too old. Using Git for this colocated repository.`;
+    }
+    if (linkedGitWorktree || paths.gitDir !== null) {
+      const fallback = yield* detect({ cwd: paths.workspaceRoot, requestedKind: "git" });
+      const gitRoot = fallback
+        ? yield* fileSystem
+            .realPath(fallback.repository.rootPath)
+            .pipe(Effect.orElseSucceed(() => null))
+        : null;
+      if (fallback && gitRoot === paths.workspaceRoot) {
+        return { ...fallback, notice };
+      }
+    }
+    return handle;
+  });
+
   // Falls back to the cwd alone when the root is not above it, such as a cwd
   // reached through a symlink.
   const foldersBelowRoot = (cwd: string, rootPath: string) => {
@@ -209,10 +255,13 @@ export const make = Effect.gen(function* () {
         disk.markerEntries.length === cached.markerEntries.length &&
         disk.markerEntries.every((exists, index) => exists === cached.markerEntries[index])
       ) {
-        return cached.handle;
+        return yield* selectAvailableDriver(cached.handle, { ...input, requestedKind });
       }
       yield* Cache.invalidate(detectionCache, key);
-      return (yield* Cache.get(detectionCache, key))?.handle ?? null;
+      return yield* selectAvailableDriver((yield* Cache.get(detectionCache, key))?.handle ?? null, {
+        ...input,
+        requestedKind,
+      });
     },
   );
 
@@ -243,6 +292,6 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(VcsDriverRegistry, make).pipe(
-  Layer.provide(VcsProjectConfig.layer),
   Layer.provide(JjVcsDriver.layer),
+  Layer.provide(VcsProjectConfig.layer),
 );

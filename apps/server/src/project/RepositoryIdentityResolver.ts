@@ -16,7 +16,10 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
-import { JJ_REPOSITORY_DETECTION_ENABLED, mainWorkspaceRootFromRepoPointer } from "../vcs/JjRepo.ts";
+import {
+  JJ_REPOSITORY_DETECTION_ENABLED,
+  mainWorkspaceRootFromRepoPointer,
+} from "../vcs/JjRepo.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -169,7 +172,7 @@ export function resolveRepositoryRootFromMarkers(cwd: string): string | null {
   if (!statIfExistsSync(cwd)?.isDirectory()) {
     return null;
   }
-  let current = cwd;
+  let current = NodeFS.realpathSync(cwd);
   for (;;) {
     if (statIfExistsSync(NodePath.join(current, ".jj"))?.isDirectory()) {
       const repoPointer = NodePath.join(current, ".jj", "repo");
@@ -177,7 +180,9 @@ export function resolveRepositoryRootFromMarkers(cwd: string): string | null {
         if (statIfExistsSync(repoPointer)?.isDirectory()) {
           return current;
         }
-        return mainWorkspaceRootFromRepoPointer(current, NodeFS.readFileSync(repoPointer, "utf8"));
+        return NodeFS.realpathSync(
+          mainWorkspaceRootFromRepoPointer(current, NodeFS.readFileSync(repoPointer, "utf8")),
+        );
       } catch {
         return current;
       }

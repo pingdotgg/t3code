@@ -66,9 +66,17 @@ import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitManager from "../git/GitManager.ts";
+import * as JjStatus from "../jj/JjStatus.ts";
 import * as JjWorkflow from "../jj/JjWorkflow.ts";
-import { describeJj, runGit, runJj, withJjRepo } from "../vcs/testing/JjTestSupport.ts";
+import {
+  describeJj,
+  runGit,
+  runJj,
+  stubSourceControlProviders,
+  withJjRepo,
+} from "../vcs/testing/JjTestSupport.ts";
 import { threadLaunchErrorForWire } from "../ws.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
@@ -429,6 +437,80 @@ describeJj("unsupported Jujutsu draft launches", () => {
           }).pipe(Effect.provide(harness.layer));
         }),
       ),
+  );
+});
+
+describeJj("broken pinned Jujutsu draft launches", () => {
+  it.effect("preserves the real jj refusal through the client JSON codec and status", () =>
+    withJjRepo({ prefix: "t3-jj-pinned-refusal-", seed: true }, (repo) =>
+      Effect.gen(function* () {
+        yield* repo.fileSystem.makeDirectory(repo.path.join(repo.root, ".t3code"));
+        yield* repo.fileSystem.writeFileString(
+          repo.path.join(repo.root, ".t3code", "vcs.json"),
+          JSON.stringify({ vcs: { kind: "jj" } }),
+        );
+        yield* repo.fileSystem.writeFileString(
+          repo.path.join(repo.root, ".jj", "repo", "config.toml"),
+          "[ui\n",
+        );
+        const status = yield* JjStatus.makeJjStatus({
+          driver: repo.driver,
+          process: repo.process,
+          gitManager: yield* GitManager.GitManager.pipe(
+            Effect.provide(Layer.mock(GitManager.GitManager)({})),
+          ),
+          sourceControlProviders: yield* stubSourceControlProviders,
+        });
+        const workflow = yield* GitWorkflow.GitWorkflowService.pipe(
+          Effect.provide(
+            GitWorkflow.layer.pipe(
+              Layer.provide(VcsDriverRegistry.layer),
+              Layer.provide(Layer.succeed(JjVcsDriver.JjVcsDriver, repo.driver)),
+              Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+              Layer.provide(Layer.mock(GitManager.GitManager)({})),
+              Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)({ localStatus: status.localStatus })),
+              Layer.provide(Layer.succeed(VcsProcess.VcsProcess, repo.process)),
+              Layer.provide(NodeServices.layer),
+            ),
+          ),
+        );
+        const harness = makeHarness({
+          workspaceRoot: repo.root,
+          git: { providerCwd: workflow.providerCwd },
+        });
+        yield* Effect.gen(function* () {
+          const launches = yield* ThreadLaunch.ThreadLaunchService;
+          const result = yield* launches
+            .launch(launchInput({ command: "broken-jj", thread: "broken-jj", message: "hello" }))
+            .pipe(Effect.result);
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result) && result.failure._tag === "ThreadLaunchError") {
+            const codec = Schema.toCodecJson(OrchestrationV2ThreadLaunchError);
+            const encoded = yield* Schema.encodeEffect(codec)(
+              threadLaunchErrorForWire(result.failure),
+            );
+            const decoded = yield* Schema.decodeUnknownEffect(codec)(
+              JSON.parse(JSON.stringify(encoded)),
+            );
+            assert.include(decoded.message, "Jujutsu could not run: Config error:");
+            assert.notInclude(decoded.message, "\n");
+          } else {
+            assert.fail("Expected a thread launch refusal");
+          }
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          assert.deepEqual(
+            yield* threads.listProjectThreads({ projectId, includeSubagents: true }),
+            [],
+          );
+          assert.equal(harness.createWorktree.mock.calls.length, 0);
+        }).pipe(Effect.provide(harness.layer));
+        const local = yield* workflow.localStatus({ cwd: repo.root });
+        assert.equal(local.vcs?.kind, "jj");
+        if (local.vcs?.kind === "jj") {
+          assert.include(local.vcs.unsupportedReason, "Jujutsu could not run: Config error:");
+        }
+      }),
+    ),
   );
 });
 

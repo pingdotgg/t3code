@@ -190,6 +190,33 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     }).pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+it.effect("offers nothing when the data dir sits inside a jj checkout", () =>
+  Effect.gen(function* () {
+    detection.enabled = true;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-jj-" });
+    yield* fileSystem.makeDirectory(path.join(checkout, ".jj"));
+    const baseDir = path.join(checkout, ".t3");
+    yield* fileSystem.makeDirectory(baseDir);
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.equal(
+        (yield* Effect.flip(scratch.ensureScratchProject))._tag,
+        "ScratchUnavailableError",
+      );
+    }).pipe(Effect.provide(layer(baseDir)));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(NodeServices.layer),
+    Effect.ensuring(
+      Effect.sync(() => {
+        detection.enabled = false;
+      }),
+    ),
+  ),
+);
 
 describeJj("dormant jj Scratch detection", () => {
   it.effect("keeps Scratch available inside a non-colocated jj repo while detection is off", () =>
