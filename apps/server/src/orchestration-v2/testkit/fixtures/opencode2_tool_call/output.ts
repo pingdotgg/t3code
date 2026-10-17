@@ -22,12 +22,13 @@ export function assertOpenCode2ToolCallOutput(
   assertSemanticProjectionIntegrity(projection);
   assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   // Buffered delivery keeps streaming text out of the read model until
-  // `text.ended`, which OpenCode sends after both tool calls started.
+  // `text.ended`, which OpenCode sends after both tool calls started. The text
+  // keeps the position it took when it began, ahead of the tool calls.
   assertTurnItemTypeSequence(projection, [
     "user_message",
+    "assistant_message",
     "dynamic_tool",
     "command_execution",
-    "assistant_message",
     "assistant_message",
     "checkpoint",
   ]);

@@ -10,6 +10,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   ThreadId,
+  TurnItemId,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -696,6 +697,123 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
         assert.equal(started[1]?.message.messageId, MessageId.make("message:steer"));
         assert.deepEqual(started[1]?.modelSelection, composerSelection);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+// A draft that never reaches a paragraph boundary is held back while it
+// streams. Codex only flushes it at turn end, after the final answer is written,
+// so the draft must already own its place from before the steer.
+it.effect("keeps a held commentary draft before the steer when turn end flushes it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { events, started, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("steering-held-draft");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const first = started[0]!;
+        const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+        const now = yield* DateTime.now;
+        const assistantItem = (id: string, text: string, streaming: boolean) =>
+          ({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: TurnItemId.make(id),
+              threadId,
+              runId: first.runId,
+              nodeId: first.rootNodeId,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.id,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 0,
+              status: streaming ? "running" : "completed",
+              title: null,
+              startedAt: now,
+              completedAt: streaming ? null : now,
+              updatedAt: now,
+              type: "assistant_message",
+              messageId: MessageId.make(`message:${id}`),
+              text,
+              streaming,
+            },
+          }) satisfies ProviderAdapter.ProviderAdapterV2Event;
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+
+        // The cut-off draft starts first; the commentary after it is written,
+        // so the draft has been seen by the time the steer arrives.
+        yield* Queue.offer(events, assistantItem("draft", "Let me look at the", true));
+        const commentaryWritten = yield* watch(
+          (event) => event.type === "turn-item.updated" && event.payload.id === "commentary",
+        );
+        yield* Queue.offer(events, assistantItem("commentary", "Checking the popover.", false));
+        yield* Fiber.join(commentaryWritten);
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("steer"),
+          threadId,
+          messageId: MessageId.make("message:steer"),
+          text: "fix the popover",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: first.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+
+        const settled = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === first.runId &&
+            event.payload.status === "waiting",
+        );
+        yield* Queue.offer(events, assistantItem("answer", "All fixed.", false));
+        yield* Queue.offer(events, assistantItem("draft", "Let me look at the", false));
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+        });
+        yield* Queue.offer(events, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+
+        const items = (yield* orchestrator.getThreadProjection(threadId)).turnItems
+          .toSorted((left, right) => left.ordinal - right.ordinal)
+          .flatMap((item) =>
+            item.type === "user_message"
+              ? [String(item.messageId)]
+              : item.type === "assistant_message"
+                ? [String(item.id)]
+                : [],
+          );
+        assert.deepEqual(items, [
+          "message:first",
+          "draft",
+          "commentary",
+          "message:steer",
+          "answer",
+        ]);
       }).pipe(Effect.provide(layer));
     }),
   ),
