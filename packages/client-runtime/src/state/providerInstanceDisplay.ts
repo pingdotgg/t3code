@@ -42,6 +42,19 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
+export function providerAccentForegroundColor(accentColor: string): "#000000" | "#ffffff" {
+  const hex = normalizeProviderAccentColor(accentColor);
+  if (!hex) return "#ffffff";
+  const linearChannel = (offset: number) => {
+    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
+  // WCAG contrast: black wins when (L + 0.05) / 0.05 exceeds 1.05 / (L + 0.05).
+  return (luminance + 0.05) ** 2 > 0.0525 ? "#000000" : "#ffffff";
+}
+
 export function shouldShowInstanceBadge(
   entry: {
     readonly driverKind: ProviderDriverKind;
