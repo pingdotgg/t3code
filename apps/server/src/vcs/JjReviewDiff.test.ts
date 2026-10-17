@@ -52,6 +52,68 @@ const addOriginWithMain = (context: RepoContext) =>
   });
 
 describeJj("JjReviewDiff branch totals", () => {
+  it.effect("uses the stored upstream base instead of local and origin shadows for preview and totals", () =>
+    withJjRepo({ prefix: "t3-jj-review-upstream-", withRemote: true }, (repo) =>
+      Effect.gen(function* () {
+        const upstreamPath = repo.path.join(repo.base, "upstream.git");
+        yield* runGit(repo.root, ["init", "--bare", "--quiet", upstreamPath]);
+        yield* runGit(repo.root, ["remote", "add", "upstream", upstreamPath]);
+        yield* write(repo, "upstream-only.txt", "upstream base\n");
+        yield* runJj(repo.root, ["commit", "-m", "upstream base"]);
+        yield* runJj(repo.root, ["bookmark", "create", "release", "-r", "@-"]);
+        yield* runJj(repo.root, ["git", "push", "--remote", "upstream", "--bookmark", "release"]);
+        const upstream = yield* commitId(repo.root, "release@upstream");
+        yield* runGit(repo.root, [
+          "update-ref",
+          "refs/remotes/origin/release",
+          yield* commitId(repo.root, "main"),
+        ]);
+        yield* runJj(repo.root, [
+          "bookmark",
+          "set",
+          "release",
+          "-r",
+          "main",
+          "--allow-backwards",
+        ]);
+        yield* runJj(repo.root, ["bookmark", "create", "topic", "-r", upstream]);
+        const cwd = repo.path.join(repo.base, "topic");
+        yield* runJj(repo.root, [
+          "workspace",
+          "add",
+          "--colocate",
+          "--name",
+          workspaceNameForRef("topic"),
+          "-r",
+          "topic",
+          cwd,
+        ]);
+        yield* runGit(repo.root, ["config", "branch.topic.gh-merge-base", "release"]);
+        yield* runGit(repo.root, [
+          "config",
+          "branch.topic.t3-merge-base-ref",
+          "refs/remotes/upstream/release",
+        ]);
+        yield* repo.fileSystem.writeFileString(repo.path.join(cwd, "feature.txt"), "feature\n");
+        const preview = yield* repo.driver.getDiffPreview!({ cwd });
+        const source = preview.sources[1]!;
+        assert.equal(source.title, "Against upstream/release");
+        assert.equal(source.baseRef, upstream);
+        assert.include(source.diff, "+feature");
+        assert.notInclude(source.diff, "upstream-only.txt");
+        const change = yield* repo.driver.currentChange(cwd);
+        for (const input of [{ cwd, change }, { cwd, change, refName: "topic" }]) {
+          const totals = yield* repo.driver.readBranchChangeTotals(input);
+          assert.deepStrictEqual(totals, {
+            baseRef: "upstream/release",
+            insertions: 1,
+            deletions: 0,
+          });
+        }
+      }),
+    ),
+  );
+
   for (const childRef of ["zzz-child", "aaa-child"]) {
     it.effect(`uses the managed bookmark's configured review base for ${childRef}`, () =>
       withJjRepo({ prefix: "t3-jj-review-workspace-", seed: true }, (repo) =>
@@ -95,6 +157,7 @@ describeJj("JjReviewDiff branch totals", () => {
               { cwd, change, refName },
             ]) {
               const totals = yield* repo.driver.readBranchChangeTotals(input);
+              assert.isDefined(totals);
               assert.equal(totals.baseRef, expectedBase);
               assert.equal(totals.insertions, 1);
             }

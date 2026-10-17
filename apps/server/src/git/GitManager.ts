@@ -719,6 +719,36 @@ function toPullRequestHeadRemoteInfo(pr: {
   };
 }
 
+export const readProjectSettings = Effect.fnUntraced(function* (input: {
+  readonly cwd: string;
+  readonly threadId?: ThreadId | undefined;
+  readonly projectId?: ProjectId | undefined;
+}) {
+  const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  const settings = yield* serverSettingsService.getSettings;
+  if (!hasProjectSettingsOverrides(settings)) {
+    return { settings, projectId: input.projectId ?? null };
+  }
+  // Source-control helpers also run without orchestration in the CLI and focused tests.
+  const threads = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
+  const projects = yield* Effect.serviceOption(ProjectStore.ProjectStoreV2);
+  let projectId = input.projectId ?? null;
+  if (input.projectId === undefined) {
+    if (input.threadId !== undefined && Option.isSome(threads)) {
+      projectId = yield* threads.value.getThreadShell(input.threadId).pipe(
+        Effect.map((thread) => thread?.projectId ?? null),
+        Effect.orElseSucceed(() => null),
+      );
+    } else if (input.threadId === undefined && Option.isSome(projects)) {
+      projectId = yield* projects.value.findActiveByWorkspaceRoot(input.cwd).pipe(
+        Effect.map((project) => Option.getOrNull(project)?.projectId ?? null),
+        Effect.orElseSucceed(() => null),
+      );
+    }
+  }
+  return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
+});
+
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
@@ -734,24 +764,15 @@ export const make = Effect.gen(function* () {
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
-  const projectSettingsFor = Effect.fnUntraced(function* (input: {
+  const projectSettingsFor = (input: {
     readonly cwd: string;
     readonly threadId?: ThreadId | undefined;
-  }) {
-    const settings = yield* serverSettingsService.getSettings;
-    if (!hasProjectSettingsOverrides(settings))
-      return { settings, projectId: null as ProjectId | null };
-    const projectId: ProjectId | null = yield* input.threadId !== undefined
-      ? threads.getThreadShell(input.threadId).pipe(
-          Effect.map((thread) => thread?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
-        )
-      : projects.findActiveByWorkspaceRoot(input.cwd).pipe(
-          Effect.map((project) => Option.getOrNull(project)?.projectId ?? null),
-          Effect.orElseSucceed(() => null),
-        );
-    return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
-  });
+  }) =>
+    readProjectSettings({ cwd: input.cwd, threadId: input.threadId }).pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, serverSettingsService),
+      Effect.provideService(ProjectionStore.ProjectionStoreV2, threads),
+      Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+    );
   const readThreadContext = Effect.fnUntraced(
     function* (threadId: ThreadId | undefined) {
       if (threadId === undefined) return undefined;

@@ -153,6 +153,13 @@ const layerRuntime = (dbPath: string) => {
     Layer.provide(McpProviderSessions.layer),
     Layer.provideMerge(SqlitePersistence.layerFromPath(dbPath)),
     Layer.provide(layerCheckpointStore),
+    Layer.provide(
+      VcsDriverRegistry.layer.pipe(
+        Layer.provide(VcsProcess.layer),
+        Layer.provide(layerServerConfig),
+        Layer.provide(layerPlatform),
+      ),
+    ),
     Layer.provide(layerServerConfig),
     Layer.provide(ServerSettings.layerTest()),
     Layer.provide(

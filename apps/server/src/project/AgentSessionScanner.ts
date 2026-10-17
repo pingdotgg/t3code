@@ -38,6 +38,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ServerSettings from "../serverSettings.ts";
+import { JJ_REPOSITORY_DETECTION_ENABLED, resolveJjRepoPaths } from "../vcs/JjRepo.ts";
 import {
   createTranscriptJsonReader,
   createTranscriptJsonSelector,
@@ -697,9 +698,23 @@ export const make = Effect.gen(function* () {
   > {
     const gitPath = path.join(directory, ".git");
     const gitStats = yield* statOption(gitPath);
-    if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
     let gitDir = gitPath;
-    if (gitStats.value.type !== "Directory") {
+    if (Option.isNone(gitStats)) {
+      if (!JJ_REPOSITORY_DETECTION_ENABLED) return { _tag: "NotGit" } as const;
+      // A user's own `jj workspace add` directory holds `.jj` and no `.git`; without this it is
+      // imported with no remote and never groups with its repository.
+      const jjStats = yield* statOption(path.join(directory, ".jj"));
+      if (Option.isNone(jjStats) || jjStats.value.type !== "Directory") {
+        return { _tag: "NotGit" } as const;
+      }
+      const jjPaths = yield* resolveJjRepoPaths(fileSystem, path, directory).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (jjPaths === null) {
+        return { _tag: "NotGit" } as const;
+      }
+      gitDir = path.join(jjPaths.mainWorkspaceRoot, ".git");
+    } else if (gitStats.value.type !== "Directory") {
       const pointer = yield* fileSystem
         .readFileString(gitPath)
         .pipe(Effect.orElseSucceed(() => ""));
@@ -708,7 +723,9 @@ export const make = Effect.gen(function* () {
       gitDir = path.resolve(directory, target);
     }
     const linkedWorktree =
-      gitStats.value.type !== "Directory" && /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir);
+      Option.isSome(gitStats) &&
+      gitStats.value.type !== "Directory" &&
+      /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir);
     if (linkedWorktree) {
       const commonDir = yield* fileSystem
         .readFileString(path.join(gitDir, "commondir"))

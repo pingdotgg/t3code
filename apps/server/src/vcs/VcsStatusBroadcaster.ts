@@ -31,6 +31,11 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { withStatusRefreshReads as scopeStatusRefreshReads } from "../jj/JjStatus.ts";
+import { JJ_REPOSITORY_DETECTION_ENABLED } from "./JjRepo.ts";
+
+const withStatusRefreshReads = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  JJ_REPOSITORY_DETECTION_ENABLED ? scopeStatusRefreshReads(effect) : effect;
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -400,7 +405,7 @@ export const make = Effect.gen(function* () {
           { concurrency: "unbounded" },
         );
         return yield* updateCachedStatus(cwd, local, remote);
-      }),
+      }).pipe(withStatusRefreshReads),
     );
   });
 
@@ -441,7 +446,14 @@ export const make = Effect.gen(function* () {
 
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
-      if (!local.isRepo || !local.isDefaultRef || local.hasWorkingTreeChanges) return null;
+      if (
+        local.vcs?.kind === "jj" ||
+        !local.isRepo ||
+        !local.isDefaultRef ||
+        local.hasWorkingTreeChanges
+      ) {
+        return null;
+      }
 
       pullAttempted = true;
       yield* workflow.pullCurrentBranch(cwd);
@@ -449,7 +461,7 @@ export const make = Effect.gen(function* () {
       const [refreshedLocal, refreshedRemote] = yield* Effect.all(
         [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
         { concurrency: "unbounded" },
-      );
+      ).pipe(withStatusRefreshReads);
       yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
       return { local: refreshedLocal, remote: refreshedRemote };
     }).pipe(
@@ -501,7 +513,7 @@ export const make = Effect.gen(function* () {
           yield* refreshLocalStatusCore(cwd);
         }
         return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
-      }),
+      }).pipe(withStatusRefreshReads),
     );
   });
 
@@ -523,7 +535,7 @@ export const make = Effect.gen(function* () {
         const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remote, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         return yield* updateCachedStatus(cwd, local, remote, { publish: true });
-      }),
+      }).pipe(withStatusRefreshReads),
     );
   });
 

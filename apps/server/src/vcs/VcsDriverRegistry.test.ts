@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,6 +11,16 @@ import * as JjVcsDriver from "./JjVcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
+import type * as JjRepo from "./JjRepo.ts";
+import { describeJj, seedJjRepo } from "./testing/JjTestSupport.ts";
+
+const detection = vi.hoisted(() => ({ enabled: false }));
+vi.mock("./JjRepo.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof JjRepo>()),
+  get JJ_REPOSITORY_DETECTION_ENABLED() {
+    return detection.enabled;
+  },
+}));
 
 const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -86,6 +97,52 @@ describe("VcsDriverRegistry", () => {
       ),
     );
 
+  for (const enabled of [false, true]) {
+    it.effect(
+      `skips plain Git facade detection without spawning processes (enabled=${enabled})`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-facade-" });
+          yield* fs.makeDirectory(path.join(root, ".git"));
+          const calls: string[] = [];
+          detection.enabled = enabled;
+          yield* Effect.gen(function* () {
+            const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+            assert.isNull(yield* registry.detect({ cwd: root, jjOnly: true }));
+            assert.isEmpty(calls);
+          }).pipe(
+            Effect.provide(makeDiskBackedLayer(root, calls)),
+            Effect.ensuring(
+              Effect.sync(() => {
+                detection.enabled = false;
+              }),
+            ),
+          );
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
+
+  describeJj("facade jj detection", () => {
+    it.effect("selects a real jj repository when detection is enabled", () =>
+      Effect.gen(function* () {
+        const { root } = yield* seedJjRepo({ prefix: "t3-vcs-facade-jj-" });
+        detection.enabled = true;
+        yield* Effect.gen(function* () {
+          const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+          assert.equal((yield* registry.detect({ cwd: root, jjOnly: true }))?.kind, "jj");
+        }).pipe(
+          Effect.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              detection.enabled = false;
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

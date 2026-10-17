@@ -84,6 +84,25 @@ describe("findVcsMarkerRoot", () => {
     ),
   );
 
+  it.effect("stops at a nested bare Git repository instead of the outer jj workspace", () =>
+    withTempDir(({ fileSystem, path, root }) =>
+      Effect.gen(function* () {
+        yield* makeColocatedRoot(fileSystem, path, root);
+        const bare = path.join(root, "nested.git");
+        yield* fileSystem.makeDirectory(path.join(bare, "objects"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(bare, "refs"));
+        yield* fileSystem.writeFileString(path.join(bare, "HEAD"), "ref: refs/heads/main\n");
+
+        for (const cwd of [bare, path.join(bare, "objects")]) {
+          assert.deepStrictEqual(yield* findVcsMarkerRoot(fileSystem, path, cwd), {
+            root: bare,
+            marker: "git",
+          });
+        }
+      }),
+    ),
+  );
+
   it.effect("returns null for a path that no longer exists instead of walking up", () =>
     withTempDir(({ fileSystem, path, root }) =>
       Effect.gen(function* () {

@@ -215,6 +215,18 @@ const VcsStatusChangeRequest = Schema.Struct({
 
 const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
+  /**
+   * Version control system backing this workspace. Emitted only when it is not Git, so existing
+   * payloads are unchanged; absent means Git. `unsupportedReason` is set when the detected system
+   * is present but unusable (a non-colocated Jujutsu repository, or a `jj` below the supported
+   * minimum). Its presence is the signal and the string is the user-facing reason.
+   */
+  vcs: Schema.optional(
+    Schema.Struct({
+      kind: Schema.Literal("jj"),
+      unsupportedReason: Schema.optional(TrimmedNonEmptyStringSchema),
+    }),
+  ),
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
   isDefaultRef: Schema.Boolean,
@@ -353,7 +365,8 @@ export type VcsPullResult = typeof VcsPullResult.Type;
 
 // Git stderr can echo credentials from argv and remote URLs. Only a fixed
 // reason reaches the error and its diagnostic suffix; newer, unknown reasons
-// decode as absent through GitCommandError.
+// decode as absent through GitCommandError. unsupported_repository lets clients
+// display the safe, server-authored detail.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
@@ -364,6 +377,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "ref_not_found",
   "remote_unreachable",
   "tag_would_be_clobbered",
+  "unsupported_repository",
 ]);
 export type GitCommandFailureReason = typeof GitCommandFailureReason.Type;
 

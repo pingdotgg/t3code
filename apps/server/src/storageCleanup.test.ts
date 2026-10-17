@@ -24,6 +24,7 @@ import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as GitManager from "./git/GitManager.ts";
+import { JJ_REPOSITORY_DETECTION_ENABLED } from "./vcs/JjRepo.ts";
 import * as Settings from "./serverSettings.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -879,6 +880,31 @@ describe("subagent worktree ownership", () => {
 });
 
 describe("orphan worktree reports", () => {
+  it.live.skipIf(JJ_REPOSITORY_DETECTION_ENABLED)(
+    "does not probe jj markers while detection is dormant",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const probes: string[] = [];
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              exists: (candidate) => {
+                if (candidate.includes("/.jj")) probes.push(candidate);
+                return fs.exists(candidate);
+              },
+            }),
+          );
+          const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+          yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
+          yield* fs.utimes(orphan, 1, 1);
+          yield* fixture.service.runNow;
+          expect(probes).toEqual([]);
+        }),
+      ),
+  );
+
   it.live("keeps orphan results visible when thread results fill the report", () =>
     runCleanupTest(
       Effect.gen(function* () {

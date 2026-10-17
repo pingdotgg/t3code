@@ -106,6 +106,8 @@ export interface JjVcsDriverShape extends VcsDriverService {
   readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string | null, VcsError>;
   /** Filesystem-only repository generation key, shared by repository metadata and ref caches. */
   readonly repoMetadataKey: (paths: JjRepo.JjRepoPaths) => Effect.Effect<string>;
+  /** Filesystem operation-head identity for live bookmark/workspace snapshots. */
+  readonly repoOperationKey: (paths: JjRepo.JjRepoPaths) => Effect.Effect<string, VcsError>;
   /** Drops this repo's cached default bookmark and remote names. */
   readonly invalidateRepoCaches: (cwd: string) => Effect.Effect<void, never>;
 }
@@ -225,8 +227,8 @@ const decodeFailure = (operation: string, command: string, cwd: string) =>
         cwd,
         stream: "stdout",
         cause: new Error(
-          `Malformed jj output at ${formatDecodeIssue(error.issue).issues
-            .map((issue) => issue.path?.join(".") || "<JSON>")
+          `Malformed jj output at ${formatDecodeIssue(error.issue)
+            .issues.map((issue) => issue.path?.join(".") || "<JSON>")
             .join(", ")}.`,
         ),
       }),
@@ -296,7 +298,7 @@ export const makeVcsDriverShape = Effect.gen(function* () {
 
   const capabilities = {
     kind: "jj",
-    supportsWorktrees: false,
+    supportsWorktrees: true,
     supportsBookmarks: true,
     supportsAtomicSnapshot: true,
     supportsPushDefaultRemote: false,
@@ -372,6 +374,21 @@ export const makeVcsDriverShape = Effect.gen(function* () {
     return generation;
   };
 
+  const repoOperationKey: JjVcsDriverShape["repoOperationKey"] = (paths) =>
+    fileSystem
+      .readDirectory(path.join(paths.mainWorkspaceRoot, ".jj", "repo", "op_heads", "heads"))
+      .pipe(
+        Effect.map((heads) => heads.toSorted().join("\0")),
+        Effect.mapError(
+          (cause) =>
+            new VcsRepositoryDetectionError({
+              operation: "JjVcsDriver.repoOperationKey",
+              cwd: paths.workspaceRoot,
+              detail: "Could not read Jujutsu operation heads.",
+              cause,
+            }),
+        ),
+      );
   const repoMetadataKey = Effect.fn("JjVcsDriver.repoMetadataKey")(function* (
     paths: JjRepo.JjRepoPaths,
   ) {
@@ -886,6 +903,7 @@ export const makeVcsDriverShape = Effect.gen(function* () {
   return {
     capabilities,
     repoMetadataKey,
+    repoOperationKey,
     execute,
     checkpoints: makeJjCheckpointOps({ crypto, process: vcsProcess, ensureGitDir, currentChange }),
     checkpointsUsable,

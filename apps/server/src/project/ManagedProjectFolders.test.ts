@@ -16,17 +16,22 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
+import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import type * as JjRepo from "../vcs/JjRepo.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { describeJj, seedJjRepo } from "../vcs/testing/JjTestSupport.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -34,10 +39,20 @@ import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 
+const detection = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../vcs/JjRepo.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof JjRepo>()),
+  get JJ_REPOSITORY_DETECTION_ENABLED() {
+    return detection.enabled;
+  },
+}));
+
 const layerGitWorkflow = (vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>) =>
   GitWorkflow.layer.pipe(
     Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(vcsProcess ?? VcsProcess.layer))),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)({})),
+    Layer.provide(JjVcsDriver.layer.pipe(Layer.provide(vcsProcess ?? VcsProcess.layer))),
   );
 
 const layerEnrichment = ProjectEnrichmentService.layer.pipe(
@@ -115,6 +130,40 @@ const requireRoot = Effect.gen(function* () {
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
 
+it.effect("probes a non-repository Scratch base only once with jj detection enabled", () =>
+  Effect.gen(function* () {
+    detection.enabled = true;
+    const commands: string[] = [];
+    const countedProcess = Layer.effect(
+      VcsProcess.VcsProcess,
+      VcsProcess.VcsProcess.pipe(
+        Effect.map((process) => ({
+          run: (input) => {
+            commands.push(`${input.command} ${input.args.join(" ")}`);
+            return process.run(input);
+          },
+        })),
+      ),
+    ).pipe(Layer.provide(VcsProcess.layer), Layer.provide(NodeServices.layer));
+    yield* withScratch(
+      ({ baseDir }) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
+        }),
+      { vcsProcess: countedProcess },
+    );
+    assert.lengthOf(commands, 1);
+    assert.match(commands[0]!, /^git .*rev-parse/);
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        detection.enabled = false;
+      }),
+    ),
+  ),
+);
+
 it.effect("offers a Scratch folder under the data dir when it is outside a checkout", () =>
   withScratch(({ baseDir }) =>
     Effect.gen(function* () {
@@ -141,6 +190,22 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     }).pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describeJj("dormant jj Scratch detection", () => {
+  it.effect("keeps Scratch available inside a non-colocated jj repo while detection is off", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root } = yield* seedJjRepo({ prefix: "t3-scratch-dormant-", colocated: false });
+      const baseDir = path.join(root, ".t3");
+      yield* fileSystem.makeDirectory(baseDir);
+      assert.equal(
+        yield* requireRoot.pipe(Effect.provide(layer(baseDir))),
+        path.join(baseDir, "scratch"),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
 
 it.effect("offers a Scratch folder when Git is not installed", () =>
   withScratch(

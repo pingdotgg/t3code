@@ -50,7 +50,7 @@ export type JjReviewDiffOps = Pick<
     readonly cwd: string;
     readonly change: JjChange;
     readonly refName?: string | null;
-  }) => Effect.Effect<NonNullable<VcsStatusLocalResult["branchChanges"]>, VcsError>;
+  }) => Effect.Effect<VcsStatusLocalResult["branchChanges"], VcsError>;
 };
 
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
@@ -280,11 +280,32 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
         deps.process,
         "JjVcsDriver.getDiffPreview.resolveBase",
         { gitDir, cwd },
-        ["config", "--get", `branch.${bookmark}.gh-merge-base`],
+        [
+          "config",
+          "--get-regexp",
+          `^branch\\.${bookmark.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(t3-merge-base-ref|gh-merge-base)$`,
+        ],
         { allowNonZeroExit: true },
       );
-      if (configured.exitCode === 0 && configured.stdout.trim() !== "") {
-        const base = yield* resolveAutomatic(configured.stdout.trim());
+      let fullRef = "";
+      let legacyBase = "";
+      if (configured.exitCode === 0) {
+        for (const line of configured.stdout.split("\n")) {
+          const separator = line.indexOf(" ");
+          const key = line.slice(0, separator);
+          const value = line.slice(separator + 1).trim();
+          if (key === `branch.${bookmark}.t3-merge-base-ref`) fullRef = value;
+          else if (key === `branch.${bookmark}.gh-merge-base`) legacyBase = value;
+        }
+      }
+      if (fullRef.startsWith("refs/heads/") || fullRef.startsWith("refs/remotes/")) {
+        const change = yield* resolve(fullRef);
+        if (change !== null) {
+          return { label: fullRef.replace(/^refs\/(?:heads|remotes)\//, ""), change };
+        }
+      }
+      if (legacyBase !== "") {
+        const base = yield* resolveAutomatic(legacyBase);
         if (base.change !== null) return base;
       }
     }
@@ -325,7 +346,30 @@ export const makeJjReviewDiff = (deps: JjReviewDiffDeps): JjReviewDiffOps => {
         ...JJ_CONFLICT_PATHSPECS,
       ],
       { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    ).pipe(
+      Effect.catch((error) => {
+        if (error._tag !== "VcsProcessExitError" || error.exitCode !== 128) {
+          return Effect.fail(error);
+        }
+        // Only diagnose a failed triple-dot diff. Unrelated histories have no optional totals;
+        // malformed commands, missing objects, timeouts and all other failures remain failures.
+        return colocatedGitCommand(
+          deps.process,
+          operation,
+          { gitDir, cwd: input.cwd },
+          ["merge-base", baseChange.commitId, input.change.commitId],
+          { allowNonZeroExit: true },
+        ).pipe(
+          Effect.catch(() => Effect.fail(error)),
+          Effect.flatMap((diagnostic) =>
+            diagnostic.exitCode === 1 && diagnostic.stdout === "" && diagnostic.stderr === ""
+              ? Effect.succeed(undefined)
+              : Effect.fail(error),
+          ),
+        );
+      }),
     );
+    if (stats === undefined) return undefined;
     const files = parseReviewNumstat(stats.stdout);
     return {
       baseRef,
