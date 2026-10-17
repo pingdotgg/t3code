@@ -1234,7 +1234,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
+  const readCurrentUpstreamRef = Effect.fn("readCurrentUpstreamRef")(function* (cwd: string) {
     const upstreamRef = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
@@ -1243,6 +1243,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => stdout.trim()));
 
     if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
+      return null;
+    }
+    return upstreamRef;
+  });
+
+  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (
+    cwd: string,
+    knownUpstreamRef?: string,
+  ) {
+    const upstreamRef = knownUpstreamRef ?? (yield* readCurrentUpstreamRef(cwd));
+    if (upstreamRef === null) {
       return null;
     }
 
@@ -1807,8 +1818,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const branchValue = branchResult.stdout.trim();
       branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
     }
-    const upstream = yield* resolveCurrentUpstream(cwd);
-    const upstreamRef = upstream?.upstreamRef ?? null;
+    const currentUpstreamRef = yield* readCurrentUpstreamRef(cwd);
+    // Preserve upstream-name validation without resolving the unused remote and branch names.
+    let upstreamRef =
+      currentUpstreamRef === null
+        ? null
+        : (parseUpstreamRefByFirstSeparator(currentUpstreamRef)?.upstreamRef ?? null);
+    // Trimming a remote that starts with Unicode whitespace can leave a leading slash.
+    if (currentUpstreamRef?.startsWith("/")) {
+      upstreamRef = (yield* resolveCurrentUpstream(cwd, currentUpstreamRef))?.upstreamRef ?? null;
+    }
     let aheadCount = 0;
     let behindCount = 0;
 

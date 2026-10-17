@@ -2589,7 +2589,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["push", "-u", "origin", "feature/remote-status"]);
         yield* writeTextFile(cwd, "untracked.txt", "local-only\n");
 
-        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        let remoteEnumerations = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.length === 1 &&
+              command.args[0] === "remote"
+            ) {
+              remoteEnumerations++;
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const status = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+
+        assert.equal(remoteEnumerations, 0);
+        assert.equal(status.upstreamRef, "origin/feature/remote-status");
 
         assert.equal(status.isRepo, true);
         assert.equal(status.branch, "feature/remote-status");
