@@ -248,34 +248,49 @@ describe("DesktopApplicationMenu", () => {
 
   it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
     Effect.gen(function* () {
-      const selectedAction = yield* Deferred.make<string>();
-      const applicationMenuTemplate =
-        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      for (const platform of ["darwin", "linux", "win32"] as const) {
+        const accelerators = [
+          "CmdOrCtrl+=",
+          "CmdOrCtrl+Plus",
+          ...(platform === "darwin" ? ["CmdOrCtrl+Shift+=", "CmdOrCtrl+numadd"] : []),
+        ];
+        for (const accelerator of accelerators) {
+          const selectedAction = yield* Deferred.make<string>();
+          const applicationMenuTemplate =
+            yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
 
-      yield* configureMenu(selectedAction, applicationMenuTemplate);
+          yield* configureMenu(selectedAction, applicationMenuTemplate, { platform });
 
-      const template = yield* Deferred.await(applicationMenuTemplate);
-      const viewMenu = template.find((item) => item.label === "View");
-      assert.isDefined(viewMenu);
-      if (!Array.isArray(viewMenu.submenu)) {
-        throw new Error("Expected View menu submenu to be an array.");
+          const template = yield* Deferred.await(applicationMenuTemplate);
+          const viewMenu = template.find((item) => item.label === "View");
+          assert.isDefined(viewMenu);
+          if (!Array.isArray(viewMenu.submenu)) {
+            throw new Error("Expected View menu submenu to be an array.");
+          }
+
+          assert.isUndefined(
+            viewMenu.submenu.find((item) =>
+              ["zoom", "reload", "devtools"].some((role) =>
+                item.role?.toLowerCase().includes(role),
+              ),
+            ),
+          );
+
+          const zoomItems = viewMenu.submenu.filter((item) => item.label === "Zoom In");
+          assert.deepEqual(
+            zoomItems.map((item) => item.accelerator),
+            accelerators,
+          );
+          assert.equal(zoomItems.filter((item) => item.visible !== false).length, 1);
+          const zoomIn = zoomItems.find((item) => item.accelerator === accelerator);
+          if (typeof zoomIn?.click !== "function") {
+            throw new Error(`Expected ${accelerator} menu item to have a click handler.`);
+          }
+
+          zoomIn.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+          assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
+        }
       }
-
-      assert.isUndefined(
-        viewMenu.submenu.find((item) =>
-          ["zoom", "reload", "devtools"].some((role) => item.role?.toLowerCase().includes(role)),
-        ),
-      );
-
-      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
-      assert.isDefined(zoomIn);
-      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
-      if (typeof zoomIn.click !== "function") {
-        throw new Error("Expected Zoom In menu item to have a click handler.");
-      }
-
-      zoomIn.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-      assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
     }),
   );
 

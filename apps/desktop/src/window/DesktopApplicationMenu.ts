@@ -261,6 +261,17 @@ export const make = Effect.gen(function* () {
             visible: false,
             click: zoomClick("in"),
           },
+          // Cocoa converts Plus differently from explicit Shift+= and NumAdd.
+          // Keep these in the menu so renderer-owned preview zoom can consume
+          // the keydown before the native app zoom fallback.
+          ...(environment.platform === "darwin"
+            ? ["CmdOrCtrl+Shift+=", "CmdOrCtrl+numadd"].map((accelerator) => ({
+                label: "Zoom In",
+                accelerator,
+                visible: false,
+                click: zoomClick("in"),
+              }))
+            : []),
           { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
           { type: "separator" },
           { role: "togglefullscreen" },
