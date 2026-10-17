@@ -401,8 +401,13 @@ function ProjectDetail({
         draftStore.clearProjectDraftThreadId(projectRef);
       }
 
+      // Back to the project overview so several projects can be removed in a row.
       if (isWholeGroup && !hasOtherMembers) {
-        void navigate({ to: "/", replace: true });
+        void navigate({
+          to: "/settings/projects",
+          search: ({ machine }) => ({ machine }),
+          replace: true,
+        });
       }
     },
     [
