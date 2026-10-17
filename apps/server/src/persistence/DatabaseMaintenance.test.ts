@@ -31,6 +31,45 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
+    it.effect("reports and deletes only the database from before 0.1.0", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
+        const userdata = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-" });
+        const dbPath = path.join(userdata, "statev2.sqlite");
+        const legacy = path.join(userdata, "state.sqlite");
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE retained_data (value TEXT)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+
+        const openLegacy = NodeSqliteClient.layer({ filename: legacy });
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`CREATE TABLE v1_data (value TEXT)`;
+        }).pipe(Effect.provide(openLegacy));
+        assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
+
+        // A version before 0.1.0 still running against it keeps it.
+        const refused = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`SELECT value FROM v1_data`;
+          return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+        }).pipe(Effect.provide(openLegacy));
+        assert.equal(refused._tag, "DatabaseInUseError");
+        assert.isTrue(yield* fs.exists(legacy));
+
+        yield* maintenance.removeLegacyDatabase(dbPath);
+        assert.isFalse(yield* fs.exists(legacy));
+        assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+        assert.isTrue(yield* fs.exists(dbPath));
+        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("compacts an existing database offline only once its server has stopped", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
