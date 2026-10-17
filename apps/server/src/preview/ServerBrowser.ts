@@ -1711,6 +1711,20 @@ const make = Effect.gen(function* () {
                 ),
               )
             : undefined;
+        if (reuse && request.tabIdExplicit && !found) {
+          const { sessions } = await Effect.runPromise(
+            manager.list({ threadId: ThreadId.make(request.threadId) }),
+          );
+          const desktop = sessions.some(
+            (session) => session.tabId === request.tabId && session.runtime !== "server",
+          );
+          throw new ServerBrowserPage.ServerBrowserOperationError(
+            desktop ? "PreviewAutomationExecutionError" : "PreviewAutomationTabNotFoundError",
+            desktop
+              ? "This tab belongs to the desktop runtime. This environment's server browser cannot control desktop tabs. Omit tabId to open a server tab instead."
+              : "The requested server preview tab does not exist.",
+          );
+        }
         // Only an explicit tabId reuses a tab this session did not open; a tab
         // it last read (such as the user's) is not taken over implicitly.
         const existing =
