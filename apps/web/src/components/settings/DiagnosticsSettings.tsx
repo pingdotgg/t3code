@@ -23,7 +23,8 @@ import * as Option from "effect/Option";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -35,7 +36,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { ExpandableText } from "./ExpandableText";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
-import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { TelemetryExportSettings } from "./TelemetryExportSettings";
@@ -664,8 +665,7 @@ function ProcessResourceHistoryTable({
 }
 
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
-  useRelativeTimeTick();
-  const relative = getRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
+  const relative = useRelativeTimeState(checkedAt ? DateTime.formatIso(checkedAt) : null);
 
   if (relative.status === "missing") {
     return <span className="text-2xs text-muted-foreground/50">Checking</span>;

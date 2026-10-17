@@ -44,7 +44,7 @@ import { ensureLocalApi } from "../../localApi";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { formatRelativeTime } from "../../timestampFormat";
+import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "../ui/scroll-area";
@@ -57,7 +57,7 @@ import {
   shouldShowResourceMonitorRetry,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
-import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
+import { SettingsSection } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
   { label: "5m", windowMs: 5 * 60_000, bucketMs: 15_000 },
@@ -207,12 +207,8 @@ function SourceStatusBadge({
 }
 
 function LastSampleLabel({ sampledAt }: { sampledAt: DateTime.Utc | null }) {
-  useRelativeTimeTick();
-  if (!sampledAt) {
-    return <span className="text-2xs text-muted-foreground/55">Waiting for sample</span>;
-  }
-  const relative = formatRelativeTime(DateTime.formatIso(sampledAt));
-  if (!relative) {
+  const relative = useRelativeTimeState(sampledAt ? DateTime.formatIso(sampledAt) : null);
+  if (relative.status !== "relative") {
     return <span className="text-2xs text-muted-foreground/55">Waiting for sample</span>;
   }
   return (

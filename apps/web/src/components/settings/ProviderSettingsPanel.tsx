@@ -57,7 +57,7 @@ import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { getRelativeTimeState } from "../../timestampFormat";
+import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
 import {
   ConnectionStatusDot,
   connectionPhaseDotClassName,
@@ -112,7 +112,6 @@ import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
-  useRelativeTimeTick,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import {
@@ -151,8 +150,7 @@ function configuredBinaryPath(config: unknown): string {
 }
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
-  useRelativeTimeTick();
-  const lastCheckedRelative = getRelativeTimeState(lastCheckedAt);
+  const lastCheckedRelative = useRelativeTimeState(lastCheckedAt);
 
   if (lastCheckedRelative.status === "missing") {
     return null;

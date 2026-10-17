@@ -11,7 +11,8 @@ import {
   formatShortTimestamp,
   formatTimestamp,
   formatUpcomingTimestamp,
-  getRelativeTimeState,
+  msUntilRelativeTimeChange,
+  relativeTimeElapsedMs,
   resolveTimestampLocale,
 } from "./timestampFormat";
 
@@ -253,9 +254,9 @@ describe("invalid timestamp inputs", () => {
     expect(formatRelativeTimeLabel("not-a-date")).toBe("");
   });
 
-  it("distinguishes missing and invalid relative time state", () => {
-    expect(getRelativeTimeState(null)).toEqual({ status: "missing" });
-    expect(getRelativeTimeState("not-a-date")).toEqual({ status: "invalid" });
+  it("has no relative time boundary for an invalid timestamp", () => {
+    expect(relativeTimeElapsedMs("not-a-date")).toBeNull();
+    expect(msUntilRelativeTimeChange("not-a-date")).toBeNull();
   });
 
   it("returns an empty elapsed duration instead of a NaN label", () => {
@@ -272,22 +273,27 @@ describe("invalid timestamp inputs", () => {
   });
 });
 
-describe("getRelativeTimeState", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-07T12:00:00.000Z"));
+describe("relative time boundaries", () => {
+  const nowMs = Date.parse("2026-04-07T12:00:00.000Z");
+
+  it("waits for the label to change instead of the next second", () => {
+    // "just now" turns into "1m ago" at the one-minute mark.
+    expect(msUntilRelativeTimeChange("2026-04-07T11:59:40.000Z", nowMs)).toBe(40_000);
+    // "2m ago" turns into "3m ago" a minute after the 2m mark.
+    expect(msUntilRelativeTimeChange("2026-04-07T11:57:30.000Z", nowMs)).toBe(30_000);
+    // "3h ago" holds until the 4h mark.
+    expect(msUntilRelativeTimeChange("2026-04-07T08:30:00.000Z", nowMs)).toBe(30 * 60_000);
+    // "2d ago" holds until the 3d mark.
+    expect(msUntilRelativeTimeChange("2026-04-05T00:00:00.000Z", nowMs)).toBe(12 * 3_600_000);
+    // A future timestamp reads "just now" until a minute after it.
+    expect(msUntilRelativeTimeChange("2026-04-07T12:00:10.000Z", nowMs)).toBe(70_000);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("returns relative parts for valid timestamps", () => {
-    expect(getRelativeTimeState("2026-04-07T11:45:00.000Z")).toEqual({
-      status: "relative",
-      value: "15m",
-      suffix: "ago",
-    });
+  it("keeps the elapsed snapshot stable while the label is unchanged", () => {
+    const at = "2026-04-07T11:57:30.000Z";
+    expect(relativeTimeElapsedMs(at, nowMs)).toBe(2 * 60_000);
+    expect(relativeTimeElapsedMs(at, nowMs + 29_999)).toBe(2 * 60_000);
+    expect(relativeTimeElapsedMs(at, nowMs + 30_000)).toBe(3 * 60_000);
   });
 });
 
