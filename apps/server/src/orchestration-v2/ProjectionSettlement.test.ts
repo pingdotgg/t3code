@@ -76,6 +76,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  overrides: Partial<OrchestrationV2Run> = {},
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -100,6 +101,7 @@ const createRun = Effect.fn(function* (
       completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
       checkpointId: null,
       contextHandoffId: null,
+      ...overrides,
     },
   });
   return runId;
@@ -353,6 +355,78 @@ it.effect.each([
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
+  "%s: attention notices hold settlement until another run actually starts",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const later = DateTime.add(old, { hours: 1 });
+      for (const [name, needsAttention, nextRun, eligible] of [
+        ["attention", true, null, false],
+        ["ordinary-notice", undefined, null, true],
+        ["explicit-false", false, null, true],
+        ["queued", true, { status: "queued", startedAt: null }, false],
+        ["held", true, { status: "queued", startedAt: null, queueHeld: true }, false],
+        ["canceled", true, { status: "cancelled", startedAt: null }, false],
+        ["failed-before-start", true, { status: "failed", startedAt: null }, false],
+        ["later-start", true, { startedAt: later }, true],
+        ["failed-after-start", true, { status: "failed", startedAt: later }, true],
+        ["canceled-after-start", true, { status: "cancelled", startedAt: later }, true],
+        ["lower-ordinal-later-start", true, { ordinal: 1, startedAt: later }, true],
+        [
+          "higher-ordinal-older-start",
+          true,
+          { startedAt: DateTime.subtract(old, { hours: 1 }) },
+          false,
+        ],
+        ["same-start-higher-ordinal", true, {}, true],
+        ["same-start-lower-ordinal", true, { ordinal: 1 }, false],
+        ["automatic-continuation", true, { startedAt: later, workStartedAt: old }, true],
+      ] satisfies ReadonlyArray<
+        readonly [string, boolean | undefined, Partial<OrchestrationV2Run> | null, boolean]
+      >) {
+        const threadId = yield* createThread(name);
+        const runId = yield* createRun(threadId, "completed", 2);
+        yield* store.apply({
+          id: EventId.make(`event:notice:${runId}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: old,
+          payload: {
+            id: TurnItemId.make(`notice:${runId}`),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "system_notice",
+            status: "completed",
+            title: null,
+            startedAt: old,
+            completedAt: old,
+            updatedAt: old,
+            message: "Needs attention",
+            ...(needsAttention === undefined ? {} : { needsAttention }),
+          },
+        });
+        if (nextRun !== null) {
+          yield* createRun(threadId, "completed", 3, nextRun);
+        }
+        assert.deepEqual(
+          (yield* store.getSettlementCandidates(threadId)).map((candidate) => candidate.id),
+          eligible ? [threadId] : [],
+          name,
+        );
+      }
+    }).pipe(Effect.provide(testLayer)),
+);
+
 const pullRequestLink = (number: number) => ({
   host: "github.com",
   repository: "owner/repository",
@@ -458,7 +532,7 @@ it.effect(
       );
       assert.isTrue(queries.every(([query]) => !query.includes("COUNT(")));
       const pendingQuery = queries.find(([query]) =>
-        query.includes("FROM orchestration_v2_projection_turn_items"),
+        query.includes("FROM orchestration_v2_projection_turn_items i"),
       );
       assert.isDefined(pendingQuery);
       const metadata = yield* store.getThread(threadId);

@@ -157,6 +157,17 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   assert.isDefined(projectionThreadId);
   const projection = result.projections.get(projectionThreadId);
   assert.isDefined(projection);
+  if (input.fixtureName === "tool_call_denied_write" && input.driver.driver === "claudeAgent") {
+    assert.isFalse(
+      result.domainEvents.some(
+        (event) =>
+          event.type === "turn-item.updated" &&
+          event.payload.type === "system_notice" &&
+          event.payload.needsAttention === true,
+      ),
+      "a recorded user decline must not be announced as a Claude permission denial",
+    );
+  }
   const latestRun = projection.runs.at(-1);
   assert.deepEqual(latestRun?.modelSelection, input.driver.modelSelection);
   if (projection.runs.some((run) => run.status === "completed")) {
