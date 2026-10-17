@@ -10,7 +10,6 @@ import {
   SourceControlProviderError,
   SourceControlRepositoryError,
   type GitCommandFailureReason,
-  VcsUnsupportedOperationError,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
@@ -24,6 +23,7 @@ import {
 
 import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import {
   parseGitCloneProgressLine,
   type GitCloneProgressLine,
@@ -193,6 +193,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
+  const jjWorkflow = yield* JjWorkflow.JjWorkflow;
 
   const ensureConcreteProvider = (input: {
     readonly operation: string;
@@ -435,23 +436,6 @@ export const make = Effect.gen(function* () {
         operation: "publishRepository",
         provider: input.provider,
       });
-      const detected = JJ_REPOSITORY_DETECTION_ENABLED
-        ? yield* vcsRegistry.detect({ cwd: input.cwd })
-        : null;
-      if (detected?.kind === "jj") {
-        return yield* Effect.fail(
-          new SourceControlRepositoryError({
-            operation: "publishRepository",
-            provider: providerKind,
-            detail: "Publishing Jujutsu repositories is not supported.",
-            cause: new VcsUnsupportedOperationError({
-              operation: "publishRepository",
-              kind: "jj",
-              detail: "Publishing Jujutsu repositories is not supported.",
-            }),
-          }),
-        );
-      }
       const provider = yield* providers.get(providerKind);
       const urls = yield* provider.createRepository({
         cwd: input.cwd,
@@ -460,6 +444,43 @@ export const make = Effect.gen(function* () {
       });
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const preferredRemoteName = input.remoteName?.trim() || "origin";
+
+      const kind = JJ_REPOSITORY_DETECTION_ENABLED
+        ? yield* vcsRegistry.detect({ cwd: input.cwd }).pipe(
+            Effect.map((handle) => handle?.kind ?? null),
+            Effect.orElseSucceed(() => null),
+          )
+        : null;
+      // In a colocated Jujutsu repository Git's own HEAD is usually detached, so the Git path
+      // either fails confusingly or publishes `@-`.
+      if (kind === "jj") {
+        const published = yield* jjWorkflow
+          .publishRepository({
+            cwd: input.cwd,
+            remoteName: preferredRemoteName,
+            remoteUrl,
+            pushFailureDetail: (cause, remoteName) =>
+              publishPushFailureDetail({ urls, remoteName, remoteUrl, reason: cause.reason }),
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new SourceControlRepositoryError({
+                  operation: "publishRepository",
+                  provider: providerKind,
+                  detail: cause.detail,
+                  cause,
+                }),
+            ),
+          );
+        return {
+          repository: toRepositoryInfo(providerKind, urls),
+          remoteName: published.remoteName,
+          remoteUrl,
+          branch: published.refName,
+          status: published.status,
+        };
+      }
 
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,

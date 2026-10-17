@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -16,8 +17,11 @@ import { ServerConfig, layerTest as serverConfigLayerTest } from "../config.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
@@ -29,6 +33,8 @@ import {
   type JjRepoFixture,
 } from "../vcs/testing/JjTestSupport.ts";
 import * as JjWorkflow from "./JjWorkflow.ts";
+import { makeJjRemotes } from "./JjRemotes.ts";
+import { workspaceNameForRef } from "./JjWorkspaces.ts";
 
 const projectId = ProjectId.make("workflow-project");
 
@@ -43,6 +49,7 @@ const withWorkflow = <A, E>(
   ) => Effect.Effect<A, E>,
   options: {
     readonly settings?: Partial<typeof DEFAULT_SERVER_SETTINGS>;
+    readonly provider?: Partial<SourceControlProvider.SourceControlProvider["Service"]>;
   } = {},
 ) =>
   withJjRepo({ prefix: "t3-jj-workflow-", seed: true }, (repo) =>
@@ -57,10 +64,14 @@ const withWorkflow = <A, E>(
         Effect.provideService(JjVcsDriver.JjVcsDriver, repo.driver),
         Effect.provideService(VcsProcess.VcsProcess, repo.process),
         Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provideService(HostProcess.Environment, {}),
         Effect.provide(
           Layer.mergeAll(
             Layer.succeed(ServerConfig, { ...config, worktreesDir: defaultDirectory }),
+            NodeCrypto.layer,
             Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({}),
             Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
               resolveLink: () => undefined,
               resolve: () =>
@@ -72,10 +83,12 @@ const withWorkflow = <A, E>(
                         headSelectors,
                         limit: state === "open" ? 1 : 20,
                       }),
+                      ...options.provider,
                     }),
                   ),
                 ),
             }),
+            Layer.mock(TextGeneration.TextGeneration)({}),
             Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
             Layer.mock(ProjectStore.ProjectStoreV2)({
               findActiveByWorkspaceRoot: (workspaceRoot) =>
@@ -195,6 +208,21 @@ describeJj("JjWorkflow status cache invalidation", () => {
     ),
   );
 
+  it.effect("refreshes cached refs after a direct remote bookmark mutation", () =>
+    withWorkflow("", ({ workflow, root, driver, process }) =>
+      Effect.gen(function* () {
+        yield* workflow.listRefs({ cwd: root });
+        yield* makeJjRemotes({ driver, process }).bookmarkTo({
+          cwd: root,
+          name: "remote-created",
+          revset: "@-",
+          operation: "test",
+        });
+        const refs = yield* workflow.listRefs({ cwd: root });
+        assert.isTrue(refs.refs.some((ref) => ref.name === "remote-created"));
+      }),
+    ),
+  );
 });
 
 describeJj("JjWorkflow worktree directory settings", () => {
@@ -364,5 +392,149 @@ describeJj("JjWorkflow worktree submodule settings", () => {
         }),
       { settings: { worktreeSubmodules: "none" } },
     ),
+  );
+});
+
+describeJj("JjWorkflow change-request identity", () => {
+  it.effect("finds an imported alias PR without source bookmarks or an available fork", () => {
+    const probes: Array<{ readonly cwd: string; readonly headSelector: string }> = [];
+    return withWorkflow(
+      "",
+      ({ workflow, root, base, driver, fileSystem }) =>
+        Effect.gen(function* () {
+          const alias = "z-imported-pr";
+          yield* runJj(root, ["bookmark", "create", "aaa-unrelated", "-r", "main"]);
+          yield* runJj(root, [
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/upstream/repo.git",
+          ]);
+          const fork = `${base}/fork.git`;
+          yield* runGit(root, ["init", "--bare", fork]);
+          yield* runGit(root, ["push", fork, "refs/heads/main:refs/heads/topic"]);
+          yield* runJj(root, ["git", "remote", "add", "contributor", fork]);
+          yield* runGit(root, [
+            "fetch",
+            "--refmap=",
+            "contributor",
+            `refs/heads/topic:refs/heads/${alias}`,
+          ]);
+          yield* runJj(root, ["git", "import"]);
+          yield* fileSystem.remove(fork, { recursive: true });
+          yield* runGit(root, [
+            "config",
+            "remote.contributor.url",
+            "https://github.com/contributor/repo.git",
+          ]);
+          yield* runGit(root, ["config", `branch.${alias}.remote`, "contributor"]);
+          yield* runGit(root, ["config", `branch.${alias}.merge`, "refs/heads/topic"]);
+          yield* runGit(root, ["config", `branch.${alias}.t3code-imported-pr-head`, "true"]);
+          assert.isFalse(
+            (yield* driver.listBookmarks(root)).some(
+              (bookmark) => bookmark.name === alias && bookmark.remote === "origin",
+            ),
+          );
+          assert.isFalse(
+            (yield* driver.listBookmarks(root)).some(
+              (bookmark) => bookmark.name === "topic" && bookmark.remote === "contributor",
+            ),
+          );
+          const cwd = `${base}/imported-workspace`;
+          yield* runJj(root, [
+            "workspace",
+            "add",
+            "--name",
+            workspaceNameForRef(alias),
+            "-r",
+            "main",
+            cwd,
+          ]);
+          const result = yield* workflow.runStackedAction({
+            actionId: "imported-pr",
+            cwd,
+            action: "create_pr",
+          });
+          assert.equal(result.push.status, "skipped_not_requested");
+          assert.equal(result.pr.status, "opened_existing");
+          if (result.pr.status !== "opened_existing") {
+            throw new Error(`Expected existing imported PR, got ${result.pr.status}`);
+          }
+          assert.equal(result.pr.headBranch, "topic");
+          assert.equal(result.pr.number, 42);
+          assert.deepStrictEqual(probes, [{ cwd: root, headSelector: "contributor:topic" }]);
+          const rejectedPush = yield* workflow
+            .runStackedAction({ actionId: "imported-push", cwd, action: "push" })
+            .pipe(Effect.flip);
+          assert.include(rejectedPush.message, "source repository");
+        }),
+      {
+        provider: {
+          listChangeRequests: (input) =>
+            Effect.sync(() => {
+              probes.push({ cwd: input.cwd, headSelector: input.headSelector });
+              return [
+                {
+                  provider: SourceControlProviderKind.make("github"),
+                  state: "open" as const,
+                  number: 42,
+                  title: "Fork change",
+                  url: "https://github.com/upstream/repo/pull/42",
+                  baseRefName: "main",
+                  headRefName: "topic",
+                  isCrossRepository: true,
+                  headRepositoryNameWithOwner: "contributor/repo",
+                  headRepositoryOwnerLogin: "contributor",
+                  updatedAt: Option.none(),
+                },
+              ];
+            }),
+        },
+      },
+    );
+  });
+
+  it.effect(
+    "refuses an imported PR shortcut when local commits are ahead of its available source",
+    () =>
+      withWorkflow("", ({ workflow, root, base, fileSystem }) =>
+        Effect.gen(function* () {
+          const alias = "z-imported-pr";
+          const fork = `${base}/fork.git`;
+          yield* runGit(root, ["init", "--bare", fork]);
+          yield* runGit(root, ["push", fork, "refs/heads/main:refs/heads/topic"]);
+          yield* runJj(root, [
+            "git",
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/upstream/repo.git",
+          ]);
+          yield* runJj(root, ["git", "remote", "add", "contributor", fork]);
+          yield* runJj(root, ["git", "fetch", "--remote", "contributor"]);
+          yield* runJj(root, ["bookmark", "create", alias, "-r", "main"]);
+          yield* runGit(root, ["config", `branch.${alias}.remote`, "contributor"]);
+          yield* runGit(root, ["config", `branch.${alias}.merge`, "refs/heads/topic"]);
+          yield* runGit(root, ["config", `branch.${alias}.t3code-imported-pr-head`, "true"]);
+          const cwd = `${base}/imported-workspace`;
+          yield* runJj(root, [
+            "workspace",
+            "add",
+            "--name",
+            workspaceNameForRef(alias),
+            "-r",
+            "main",
+            cwd,
+          ]);
+          yield* fileSystem.writeFileString(`${cwd}/local.txt`, "unpublished change\n");
+          yield* runJj(cwd, ["commit", "-m", "Unpublished local change"]);
+          yield* runJj(cwd, ["bookmark", "set", alias, "-r", "@-"]);
+          const failure = yield* workflow
+            .runStackedAction({ actionId: "ahead-imported-pr", cwd, action: "create_pr" })
+            .pipe(Effect.flip);
+          assert.include(failure.message, "source repository");
+        }),
+      ),
   );
 });

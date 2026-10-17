@@ -388,6 +388,7 @@ const layerSourceControlRepositoryService = SourceControlRepositoryService.layer
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(layerSourceControlProviderRegistry),
   Layer.provideMerge(layerVcsDriverRegistry),
+  Layer.provideMerge(layerJjWorkflow),
 );
 
 const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(

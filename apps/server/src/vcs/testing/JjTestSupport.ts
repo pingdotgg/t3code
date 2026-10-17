@@ -82,22 +82,35 @@ export class JjTestCommandError extends Schema.TaggedError<JjTestCommandError>()
 export const runJj = (
   cwd: string,
   args: ReadonlyArray<string>,
+  options: { readonly env?: NodeJS.ProcessEnv } = {},
 ): Effect.Effect<string, JjTestCommandError> =>
   Effect.tryPromise({
-    try: () => execFileAsync("jj", ["--no-pager", "--color=never", ...args], { cwd }),
+    try: () =>
+      execFileAsync("jj", ["--no-pager", "--color=never", ...args], {
+        cwd,
+        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+      }),
     catch: (cause) => new JjTestCommandError({ command: args.join(" "), cwd, cause }),
   }).pipe(Effect.map((result) => result.stdout));
 
-export const createJjRepo = (cwd: string): Effect.Effect<void, JjTestCommandError> =>
-  runJj(cwd, ["git", "init", "--colocate"]).pipe(Effect.asVoid);
+export const createJjRepo = (
+  cwd: string,
+  options: { readonly env?: NodeJS.ProcessEnv } = {},
+): Effect.Effect<void, JjTestCommandError> =>
+  runJj(cwd, ["git", "init", "--colocate"], options).pipe(Effect.asVoid);
 
 /** For fixtures a jj repository needs but jj cannot build, such as an external (non-colocated) store. */
 export const runGit = (
   cwd: string,
   args: ReadonlyArray<string>,
+  options: { readonly env?: NodeJS.ProcessEnv } = {},
 ): Effect.Effect<string, JjTestCommandError> =>
   Effect.tryPromise({
-    try: () => execFileAsync("git", [...args], { cwd }),
+    try: () =>
+      execFileAsync("git", [...args], {
+        cwd,
+        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+      }),
     catch: (cause) => new JjTestCommandError({ command: `git ${args.join(" ")}`, cwd, cause }),
   }).pipe(Effect.map((result) => result.stdout));
 
@@ -115,6 +128,8 @@ export interface SeedJjRepoInput {
   readonly withRemote?: boolean;
   /** `false` builds an external-store repository, the shape T3 refuses to operate on. */
   readonly colocated?: boolean;
+  /** Overrides inherited environment only for this fixture's commands and driver. */
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export interface SeededJjRepo {
@@ -136,22 +151,22 @@ export const seedJjRepo = Effect.fnUntraced(function* (input: SeedJjRepoInput) {
   if (input.colocated === false) {
     const store = path.join(base, "store.git");
     yield* fileSystem.makeDirectory(store, { recursive: true });
-    yield* runGit(store, ["init", "--bare", "--initial-branch=main", store]);
-    yield* runJj(root, ["git", "init", "--git-repo", store]);
+    yield* runGit(store, ["init", "--bare", "--initial-branch=main", store], input);
+    yield* runJj(root, ["git", "init", "--git-repo", store], input);
     return { base, root, remotePath } satisfies SeededJjRepo;
   }
 
-  yield* createJjRepo(root);
+  yield* createJjRepo(root, input);
   if (input.seed === true || input.withRemote === true) {
     yield* fileSystem.writeFileString(path.join(root, "seed.txt"), "seed\n");
-    yield* runJj(root, ["commit", "-m", "seed"]);
-    yield* runJj(root, ["bookmark", "create", "main", "-r", "@-"]);
+    yield* runJj(root, ["commit", "-m", "seed"], input);
+    yield* runJj(root, ["bookmark", "create", "main", "-r", "@-"], input);
   }
   if (input.withRemote === true) {
     yield* fileSystem.makeDirectory(remotePath, { recursive: true });
-    yield* runGit(remotePath, ["init", "--bare", "--initial-branch=main", remotePath]);
-    yield* runJj(root, ["git", "remote", "add", "origin", remotePath]);
-    yield* runJj(root, ["git", "push", "--bookmark", "main", "--remote", "origin"]);
+    yield* runGit(remotePath, ["init", "--bare", "--initial-branch=main", remotePath], input);
+    yield* runJj(root, ["git", "remote", "add", "origin", remotePath], input);
+    yield* runJj(root, ["git", "push", "--bookmark", "main", "--remote", "origin"], input);
   }
   return { base, root, remotePath } satisfies SeededJjRepo;
 });
@@ -170,10 +185,21 @@ export const withJjRepo = <A, E>(
 ) =>
   Effect.gen(function* () {
     const seeded = yield* seedJjRepo(input);
+    const inheritedProcess = yield* VcsProcess.VcsProcess;
+    const process = input.env
+      ? {
+          ...inheritedProcess,
+          run: (command: Parameters<typeof inheritedProcess.run>[0]) =>
+            inheritedProcess.run({ ...command, env: { ...command.env, ...input.env } }),
+        }
+      : inheritedProcess;
+    const driver = input.env
+      ? yield* JjVcsDriver.makeJjVcsDriver.pipe(Effect.provideService(VcsProcess.VcsProcess, process))
+      : yield* JjVcsDriver.JjVcsDriver;
     return yield* use({
       ...seeded,
-      driver: yield* JjVcsDriver.JjVcsDriver,
-      process: yield* VcsProcess.VcsProcess,
+      driver,
+      process,
       fileSystem: yield* FileSystem.FileSystem,
       path: yield* Path.Path,
     });

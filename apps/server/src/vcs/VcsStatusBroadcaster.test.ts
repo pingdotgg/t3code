@@ -434,47 +434,6 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect("does not automatically pull jj repositories before native pulls are enabled", () => {
-    let pullCalls = 0;
-    const localStatus: VcsStatusLocalResult = {
-      ...baseLocalStatus,
-      isDefaultRef: true,
-      vcs: { kind: "jj" },
-    };
-    const remoteStatus = { ...baseRemoteStatus, behindCount: 2 };
-    const layerTest = VcsStatusBroadcaster.layer.pipe(
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(layerBackgroundPolicy(() => true)),
-      Layer.provide(
-        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
-          isEnabled: () => Effect.succeed(true),
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(GitWorkflowService.GitWorkflowService)({
-          localStatus: () => Effect.succeed(localStatus),
-          remoteStatus: () => Effect.succeed(remoteStatus),
-          invalidateLocalStatus: () => Effect.void,
-          invalidateRemoteStatus: () => Effect.void,
-          invalidateStatus: () => Effect.void,
-          pullCurrentBranch: () =>
-            Effect.sync(() => {
-              pullCalls += 1;
-              return { status: "pulled" as const, refName: "main", upstreamRef: "origin/main" };
-            }),
-        }),
-      ),
-    );
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-jj-no-auto-pull-" });
-      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const status = yield* broadcaster.refreshStatus(root);
-      assert.equal(pullCalls, 0);
-      assert.equal(status.behindCount, 2);
-    }).pipe(Effect.provide(layerTest));
-  });
-
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
