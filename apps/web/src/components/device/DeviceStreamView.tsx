@@ -1,5 +1,5 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
@@ -23,9 +23,39 @@ import {
   type DeviceStreamStatus,
 } from "@t3tools/client-runtime/device/stream";
 import { observeResize } from "~/lib/observeResize";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 const AX_POLL_INTERVAL_MS = 2_000;
 const CONTROLS_RAIL_WIDTH = 56;
+
+function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
+  if (!screen) return platform === "ios" ? 9 / 19.5 : 9 / 20;
+  const landscape =
+    screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
+  const w = landscape
+    ? Math.max(screen.width, screen.height)
+    : Math.min(screen.width, screen.height);
+  const h = landscape
+    ? Math.min(screen.width, screen.height)
+    : Math.max(screen.width, screen.height);
+  return w / h;
+}
+
+// serve-sim streams the raw framebuffer; rotate the display for a device
+// that reports landscape while its frames stay portrait.
+function screenRotation(platform: DevicePlatform, screen: DeviceScreenSize | null): number {
+  if (platform !== "ios" || !screen || screen.width > screen.height) return 0;
+  switch (screen.orientation) {
+    case "landscape_left":
+      return 90;
+    case "landscape_right":
+      return -90;
+    case "portrait_upside_down":
+      return 180;
+    default:
+      return 0;
+  }
+}
 
 export interface DeviceViewControls {
   readonly phone: boolean;
@@ -68,20 +98,22 @@ export function DeviceStreamView(props: {
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
   const [phoneUnavailable, setPhoneUnavailable] = useState(false);
-  const onPhoneUnavailable = useCallback(() => setPhoneUnavailable(true), []);
+  // The stream effect and the viewports' scene setup depend on these; a new
+  // identity per render would restart the stream and rebuild the 3D scene.
+  const onPhoneUnavailable = useStableCallback(() => setPhoneUnavailable(true));
   const cancelPhoneInputRef = useRef<(() => void) | null>(null);
-  const cancelPhoneInput = useCallback(() => cancelPhoneInputRef.current?.(), []);
+  const cancelPhoneInput = useStableCallback(() => cancelPhoneInputRef.current?.());
   const resetViewRef = useRef<(() => void) | null>(null);
-  const onResetReady = useCallback((reset: (() => void) | null) => {
+  const onResetReady = useStableCallback((reset: (() => void) | null) => {
     resetViewRef.current = reset;
-  }, []);
+  });
   const frameListenerRef = useRef<(() => void) | null>(null);
-  const onFrameListener = useCallback((listener: (() => void) | null) => {
+  const onFrameListener = useStableCallback((listener: (() => void) | null) => {
     frameListenerRef.current = listener;
-  }, []);
-  const onInputCancel = useCallback((cancel: (() => void) | null) => {
+  });
+  const onInputCancel = useStableCallback((cancel: (() => void) | null) => {
     cancelPhoneInputRef.current = cancel;
-  }, []);
+  });
   const access = useDeviceHubAccess(props.environmentId, props.hostId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DeviceStreamClient | null>(null);
@@ -93,9 +125,10 @@ export function DeviceStreamView(props: {
   const [foldAngle, setFoldAngle] = useState<number | null>(null);
   const [mjpegUrl, setMjpegUrl] = useState<string | null>(null);
   const [mjpegGeneration, setMjpegGeneration] = useState(0);
-  const attachMjpegImage = useCallback((image: HTMLImageElement | null) => {
+  // A new ref callback per render would detach and reattach the MJPEG image.
+  const attachMjpegImage = useStableCallback((image: HTMLImageElement | null) => {
     clientRef.current?.setMjpegImage(image);
-  }, []);
+  });
   const [inputState, setInputState] = useState<{ connected: boolean; detail?: string }>({
     connected: false,
   });
@@ -169,18 +202,7 @@ export function DeviceStreamView(props: {
     props.visible,
   ]);
 
-  const aspect = useMemo(() => {
-    if (!screen) return props.platform === "ios" ? 9 / 19.5 : 9 / 20;
-    const landscape =
-      screen.orientation === "landscape_left" || screen.orientation === "landscape_right";
-    const w = landscape
-      ? Math.max(screen.width, screen.height)
-      : Math.min(screen.width, screen.height);
-    const h = landscape
-      ? Math.min(screen.width, screen.height)
-      : Math.max(screen.width, screen.height);
-    return w / h;
-  }, [props.platform, screen]);
+  const aspect = screenAspect(props.platform, screen);
 
   const retainingFrame =
     status === "connecting" && hasFrame && inputState.connected && screen !== null;
@@ -220,25 +242,9 @@ export function DeviceStreamView(props: {
     update();
     return observeResize(element, update);
   }, []);
-  const frame = useMemo(() => {
-    return fitDeviceFrame(aspect, host.width, host.height, controlsInset);
-  }, [aspect, controlsInset, host]);
+  const frame = fitDeviceFrame(aspect, host.width, host.height, controlsInset);
 
-  // serve-sim streams the raw framebuffer; rotate the display for a device
-  // that reports landscape while its frames stay portrait.
-  const rotation = useMemo(() => {
-    if (props.platform !== "ios" || !screen || screen.width > screen.height) return 0;
-    switch (screen.orientation) {
-      case "landscape_left":
-        return 90;
-      case "landscape_right":
-        return -90;
-      case "portrait_upside_down":
-        return 180;
-      default:
-        return 0;
-    }
-  }, [props.platform, screen]);
+  const rotation = screenRotation(props.platform, screen);
 
   const sideways = rotation === 90 || rotation === -90;
   const mediaStyle: React.CSSProperties = sideways
@@ -299,13 +305,13 @@ export function DeviceStreamView(props: {
             : null;
 
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
-  const resetView = useCallback(() => {
+  const resetView = () => {
     if (!isDuo) {
       const orientation = keyboardAttached ? "landscape_right" : "portrait";
       if (screen?.orientation !== orientation) clientRef.current?.setOrientation(orientation);
     }
     resetViewRef.current?.();
-  }, [isDuo, keyboardAttached, screen?.orientation]);
+  };
   const profile = resolveDeviceShape({
     platform: props.platform,
     name: props.deviceName ?? "",
