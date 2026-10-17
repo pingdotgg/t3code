@@ -1,6 +1,8 @@
+import type { ServerConfig, ServerConfigStreamEvent } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
-import { reuseUnchanged } from "./serverConfigProjection.ts";
+import { applyServerConfigProjection, reuseUnchanged } from "./serverConfigProjection.ts";
 
 describe("reuseUnchanged", () => {
   const provider = (checkedAt: string, skills: ReadonlyArray<string>) => ({
@@ -36,5 +38,25 @@ describe("reuseUnchanged", () => {
     expect(next[0]!.models).toBe(previous[0]!.models);
     const dropped = reuseUnchanged({ a: 1, b: 2 }, { a: 1 });
     expect(dropped).toEqual({ a: 1 });
+  });
+});
+
+describe("applyServerConfigProjection snapshot", () => {
+  const snapshot = (checkedAt: string) =>
+    ({
+      type: "snapshot",
+      config: {
+        environment: { capabilities: {} },
+        providers: [{ instanceId: "claude", checkedAt, skills: [{ name: "review" }] }],
+      },
+    }) as unknown as ServerConfigStreamEvent;
+  const providersOf = (projection: ReturnType<typeof applyServerConfigProjection>) =>
+    (Option.getOrThrow(projection).config as ServerConfig).providers;
+
+  it("keeps unchanged skills when a reconnect re-sends the config", () => {
+    const first = applyServerConfigProjection(Option.none(), snapshot("a"));
+    const second = applyServerConfigProjection(first, snapshot("b"));
+    expect(providersOf(second)[0]!.checkedAt).toBe("b");
+    expect(providersOf(second)[0]!.skills).toBe(providersOf(first)[0]!.skills);
   });
 });
