@@ -30,6 +30,7 @@ import {
   type AntigravityProfile,
   antigravityProfileSettings,
   buildAntigravityAcpSpawnInput,
+  findLinuxCaBundle,
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
@@ -219,6 +220,62 @@ describe("Antigravity process environment", () => {
     expect(perRun.env?.TEMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
     expect(perRun.env?.TMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
   });
+
+  it("points the agent at the system CA bundle unless the user chose one (#16742)", () => {
+    const envFor = (baseEnv: NodeJS.ProcessEnv, agentProfile: AntigravityProfile) =>
+      buildAntigravityAcpSpawnInput({
+        installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+        profile: agentProfile,
+        cwd: "/project",
+        baseEnv,
+      }).env ?? {};
+    const withBundle = { ...profile, caBundlePath: "/etc/ssl/certs/ca-certificates.crt" };
+
+    expect(envFor({ PATH: "/usr/bin" }, withBundle).SSL_CERT_FILE).toBe(
+      "/etc/ssl/certs/ca-certificates.crt",
+    );
+    expect(envFor({ SSL_CERT_FILE: "/home/me/ca.pem" }, withBundle).SSL_CERT_FILE).toBe(
+      "/home/me/ca.pem",
+    );
+    expect(envFor({ SSL_CERT_DIR: "/home/me/certs" }, withBundle)).not.toHaveProperty(
+      "SSL_CERT_FILE",
+    );
+    // No bundle was found, so the agent keeps its own defaults.
+    expect(envFor({ PATH: "/usr/bin" }, profile)).not.toHaveProperty("SSL_CERT_FILE");
+  });
+
+  it.effect("finds the first CA bundle that exists, Nix's own first", () =>
+    Effect.gen(function* () {
+      const findAmong = (existing: ReadonlyArray<string>, baseEnv: NodeJS.ProcessEnv = {}) =>
+        findLinuxCaBundle(baseEnv).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              FileSystem.layerNoop({ exists: (path) => Effect.succeed(existing.includes(path)) }),
+              NodePath.layerPosix,
+            ),
+          ),
+        );
+      const nixBundle = "/nix/store/nss-cacert/etc/ssl/certs/ca-bundle.crt";
+
+      expect(yield* findAmong(["/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"])).toBe(
+        "/etc/pki/tls/certs/ca-bundle.crt",
+      );
+      expect(yield* findAmong([])).toBeUndefined();
+      expect(
+        yield* findAmong([nixBundle, "/etc/ssl/certs/ca-certificates.crt"], {
+          NIX_SSL_CERT_FILE: nixBundle,
+        }),
+      ).toBe(nixBundle);
+      expect(
+        yield* findAmong(["/etc/ssl/certs/ca-certificates.crt"], { NIX_SSL_CERT_FILE: nixBundle }),
+      ).toBe("/etc/ssl/certs/ca-certificates.crt");
+      expect(
+        yield* findAmong(["certs/ca-bundle.crt", "/etc/ssl/cert.pem"], {
+          NIX_SSL_CERT_FILE: "certs/ca-bundle.crt",
+        }),
+      ).toBe("/etc/ssl/cert.pem");
+    }),
+  );
 
   it("isolates TMPDIR to the profile directory on POSIX hosts", () => {
     const spawn = buildAntigravityAcpSpawnInput({
@@ -720,6 +777,28 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       );
       expect(exitCode).toBe(0);
     }),
+  );
+
+  // The helper path check rejects a Windows drive letter on a POSIX platform.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "looks for a CA bundle on Linux only",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const bundle = path.join(temporaryDirectory, "ca-bundle.crt");
+        yield* fs.writeFileString(bundle, "");
+        const prepare = (platform: NodeJS.Platform) =>
+          prepareAntigravityProfile({
+            profileDirectory: path.join(temporaryDirectory, platform),
+            platform,
+            baseEnv: { PATH: path.dirname(process.execPath), NIX_SSL_CERT_FILE: bundle },
+          });
+
+        expect((yield* prepare("linux")).caBundlePath).toBe(bundle);
+        expect((yield* prepare("darwin")).caBundlePath).toBeUndefined();
+      }),
   );
 
   it.effect("fails before creating a profile when the helper cannot start", () =>
