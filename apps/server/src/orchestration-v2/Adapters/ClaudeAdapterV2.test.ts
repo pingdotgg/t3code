@@ -4137,7 +4137,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   }
 
   const makeTaskToolHarness = Effect.gen(function* () {
-    const harness = yield* makeWakeHarness;
+    // Claude's on-disk task store; tests seed it to stand in for a list Claude
+    // kept from an earlier server process.
+    const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+      prefix: "t3-claude-tasks-",
+    });
+    const harness = yield* makeWakeHarnessWithOptions({
+      environment: { CLAUDE_CONFIG_DIR: configDir },
+    });
     let sequence = 600;
     let turn = 0;
     const nextUuid = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
@@ -4173,7 +4180,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       harness.events.flatMap((event) =>
         event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
       );
-    return { startTurn, call, finishTurn, plans };
+    return { configDir, startTurn, call, finishTurn, plans };
   });
 
   const createTask = (id: string, subject: string): TaskToolCall => ({
@@ -4327,6 +4334,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       for (const plan of harness.plans().slice(2)) {
         assert.isFalse(plan.steps.some((step) => step.id === "task-1"));
       }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("starts from the task list Claude kept for the session before a restart", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const harness = yield* makeTaskToolHarness;
+      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
+      yield* fileSystem.makeDirectory(tasksDir, { recursive: true });
+      const task = (id: string, subject: string, status: string, metadata?: object) =>
+        fileSystem.writeFileString(
+          `${tasksDir}/${id}.json`,
+          JSON.stringify({
+            id,
+            subject,
+            description: "",
+            status,
+            blocks: [],
+            blockedBy: [],
+            metadata,
+          }),
+        );
+      yield* task("10", "Ship", "pending");
+      yield* task("1", "Inspect", "completed");
+      // Claude already wrote the TaskUpdate below before T3 sees its result.
+      yield* task("2", "Implement", "completed");
+      yield* task("3", "Internal", "pending", { _internal: true });
+      yield* fileSystem.writeFileString(`${tasksDir}/4.json`, "{");
+      yield* fileSystem.writeFileString(`${tasksDir}/.highwatermark`, "10");
+      yield* fileSystem.writeFileString(`${tasksDir}/.lock`, "");
+
+      yield* harness.startTurn();
+      yield* harness.call(updateTask({ taskId: "2", status: "completed" }));
+      yield* harness.call(createTask("11", "Verify"));
+      yield* harness.finishTurn();
+
+      assert.deepEqual(
+        harness.plans().map((plan) => plan.steps),
+        [
+          [
+            { id: "task-1", text: "Inspect", status: "completed" },
+            { id: "task-2", text: "Implement", status: "completed" },
+            { id: "task-10", text: "Ship", status: "pending" },
+          ],
+          [
+            { id: "task-1", text: "Inspect", status: "completed" },
+            { id: "task-2", text: "Implement", status: "completed" },
+            { id: "task-10", text: "Ship", status: "pending" },
+            { id: "task-11", text: "Verify", status: "pending" },
+          ],
+        ],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("clears the list when a restart's first task tool deletes the last stored task", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const harness = yield* makeTaskToolHarness;
+      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
+      // Claude already removed the task file before T3 sees the result.
+      yield* fileSystem.makeDirectory(tasksDir, { recursive: true });
+      yield* fileSystem.writeFileString(`${tasksDir}/.highwatermark`, "1");
+
+      yield* harness.startTurn();
+      yield* harness.call(updateTask({ taskId: "1", status: "deleted" }));
+      yield* harness.finishTurn();
+
+      assert.deepEqual(
+        harness.plans().map((plan) => plan.steps),
+        [[]],
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
