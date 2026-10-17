@@ -890,6 +890,40 @@ it("shows readable models and only differing workspace details in agent tooltips
     expect(text()).toContain(`My GPT${expected}`);
     if (!expected) expect(text()).not.toContain("My GPT ·");
   }
+  const baseConfig = state.configs.get("test");
+  const reasoningEffort: ProviderOptionDescriptor = {
+    id: "reasoningEffort",
+    label: "Reasoning",
+    type: "select",
+    options: [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium", isDefault: true },
+      { id: "high", label: "High" },
+    ],
+  };
+  for (const [descriptors, options, expected] of [
+    [[reasoningEffort], [{ id: "reasoningEffort", value: "high" }], " · high"],
+    [[reasoningEffort], [], " · medium"],
+    [[reasoningEffort], undefined, " · medium"],
+    [[], undefined, ""],
+  ] as const) {
+    state.configs.set("test", {
+      providers: [
+        {
+          instanceId: "codex",
+          driver: "codex",
+          models: [
+            { slug: "gpt-5.4", name: "My GPT", capabilities: { optionDescriptors: descriptors } },
+          ],
+        },
+      ],
+    });
+    child.modelSelection.options = options;
+    await rerender();
+    expect(text()).toContain(`My GPT${expected}`);
+    if (!expected) expect(text()).not.toContain("My GPT ·");
+  }
+  state.configs.set("test", baseConfig);
   const speedConfig = state.configs.get("test");
   const serviceTier: ProviderOptionDescriptor = {
     id: "serviceTier",

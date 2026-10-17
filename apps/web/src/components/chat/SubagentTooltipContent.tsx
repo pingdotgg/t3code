@@ -11,7 +11,11 @@ import {
   resolveSubagentMetadata,
   subagentDetailPreview,
 } from "@t3tools/client-runtime/state/subagent-display";
-import { getModelSelectionStringOptionValue, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentValue,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 import type { ReactNode } from "react";
 import {
@@ -72,9 +76,25 @@ export function SubagentTooltipContent(props: {
     childModel === (modelSlug ?? model) && childSelection?.instanceId === props.providerInstanceId
       ? childSelection
       : undefined;
-  const effort = ["reasoningEffort", "effort", "reasoning", "variant"]
+  const effortOptionIds = ["reasoningEffort", "effort", "reasoning", "variant"];
+  // A delegated task that omits effort runs at the model's default, so show that like the composer.
+  const savedEffort = effortOptionIds
     .map((id) => getModelSelectionStringOptionValue(matchingSelection, id))
     .find(Boolean);
+  const effort =
+    savedEffort ??
+    (matchingSelection
+      ? effortOptionIds
+          .map((id) => {
+            const descriptor = providerModel?.capabilities?.optionDescriptors?.find(
+              (candidate) => candidate.id === id,
+            );
+            if (descriptor?.type !== "select") return undefined;
+            const value = getProviderOptionCurrentValue(descriptor, matchingSelection);
+            return typeof value === "string" ? value : undefined;
+          })
+          .find(Boolean)
+      : undefined);
   const speed = provider
     ? providerModel?.capabilities?.optionDescriptors
         ?.map((descriptor) => {
