@@ -9,7 +9,6 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
-  type ClientSettings,
   type ProjectScopedServerSettingKey,
   type ServerSettings,
   type UnifiedSettings,
@@ -36,20 +35,18 @@ import {
   type ScopedSettingsPatch,
 } from "./scopedSettings";
 
-// Callers often pass an inline selector; a separate hook keeps the merge cached across those.
-function useMergedSettings(serverSettings: ServerSettings, clientSettings: ClientSettings) {
-  "use memo";
-  return mergeEnvironmentSettings(serverSettings, clientSettings);
+// Returns the merged object alone so the selector, often inline, cannot widen its cache key.
+function useScopedMergedSettings(): UnifiedSettings {
+  const { target } = useSettingsScope();
+  const clientSettings = useClientSettings();
+  useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
+  return mergeEnvironmentSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, clientSettings);
 }
 
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  const { target } = useSettingsScope();
-  const clientSettings = useClientSettings();
-  const serverSettings = target?.settings ?? DEFAULT_SERVER_SETTINGS;
-  useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
-  const settings = useMergedSettings(serverSettings, clientSettings);
+  const settings = useScopedMergedSettings();
   return selector ? selector(settings) : (settings as T);
 }
 
