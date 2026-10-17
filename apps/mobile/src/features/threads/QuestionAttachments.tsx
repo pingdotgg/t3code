@@ -6,7 +6,7 @@ import { convertPastedImagesToAttachments } from "../../lib/composerImages";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { View } from "react-native";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
@@ -49,6 +49,14 @@ export function QuestionAttachments(props: {
     props.requestId,
     props.question.id,
   ]);
+  // A focused input that unmounts never delivers its onBlur, so release focus here or
+  // the screen would keep treating the keyboard as owned by a removed input.
+  const focusedRef = useRef(false);
+  const onInputFocusChange = props.onInputFocusChange;
+  const releaseFocus = useEffectEvent(() => {
+    if (focusedRef.current) onInputFocusChange?.(false);
+  });
+  useEffect(() => () => releaseFocus(), []);
   const pickerScope = useRef<{ key: string; active: boolean } | null>(null);
   useEffect(() => {
     const scope = { key: scopeKey, active: true };
@@ -197,8 +205,14 @@ export function QuestionAttachments(props: {
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
           editable={!props.disabled}
           onChangeText={props.onChangeText}
-          onFocus={() => props.onInputFocusChange?.(true)}
-          onBlur={() => props.onInputFocusChange?.(false)}
+          onFocus={() => {
+            focusedRef.current = true;
+            onInputFocusChange?.(true);
+          }}
+          onBlur={() => {
+            focusedRef.current = false;
+            onInputFocusChange?.(false);
+          }}
           placeholder="Or type a custom answer"
           className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
         />
