@@ -226,6 +226,22 @@ describe("applyShellStreamEvent", () => {
     expect(afterEnrichment.threads[0]?.title).toBe("Server thread");
   });
 
+  it("keeps the project object when an enrichment re-resolves an unchanged identity", () => {
+    const project = { ...v2Project, repositoryIdentity };
+    const previous = { ...v2ShellSnapshot, snapshotSequence: 5, projects: [project] };
+    const next = mergeShellSnapshotProjects(
+      previous,
+      {
+        ...v2ShellSnapshot,
+        snapshotSequence: 5,
+        projects: [{ ...v2Project, repositoryIdentity: { ...repositoryIdentity } }],
+      },
+      { resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot] },
+    );
+
+    expect(next.projects[0]).toBe(project);
+  });
+
   it("takes identity from a lower-sequence enrichment without reverting live thread state", () => {
     const previous = {
       ...v2ShellSnapshot,
