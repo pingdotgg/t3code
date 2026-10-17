@@ -35,6 +35,105 @@ export function diffFileTreeEntries(
   return [...statusByPath].map(([path, status]) => ({ path, status }));
 }
 
+/**
+ * Pierre stores one filesystem. A diff path that is also a directory prefix of another
+ * path (`office` and `office/config.ts`, or the reverse) cannot be inserted as-is.
+ * The file keeps a zero-width suffix so the row label stays the file name and the
+ * directory can still be created. Callers translate with `selectionPath` and `modelPath`.
+ */
+const DIFF_FILE_TREE_FILE_MARK = "\u200b";
+
+const identityPath = (path: string) => path;
+
+/**
+ * Paths safe for Pierre, and the maps between those paths and the diff.
+ * `selectionPath` turns a tree row back into the file a click should open.
+ * `modelPath` turns a diff path into the row stored in the tree.
+ */
+export interface DiffFileTreeModel {
+  /** Paths safe to pass to Pierre. Same array as the input when nothing collides. */
+  readonly paths: ReadonlyArray<string>;
+  /** Pierre path to the diff path a click should open. */
+  readonly selectionPath: (modelPath: string) => string;
+  /** Diff path to the path stored in the tree. */
+  readonly modelPath: (path: string) => string;
+}
+
+/**
+ * File paths that are also a directory prefix of another path in this diff.
+ * `office` collides with `office/config.ts`; a shared string prefix such as
+ * `office` and `officer.ts` does not. Null when every path can be stored as itself.
+ */
+function collidingFilePaths(paths: ReadonlyArray<string>): ReadonlySet<string> | null {
+  if (paths.length < 2) return null;
+  const unique = [...new Set(paths)].toSorted();
+  const colliding = new Set<string>();
+  for (let index = 0; index < unique.length; index += 1) {
+    const path = unique[index]!;
+    const directoryPrefix = `${path}/`;
+    for (let next = index + 1; next < unique.length; next += 1) {
+      const other = unique[next]!;
+      if (!other.startsWith(path)) break;
+      if (other.startsWith(directoryPrefix)) {
+        colliding.add(path);
+        break;
+      }
+    }
+  }
+  return colliding.size === 0 ? null : colliding;
+}
+
+/**
+ * A tree path for a file that collides with a directory. Appends the zero-width file
+ * mark until the path is neither occupied nor a directory prefix of an occupied path.
+ */
+function modelPathForCollidingFile(path: string, occupied: Set<string>): string {
+  let modelPath = path;
+  const collides = (candidate: string) => {
+    if (occupied.has(candidate)) return true;
+    const prefix = `${candidate}/`;
+    for (const other of occupied) {
+      if (other.startsWith(prefix)) return true;
+    }
+    return false;
+  };
+  do {
+    modelPath += DIFF_FILE_TREE_FILE_MARK;
+  } while (collides(modelPath));
+  return modelPath;
+}
+
+/**
+ * Rewrites file paths that collide with a directory prefix so both can live in one tree,
+ * and maps a click on the rewritten row back to the original diff path. Paths that do not
+ * collide are returned unchanged.
+ */
+export function diffFileTreeModel(paths: ReadonlyArray<string>): DiffFileTreeModel {
+  const colliding = collidingFilePaths(paths);
+  if (colliding === null) {
+    return { paths, selectionPath: identityPath, modelPath: identityPath };
+  }
+  const occupied = new Set(paths);
+  const modelPaths = paths.map((path) => {
+    if (!colliding.has(path)) return path;
+    const modelPath = modelPathForCollidingFile(path, occupied);
+    occupied.add(modelPath);
+    return modelPath;
+  });
+  const selectionByModelPath = new Map<string, string>();
+  const modelBySelectionPath = new Map<string, string>();
+  paths.forEach((path, index) => {
+    const modelPath = modelPaths[index]!;
+    selectionByModelPath.set(modelPath, path);
+    modelBySelectionPath.set(path, modelPath);
+  });
+  return {
+    paths: modelPaths,
+    selectionPath: (modelPath) => selectionByModelPath.get(modelPath) ?? modelPath,
+    modelPath: (path) => modelBySelectionPath.get(path) ?? path,
+  };
+}
+
 export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArray<string> {
   const directories = new Set<string>();
   for (const path of paths) {

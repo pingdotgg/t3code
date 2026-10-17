@@ -17,6 +17,7 @@ import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
+  diffFileTreeModel,
   diffFileTreePositions,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
@@ -46,8 +47,10 @@ export function DiffFileTree({
 }: DiffFileTreeProps) {
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
-  const directoryPaths = collectDirectoryPaths(paths);
-  const positions = diffFileTreePositions(paths);
+  const presented = diffFileTreeModel(paths);
+  const modelPaths = presented.paths;
+  const directoryPaths = collectDirectoryPaths(modelPaths);
+  const positions = diffFileTreePositions(modelPaths);
   const [ordering] = useState(() => {
     let currentPositions: ReadonlyMap<string, number> = new Map();
     return {
@@ -57,19 +60,28 @@ export function DiffFileTree({
       },
     };
   });
-  const gitStatus: ReadonlyArray<GitStatusEntry> = entries.map((entry) => ({
-    path: entry.path,
+  const gitStatus: ReadonlyArray<GitStatusEntry> = entries.map((entry, index) => ({
+    path: modelPaths[index] ?? entry.path,
     status: entry.status,
   }));
   const syncingSelectionRef = useRef(false);
-  const handledRevealRef = useRef<{ path: string; revealRequestId: number } | null>(null);
+  const handledRevealRef = useRef<{
+    path: string;
+    revealRequestId: number;
+    modelPath: string;
+  } | null>(null);
   const mountedPathsRef = useRef<ReadonlyArray<string> | null>(null);
 
   // The tree model keeps the first selection handler it was given.
   const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
     if (syncingSelectionRef.current) return;
-    const path = selectedPaths.at(-1)?.replace(/\/$/, "");
-    if (path && paths.includes(path)) onSelectFile(path);
+    const raw = selectedPaths.at(-1);
+    if (!raw) return;
+    // Directory ids end in `/`. A file that shares that directory's name is stored under a
+    // different model path, so stripping the slash must not select it.
+    const modelPath = modelPaths.includes(raw) ? raw : raw.replace(/\/$/, "");
+    if (!modelPaths.includes(modelPath)) return;
+    onSelectFile(presented.selectionPath(modelPath));
   });
 
   const { model } = useFileTree({
@@ -90,64 +102,66 @@ export function DiffFileTree({
   useEffect(() => {
     ordering.update(positions);
     const mountedPaths = mountedPathsRef.current;
-    if (mountedPaths === paths) return;
-    mountedPathsRef.current = paths;
+    if (mountedPaths === modelPaths) return;
+    mountedPathsRef.current = modelPaths;
     if (mountedPaths === null) {
-      model.resetPaths(paths);
-    } else if (mountedPaths.every((path, index) => paths[index] === path)) {
-      const updates = buildDiffFileTreeUpdates(mountedPaths, paths);
+      model.resetPaths(modelPaths);
+    } else if (mountedPaths.every((path, index) => modelPaths[index] === path)) {
+      const updates = buildDiffFileTreeUpdates(mountedPaths, modelPaths);
       if (updates.length > 0) model.batch(updates);
     } else {
-      // A refreshed diff can change the rank of existing siblings. Mutations do not reorder
-      // those rows, so rebuild while carrying the reader's folder expansion forward.
+      // A refreshed diff can change the rank of existing siblings. A file that becomes a
+      // directory prefix also changes its model path, which Pierre cannot rename in place.
+      // Rebuild while carrying the reader's folder expansion forward.
       const collapsedDirectories = directoryPaths.filter((path) => {
         const directory = model.getItem(path);
         return directory !== null && "isExpanded" in directory && !directory.isExpanded();
       });
-      model.resetPaths(paths);
+      model.resetPaths(modelPaths);
       for (const path of collapsedDirectories) {
         const directory = model.getItem(path);
         if (directory !== null && "collapse" in directory) directory.collapse();
       }
     }
     model.setGitStatus(gitStatus);
-  }, [directoryPaths, gitStatus, model, ordering, paths, positions]);
+  }, [directoryPaths, gitStatus, model, modelPaths, ordering, positions]);
 
   useEffect(() => {
     if (selectedPath === null) {
       handledRevealRef.current = null;
       return;
     }
-    const item = model.getItem(selectedPath);
+    const modelPath = presented.modelPath(selectedPath);
+    const item = model.getItem(modelPath);
     if (item === null || item.isDirectory()) {
       handledRevealRef.current = null;
       return;
     }
     const handled = handledRevealRef.current;
-    if (handled?.path === selectedPath && handled.revealRequestId === revealRequestId) return;
-    handledRevealRef.current = { path: selectedPath, revealRequestId };
+    if (
+      handled?.path === selectedPath &&
+      handled.revealRequestId === revealRequestId &&
+      handled.modelPath === modelPath
+    ) {
+      return;
+    }
+    handledRevealRef.current = { path: selectedPath, revealRequestId, modelPath };
     syncingSelectionRef.current = true;
     for (const path of model.getSelectedPaths()) {
-      if (path !== selectedPath) model.getItem(path)?.deselect();
+      if (path !== modelPath) model.getItem(path)?.deselect();
     }
     let ancestor = "";
-    for (const segment of selectedPath.split("/").slice(0, -1)) {
+    for (const segment of modelPath.split("/").slice(0, -1)) {
       ancestor += `${segment}/`;
       const directory = model.getItem(ancestor);
       if (directory !== null && "expand" in directory) directory.expand();
     }
     item.select();
-    model.scrollToPath(selectedPath, { offset: "nearest" });
+    model.scrollToPath(modelPath, { offset: "nearest" });
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [
-    model,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A file that arrives after it was asked for is still revealed.
-    paths,
-    revealRequestId,
-    selectedPath,
-  ]);
+  }, [model, presented, revealRequestId, selectedPath]);
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
@@ -203,14 +217,16 @@ export function DiffFileTree({
           // Pierre does not emit a selection change for its sole selected row.
           // Read selection before the row handles the click so new selections reveal only once.
           const selected = model.getSelectedPaths();
-          const path = selected.length === 1 ? selected[0] : undefined;
-          if (!path || !paths.includes(path)) return;
+          const raw = selected.length === 1 ? selected[0] : undefined;
+          if (!raw) return;
+          const path = modelPaths.includes(raw) ? raw : raw.replace(/\/$/, "");
+          if (!modelPaths.includes(path)) return;
           const clickedSelectedRow = event.nativeEvent
             .composedPath()
             .some(
               (node) => node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
             );
-          if (clickedSelectedRow) onSelectFile(path);
+          if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
