@@ -511,6 +511,30 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   ];
 }
 
+export const SIDEBAR_THREAD_LIST_STEP = 5;
+
+/**
+ * How much of a project's thread list to show: the preview, plus one step of threads per
+ * "Show more". Steps beyond the end of the list are clamped, so the list may have shrunk since.
+ */
+export function resolveSidebarThreadListWindow(input: {
+  total: number;
+  previewCount: number;
+  requestedSteps: number;
+}) {
+  const maxSteps = Math.max(
+    0,
+    Math.ceil((input.total - input.previewCount) / SIDEBAR_THREAD_LIST_STEP),
+  );
+  const steps = Math.min(Math.max(0, input.requestedSteps), maxSteps);
+  return {
+    steps,
+    visibleCount: Math.min(input.total, input.previewCount + steps * SIDEBAR_THREAD_LIST_STEP),
+    canShowMore: steps < maxSteps,
+    canShowFewer: steps > 0,
+  };
+}
+
 export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "lineage">): boolean {
   return thread.lineage.relationshipToParent === "subagent";
 }

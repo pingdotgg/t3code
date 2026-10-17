@@ -29,6 +29,7 @@ import {
   pinOrderKeyBetween,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
+  resolveSidebarThreadListWindow,
   resolveProjectStatusIndicator,
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
@@ -2317,6 +2318,46 @@ describe("Working shelf (beta)", () => {
         unsettle: false,
         unsnooze: false,
       });
+    });
+  });
+});
+
+describe("resolveSidebarThreadListWindow", () => {
+  it("grows and shrinks the thread list five threads at a time", () => {
+    const window = (requestedSteps: number, total = 17) =>
+      resolveSidebarThreadListWindow({ total, previewCount: 6, requestedSteps });
+
+    expect(window(0)).toEqual({
+      steps: 0,
+      visibleCount: 6,
+      canShowMore: true,
+      canShowFewer: false,
+    });
+    expect(window(1)).toEqual({
+      steps: 1,
+      visibleCount: 11,
+      canShowMore: true,
+      canShowFewer: true,
+    });
+    expect(window(2)).toEqual({
+      steps: 2,
+      visibleCount: 16,
+      canShowMore: true,
+      canShowFewer: true,
+    });
+    expect(window(3)).toEqual({
+      steps: 3,
+      visibleCount: 17,
+      canShowMore: false,
+      canShowFewer: true,
+    });
+    // The list shrank since the last click: stay at its end instead of overshooting.
+    expect(window(9)).toEqual(window(3));
+    expect(window(0, 4)).toEqual({
+      steps: 0,
+      visibleCount: 4,
+      canShowMore: false,
+      canShowFewer: false,
     });
   });
 });
