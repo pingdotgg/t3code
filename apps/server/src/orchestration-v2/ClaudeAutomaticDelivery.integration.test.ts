@@ -139,6 +139,8 @@ it.effect.each(deliveries)(
         const offers: SDKUserMessage[] = [];
         const nativeQueue: SDKUserMessage[] = [];
         const batchAbort = new AbortController();
+        // Offers already sent when each interrupt reached the CLI.
+        const offersAtInterrupt: number[] = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: modelSelection.instanceId,
           settings,
@@ -168,7 +170,13 @@ it.effect.each(deliveries)(
                 setPermissionMode: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 stopTask: () => Effect.void,
-                interrupt: Effect.die("automatic delivery must never interrupt"),
+                // Only a user's steer interrupts the running command.
+                interrupt:
+                  delivery === "user steering"
+                    ? Effect.sync(() => {
+                        offersAtInterrupt.push(offers.length);
+                      })
+                    : Effect.die("automatic delivery must never interrupt"),
                 close: Effect.void,
               }),
             forkSession: () => Effect.die("unused"),
@@ -395,6 +403,7 @@ it.effect.each(deliveries)(
             delivery === "user steering" || delivery === "promoted queued message";
           assert.equal(batchAbort.signal.aborted, explicitSteer);
           assert.equal(offers.length, explicitSteer ? 2 : 1);
+          assert.deepEqual(offersAtInterrupt, explicitSteer ? [1] : []);
           const finished = yield* watch(
             (event) =>
               event.type === "run.updated" &&

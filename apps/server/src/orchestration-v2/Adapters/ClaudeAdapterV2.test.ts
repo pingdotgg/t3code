@@ -43,6 +43,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -2331,7 +2332,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly stopTask?: (
       taskId: string,
     ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
@@ -3104,6 +3105,114 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { sender: "a user's", createdBy: "user", scheduled: false, interrupts: true },
+    { sender: "an agent's", createdBy: "agent", scheduled: false, interrupts: false },
+    { sender: "a scheduled task's", createdBy: "user", scheduled: true, interrupts: false },
+  ] as const)(
+    "$sender steer interrupts the turn before it is offered: $interrupts",
+    ({ createdBy, scheduled, interrupts }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Offers already sent when each interrupt reached the CLI.
+          const offersAtInterrupt: Array<number> = [];
+          let offered: ReadonlyArray<SDKUserMessage> = [];
+          const harness = yield* makeWakeHarnessWithOptions({
+            interrupt: Effect.sync(() => {
+              offersAtInterrupt.push(offered.length);
+            }),
+          });
+          offered = harness.offeredMessages;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attemptId = RunAttemptId.make("attempt-steer-interrupt");
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Scan the repository.",
+            attachments: [],
+          });
+          yield* harness.runtime.startTurn(input);
+          yield* harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+            message: {
+              createdBy,
+              creationSource: scheduled ? "server" : "web",
+              messageId: MessageId.make("message-steer-interrupt"),
+              text: "Stop waiting and summarize what you have.",
+              attachments: [],
+              ...(scheduled ? { scheduledTaskId: ScheduledTaskId.make("scheduled-scan") } : {}),
+            },
+          });
+
+          // The interrupt lands before the steer is offered, so the steer is
+          // never folded into the turn the interrupt aborts.
+          assert.deepEqual(offersAtInterrupt, interrupts ? [1] : []);
+          assert.equal(harness.offeredMessages[1]?.priority, "now");
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("still offers a user steer when the interrupt fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          interrupt: Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "interrupt",
+              cause: "forced interrupt failure",
+            }),
+          ),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-steer-interrupt-failed");
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Scan the repository.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-steer-interrupt-failed"),
+            text: "Stop waiting and summarize what you have.",
+            attachments: [],
+          },
+        });
+
+        assert.lengthOf(harness.offeredMessages, 2);
+        assert.equal(harness.offeredMessages[1]?.priority, "now");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
