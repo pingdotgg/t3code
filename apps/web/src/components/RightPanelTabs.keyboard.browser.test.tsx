@@ -192,6 +192,7 @@ describe("right panel new-tab shortcut", () => {
     expect((await press("t", { metaKey: true, isComposing: true })).defaultPrevented).toBe(false);
     const dialog = document.createElement("div");
     dialog.dataset.slot = "dialog-popup";
+    dialog.dataset.open = "";
     container.append(dialog);
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
     expect(document.querySelector('[role="menu"]')).toBeNull();
