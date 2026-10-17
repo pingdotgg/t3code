@@ -34,6 +34,7 @@ describe("a name written into a header and read back out", () => {
     "with space.txt",
     "café/résumé.ts",
     "🚀.ts",
+    "\uFEFFtab\tfile.txt",
     "tab\tfile.txt",
     "line\nfile.txt",
     "carriage\rfile.txt",
@@ -62,6 +63,13 @@ describe("a name written into a header and read back out", () => {
 });
 
 describe("unquoteGitPatchPath", () => {
+  it.each(['"\\357\\273\\277note.txt"', "\\357\\273\\277note.txt"])(
+    "preserves an escaped U+FEFF at the start of a filename: %j",
+    (token) => {
+      expect(unquoteGitPatchPath(token)).toBe("\uFEFFnote.txt");
+    },
+  );
+
   it("leaves a token git saw no need to quote alone", () => {
     expect(unquoteGitPatchPath("src/app.ts")).toBe("src/app.ts");
     expect(unquoteGitPatchPath("with space.txt")).toBe("with space.txt");

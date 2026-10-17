@@ -72,6 +72,20 @@ describe("parseDiffFileRevisions", () => {
     assert.deepStrictEqual([...revisions], [["new.ts", "2222222"]]);
   });
 
+  it("keeps a leading U+FEFF in a quoted rename's revision key", () => {
+    const revisions = parseDiffFileRevisions(
+      patchOf(
+        'diff --git a/old.txt "b/\\357\\273\\277note.txt"',
+        "similarity index 100%",
+        "rename from old.txt",
+        'rename to "\\357\\273\\277note.txt"',
+        "index 2222222..2222222 100644",
+      ),
+    );
+
+    assert.deepStrictEqual([...revisions], [["\uFEFFnote.txt", "2222222"]]);
+  });
+
   it("leaves out a file Bitbucket excluded, which it gives no index line for", () => {
     const revisions = parseDiffFileRevisions(
       patchOf(
