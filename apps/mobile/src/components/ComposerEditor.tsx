@@ -33,6 +33,8 @@ import {
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
+  /** iOS destroys a hidden native editor, so it remounts; the import lifecycle here survives. */
+  readonly hidden?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly onOpenMention?: (path: string) => void;
   readonly onOpenAttachment?: (attachment: ComposerDocumentAttachment) => void;
@@ -42,6 +44,7 @@ export type ComposerEditorProps = NativeComposerEditorProps & {
 
 export function ComposerEditor({
   draftKey,
+  hidden,
   environmentId,
   onOpenMention,
   onOpenAttachment,
@@ -160,6 +163,7 @@ export function ComposerEditor({
   return (
     <>
       <NativeComposerEditor
+        key={hidden ? "hidden" : "visible"}
         {...props}
         enterBehavior={props.enterBehavior ?? preferredEnterBehavior}
         onChangeText={changeText}
