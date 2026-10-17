@@ -29,14 +29,14 @@ export function SegmentedControl<Value extends string | number>(
 ) {
   const { colors, colorScheme } = useControlTheme();
   const trackColor = flattenThemeColor(
-    themeColorWithAlpha(colors["--color-primary"], colorScheme === "dark" ? 0.18 : 0.07),
+    themeColorWithAlpha(colors["--color-prominent-action"], colorScheme === "dark" ? 0.18 : 0.07),
     colors["--color-screen"],
   );
   const selectedColor =
-    colorScheme === "dark" ? colors["--color-primary"] : colors["--color-secondary"];
+    colorScheme === "dark" ? colors["--color-prominent-action"] : colors["--color-secondary"];
   const selectedTextColor =
     colorScheme === "dark"
-      ? colors["--color-primary-foreground"]
+      ? colors["--color-prominent-action-foreground"]
       : colors["--color-secondary-foreground"];
   return (
     <View className={props.className}>
