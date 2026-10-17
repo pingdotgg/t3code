@@ -23,7 +23,8 @@ export const definition = defineSourceControlClient({
   publishDescription: "gitlab.com",
   publishHost: () => "gitlab.com",
   newRepositoryOwner: (account) => ({ owner: account }),
-  defaultCloneTransport: "ssh",
+  // `glab auth login` installs a Git credential helper for HTTPS; SSH needs a registered key.
+  defaultCloneTransport: "https",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/-/merge_requests/${number}`,
   changeRequestActions: new Set([
