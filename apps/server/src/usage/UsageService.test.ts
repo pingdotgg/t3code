@@ -19,6 +19,7 @@ import {
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -1814,31 +1815,139 @@ describe("UsageService", () => {
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
       yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const transcriptDir = yield* Effect.promise(() =>
+        NodeFSP.realpath(NodePath.join(home, "claude", "projects")),
+      );
 
-      let ratesFetches = 0;
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(
-          layerService({
-            prefix: "usage-service-flight-test",
-            home,
-            settings,
-            onRatesFetch: () => {
-              ratesFetches += 1;
-            },
+      yield* Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        let homeProbes = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            exists: (path) =>
+              fileSystem.exists(path).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    if (path === transcriptDir) homeProbes += 1;
+                  }),
+                ),
+              ),
           }),
-        ),
-      );
+        );
+        const [first, second] = yield* Effect.all(
+          [service.readSummary(WINDOW), service.readSummary(WINDOW)],
+          { concurrency: 2 },
+        );
+        assert.deepStrictEqual(first, second);
+        assert.strictEqual(homeProbes, 1);
 
-      const [first, second] = yield* Effect.all(
-        [service.readSummary(WINDOW), service.readSummary(WINDOW)],
-        { concurrency: 2 },
+        // A later request is fresh work again, not a stale cached answer.
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+        const later = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(later), 12);
+        assert.strictEqual(homeProbes, 2);
+      }).pipe(
+        Effect.provide(layerService({ prefix: "usage-service-flight-test", home, settings })),
       );
-      assert.deepStrictEqual(first, second);
-      assert.strictEqual(ratesFetches, 1);
-
-      yield* service.readSummary(WINDOW);
-      assert.strictEqual(ratesFetches, 2);
     }).pipe(Effect.scoped),
+  );
+
+  it.live.each([
+    { cached: false, failure: "503" },
+    { cached: false, failure: "empty table" },
+    { cached: true, failure: "503" },
+    { cached: true, failure: "empty table" },
+  ])("backs off failed pricing fetches ($failure, cached=$cached)", ({ cached, failure }) =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const prefix = "usage-service-rates-backoff-test";
+      const fetchedAtMs = CURSOR_NOW - 25 * HOUR_MS;
+      if (cached) {
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(NodePath.join(home, prefix, "userdata"), { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(home, prefix, "userdata", "usage-model-rates.json"),
+            encodeUnknownJsonString({
+              fetchedAtMs,
+              document: {
+                "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+              },
+            }),
+          );
+        });
+      }
+      let requests = 0;
+      let recover = false;
+      const service = yield* UsageService.make.pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.sync(() => {
+              requests += 1;
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  recover
+                    ? {
+                        "claude-fable-5": {
+                          input_cost_per_token: 1e-5,
+                          output_cost_per_token: 5e-5,
+                        },
+                      }
+                    : {},
+                  { status: !recover && failure === "503" ? 503 : 200 },
+                ),
+              );
+            }),
+          ),
+        ),
+        Effect.provide(layerService({ prefix, home, settings })),
+      );
+      const refreshBurst = () =>
+        Effect.all(
+          Array.from({ length: 5 }, () => service.refreshRates),
+          { concurrency: 5 },
+        );
+      const refreshed = yield* refreshBurst();
+      yield* Effect.logInfo(
+        `pricing failure=${failure} cached=${cached}: 5 concurrent refreshes, ${requests} HTTP requests`,
+      );
+      assert.strictEqual(requests, 1);
+      for (const pricing of refreshed) {
+        assert.strictEqual(pricing.status, cached ? "cached" : "unavailable");
+        assert.strictEqual(pricing.knownModels, cached ? 1 : 0);
+        assert.strictEqual(
+          pricing.fetchedAt,
+          cached ? DateTime.formatIso(DateTime.makeUnsafe(fetchedAtMs)) : null,
+        );
+      }
+      const summaries = yield* Effect.all(
+        ["UTC", "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney"].map(
+          (timeZone) => service.readSummary({ ...WINDOW, timeZone }),
+        ),
+        { concurrency: 5 },
+      );
+      assert.strictEqual(requests, 1);
+      for (const summary of summaries) {
+        assert.deepStrictEqual(summary.pricing, refreshed[0]);
+        assert.strictEqual(summary.buckets[0]?.costSource, cached ? "modelPriced" : "unpriced");
+      }
+      yield* TestClock.adjust(Duration.seconds(59));
+      yield* service.refreshRates;
+      assert.strictEqual(requests, 1);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* refreshBurst();
+      assert.strictEqual(requests, 2);
+      recover = true;
+      yield* TestClock.adjust(Duration.minutes(1));
+      const recovered = yield* service.refreshRates;
+      assert.strictEqual(requests, 3);
+      assert.strictEqual(recovered.status, "fresh");
+      assert.strictEqual(recovered.knownModels, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("refetches a rate table inside its TTL only when the client asks", () =>
@@ -1866,6 +1975,8 @@ describe("UsageService", () => {
       const first = yield* service.readSummary(WINDOW);
       assert.strictEqual(ratesFetches, 1);
       assert.strictEqual(first.pricing.status, "fresh");
+      yield* service.refreshRates;
+      assert.strictEqual(ratesFetches, 1);
 
       yield* TestClock.adjust(Duration.minutes(2));
       yield* service.readSummary(WINDOW);
@@ -1877,6 +1988,9 @@ describe("UsageService", () => {
       assert.strictEqual(ratesFetches, 2);
       assert.strictEqual(refreshed.status, "fresh");
       assert.strictEqual(refreshed.knownModels, 1);
+      yield* TestClock.adjust(Duration.hours(24));
+      yield* service.readSummary(WINDOW);
+      assert.strictEqual(ratesFetches, 3);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
