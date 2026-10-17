@@ -220,6 +220,60 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
+export const ScheduledTaskWorkspaceStrategyPatch = Schema.Struct({
+  branch: Schema.optional(TrimmedNonEmptyString),
+  worktreePath: Schema.optional(TrimmedNonEmptyString),
+  baseRef: Schema.optional(TrimmedNonEmptyString),
+  startFromOrigin: Schema.optional(Schema.Boolean),
+});
+export type ScheduledTaskWorkspaceStrategyPatch = typeof ScheduledTaskWorkspaceStrategyPatch.Type;
+
+export const ScheduledTaskUpdateInput = Schema.Struct({
+  id: ScheduledTaskId,
+  projectId: ProjectId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  enabled: Schema.optional(Schema.Boolean),
+  schedule: Schema.optional(ScheduledTaskUpsertSchedule),
+  threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  workspaceStrategyPatch: Schema.optional(ScheduledTaskWorkspaceStrategyPatch),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: Schema.optional(RuntimeMode),
+  nextProjectId: Schema.optional(ProjectId),
+  expectedRuntimeMode: Schema.optional(RuntimeMode),
+  expectedInteractionMode: Schema.optional(ProviderInteractionMode),
+});
+export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
+
+export function scheduledTaskLegacyUpsert(
+  task: ScheduledTask,
+  patch: ScheduledTaskUpdateInput,
+): ScheduledTaskUpsertInput {
+  const sparse = patch.workspaceStrategyPatch;
+  return {
+    id: task.id,
+    requireExisting: true,
+    creationSource: task.creationSource,
+    title: patch.title ?? task.title,
+    prompt: patch.prompt ?? task.prompt,
+    enabled: patch.enabled ?? task.enabled,
+    schedule: patch.schedule ?? task.schedule,
+    projectId: patch.nextProjectId ?? task.projectId,
+    threadId: patch.threadId === undefined ? task.threadId : patch.threadId,
+    workspaceStrategy: patch.workspaceStrategy ?? {
+      ...task.workspaceStrategy,
+      ...(sparse?.branch !== undefined ? { branch: sparse.branch } : {}),
+      ...(sparse?.worktreePath !== undefined ? { worktreePath: sparse.worktreePath } : {}),
+      ...(sparse?.baseRef !== undefined ? { baseRef: sparse.baseRef } : {}),
+      ...(sparse?.startFromOrigin !== undefined ? { startFromOrigin: sparse.startFromOrigin } : {}),
+    },
+    modelSelection: patch.modelSelection ?? task.modelSelection,
+    runtimeMode: patch.runtimeMode ?? task.runtimeMode,
+    interactionMode: task.interactionMode,
+  };
+}
+
 export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,
   enabled: Schema.Boolean,
@@ -228,11 +282,24 @@ export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.T
 
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,
+  /**
+   * When set, the delete is scoped to this project: the row is deleted only if
+   * it still belongs to `projectId`, so a concurrent project move turns the
+   * delete into a typed not-found rather than a cross-project delete.
+   */
+  projectId: Schema.optional(ProjectId),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 
 export const ScheduledTaskRunNowInput = Schema.Struct({
   id: ScheduledTaskId,
+  /**
+   * When set, the dispatch re-read inside the mark-running transaction also
+   * requires `project_id = projectId`, so a concurrent project move turns the
+   * manual run into a typed not-found instead of firing under the old
+   * project's authority.
+   */
+  projectId: Schema.optional(ProjectId),
 });
 export type ScheduledTaskRunNowInput = typeof ScheduledTaskRunNowInput.Type;
 
