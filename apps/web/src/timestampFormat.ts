@@ -249,13 +249,16 @@ export function formatRelativeElapsed(elapsedMs: number): RelativeTimeParts {
   return { value: `${days}d`, suffix: "ago" };
 }
 
-export function formatRelativeTime(isoDate: string): RelativeTimeParts | null {
-  const elapsedMs = relativeTimeElapsedMs(isoDate);
+export function formatRelativeTime(
+  isoDate: string,
+  nowMs: number = Date.now(),
+): RelativeTimeParts | null {
+  const elapsedMs = relativeTimeElapsedMs(isoDate, nowMs);
   return elapsedMs === null ? null : formatRelativeElapsed(elapsedMs);
 }
 
-export function formatRelativeTimeLabel(isoDate: string) {
-  const relative = formatRelativeTime(isoDate);
+export function formatRelativeTimeLabel(isoDate: string, nowMs: number = Date.now()) {
+  const relative = formatRelativeTime(isoDate, nowMs);
   if (!relative) return "";
   return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
 }
