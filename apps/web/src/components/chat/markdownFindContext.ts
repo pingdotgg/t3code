@@ -6,11 +6,10 @@ export const MarkdownFindContext = createContext(false);
 
 /**
  * Find dispatches `beforematch` on hidden or clipped ancestors of the selected
- * match, like the browser's own find-in-page. `onReveal` must be stable.
+ * match, like the browser's own find-in-page. Callers create the ref during render
+ * from a stable `onReveal`, so the compiler caches it and React attaches it once.
  */
-export function useFindRevealRef(onReveal: () => void) {
-  // The compiler skips hookless functions; a new ref callback each render would re-add the listener.
-  "use memo";
+export function findRevealRef(onReveal: () => void) {
   return (element: HTMLElement | null) => {
     if (!element) return;
     element.addEventListener("beforematch", onReveal);
