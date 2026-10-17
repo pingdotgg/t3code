@@ -36,12 +36,10 @@ import {
 import {
   createContext,
   use,
-  useCallback,
   useEffect,
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -55,6 +53,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   pastedPathQueryLength,
 } from "~/composer-logic";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   collectComposerPromptInlineTokens,
   selectionTouchesMentionBoundary,
@@ -381,33 +380,30 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const commentTarget =
     commentContext.openComment?.key === citeKey ? commentContext.openComment : null;
 
-  const nodePos = useCallback(() => {
+  const nodePos = () => {
     const pos = typeof getPos === "function" ? getPos() : null;
     return typeof pos === "number" ? pos : null;
-  }, [getPos]);
+  };
 
-  const onSaveComment = useCallback(
-    (comment: string): boolean => {
-      if (!editor.isEditable) return false;
-      const pos = nodePos();
-      if (pos === null) return false;
-      const current = editor.state.doc.nodeAt(pos);
-      if (!current || current.type.name !== "composer-citation") return false;
-      const currentCitation = current.attrs.citation as AssistantCitation;
-      const next = withAssistantCitationComment(currentCitation, comment);
-      const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
-        ...current.attrs,
-        citation: next,
-        source: serializeAssistantCitation(next),
-      });
-      editor.view.dispatch(tr);
-      return true;
-    },
-    [editor, nodePos],
-  );
+  const onSaveComment = (comment: string): boolean => {
+    if (!editor.isEditable) return false;
+    const pos = nodePos();
+    if (pos === null) return false;
+    const current = editor.state.doc.nodeAt(pos);
+    if (!current || current.type.name !== "composer-citation") return false;
+    const currentCitation = current.attrs.citation as AssistantCitation;
+    const next = withAssistantCitationComment(currentCitation, comment);
+    const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+      ...current.attrs,
+      citation: next,
+      source: serializeAssistantCitation(next),
+    });
+    editor.view.dispatch(tr);
+    return true;
+  };
 
   const removeOnCancel = commentTarget?.removeOnCancel;
-  const onRemove = useCallback(() => {
+  const onRemove = () => {
     if (!editor.isEditable || !removeOnCancel) return;
     const pos = nodePos();
     if (pos === null) return;
@@ -418,16 +414,16 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
     const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
     editor.chain().focus().deleteRange({ from, to }).run();
-  }, [editor, nodePos, removeOnCancel]);
+  };
 
-  const onRestoreFocus = useCallback(() => {
+  const onRestoreFocus = () => {
     if (!editor.isEditable) return;
     const pos = nodePos();
     if (pos === null) return;
     const current = editor.state.doc.nodeAt(pos);
     if (!current || current.type.name !== "composer-citation") return;
     editor.commands.focus(pos + current.nodeSize);
-  }, [editor, nodePos]);
+  };
 
   return (
     <NodeViewWrapper
@@ -775,6 +771,114 @@ const ComposerUndoGroupingExtension = Extension.create<
   },
 });
 
+// Module-level because Tiptap's extension hooks read their config from `this`,
+// and so the editor options keep one extensions identity across renders.
+function createComposerExtensions(richText: boolean) {
+  return [
+    StarterKit.configure({
+      blockquote: false,
+      bulletList: false,
+      codeBlock: false,
+      heading: false,
+      horizontalRule: false,
+      listItem: false,
+      link: false,
+      orderedList: false,
+      underline: false,
+      dropcursor: false,
+      gapcursor: false,
+      trailingNode: false,
+      code: false,
+      listKeymap: false,
+      undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
+      ...(richText ? {} : { bold: false, italic: false, strike: false }),
+    }),
+    ComposerUndoGroupingExtension,
+    ComposerMentionExtension,
+    ComposerSkillExtension,
+    ComposerCitationExtension,
+    ComposerContextReferenceExtension,
+    ComposerMarkersExtension,
+    ...(richText
+      ? [
+          ComposerCodeExtension,
+          ComposerCodeBlockExtension.extend({
+            addNodeView() {
+              return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {
+                // The header holds the language picker. Tiptap only shields
+                // events aimed at the button element itself, so a click on
+                // its icon or label would reach ProseMirror and move the
+                // selection; keep every header event away from the editor.
+                stopEvent: ({ event }) =>
+                  event.target instanceof Element &&
+                  event.target.closest(".chat-markdown-codeblock-header") !== null,
+              });
+            },
+            // Tiptap's own ``` + space rule would open a fence inside a
+            // list item or quote, where the serializer has no line for
+            // it. Enter on a fence line covers the gesture at top level.
+            addInputRules() {
+              return [];
+            },
+          }),
+          composerCodeBlockHighlight({
+            resolveTheme: () =>
+              resolveDiffThemeName(
+                document.documentElement.classList.contains("dark") ? "dark" : "light",
+              ),
+          }),
+          ...ComposerBlockExtensions.map((extension) =>
+            extension.name === "blockquote"
+              ? extension.extend({
+                  addInputRules() {
+                    return [blockquoteInputRule];
+                  },
+                })
+              : extension.name === "horizontalRule"
+                ? extension.extend({
+                    addInputRules() {
+                      return [horizontalRuleInputRule];
+                    },
+                  })
+                : extension.name === "heading"
+                  ? extension.extend({
+                      addInputRules() {
+                        return [headingInputRule];
+                      },
+                    })
+                  : extension,
+          ),
+          ...ComposerListExtensions.map((extension) =>
+            extension.name === "listItem"
+              ? extension
+              : extension.extend({
+                  addInputRules() {
+                    return this.name === "bulletList"
+                      ? [
+                          listMarkerInputRule(/^(?<marker>[*+])(?<space>\s)$/, "bulletList"),
+                          listMarkerInputRule(
+                            /^(?<marker>-)(?<space>[ \t]+)(?<carried>[^\s[])$/,
+                            "bulletList",
+                          ),
+                        ]
+                      : [listMarkerInputRule(/^(?<marker>\d+[.)])(?<space>\s)$/, "orderedList")];
+                  },
+                }),
+          ),
+          ComposerTaskListExtension,
+          ComposerTaskItemExtension.extend({
+            addInputRules() {
+              return [taskInputRule(this.type), bulletToTaskInputRule];
+            },
+          }),
+        ]
+      : []),
+  ];
+}
+
+const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
+const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
+
 function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const {
     value,
@@ -806,21 +910,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     editorRef,
   } = props;
   const richText = !literalText && (richTextEnabled ?? false);
-  const clampEditorCursor = useCallback(
-    (text: string, position: number) =>
-      literalText
-        ? Math.max(
-            0,
-            Math.min(text.length, Number.isFinite(position) ? Math.floor(position) : text.length),
-          )
-        : clampCollapsedComposerCursor(text, position),
-    [literalText],
-  );
-  const expandEditorCursor = useCallback(
-    (text: string, position: number) =>
-      literalText ? position : expandCollapsedComposerCursor(text, position),
-    [literalText],
-  );
+  const clampEditorCursor = (text: string, position: number) =>
+    literalText
+      ? Math.max(
+          0,
+          Math.min(text.length, Number.isFinite(position) ? Math.floor(position) : text.length),
+        )
+      : clampCollapsedComposerCursor(text, position);
+  const expandEditorCursor = (text: string, position: number) =>
+    literalText ? position : expandCollapsedComposerCursor(text, position);
 
   const onChangeRef = useRef(onChange);
   const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
@@ -828,7 +926,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const isPathQueryActiveRef = useRef(isPathQueryActive);
   const buildFragmentRef = useRef(buildContextClipboardFragment);
   const importFragmentRef = useRef(importContextFragment);
-  const skillsRef = useRef(skills);
   const latestValueRef = useRef(value);
   const editorHolder = useRef<TiptapEditor | null>(null);
 
@@ -850,16 +947,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   useEffect(() => {
     importFragmentRef.current = importContextFragment;
   }, [importContextFragment]);
-  useEffect(() => {
-    skillsRef.current = skills;
-  }, [skills]);
   useLayoutEffect(() => {
     latestValueRef.current = value;
   }, [value]);
 
-  const skillLabelFor = useCallback((name: string): SkillMeta => {
+  // Stable so a skills refresh does not rerun the controlled-value effect.
+  const skillLabelFor = useStableCallback((name: string): SkillMeta => {
     const normalized = name.startsWith("$") ? name.slice(1) : name;
-    const skill = skillsRef.current.find((candidate) => candidate.name === normalized);
+    const skill = skills.find((candidate) => candidate.name === normalized);
     if (!skill) {
       return { label: formatProviderSkillDisplayName({ name: normalized }), description: null };
     }
@@ -868,7 +963,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       label: formatProviderSkillDisplayName(skill),
       description: shortDescription || skill.description?.trim() || null,
     };
-  }, []);
+  });
 
   const initialCursor = clampEditorCursor(value, cursor);
   const initialExpandedCursor = expandEditorCursor(value, initialCursor);
@@ -886,221 +981,108 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
 
-  const citationCommentActions = useMemo(
-    () => ({
-      openComment: openCitation,
-      onOpenChange: (nodeKey: string, open: boolean) => {
-        if (!open && citationDraftRef.current?.key === nodeKey) citationDraftRef.current = null;
-        setOpenCitation((current) => {
-          if (open) {
-            if (current?.key === nodeKey) return current;
-            return { key: nodeKey };
-          }
-          return current?.key === nodeKey ? null : current;
-        });
-      },
-      onDraftChange: (nodeKey: string, comment: string) => {
-        citationDraftRef.current = { key: nodeKey, comment };
-      },
-      onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
-    }),
-    [onCitationSubmitAndSend, openCitation],
-  );
-
-  const handleEditorChange = useCallback(
-    (updated: TiptapEditor) => {
-      const map = serializeEditorDoc(updated.state.doc);
-      const contextIds = literalText ? [] : map.contextIds;
-      const { from, to } = updated.state.selection;
-      const fromFlat = pmToFlat(map, from);
-      const toFlat = pmToFlat(map, to);
-      const nextValue = map.value;
-      const nextCursor = clampEditorCursor(map.value, flatToCollapsed(map, fromFlat));
-      const nextExpandedCursor = Math.max(
-        0,
-        Math.min(map.value.length, flatToMarkdown(map, fromFlat)),
-      );
-      const nextSelectionRange = {
-        start: Math.min(nextExpandedCursor, flatToMarkdown(map, toFlat)),
-        end: Math.max(nextExpandedCursor, flatToMarkdown(map, toFlat)),
-      };
-      const previousSelectionRange = selectionRangeRef.current;
-      selectionRangeRef.current = nextSelectionRange;
-      setIsEmpty(nextValue.length === 0);
-      const previousSnapshot = snapshotRef.current;
-      const snapshotChanged = !(
-        previousSnapshot.value === nextValue &&
-        previousSnapshot.cursor === nextCursor &&
-        previousSnapshot.expandedCursor === nextExpandedCursor &&
-        previousSnapshot.contextIds.length === contextIds.length &&
-        previousSnapshot.contextIds.every((id, index) => id === contextIds[index])
-      );
-      if (isApplyingControlledUpdateRef.current) return;
-      if (!snapshotChanged) {
-        if (didComposerSelectionChangeVisibly(previousSelectionRange, nextSelectionRange)) {
-          onVisibleSelectionChangeRef.current?.();
+  const citationCommentActions = {
+    openComment: openCitation,
+    onOpenChange: (nodeKey: string, open: boolean) => {
+      if (!open && citationDraftRef.current?.key === nodeKey) citationDraftRef.current = null;
+      setOpenCitation((current) => {
+        if (open) {
+          if (current?.key === nodeKey) return current;
+          return { key: nodeKey };
         }
-        return;
-      }
-      // A selection-only update while a newer prompt waits to be applied (a chip
-      // was just inserted through the store) would report stale text and clobber
-      // the prompt. Let the controlled rewrite land instead.
-      if (previousSnapshot.value === nextValue && nextValue !== latestValueRef.current) {
-        return;
-      }
-      snapshotRef.current = {
-        value: nextValue,
-        cursor: nextCursor,
-        expandedCursor: nextExpandedCursor,
-        contextIds,
-      };
-      const inCodeBlock = updated.state.selection.$from.parent.type.spec.code === true;
-      const suppressTrigger =
-        literalText ||
-        inCodeBlock ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
-      onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, contextIds);
+        return current?.key === nodeKey ? null : current;
+      });
     },
-    [clampEditorCursor, literalText],
-  );
+    onDraftChange: (nodeKey: string, comment: string) => {
+      citationDraftRef.current = { key: nodeKey, comment };
+    },
+    onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
+  };
 
-  const editorAttributes = useMemo(
-    () => ({
-      class: cn(
-        "composer-tiptap -m-1 block max-h-52 min-h-19.5 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
-        className,
-      ),
-      "data-testid": "composer-editor",
-      "data-composer-rich-text": richText ? "true" : "false",
-      role: "textbox",
-      "aria-multiline": "true",
-      ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
-      ...(disabled ? { "aria-readonly": "true" } : {}),
-      ...(!disabled && suggestionListId
-        ? {
-            "aria-autocomplete": "list",
-            "aria-haspopup": "listbox",
-            ...(activeSuggestionId
-              ? {
-                  "aria-controls": suggestionListId,
-                  "aria-activedescendant": activeSuggestionId,
-                }
-              : {}),
-          }
-        : {}),
-      "aria-placeholder": placeholder,
-    }),
-    [activeSuggestionId, ariaLabel, className, disabled, placeholder, richText, suggestionListId],
-  );
+  const handleEditorChange = (updated: TiptapEditor) => {
+    const map = serializeEditorDoc(updated.state.doc);
+    const contextIds = literalText ? [] : map.contextIds;
+    const { from, to } = updated.state.selection;
+    const fromFlat = pmToFlat(map, from);
+    const toFlat = pmToFlat(map, to);
+    const nextValue = map.value;
+    const nextCursor = clampEditorCursor(map.value, flatToCollapsed(map, fromFlat));
+    const nextExpandedCursor = Math.max(
+      0,
+      Math.min(map.value.length, flatToMarkdown(map, fromFlat)),
+    );
+    const nextSelectionRange = {
+      start: Math.min(nextExpandedCursor, flatToMarkdown(map, toFlat)),
+      end: Math.max(nextExpandedCursor, flatToMarkdown(map, toFlat)),
+    };
+    const previousSelectionRange = selectionRangeRef.current;
+    selectionRangeRef.current = nextSelectionRange;
+    setIsEmpty(nextValue.length === 0);
+    const previousSnapshot = snapshotRef.current;
+    const snapshotChanged = !(
+      previousSnapshot.value === nextValue &&
+      previousSnapshot.cursor === nextCursor &&
+      previousSnapshot.expandedCursor === nextExpandedCursor &&
+      previousSnapshot.contextIds.length === contextIds.length &&
+      previousSnapshot.contextIds.every((id, index) => id === contextIds[index])
+    );
+    if (isApplyingControlledUpdateRef.current) return;
+    if (!snapshotChanged) {
+      if (didComposerSelectionChangeVisibly(previousSelectionRange, nextSelectionRange)) {
+        onVisibleSelectionChangeRef.current?.();
+      }
+      return;
+    }
+    // A selection-only update while a newer prompt waits to be applied (a chip
+    // was just inserted through the store) would report stale text and clobber
+    // the prompt. Let the controlled rewrite land instead.
+    if (previousSnapshot.value === nextValue && nextValue !== latestValueRef.current) {
+      return;
+    }
+    snapshotRef.current = {
+      value: nextValue,
+      cursor: nextCursor,
+      expandedCursor: nextExpandedCursor,
+      contextIds,
+    };
+    const inCodeBlock = updated.state.selection.$from.parent.type.spec.code === true;
+    const suppressTrigger =
+      literalText ||
+      inCodeBlock ||
+      isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
+      isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
+    onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, contextIds);
+  };
+
+  const editorAttributes = {
+    class: cn(
+      "composer-tiptap -m-1 block max-h-52 min-h-19.5 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+      className,
+    ),
+    "data-testid": "composer-editor",
+    "data-composer-rich-text": richText ? "true" : "false",
+    role: "textbox",
+    "aria-multiline": "true",
+    ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+    ...(disabled ? { "aria-readonly": "true" } : {}),
+    ...(!disabled && suggestionListId
+      ? {
+          "aria-autocomplete": "list",
+          "aria-haspopup": "listbox",
+          ...(activeSuggestionId
+            ? {
+                "aria-controls": suggestionListId,
+                "aria-activedescendant": activeSuggestionId,
+              }
+            : {}),
+        }
+      : {}),
+    "aria-placeholder": placeholder,
+  };
 
   const editor = useEditor(
     {
-      extensions: [
-        StarterKit.configure({
-          blockquote: false,
-          bulletList: false,
-          codeBlock: false,
-          heading: false,
-          horizontalRule: false,
-          listItem: false,
-          link: false,
-          orderedList: false,
-          underline: false,
-          dropcursor: false,
-          gapcursor: false,
-          trailingNode: false,
-          code: false,
-          listKeymap: false,
-          undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
-          ...(richText ? {} : { bold: false, italic: false, strike: false }),
-        }),
-        ComposerUndoGroupingExtension,
-        ComposerMentionExtension,
-        ComposerSkillExtension,
-        ComposerCitationExtension,
-        ComposerContextReferenceExtension,
-        ComposerMarkersExtension,
-        ...(richText
-          ? [
-              ComposerCodeExtension,
-              ComposerCodeBlockExtension.extend({
-                addNodeView() {
-                  return ReactNodeViewRenderer(ComposerCodeBlockNodeView, {
-                    // The header holds the language picker. Tiptap only shields
-                    // events aimed at the button element itself, so a click on
-                    // its icon or label would reach ProseMirror and move the
-                    // selection; keep every header event away from the editor.
-                    stopEvent: ({ event }) =>
-                      event.target instanceof Element &&
-                      event.target.closest(".chat-markdown-codeblock-header") !== null,
-                  });
-                },
-                // Tiptap's own ``` + space rule would open a fence inside a
-                // list item or quote, where the serializer has no line for
-                // it. Enter on a fence line covers the gesture at top level.
-                addInputRules() {
-                  return [];
-                },
-              }),
-              composerCodeBlockHighlight({
-                resolveTheme: () =>
-                  resolveDiffThemeName(
-                    document.documentElement.classList.contains("dark") ? "dark" : "light",
-                  ),
-              }),
-              ...ComposerBlockExtensions.map((extension) =>
-                extension.name === "blockquote"
-                  ? extension.extend({
-                      addInputRules() {
-                        return [blockquoteInputRule];
-                      },
-                    })
-                  : extension.name === "horizontalRule"
-                    ? extension.extend({
-                        addInputRules() {
-                          return [horizontalRuleInputRule];
-                        },
-                      })
-                    : extension.name === "heading"
-                      ? extension.extend({
-                          addInputRules() {
-                            return [headingInputRule];
-                          },
-                        })
-                      : extension,
-              ),
-              ...ComposerListExtensions.map((extension) =>
-                extension.name === "listItem"
-                  ? extension
-                  : extension.extend({
-                      addInputRules() {
-                        return this.name === "bulletList"
-                          ? [
-                              listMarkerInputRule(/^(?<marker>[*+])(?<space>\s)$/, "bulletList"),
-                              listMarkerInputRule(
-                                /^(?<marker>-)(?<space>[ \t]+)(?<carried>[^\s[])$/,
-                                "bulletList",
-                              ),
-                            ]
-                          : [
-                              listMarkerInputRule(
-                                /^(?<marker>\d+[.)])(?<space>\s)$/,
-                                "orderedList",
-                              ),
-                            ];
-                      },
-                    }),
-              ),
-              ComposerTaskListExtension,
-              ComposerTaskItemExtension.extend({
-                addInputRules() {
-                  return [taskInputRule(this.type), bulletToTaskInputRule];
-                },
-              }),
-            ]
-          : []),
-      ],
+      extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
       content: buildDocJson(
         value,
         (name) => {
@@ -1454,7 +1436,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     editor.view.setProps({ attributes: editorAttributes });
   }, [editor, editorAttributes]);
 
-  const readSnapshot = useCallback(() => {
+  const readSnapshot = () => {
     const snapshot = snapshotRef.current;
     if (!editor) return snapshot;
     const map = serializeEditorDoc(editor.state.doc);
@@ -1473,7 +1455,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     };
     snapshotRef.current = next;
     return next;
-  }, [clampEditorCursor, editor, literalText]);
+  };
 
   // A question or approval swaps the controlled value while a citation comment
   // is open. Its node view unmounts with the old document, so save the comment
@@ -1587,41 +1569,38 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     value,
   ]);
 
-  const focusAt = useCallback(
-    (nextCursor: number) => {
-      if (!editor) return;
-      // view.focus() writes the state selection to the DOM as it focuses. A
-      // bare DOM focus leaves the native caret at the start until
-      // ProseMirror resyncs it 20ms later, and dictation tools type fast
-      // enough to land keys there, ahead of the text already inserted.
-      editor.view.focus();
-      if (snapshotRef.current.value !== latestValueRef.current) return;
-      const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
-      const map = serializeEditorDoc(editor.state.doc);
-      const flat = collapsedToFlat(map, boundedCursor);
-      editor.commands.setTextSelection(flatToPm(map, flat));
-      scrollTiptapCaretIntoView(editor);
-      if (boundedCursor === snapshotRef.current.cursor) return;
-      snapshotRef.current = {
-        value: snapshotRef.current.value,
-        cursor: boundedCursor,
-        expandedCursor: expandEditorCursor(snapshotRef.current.value, boundedCursor),
-        contextIds: snapshotRef.current.contextIds,
-      };
-      selectionRangeRef.current = {
-        start: snapshotRef.current.expandedCursor,
-        end: snapshotRef.current.expandedCursor,
-      };
-      onChangeRef.current(
-        snapshotRef.current.value,
-        boundedCursor,
-        snapshotRef.current.expandedCursor,
-        literalText,
-        snapshotRef.current.contextIds,
-      );
-    },
-    [clampEditorCursor, editor, expandEditorCursor, literalText],
-  );
+  const focusAt = (nextCursor: number) => {
+    if (!editor) return;
+    // view.focus() writes the state selection to the DOM as it focuses. A
+    // bare DOM focus leaves the native caret at the start until
+    // ProseMirror resyncs it 20ms later, and dictation tools type fast
+    // enough to land keys there, ahead of the text already inserted.
+    editor.view.focus();
+    if (snapshotRef.current.value !== latestValueRef.current) return;
+    const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
+    const map = serializeEditorDoc(editor.state.doc);
+    const flat = collapsedToFlat(map, boundedCursor);
+    editor.commands.setTextSelection(flatToPm(map, flat));
+    scrollTiptapCaretIntoView(editor);
+    if (boundedCursor === snapshotRef.current.cursor) return;
+    snapshotRef.current = {
+      value: snapshotRef.current.value,
+      cursor: boundedCursor,
+      expandedCursor: expandEditorCursor(snapshotRef.current.value, boundedCursor),
+      contextIds: snapshotRef.current.contextIds,
+    };
+    selectionRangeRef.current = {
+      start: snapshotRef.current.expandedCursor,
+      end: snapshotRef.current.expandedCursor,
+    };
+    onChangeRef.current(
+      snapshotRef.current.value,
+      boundedCursor,
+      snapshotRef.current.expandedCursor,
+      literalText,
+      snapshotRef.current.contextIds,
+    );
+  };
 
   useImperativeHandle(
     editorRef,
@@ -1702,36 +1681,33 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     [editor, focusAt, literalText, readSnapshot],
   );
 
-  const handleCopyCut = useCallback(
-    (event: React.ClipboardEvent, cut: boolean) => {
-      const build = buildFragmentRef.current;
-      if (!editor || (cut && !editor.isEditable)) return;
-      const clipboardData = event.clipboardData;
-      const { from, to } = editor.state.selection;
-      if (from === to) return;
-      const text = serializeSelection(editor.state.doc, from, to);
-      const contextIds = literalText ? [] : Array.from(new Set(collectInlineContextIds(text)));
-      const fragment = contextIds.length > 0 ? build?.(contextIds) : null;
-      event.preventDefault();
-      clipboardData.setData("text/plain", text);
-      if (fragment) {
-        clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
-        clipboardData.setData("text/html", encodeComposerContextClipboardHtml(text, fragment));
-      }
-      if (cut) {
-        editor
-          .chain()
-          .focus()
-          .command(({ tr }) => {
-            markAsClipboardEdit(tr, "cut");
-            return true;
-          })
-          .deleteSelection()
-          .run();
-      }
-    },
-    [editor, literalText],
-  );
+  const handleCopyCut = (event: React.ClipboardEvent, cut: boolean) => {
+    const build = buildFragmentRef.current;
+    if (!editor || (cut && !editor.isEditable)) return;
+    const clipboardData = event.clipboardData;
+    const { from, to } = editor.state.selection;
+    if (from === to) return;
+    const text = serializeSelection(editor.state.doc, from, to);
+    const contextIds = literalText ? [] : Array.from(new Set(collectInlineContextIds(text)));
+    const fragment = contextIds.length > 0 ? build?.(contextIds) : null;
+    event.preventDefault();
+    clipboardData.setData("text/plain", text);
+    if (fragment) {
+      clipboardData.setData(COMPOSER_CONTEXT_CLIPBOARD_MIME, fragment);
+      clipboardData.setData("text/html", encodeComposerContextClipboardHtml(text, fragment));
+    }
+    if (cut) {
+      editor
+        .chain()
+        .focus()
+        .command(({ tr }) => {
+          markAsClipboardEdit(tr, "cut");
+          return true;
+        })
+        .deleteSelection()
+        .run();
+    }
+  };
 
   return (
     <RichComposerSkillsContext value={skills}>
