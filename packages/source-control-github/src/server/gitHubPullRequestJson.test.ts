@@ -27,7 +27,11 @@ import {
   toReviewThreadPage,
   toViewerPermissions,
 } from "./gitHubPullRequestJson.ts";
-import { PullRequestSummary, PullRequestWatchFingerprint } from "./pullRequestBatches.graphql.ts";
+import {
+  PullRequestSummary,
+  PullRequestSummaryWithStacks,
+  PullRequestWatchFingerprint,
+} from "./pullRequestBatches.graphql.ts";
 import {
   LabelCandidates,
   PullRequestActivity,
@@ -2232,6 +2236,9 @@ describe("host-native stack decoding", () => {
 const decodeSummaryResult = Schema.decodeUnknownSync(PullRequestSummary.result);
 const decodeSummary = (pullRequest: object) =>
   decodeSummaryResult({ repository: { pullRequest } }).repository!.pullRequest!;
+const decodeStackedSummaryResult = Schema.decodeUnknownSync(PullRequestSummaryWithStacks.result);
+const decodeStackedSummary = (pullRequest: object) =>
+  decodeStackedSummaryResult({ repository: { pullRequest } }).repository!.pullRequest!;
 const decodeWatchedResult = Schema.decodeUnknownSync(PullRequestWatchFingerprint.result);
 const decodeWatched = (pullRequest: object) =>
   decodeWatchedResult({ repository: { pullRequest } }).repository!.pullRequest!;
@@ -2290,11 +2297,11 @@ describe("batched pull request summaries", () => {
 
   it("reads stack membership only where the read asked for it", () => {
     expect(
-      toPullRequestSummary(decodeSummary(summary({ stack: null, stackEntry: null }))).stack,
+      toPullRequestSummary(decodeStackedSummary(summary({ stack: null, stackEntry: null }))).stack,
     ).toBeNull();
     expect(
       toPullRequestSummary(
-        decodeSummary(
+        decodeStackedSummary(
           summary({
             stack: { number: 3, size: 2, baseRefName: "main" },
             stackEntry: { position: 2 },

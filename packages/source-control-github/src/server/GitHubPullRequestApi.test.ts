@@ -211,6 +211,35 @@ const rowDefaults = {
   commits: { nodes: [] },
 };
 
+/** A linked pull request's summary fields, as every host answers them. */
+const summaryNode = (number: number) => ({
+  number,
+  title: `Pull request ${number}`,
+  url: `https://github.com/acme/web/pull/${number}`,
+  author: {
+    __typename: "User",
+    login: "octocat",
+    name: "Octo Cat",
+    avatarUrl: "https://avatars.githubusercontent.com/u/1",
+  },
+  baseRefName: "main",
+  headRefName: `feat/${number}`,
+  state: "OPEN",
+  isDraft: false,
+  mergeable: "MERGEABLE",
+  reviewDecision: null,
+  latestReviews: {
+    nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
+  },
+  additions: 12,
+  deletions: 3,
+  changedFiles: 2,
+  updatedAt: "2026-08-24T12:34:56.000Z",
+  mergedAt: null,
+  closedAt: null,
+  commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+});
+
 /** A connection's page info with no next page, as GitHub sends it: the cursor is always there. */
 const lastPage = { hasNextPage: false, endCursor: null };
 
@@ -452,6 +481,25 @@ function searchPage(nodes: ReadonlyArray<unknown>, hasNextPage = false) {
 }
 
 const searchQueryOfCall = searchOfCall;
+
+/**
+ * Answers the way GitHub Enterprise Server does. Its schema has no pull request stacks, and it
+ * validates the whole document before `@include` applies, so a document that names `stack` fails
+ * with errors and no data even where `@include(if: false)` would skip the field.
+ */
+function answerAsEnterpriseServer(body: string): void {
+  mockedExecute.mockImplementation((call) =>
+    Effect.succeed(
+      output(
+        call.kind === "graphql" && /\bstack(Entry)?\b/.test(call.query)
+          ? encodeJson({
+              errors: [{ message: "Field 'stack' doesn't exist on type 'PullRequest'" }],
+            })
+          : body,
+      ),
+    ),
+  );
+}
 
 /** Whether a request is the GraphQL operation `needle` names, or its document or path holds it. */
 function matches(call: ApiCall, needle: string): boolean {
@@ -855,31 +903,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("reads linked pull requests on one host together, filed back by position", () =>
     Effect.gen(function* () {
       const node = (number: number) => ({
-        number,
-        title: `Pull request ${number}`,
-        url: `https://github.com/acme/web/pull/${number}`,
-        author: {
-          __typename: "User",
-          login: "octocat",
-          name: "Octo Cat",
-          avatarUrl: "https://avatars.githubusercontent.com/u/1",
-        },
-        baseRefName: "main",
-        headRefName: `feat/${number}`,
-        state: "OPEN",
-        isDraft: false,
-        mergeable: "MERGEABLE",
-        reviewDecision: null,
-        latestReviews: {
-          nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
-        },
-        additions: 12,
-        deletions: 3,
-        changedFiles: 2,
-        updatedAt: "2026-08-24T12:34:56.000Z",
-        mergedAt: null,
-        closedAt: null,
-        commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+        ...summaryNode(number),
+        stack: null,
+        stackEntry: null,
       });
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -932,6 +958,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       );
       assert.strictEqual(eight?.headBranch, "feat/8");
+      // github.com was asked for stacks in the same read, and answered that #7 is in none.
+      assert.strictEqual(seven?.stack, null);
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
         "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
@@ -940,9 +968,31 @@ layer("GitHubPullRequestApi.layer", (it) => {
         _0_owner: "acme",
         _0_name: "web",
         _0_number: 7,
-        _0_stacks: true,
         _1_number: 8,
       });
+    }),
+  );
+
+  it.effect("reads a linked pull request on an Enterprise host, whose schema has no stacks", () =>
+    Effect.gen(function* () {
+      answerAsEnterpriseServer(
+        encodeJson({ data: { _0_repository: { pullRequest: summaryNode(7) } } }),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const read = yield* cli
+        .getPullRequestSummary({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.acme.test",
+          number: 7,
+        })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summary = yield* Fiber.join(read);
+
+      assert.strictEqual(summary.headBranch, "feat/7");
+      expect(summary).not.toHaveProperty("stack");
     }),
   );
 
@@ -1708,6 +1758,58 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const enterprise = yield* cli.listPullRequests({ ...input, host: "github.acme.test" });
       expect(empty.items).toEqual([]);
       expect(enterprise.items.map((item) => item.number)).toEqual([7]);
+      expect(mockedStackMemberships).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("lists and searches an Enterprise host, whose schema has no stacks", () =>
+    Effect.gen(function* () {
+      answerAsEnterpriseServer(pullRequests(1, 7));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = {
+        cwd: "/w",
+        host: "github.acme.test",
+        state: "open" as const,
+        involvement: "all" as const,
+        viewer: "bilal",
+        limit: 2,
+      };
+
+      const listed = yield* cli.listPullRequests({ ...input, repository: "acme/web" });
+      const searched = yield* cli.searchPullRequests({ ...input, repositories: ["acme/web"] });
+
+      expect(listed.items.map((item) => item.number)).toEqual([7]);
+      expect(searched.items.map((item) => item.number)).toEqual([7]);
+    }),
+  );
+
+  it.effect("reads each row's stack in the github.com search itself", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          searchPage([
+            {
+              ...searchItem(7, "acme/web", "2026-07-03T00:00:00Z"),
+              stack: { number: 3, size: 2, baseRefName: "main" },
+              stackEntry: { position: 1 },
+            },
+          ]),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.searchPullRequests({
+        cwd: "/w",
+        host: "github.com",
+        repositories: ["acme/web"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(batch.items[0]?.stack).toEqual({ number: 3, size: 2, base: "main", position: 1 });
+      expect(mockedExecute).toHaveBeenCalledOnce();
       expect(mockedStackMemberships).not.toHaveBeenCalled();
     }),
   );

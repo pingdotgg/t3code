@@ -39,7 +39,8 @@ import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChe
 
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
 import type {
-  PullRequestSummaryRepositoryPullRequestPullRequest as SummarizedPullRequest,
+  PullRequestSummaryFields as SummarizedPullRequest,
+  PullRequestSummaryWithStacksRepositoryPullRequestPullRequest as StackedSummarizedPullRequest,
   PullRequestWatchFingerprintRepositoryPullRequestPullRequest as WatchedPullRequest,
 } from "./pullRequestBatches.graphql.ts";
 import {
@@ -47,6 +48,9 @@ import {
   PullRequestList,
   PullRequestRow,
   PullRequestSearch,
+  PullRequestSearchWithStacks,
+  PullRequestStack,
+  PullRequestStackEntry,
 } from "./pullRequestListings.graphql.ts";
 import type {
   ActorAvatars,
@@ -846,7 +850,14 @@ const decodeDetail = decodeJsonResult(
 );
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
-const decodeRow = Schema.decodeUnknownExit(PullRequestRow);
+// Only rows from `PullRequestSearchWithStacks` carry a stack.
+const decodeRow = Schema.decodeUnknownExit(
+  Schema.Struct({
+    ...PullRequestRow.fields,
+    stack: Schema.optionalKey(Schema.NullOr(PullRequestStack)),
+    stackEntry: Schema.optionalKey(Schema.NullOr(PullRequestStackEntry)),
+  }),
+);
 
 /**
  * A listing page whose rows are left undecoded, so `toPullRequestRows` can decode them one at a
@@ -862,6 +873,13 @@ const LenientRows = Schema.Struct({
 export const LenientPullRequestSearch = GraphQL.query(PullRequestSearch.name, {
   document: PullRequestSearch.document,
   variables: PullRequestSearch.variables,
+  result: Schema.Struct({ search: LenientRows }),
+});
+
+/** The generated github.com search, with its rows decoded by `toPullRequestRows` instead. */
+export const LenientPullRequestSearchWithStacks = GraphQL.query(PullRequestSearchWithStacks.name, {
+  document: PullRequestSearchWithStacks.document,
+  variables: PullRequestSearchWithStacks.variables,
   result: Schema.Struct({ search: LenientRows }),
 });
 
@@ -1014,7 +1032,9 @@ export interface GitHubPullRequestSummary {
 }
 
 /** The summary a linked thread keeps current, from one slice of the batched read. */
-export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullRequestSummary {
+export function toPullRequestSummary(
+  pr: SummarizedPullRequest | StackedSummarizedPullRequest,
+): GitHubPullRequestSummary {
   return {
     number: pr.number,
     title: pr.title,
@@ -1034,7 +1054,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     // One enum for the head commit, dressed as a single check like the search row's.
     checksState: rollupChecksState(rollupStates(pr.commits)),
     mergeability: toMergeability(pr.mergeable),
-    ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
+    ...("stack" in pr ? { stack: toStackMembership(pr) ?? null } : {}),
   };
 }
 
