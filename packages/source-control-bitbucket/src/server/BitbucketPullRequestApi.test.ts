@@ -711,6 +711,24 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("asks for the time a pull request closed, which Bitbucket leaves out by default", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            pullRequestJson({ state: "MERGED", closed_on: "2025-06-16T23:40:46.222238+00:00" }),
+          ),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const pullRequest = yield* api.getPullRequest({ repository: "acme/web", number: 7 });
+
+      expect(callAt(0).url).toBe("/repositories/acme/web/pullrequests/7?fields=%2Bclosed_on");
+      assert.strictEqual(pullRequest.closedAt, "2025-06-16T23:40:46.222Z");
+    }),
+  );
+
   it.effect("fails the read when Bitbucket answers with something unreadable", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(

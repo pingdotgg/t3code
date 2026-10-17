@@ -585,7 +585,9 @@ export const make = Effect.gen(function* () {
       withRepository(input.repository, (path) =>
         readPage({
           operation: "getPullRequest",
-          url: `${path}/pullrequests/${input.number}`,
+          // `closed_on` is left out of the default representation. It is the only merge or
+          // decline time Bitbucket states on the pull request itself, and settlement needs it.
+          url: `${path}/pullrequests/${input.number}?fields=%2Bclosed_on`,
           decode: decodePullRequestJson,
         }),
       ),
