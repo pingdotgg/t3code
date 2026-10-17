@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -393,6 +394,37 @@ describe("AcpSessionRuntime", () => {
       expect(error.message).toContain("cli.json");
       expect(error.message).toContain("Unrecognized key");
       expect(error.message).not.toContain("ACP process exited with code 1\nACP process exited");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // The child reads the whole initialize line before it dies, so the write has
+  // landed and only the exit can end the connection. Dying before that read
+  // lets the write fail first, which is a transport error. A child's self
+  // `process.kill` is TerminateProcess(handle, 1) on Windows, so the parent sees
+  // exit code 1 there and SIGKILL only on POSIX.
+  it.effect("reports how a self-killed ACP process ended with its stderr", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          command: process.execPath,
+          args: [
+            "-e",
+            'require("node:readline").createInterface({ input: process.stdin }).once("line", (line) => process.stderr.write("runtime aborted after " + JSON.parse(line).method + "\\n", () => process.kill(process.pid, "SIGKILL")));',
+          ],
+        },
+      });
+      const error = yield* runtime.initialize().pipe(Effect.flip);
+      const expected =
+        platform === "win32"
+          ? { exit: { code: 1 }, message: "ACP process exited with code 1" }
+          : {
+              exit: { signal: "SIGKILL" },
+              message: "ACP process was terminated by signal SIGKILL",
+            };
+      expect(error).toMatchObject({ _tag: "AcpProcessExitedError", ...expected.exit });
+      expect(error.message).toBe(`${expected.message}\nruntime aborted after initialize`);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

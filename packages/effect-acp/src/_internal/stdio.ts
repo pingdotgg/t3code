@@ -2,6 +2,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import type * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import { ChildProcessSpawner } from "effect/process";
@@ -49,15 +50,29 @@ type ChildProcessTerminationHandle = Pick<
   "exitCode" | "pid"
 >;
 
+// Effect's Node spawner fails `exitCode` when a signal ends the child, naming
+// the signal only in the cause's message.
+const terminationSignal = (cause: PlatformError.PlatformError) => {
+  const error = cause.reason.cause;
+  return error instanceof Error
+    ? /receipt of signal: '(?<signal>SIG[A-Z0-9]+)'/.exec(error.message)?.groups?.signal
+    : undefined;
+};
+
+/** Classifies how the ACP child ended once its connection terminates. */
 export const makeTerminationError = (
   handle: ChildProcessTerminationHandle,
 ): Effect.Effect<AcpError.AcpError> =>
   Effect.match(handle.exitCode, {
-    onFailure: (cause) =>
-      new AcpError.AcpTransportError({
-        operation: "read-process-exit-status",
-        pid: handle.pid,
-        cause,
-      }),
+    onFailure: (cause) => {
+      const signal = terminationSignal(cause);
+      return signal === undefined
+        ? new AcpError.AcpTransportError({
+            operation: "read-process-exit-status",
+            pid: handle.pid,
+            cause,
+          })
+        : new AcpError.AcpProcessExitedError({ signal, pid: handle.pid, cause });
+    },
     onSuccess: (code) => new AcpError.AcpProcessExitedError({ code, pid: handle.pid }),
   });
