@@ -35,4 +35,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/ProjectFaviconPickerDialog.tsx",
   "apps/web/src/components/settings/ThemeEditorPanel.tsx",
   "apps/web/src/panelAnimations.ts",
+  "apps/web/src/hooks/useCopyToClipboard.ts",
 ] as const;
