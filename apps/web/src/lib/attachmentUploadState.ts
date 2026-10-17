@@ -32,22 +32,16 @@ export function attachmentUploadBlockReason(input: {
   readonly environmentId: EnvironmentId;
 }): string | null {
   let pending = 0;
-  let failed = 0;
 
   for (const imageId of input.imageIds) {
     const upload = input.uploadsByImageId[imageId];
-    if (upload?.status === "failed" && upload.environmentId === input.environmentId) {
-      failed += 1;
-    } else if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) {
+    // Send retries failed uploads, so they must not disable it.
+    if (upload?.status === "failed" && upload.environmentId === input.environmentId) continue;
+    if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) {
       pending += 1;
     }
   }
 
-  if (failed > 0) {
-    return failed === 1
-      ? "Retry or remove the failed attachment"
-      : "Retry or remove the failed attachments";
-  }
   if (pending > 0) {
     return pending === 1 ? "Attachment still uploading" : "Attachments still uploading";
   }
