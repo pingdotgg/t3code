@@ -21,7 +21,12 @@ export function useThreadContextDrop(
       active = false;
       target.removeEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
     };
-  }, [environmentId, targetKey, targetRef]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new environment or target ends the previous listener, so isActive reports false to drops still in flight for it.
+    environmentId,
+    targetKey,
+    targetRef,
+  ]);
 }
 
 const DROP_TARGET_ATTRIBUTE = "data-thread-context-drop";
