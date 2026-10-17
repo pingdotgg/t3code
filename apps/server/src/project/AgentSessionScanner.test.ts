@@ -9,6 +9,7 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -1907,6 +1908,112 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             source: { size: imported.source.size, mtimeMs: imported.source.mtimeMs },
           });
         }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
+    it.effect("tells a replaced transcript apart when its file ID is above 2^53", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-large-id-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-large-id-codex-");
+        const workspace = yield* makeTempDir("t3code-large-id-workspace-");
+        const filePath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "08",
+          "24",
+          "rollout-large-id.jsonl",
+        );
+        const contents = (sessionId: string) =>
+          [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Imported prompt" },
+            }),
+          ].join("\n");
+        yield* writeTranscript({
+          filePath,
+          contents: contents("original-session"),
+          mtimeMs: nowMs,
+        });
+
+        // Effect's stat omits file IDs above Number.MAX_SAFE_INTEGER, as on
+        // many NTFS volumes. Windows `utimes` cannot set the creation time, so
+        // pin it too; otherwise only a same-millisecond replacement collides.
+        const pinnedBirthtime = DateTime.toDateUtc(DateTime.makeUnsafe(nowMs));
+        const withLargeFileId = (target: string, info: FileSystem.File.Info) =>
+          target === filePath
+            ? { ...info, ino: Option.none(), birthtime: Option.some(pinnedBirthtime) }
+            : info;
+        const largeFileIdFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          stat: (target) =>
+            fileSystem.stat(target).pipe(Effect.map((info) => withLargeFileId(target, info))),
+          open: (target, options) =>
+            fileSystem.open(target, options).pipe(
+              Effect.map((file) => ({
+                ...file,
+                stat: file.stat.pipe(Effect.map((info) => withLargeFileId(target, info))),
+                readAlloc: (size: number) => file.readAlloc(size),
+              })),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const initial = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          const imported = initial[0];
+          expect(imported?._tag).toBe("Importable");
+          if (imported?._tag !== "Importable") return;
+          expect(imported.source.inode).toEqual(expect.any(String));
+          const completed = yield* scanner
+            .recentThreads(workspace, [imported.source])
+            .pipe(Stream.runCollect);
+          expect(completed[0]?._tag).toBe("AlreadyImported");
+          // Older sources stored the ID as a number, or as null when it was too
+          // large. Null ones are read once so the importer records the full ID.
+          const numericInode = Number(imported.source.inode);
+          if (Number.isSafeInteger(numericInode)) {
+            const numeric = yield* scanner
+              .recentThreads(workspace, [{ ...imported.source, inode: numericInode }])
+              .pipe(Stream.runCollect);
+            expect(numeric[0]?._tag).toBe("AlreadyImported");
+          }
+          const legacy = yield* scanner
+            .recentThreads(workspace, [{ ...imported.source, inode: null }])
+            .pipe(Stream.runCollect);
+          expect(legacy[0]).toMatchObject({
+            _tag: "Importable",
+            source: { inode: imported.source.inode },
+          });
+
+          // Holding the old file open keeps its ID from being reused.
+          yield* fileSystem.open(filePath);
+          yield* fileSystem.remove(filePath);
+          yield* writeTranscript({
+            filePath,
+            contents: contents("replaced-session"),
+            mtimeMs: nowMs,
+          });
+          const replaced = yield* scanner
+            .recentThreads(workspace, [imported.source])
+            .pipe(Stream.runCollect);
+          expect(replaced[0]).toMatchObject({
+            _tag: "Importable",
+            thread: { providerSessionId: "replaced-session" },
+          });
+        }).pipe(
+          Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })),
+          Effect.provideService(FileSystem.FileSystem, largeFileIdFileSystem),
+        );
       }),
     );
 

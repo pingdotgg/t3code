@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's stat drops file IDs above 2^53.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import {
@@ -535,30 +537,47 @@ function extractCwd(line: string): string | null {
   return null;
 }
 
-function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
+type TranscriptIdentity = Pick<
+  AgentSessionImportSource,
+  "filePath" | "size" | "mtimeMs" | "device" | "inode" | "birthtimeMs"
+>;
+
+// Effect's stat leaves `ino` empty when the ID exceeds Number.MAX_SAFE_INTEGER,
+// which many NTFS file IDs do. A transcript replaced at the same path with the
+// same size and times would then compare as the same file.
+const transcriptIdentity = Effect.fn("AgentSessionScanner.transcriptIdentity")(function* (
+  filePath: string,
+  stats: FileSystem.File.Info,
+) {
+  const inode = Option.isSome(stats.ino)
+    ? String(stats.ino.value)
+    : yield* Effect.tryPromise(() => NodeFSP.stat(filePath, { bigint: true })).pipe(
+        Effect.map((info) => (info.ino === 0n ? null : info.ino.toString())),
+        Effect.orElseSucceed(() => null),
+      );
   return {
     filePath,
     size: Number(stats.size),
     mtimeMs: Option.match(stats.mtime, { onNone: () => null, onSome: (date) => date.getTime() }),
     device: Number(stats.dev),
-    inode: Option.match(stats.ino, { onNone: () => null, onSome: Number }),
+    inode,
     birthtimeMs: Option.match(stats.birthtime, {
       onNone: () => null,
       onSome: (date) => date.getTime(),
     }),
-  };
-}
+  } satisfies TranscriptIdentity;
+});
 
-function sameTranscriptIdentity(
-  left: ReturnType<typeof transcriptIdentity>,
-  right: ReturnType<typeof transcriptIdentity>,
-): boolean {
+// Sources recorded before file IDs were strings stored a number.
+const fileIdKey = (inode: TranscriptIdentity["inode"]) => (inode === null ? null : String(inode));
+
+function sameTranscriptIdentity(left: TranscriptIdentity, right: TranscriptIdentity): boolean {
   return (
     left.filePath === right.filePath &&
     left.size === right.size &&
     left.mtimeMs === right.mtimeMs &&
     left.device === right.device &&
-    left.inode === right.inode &&
+    fileIdKey(left.inode) === fileIdKey(right.inode) &&
     left.birthtimeMs === right.birthtimeMs
   );
 }
@@ -742,7 +761,7 @@ export const make = Effect.gen(function* () {
 
   const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
-    expected: ReturnType<typeof transcriptIdentity>,
+    expected: TranscriptIdentity,
     recordLimit: number,
     source: AgentSessionSource,
   ) {
@@ -752,7 +771,12 @@ export const make = Effect.gen(function* () {
       fileSystem.open(filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
-            if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
+            if (
+              !sameTranscriptIdentity(
+                expected,
+                yield* transcriptIdentity(filePath, yield* file.stat),
+              )
+            ) {
               return null;
             }
             const records: Array<DecodedTranscriptRecord> = [];
@@ -814,7 +838,10 @@ export const make = Effect.gen(function* () {
             }
 
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
-            return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
+            return sameTranscriptIdentity(
+              expected,
+              yield* transcriptIdentity(filePath, yield* file.stat),
+            )
               ? { records, recordCount }
               : null;
           }),
@@ -1301,7 +1328,7 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(stats) || stats.value.type !== "File") {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const identity = transcriptIdentity(transcript.filePath, stats.value);
+          const identity = yield* transcriptIdentity(transcript.filePath, stats.value);
           const completedSource = completed?.find(
             (source) =>
               source.provider === candidate.source && sameTranscriptIdentity(source, identity),
