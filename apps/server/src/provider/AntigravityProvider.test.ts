@@ -29,6 +29,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { antigravity140Session } from "./acp/antigravity140.fixture.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -179,6 +180,14 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
+  it("keeps ACP 1.4 concrete models and the selected thinking level", () => {
+    const models = buildAntigravityModelsFromSession(antigravity140Session);
+    expect(models.map((model) => model.slug)).toEqual(
+      antigravity140Session.models.availableModels.map((model) => model.modelId),
+    );
+    expect(models.find((model) => model.isDefault)?.slug).toBe("gemini-3.8-flash-high");
+  });
+
   it("keeps the captured personal catalog's IDs, labels, order, and selected default", () => {
     const models = buildAntigravityModelsFromSession(sessionSetupResult);
     expect(models.map((model) => [model.slug, model.name])).toEqual(
@@ -235,6 +244,29 @@ describe("Antigravity model catalog", () => {
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {
+  it.effect("keeps concrete ACP 1.4 models when grouped config options are updated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity140Session,
+        });
+        yield* harness.provider.onConfigOptionsUpdated(antigravity140Session.configOptions);
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.models.map((model) => model.slug)).toEqual(
+          antigravity140Session.models.availableModels.map((model) => model.modelId),
+        );
+        yield* harness.provider.onSessionStarted(started);
+        yield* harness.provider.onConfigOptionsUpdated([
+          { ...modelConfig, options: modelOptions.slice(0, 1) },
+        ]);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toHaveLength(1);
+      }),
+    ),
+  );
+
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

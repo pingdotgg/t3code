@@ -13,6 +13,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { antigravity140Session } from "./antigravity140.fixture.ts";
 import {
   antigravityPermissionMode,
   applyAntigravityAcpModelSelection,
@@ -35,17 +36,134 @@ function makeModelRuntime(
   failure?: EffectAcpErrors.AcpError,
 ) {
   const selections: string[] = [];
+  const sessionSelections: string[] = [];
   const setModel = Effect.fn("AntigravityAcpSupportTest.setModel")(function* (model: string) {
     if (failure) return yield* failure;
     selections.push(model);
   });
   return {
-    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel },
+    runtime: {
+      getConfigOptions: Effect.succeed(configOptions),
+      setModel,
+      setSessionModel: (model: string) =>
+        Effect.gen(function* () {
+          if (failure) return yield* failure;
+          sessionSelections.push(model);
+          return {};
+        }),
+    },
     selections,
+    sessionSelections,
   };
 }
 
 describe("applyAntigravityAcpModelSelection", () => {
+  it.effect.each(["gemini-3.8-flash-high", "gemini-3.8-flash-low"])(
+    "restores concrete ACP 1.4 model %s through session/set_model",
+    (model) =>
+      Effect.gen(function* () {
+        const { runtime, selections, sessionSelections } = makeModelRuntime(
+          antigravity140Session.configOptions,
+        );
+        const selected = yield* applyAntigravityAcpModelSelection({
+          runtime,
+          models: antigravity140Session.models,
+          model,
+          mapError: (cause) => cause,
+        });
+        expect(selected).toBe(model);
+        expect(sessionSelections).toEqual([model]);
+        expect(selections).toEqual([]);
+      }),
+  );
+
+  it.effect("resolves the ACP 1.4 default to a concrete model", () =>
+    Effect.gen(function* () {
+      const { runtime, sessionSelections } = makeModelRuntime(antigravity140Session.configOptions);
+      const selected = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        models: antigravity140Session.models,
+        model: ANTIGRAVITY_DEFAULT_MODEL,
+        defaultModel: "gemini-3.8-flash-medium",
+        mapError: (cause) => cause,
+      });
+      expect(selected).toBe("gemini-3.8-flash-medium");
+      expect(sessionSelections).toEqual(["gemini-3.8-flash-medium"]);
+    }),
+  );
+
+  it.effect("keeps the ACP 1.4 current model when the manifest default is unavailable", () =>
+    Effect.gen(function* () {
+      const { runtime, selections, sessionSelections } = makeModelRuntime(
+        antigravity140Session.configOptions,
+      );
+      const selected = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        models: antigravity140Session.models,
+        model: undefined,
+        defaultModel: "gemini-unavailable",
+        mapError: (cause) => cause,
+      });
+      expect(selected).toBe("gemini-3.8-flash-high");
+      expect(sessionSelections).toEqual([]);
+      expect(selections).toEqual([]);
+    }),
+  );
+
+  it.effect("restores the manifest default after an in-session thinking-level change", () =>
+    Effect.gen(function* () {
+      const { runtime, sessionSelections } = makeModelRuntime(
+        antigravity140Session.configOptions.map((option) =>
+          option.id === "thinking_level" ? { ...option, currentValue: "low" } : option,
+        ),
+      );
+      const selected = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        models: antigravity140Session.models,
+        model: ANTIGRAVITY_DEFAULT_MODEL,
+        defaultModel: "gemini-3.8-flash-high",
+        mapError: (cause) => cause,
+      });
+      expect(selected).toBe("gemini-3.8-flash-high");
+      expect(sessionSelections).toEqual(["gemini-3.8-flash-high"]);
+    }),
+  );
+
+  it.effect("keeps the config-option path when an agent has no per-model state", () =>
+    Effect.gen(function* () {
+      const { runtime, selections, sessionSelections } = makeModelRuntime(
+        antigravity140Session.configOptions,
+      );
+      const selected = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-3.8-flash",
+        mapError: (cause) => cause,
+      });
+      expect(selected).toBe("gemini-3.8-flash");
+      expect(selections).toEqual(["gemini-3.8-flash"]);
+      expect(sessionSelections).toEqual([]);
+    }),
+  );
+
+  it.effect.each(["gemini-3.8-flash", "gemini-unavailable"])(
+    "rejects ACP 1.4 model %s when it is not a concrete advertised ID",
+    (model) =>
+      Effect.gen(function* () {
+        const { runtime, selections, sessionSelections } = makeModelRuntime(
+          antigravity140Session.configOptions,
+        );
+        const error = yield* applyAntigravityAcpModelSelection({
+          runtime,
+          models: antigravity140Session.models,
+          model,
+          mapError: (cause) => cause,
+        }).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "AcpRequestError", code: -32602 });
+        expect(sessionSelections).toEqual([]);
+        expect(selections).toEqual([]);
+      }),
+  );
+
   it.effect("restores the saved model instead of the cold-resume default", () =>
     Effect.gen(function* () {
       const { runtime, selections } = makeModelRuntime();

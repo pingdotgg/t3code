@@ -22,6 +22,7 @@ import { expect } from "vite-plus/test";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
+import { antigravity140Session } from "../provider/acp/antigravity140.fixture.ts";
 
 import {
   type AntigravityTextGenerationOptions,
@@ -61,6 +62,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly startError?: AcpError;
     readonly rejectAdmission?: boolean;
     readonly sessionId?: string;
+    readonly sessionSetup?: AcpSchema.NewSessionResponse;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -147,7 +149,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
             return {
               sessionId: nativeSessionId,
               initializeResult: { protocolVersion: 1 },
-              sessionSetupResult: { sessionId: nativeSessionId },
+              sessionSetupResult: { ...options.sessionSetup, sessionId: nativeSessionId },
               modelConfigId: "model",
             };
           }),
@@ -156,20 +158,27 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
             state.selectedModes.push(mode);
             return {};
           }),
-        getConfigOptions: Effect.succeed([
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: modelSelection.model,
-            options: [{ value: modelSelection.model, name: "Gemini test" }],
-          },
-        ]),
+        getConfigOptions: Effect.succeed(
+          options.sessionSetup?.configOptions ?? [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: modelSelection.model,
+              options: [{ value: modelSelection.model, name: "Gemini test" }],
+            },
+          ],
+        ),
         getEvents: () => Stream.fromQueue(events),
         setModel: (model) =>
           Effect.sync(() => {
             state.selectedModels.push(model);
+          }),
+        setSessionModel: (model) =>
+          Effect.sync(() => {
+            state.selectedModels.push(model);
+            return {};
           }),
         prompt: (request) =>
           Effect.gen(function* () {
@@ -279,6 +288,20 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
+  it.effect("generates a title with an ACP 1.4 concrete model selection", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({ sessionSetup: antigravity140Session });
+      const title = yield* fixture.textGeneration.generateThreadTitle({
+        ...fixture.titleInput,
+        modelSelection: { ...modelSelection, model: "gemini-3.8-flash-low" },
+      });
+      expect(title).toEqual({ title: "Repair login" });
+      expect(fixture.state.selectedModels).toEqual(["gemini-3.8-flash-low"]);
+      expect(fixture.state.prompts).toHaveLength(1);
+      yield* fixture.assertCleaned;
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "generates all helper types in empty workspaces and removes only owned session files",
     () =>

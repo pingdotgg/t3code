@@ -25,8 +25,9 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
-import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
+import { antigravity140Session } from "../../provider/acp/antigravity140.fixture.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -58,6 +59,41 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
+  it.effect("restores an ACP 1.4 concrete model instead of selecting the family", () => {
+    const selected: string[] = [];
+    return Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const model = yield* flavor.applyModelSelection!({
+        runtime,
+        startResult: {
+          sessionId: antigravity140Session.sessionId,
+          sessionSetupResult: antigravity140Session,
+          initializeResult: { protocolVersion: 1 },
+          modelConfigId: "model",
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("antigravity-test"),
+          model: "gemini-3.8-flash-low",
+        },
+      });
+      assert.equal(model, "gemini-3.8-flash-low");
+      assert.deepEqual(selected, ["gemini-3.8-flash-low"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mock(AcpSessionRuntime.AcpSessionRuntime)({
+          processContainment: "none",
+          getConfigOptions: Effect.succeed(antigravity140Session.configOptions),
+          setModel: () => Effect.die("The model config only accepts a family ID"),
+          setSessionModel: (model) =>
+            Effect.sync(() => {
+              selected.push(model);
+              return {};
+            }),
+        }),
+      ),
+    );
+  });
+
   it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
     const batch = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",

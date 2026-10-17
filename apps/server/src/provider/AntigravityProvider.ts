@@ -50,10 +50,15 @@ export function buildAntigravityModelsFromSession(
   const config = setup.configOptions?.find(
     (option) => option.id === "model" || option.category === "model",
   );
+  const models = setup.configOptions?.some((option) => option.id === "thinking_level")
+    ? setup.models
+    : undefined;
   const currentValue =
-    config?.type === "select" ? config.currentValue : setup.models?.currentModelId;
-  const entries =
-    config?.type === "select"
+    models?.currentModelId ??
+    (config?.type === "select" ? config.currentValue : setup.models?.currentModelId);
+  const entries = models
+    ? models.availableModels.map((model) => ({ value: model.modelId, name: model.name }))
+    : config?.type === "select"
       ? config.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options))
       : config === undefined
         ? (setup.models?.availableModels.map((model) => ({
@@ -115,6 +120,7 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
+  readonly usesSessionModels: boolean;
 }
 
 interface AntigravityProviderOptions {
@@ -159,6 +165,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const metadata = yield* SubscriptionRef.make<AntigravityProviderState>({
     draft: initialDraft,
     authRevision: 0,
+    usesSessionModels: false,
   });
   // Skills the driver discovered on disk per workspace. Session callbacks
   // rewrite the workspace entry with native commands and must keep these, or
@@ -286,6 +293,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       return {
         authRevision: state.authRevision + 1,
+        usesSessionModels:
+          started.sessionSetupResult.models != null &&
+          started.sessionSetupResult.configOptions?.some(
+            (option) => option.id === "thinking_level",
+          ) === true,
         draft: {
           ...draft,
           installed: true,
@@ -326,7 +338,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   ) {
     const models = buildAntigravityModelsFromSession({ configOptions });
     yield* SubscriptionRef.update(metadata, (state) => {
-      if (state.draft.auth.status !== "authenticated") return state;
+      if (state.draft.auth.status !== "authenticated" || state.usesSessionModels) return state;
       return { ...state, draft: { ...state.draft, models } };
     });
   });
@@ -375,6 +387,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       (state) =>
         ({
           authRevision: state.authRevision + 1,
+          usesSessionModels: false,
           draft: {
             ...state.draft,
             auth: { status: "unauthenticated" },
