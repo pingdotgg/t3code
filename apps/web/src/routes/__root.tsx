@@ -15,7 +15,7 @@ import { Check, Copy } from "lucide";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { resolveServerBackedAppDisplayName } from "../branding.logic";
+import { resolveServerBackedAppDisplayName, resolveWindowTitle } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
@@ -63,6 +63,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
+import { useWindowTitleStore } from "../windowTitleStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
@@ -354,11 +355,18 @@ function BrowserChromeThemeSync() {
 function DocumentTitleSync() {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
-  const title = resolveServerBackedAppDisplayName({
-    baseName: APP_BASE_NAME,
-    fallbackDisplayName: APP_DISPLAY_NAME,
-    fallbackStageLabel: APP_STAGE_LABEL,
-    primaryServerVersion,
+  const projectTitle = useWindowTitleStore((store) => store.projectTitle);
+  const threadTitle = useWindowTitleStore((store) => store.threadTitle);
+  const title = resolveWindowTitle({
+    appDisplayName: resolveServerBackedAppDisplayName({
+      baseName: APP_BASE_NAME,
+      fallbackDisplayName: APP_DISPLAY_NAME,
+      fallbackStageLabel: APP_STAGE_LABEL,
+      primaryServerVersion,
+    }),
+    projectTitle,
+    threadTitle,
+    desktop: isElectron,
   });
 
   useEffect(() => {
@@ -405,6 +413,7 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
 
   return (
     <StandalonePage tone="error">
+      <DocumentTitleSync />
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
         title="Something went wrong."

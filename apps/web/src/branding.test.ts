@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveServerBackedAppDisplayName,
   resolveServerBackedAppStageLabel,
+  resolveWebAppStageLabel,
+  resolveWindowTitle,
 } from "./branding.logic";
 
 const originalWindow = globalThis.window;
@@ -112,5 +114,53 @@ describe("branding logic", () => {
         primaryServerVersion: "0.0.28-nightly.20260616",
       }),
     ).toBe("T3 Code (Alpha)");
+  });
+
+  it("labels web builds by hosted channel before dev or production", () => {
+    expect(resolveWebAppStageLabel({ hostedAppChannel: " Nightly", development: true })).toBe(
+      "Nightly",
+    );
+    expect(resolveWebAppStageLabel({ hostedAppChannel: "latest", development: false })).toBe(
+      "Latest",
+    );
+    expect(resolveWebAppStageLabel({ hostedAppChannel: "preview", development: true })).toBe("Dev");
+    expect(resolveWebAppStageLabel({ hostedAppChannel: "", development: false })).toBe("Beta");
+  });
+});
+
+describe("resolveWindowTitle", () => {
+  const appDisplayName = "T3 Code (Nightly)";
+
+  it("is the app name without a thread", () => {
+    expect(
+      resolveWindowTitle({ appDisplayName, projectTitle: null, threadTitle: null, desktop: true }),
+    ).toBe(appDisplayName);
+    expect(
+      resolveWindowTitle({
+        appDisplayName,
+        projectTitle: "acme",
+        threadTitle: "  ",
+        desktop: true,
+      }),
+    ).toBe(appDisplayName);
+  });
+
+  it("names the project and thread, adding the app name only in browser tabs", () => {
+    const input = { appDisplayName, projectTitle: "acme-web", threadTitle: "Fix login bug" };
+    expect(resolveWindowTitle({ ...input, desktop: true })).toBe("acme-web / Fix login bug");
+    expect(resolveWindowTitle({ ...input, desktop: false })).toBe(
+      "acme-web / Fix login bug — T3 Code (Nightly)",
+    );
+  });
+
+  it("drops the separator without a project title", () => {
+    expect(
+      resolveWindowTitle({
+        appDisplayName,
+        projectTitle: "  ",
+        threadTitle: "Fix login bug",
+        desktop: true,
+      }),
+    ).toBe("Fix login bug");
   });
 });

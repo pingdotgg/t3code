@@ -477,7 +477,12 @@
         cursor: pointer;
       }
     </style>
-    <title>T3 Code (Beta)</title>
+    <!-- vite.config.ts stamps the web build's channel into this title. -->
+    <title>T3 Code</title>
+    <script>
+      // Desktop's preload injects branding before page scripts, so the window starts on its channel.
+      document.title = window.desktopBridge?.getAppBranding?.()?.displayName ?? document.title;
+    </script>
   </head>
   <body>
     <div id="root">
