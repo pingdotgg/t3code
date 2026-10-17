@@ -214,17 +214,18 @@ export const layer = Layer.unwrap(
     const directory = path.join(config.providerStatusCacheDir, "pull-requests");
     return Layer.effect(PullRequestReadCache, make).pipe(
       Layer.provide(
-        KeyValueStore.layerFileSystem(directory).pipe(
-          Layer.tap(() =>
-            forkParked(
-              pruneExpiredEntryFiles(directory).pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("Failed to prune PR cache files", { cause }),
-                ),
-                Effect.repeat(Schedule.spaced(Duration.hours(1))),
+        // Memoize cleanup acquisition with the store; Layer.tap runs per consumer.
+        Layer.effectDiscard(
+          forkParked(
+            pruneExpiredEntryFiles(directory).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to prune PR cache files", { cause }),
               ),
+              Effect.repeat(Schedule.spaced(Duration.hours(1))),
             ),
           ),
+        ).pipe(
+          Layer.provideMerge(KeyValueStore.layerFileSystem(directory)),
           Layer.catch(() =>
             Layer.effectDiscard(
               Effect.logWarning("PR cache directory unavailable; using memory cache"),
