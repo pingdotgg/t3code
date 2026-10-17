@@ -77,7 +77,15 @@ type ShortcutCheck =
     };
 
 export function SnapShotSettings() {
-  const settings = useClientSettings();
+  const settings = useClientSettings((current) => ({
+    snapShotAnimations: current.snapShotAnimations,
+    snapShotEnabled: current.snapShotEnabled,
+    snapShotFlash: current.snapShotFlash,
+    snapShotIncludeAccessibility: current.snapShotIncludeAccessibility,
+    snapShotPlaySound: current.snapShotPlaySound,
+    snapShotShortcut: current.snapShotShortcut,
+    snapShotSound: current.snapShotSound,
+  }));
   const updateSettings = useUpdateClientSettings();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const bridge = getDesktopSnapShotBridge();

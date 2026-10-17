@@ -49,7 +49,10 @@ export function LoadBalancingSettings({
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
-  const settings = useClientSettings();
+  const settings = useClientSettings((current) => ({
+    loadBalancingEnabled: current.loadBalancingEnabled,
+    loadBalancingWeights: current.loadBalancingWeights,
+  }));
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdateClientSettings();
 
