@@ -1,9 +1,6 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
 import { useCallback } from "react";
-import { Platform } from "react-native";
-import { CommonActions } from "@react-navigation/native";
-import { androidWorkspaceNavigationState } from "../lib/android-workspace-navigation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
@@ -44,13 +41,7 @@ export function useOpenPullRequest(options?: {
           : null,
       );
       if (!params) return tryOpenExternalUrl(url, "pull-request");
-      if (Platform.OS === "android")
-        navigation.dispatch((state) =>
-          CommonActions.reset(
-            androidWorkspaceNavigationState(state, { name: "PullRequest", params }),
-          ),
-        );
-      else if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+      if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
       else navigation.navigate("PullRequest", params);
       return true;
     },

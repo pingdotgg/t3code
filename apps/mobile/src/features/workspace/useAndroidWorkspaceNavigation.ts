@@ -14,28 +14,34 @@ export function useWorkspaceListNavigation(tab: WorkspaceTab) {
   const navigation = useNavigation();
   const dispatch = useWorkspaceTabs()?.dispatch;
   return useCallback(() => {
-    if (Platform.OS === "android") {
+    if (navigation.canGoBack()) navigation.goBack();
+    else if (Platform.OS === "android") {
       dispatch?.({ type: "select", tab });
       navigation.dispatch((state) => CommonActions.reset(androidWorkspaceNavigationState(state)));
-    } else if (navigation.canGoBack()) navigation.goBack();
-    else navigation.dispatch(StackActions.replace("Home"));
+    } else navigation.dispatch(StackActions.replace("Home"));
   }, [navigation, dispatch, tab]);
 }
 
+/** Details use native Back; focused sheets and nested screens take priority. */
 export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
+  const navigation = useNavigation();
   const dispatch = useWorkspaceTabs()?.dispatch;
   const returnToList = useWorkspaceListNavigation(tab);
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== "android") return;
-      dispatch?.({ type: "select", tab });
+      if ((navigation.getState()?.index ?? 0) <= 1) dispatch?.({ type: "select", tab });
       const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-        if (Keyboard.isVisible()) Keyboard.dismiss();
-        else returnToList();
+        if (Keyboard.isVisible()) {
+          Keyboard.dismiss();
+          return true;
+        }
+        if (navigation.canGoBack()) return false;
+        returnToList();
         return true;
       });
       return () => subscription.remove();
-    }, [returnToList, dispatch, tab]),
+    }, [navigation, returnToList, dispatch, tab]),
   );
   return returnToList;
 }

@@ -11,12 +11,12 @@ import {
 } from "@t3tools/client-runtime/text-paste";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
-  CommonActions,
   StackActions,
   useFocusEffect,
   useNavigation,
   usePreventRemove,
   type NavigationAction,
+  type NavigationProp,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -138,6 +138,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { newTaskSubmitNavigationAction } from "./new-task-submit-navigation";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -198,7 +200,8 @@ export function NewTaskDraftScreen(props: {
 }) {
   const projects = useProjects();
   const flow = useNewTaskFlow();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp<ReactNavigation.RootParamList>>();
+  const workspaceDispatch = useWorkspaceTabs()?.dispatch;
   const {
     consumeShare,
     getShare,
@@ -1323,13 +1326,18 @@ export function NewTaskDraftScreen(props: {
         deferAttachmentCleanup: true,
       });
     }
+    if (Platform.OS === "android" && !queuesInsteadOfStarting)
+      workspaceDispatch?.({ type: "select", tab: "threads" });
     setSubmitNavigationAction(
-      queuesInsteadOfStarting
-        ? CommonActions.goBack()
-        : StackActions.replace("Thread", {
-            environmentId: String(message.environmentId),
-            threadId: String(message.threadId),
-          }),
+      newTaskSubmitNavigationAction({
+        state: (navigation.getParent() ?? navigation).getState(),
+        params: {
+          environmentId: String(message.environmentId),
+          threadId: String(message.threadId),
+        },
+        queued: queuesInsteadOfStarting,
+        android: Platform.OS === "android",
+      }),
     );
     scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
   }
