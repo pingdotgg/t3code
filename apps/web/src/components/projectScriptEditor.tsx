@@ -158,14 +158,23 @@ export function ProjectScriptEditorDialog({
   onClose: () => void;
 }) {
   const canEditActions = useEnvironmentScope(environmentId, editScope);
-  const [validationError, setValidationError] = useState<string | null>(null);
+  // Keyed by the request it belongs to: a new request starts from its own error,
+  // and a late save from the previous request can't overwrite it.
+  const [errorState, setErrorState] = useState<{
+    readonly request: ProjectScriptEditorRequest;
+    readonly message: string | null;
+  } | null>(null);
+  const validationError =
+    request === null
+      ? null
+      : errorState?.request === request
+        ? errorState.message
+        : (request.error ?? null);
+  const setValidationError = (message: string | null) => {
+    if (request !== null) setErrorState({ request, message });
+  };
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useComposerMenuState(!canEditActions);
   const [deleteName, setDeleteName] = useState("");
-  const [errorRequest, setErrorRequest] = useState<ProjectScriptEditorRequest | null>(null);
-  if (request !== errorRequest) {
-    setErrorRequest(request);
-    if (request) setValidationError(request.error ?? null);
-  }
 
   return (
     <>
