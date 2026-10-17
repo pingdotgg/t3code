@@ -56,7 +56,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const [expanded, setExpanded] = useState(false);
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  const [savePath, setSavePath] = useState("");
+  // The path last submitted, so reopening the dialog offers it again.
+  const [lastSavePath, setLastSavePath] = useState("");
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const writeProjectFile = useAtomCommand(projectEnvironment.writeFile, {
     reportFailure: false,
@@ -73,7 +74,6 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       );
     },
   });
-  const savePathInputId = useId();
   const title = proposedPlanTitle(planMarkdown) ?? "Proposed plan";
   const lineCount = planMarkdown.split("\n").length;
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
@@ -109,11 +109,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       );
       return;
     }
-    setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
     setIsSaveDialogOpen(true);
   };
 
-  const handleSaveToWorkspace = () => {
+  const handleSaveToWorkspace = (savePath: string) => {
     const relativePath = savePath.trim();
     if (!workspaceRoot || !readEnvironmentScope(environmentId, AuthFilesystemWriteScope)) {
       return;
@@ -126,6 +125,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       return;
     }
 
+    setLastSavePath(savePath);
     setIsSavingToWorkspace(true);
     void (async () => {
       const result = await writeProjectFile({
@@ -241,45 +241,71 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           }
         }}
       >
+        {/* The form owns the path so a keystroke re-renders it, not the dialog chrome. */}
         <DialogPopup className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Save plan to workspace</DialogTitle>
-            <DialogDescription>
-              Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel>
-            <label htmlFor={savePathInputId} className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Workspace path</span>
-              <Input
-                id={savePathInputId}
-                value={savePath}
-                onChange={(event) => setSavePath(event.target.value)}
-                placeholder={downloadFilename}
-                spellCheck={false}
-                disabled={isSavingToWorkspace}
-              />
-            </label>
-          </DialogPanel>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsSaveDialogOpen(false)}
-              disabled={isSavingToWorkspace}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => void handleSaveToWorkspace()}
-              disabled={!canWriteFiles || isSavingToWorkspace}
-            >
-              {isSavingToWorkspace ? "Saving..." : "Save"}
-            </Button>
-          </DialogFooter>
+          <SavePlanToWorkspaceForm
+            initialPath={lastSavePath || downloadFilename}
+            placeholder={downloadFilename}
+            workspaceRoot={workspaceRoot}
+            canWriteFiles={canWriteFiles}
+            saving={isSavingToWorkspace}
+            onCancel={() => setIsSaveDialogOpen(false)}
+            onSave={handleSaveToWorkspace}
+          />
         </DialogPopup>
       </Dialog>
     </div>
   );
 });
+
+function SavePlanToWorkspaceForm({
+  initialPath,
+  placeholder,
+  workspaceRoot,
+  canWriteFiles,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  initialPath: string;
+  placeholder: string;
+  workspaceRoot: string | undefined;
+  canWriteFiles: boolean;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (path: string) => void;
+}) {
+  const [savePath, setSavePath] = useState(initialPath);
+  const savePathInputId = useId();
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>Save plan to workspace</DialogTitle>
+        <DialogDescription>
+          Enter a path relative to <code>{workspaceRoot ?? "the workspace"}</code>.
+        </DialogDescription>
+      </DialogHeader>
+      <DialogPanel>
+        <label htmlFor={savePathInputId} className="grid gap-1.5">
+          <span className="text-xs font-medium text-foreground">Workspace path</span>
+          <Input
+            id={savePathInputId}
+            value={savePath}
+            onChange={(event) => setSavePath(event.target.value)}
+            placeholder={placeholder}
+            spellCheck={false}
+            disabled={saving}
+          />
+        </label>
+      </DialogPanel>
+      <DialogFooter>
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={() => onSave(savePath)} disabled={!canWriteFiles || saving}>
+          {saving ? "Saving..." : "Save"}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
