@@ -57,4 +57,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/files/AttachmentFilePreview.tsx",
   "apps/web/src/components/usage/UsagePage.tsx",
   "apps/web/src/components/ProviderUpdateEnvironmentRows.tsx",
+  "apps/web/src/components/files/useDirectoryEntries.ts",
 ] as const;
