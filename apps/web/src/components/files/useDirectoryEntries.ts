@@ -117,6 +117,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     ...entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
   ]);
 
+  const loadedDirectories = new Set(directories.keys());
+
   const refresh = () => {
     const paths = [...requested.current].filter((path) => reachableDirectories.has(path));
     const workerCount = Math.min(4, paths.length);
@@ -136,6 +138,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     refresh,
     isPending: pending > 0,
     loadingDirectories,
+    loadedDirectories,
     ready: directories.has(""),
     error: [...errors].find(([path]) => reachableDirectories.has(path))?.[1] ?? null,
   };

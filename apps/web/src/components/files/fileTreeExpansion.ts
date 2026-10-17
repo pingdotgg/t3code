@@ -9,7 +9,7 @@ type DirectoryHandle = {
   collapse(): void;
 };
 
-function asDirectoryHandle(item: unknown): DirectoryHandle | null {
+export function asDirectoryHandle(item: unknown): DirectoryHandle | null {
   if (
     typeof item !== "object" ||
     item === null ||

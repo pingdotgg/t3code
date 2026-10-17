@@ -30,6 +30,12 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  fileTreeExpansionStorageKey,
+  readExpandedPaths,
+  syncPersistedExpansion,
+  writeExpandedPaths,
+} from "./fileTreeExpansionStorage";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
@@ -157,6 +163,7 @@ export default function FileBrowserPanel({
     error,
     isPending,
     loadingDirectories,
+    loadedDirectories,
   } = useDirectoryEntries(environmentId, cwd);
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
@@ -330,6 +337,13 @@ export default function FileBrowserPanel({
     search.close();
   };
   const expandedPathsRef = useRef(new Set<string>());
+  // The panel unmounts with its right-panel tab, so the remembered folders live
+  // in storage. The panel is keyed by workspace, so these are read once.
+  const expansionStorageKey = fileTreeExpansionStorageKey(environmentId, cwd);
+  const [persistedExpansion] = useState(() => {
+    const persisted = readExpandedPaths(expansionStorageKey);
+    return { persisted, pendingRestore: new Set(persisted) };
+  });
   useEffect(() => {
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
@@ -337,6 +351,18 @@ export default function FileBrowserPanel({
     }
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
+      const { persisted, pendingRestore } = persistedExpansion;
+      if (
+        syncPersistedExpansion({
+          model,
+          directoryPaths,
+          loadedDirectories,
+          persisted,
+          pendingRestore,
+        })
+      ) {
+        writeExpandedPaths(expansionStorageKey, persisted);
+      }
       for (const path of directoryPaths) {
         const item = model.getItem(path);
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
@@ -352,7 +378,7 @@ export default function FileBrowserPanel({
     };
     loadExpanded();
     return model.subscribe(loadExpanded);
-  }, [directoryPaths, load, model]);
+  }, [directoryPaths, expansionStorageKey, load, loadedDirectories, model, persistedExpansion]);
   useEffect(() => {
     model.setGitStatus(
       entries
