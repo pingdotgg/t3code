@@ -283,6 +283,9 @@ export default function FileBrowserPanel({
   const loadingDirectoriesRef = useRef(loadingDirectories);
   const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
   const dragMention = useDragMentionController(cwd, hostFolder, treeModelRef);
+  const openSelectedFile = useStableCallback((relativePath: string) =>
+    onOpenFile(panelPath(relativePath)),
+  );
   const { model } = useFileTree({
     composition: {
       contextMenu: {
@@ -309,7 +312,7 @@ export default function FileBrowserPanel({
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFile(panelPath(selectedPath));
+        openSelectedFile(selectedPath);
       }
     },
     paths: [],
