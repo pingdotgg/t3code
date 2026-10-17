@@ -434,20 +434,33 @@ describe("formatModelSelectionEffort", () => {
     },
   ];
 
-  it("shows the model's default effort when the user never picked one", () => {
-    expect(formatModelSelectionEffort(selection(), catalog({}))).toBe("High");
-  });
-
   it("names a stored effort the way the catalog does", () => {
     expect(
       formatModelSelectionEffort(selection([{ id: "effort", value: "xhigh" }]), catalog({})),
     ).toBe("Extra High");
   });
 
-  it("uses the descriptor's current value over the default", () => {
-    expect(formatModelSelectionEffort(selection(), catalog({ currentValue: "medium" }))).toBe(
-      "Medium",
-    );
+  it("names a reported effort when no stored one overrides it", () => {
+    const reported = selection([{ id: "effort", value: "xhigh" }]);
+    expect(formatModelSelectionEffort(selection(), catalog({}), reported)).toBe("Extra High");
+    expect(
+      formatModelSelectionEffort(
+        selection([{ id: "effort", value: "medium" }]),
+        catalog({}),
+        reported,
+      ),
+    ).toBe("Medium");
+  });
+
+  it("shows nothing when neither the selection nor the provider states an effort", () => {
+    expect(formatModelSelectionEffort(selection(), catalog({}))).toBeNull();
+    expect(formatModelSelectionEffort(selection(), catalog({ currentValue: "medium" }))).toBeNull();
+    expect(
+      formatModelSelectionEffort(selection(), catalog({}), {
+        ...selection([{ id: "effort", value: "xhigh" }]),
+        model: "claude-opus-5-5",
+      }),
+    ).toBeNull();
   });
 
   it("shows nothing for a model the catalog does not describe", () => {
