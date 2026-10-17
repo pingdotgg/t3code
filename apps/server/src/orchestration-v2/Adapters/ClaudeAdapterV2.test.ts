@@ -7867,6 +7867,237 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([
+    { ending: "interrupted" },
+    { ending: "failed" },
+    { ending: "completed" },
+  ] as const)(
+    "projects a nested launch between turns only while its owner's run still ingests ($ending)",
+    ({ ending }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const OUTER_TASK_ID = "task-stopped-run-outer";
+          const OUTER_TOOL_USE_ID = "toolu-stopped-run-outer";
+          const NESTED_TASK_ID = "task-stopped-run-nested";
+          const NESTED_TOOL_USE_ID = "toolu-stopped-run-nested";
+          const harness = yield* makeWakeHarness;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const now = yield* DateTime.now;
+          const userTurn = (attemptId: string, providerTurnOrdinal: number) =>
+            harness.runtime.startTurn(
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(attemptId),
+                text: "Keep auditing.",
+                attachments: [],
+                providerTurnOrdinal,
+              }),
+            );
+          const nestedRows = () =>
+            harness.events.flatMap((event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === NESTED_TASK_ID
+                ? [event.subagent]
+                : [],
+            );
+
+          yield* userTurn("attempt-claude-stopped-run-1", 1);
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeSubagentTaskStartedFrame({
+              taskId: OUTER_TASK_ID,
+              toolUseId: OUTER_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000b01",
+            }),
+          );
+          yield* awaitUntil(
+            () =>
+              harness.events.some(
+                (event) =>
+                  event.type === "subagent.updated" &&
+                  event.subagent.nativeTaskRef?.nativeId === OUTER_TASK_ID,
+              ),
+            "outer subagent registered",
+          );
+          // The outer subagent keeps running after the run that launched it
+          // ends: that run then stops reading the session's events.
+          if (ending === "interrupted") {
+            yield* harness.runtime
+              .interruptTurn({
+                providerThread: harness.providerThread,
+                providerTurnId: idAllocator.derive.providerTurn({
+                  driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                  nativeTurnId: "turn:attempt-claude-stopped-run-1",
+                }),
+              })
+              .pipe(Effect.forkScoped);
+            yield* Queue.offer(
+              harness.sdkMessages,
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000000b02",
+                result: "Interrupted.",
+                subtype: "error_during_execution",
+                isError: true,
+              }),
+            );
+          } else {
+            yield* Queue.offer(
+              harness.sdkMessages,
+              ending === "failed"
+                ? makeResultFrame({
+                    uuid: "00000000-0000-4000-8000-000000000b02",
+                    result: "boom",
+                    subtype: "error_during_execution",
+                    isError: true,
+                    errors: ["boom"],
+                  })
+                : makeResultFrame({
+                    uuid: "00000000-0000-4000-8000-000000000b02",
+                    result: "Auditing in the background.",
+                  }),
+            );
+          }
+          yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+          assert.equal(harness.terminalEvents()[0]?.status, ending);
+          // A later turn completes while the outer subagent still runs: the
+          // turn that settled is then not the run the subagent belongs to.
+          yield* userTurn("attempt-claude-stopped-run-2", 2);
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000b03",
+              result: "Still on it.",
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 2, "second turn terminal");
+          const outer = harness.events.findLast(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.subagent.nativeTaskRef?.nativeId === OUTER_TASK_ID,
+          );
+          assert.equal(outer?.type === "subagent.updated" && outer.subagent.status, "running");
+          const ownerRunId = outer?.type === "subagent.updated" ? outer.subagent.runId : null;
+
+          for (const frame of [
+            claudeSdkFrame({
+              type: "assistant",
+              message: {
+                model: "claude-sonnet-4-6",
+                id: "msg_stopped_run_nested_launch",
+                type: "message",
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: NESTED_TOOL_USE_ID,
+                    name: "Agent",
+                    input: { description: "Nested check", prompt: "Reply with NESTED_OK" },
+                  },
+                ],
+              },
+              parent_tool_use_id: OUTER_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000b04",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: NESTED_TASK_ID,
+              tool_use_id: NESTED_TOOL_USE_ID,
+              description: "Nested check",
+              subagent_type: "general-purpose",
+              is_backgrounded: false,
+              spawn_depth: 2,
+              task_type: "local_agent",
+              prompt: "Reply with NESTED_OK",
+              uuid: "00000000-0000-4000-8000-000000000b05",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+            ...makeSubagentAssistantFrames({
+              parentToolUseId: OUTER_TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000b06",
+              messageId: "msg_stopped_run_outer_working",
+              text: "OUTER_WORKING",
+            }),
+          ]) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          yield* awaitUntil(
+            () =>
+              harness.events.some(
+                (event) =>
+                  event.type === "message.updated" && event.message.text === "OUTER_WORKING",
+              ),
+            "outer work after the nested launch",
+          );
+          if (ending === "completed") {
+            // The completed run stays open while its subagent runs, so the
+            // nested row joins it at once, not the later turn that settled.
+            assert.deepEqual(
+              nestedRows().map((row) => row.runId),
+              [ownerRunId],
+            );
+            return;
+          }
+          // An interrupted or failed run no longer ingests and would never
+          // store this row: the launch waits for the next turn, as before.
+          assert.deepEqual(
+            nestedRows().map((row) => row.runId),
+            [],
+            `the nested row was stamped with run ${String(ownerRunId)}`,
+          );
+          // The outer subagent's end wakes the root, and the continuation
+          // drains the held launch into its own run.
+          for (const frame of [
+            makeSubagentNotificationFrame({
+              taskId: NESTED_TASK_ID,
+              toolUseId: NESTED_TOOL_USE_ID,
+              summary: "NESTED_OK",
+              uuid: "00000000-0000-4000-8000-000000000b07",
+            }),
+            makeSubagentNotificationFrame({
+              taskId: OUTER_TASK_ID,
+              toolUseId: OUTER_TOOL_USE_ID,
+              summary: "OUTER_DONE",
+              uuid: "00000000-0000-4000-8000-000000000b08",
+            }),
+          ]) {
+            yield* Queue.offer(harness.sdkMessages, frame);
+          }
+          yield* awaitUntil(() => harness.continuationRequests.length === 1, "wake request");
+          assert.deepEqual(nestedRows(), [], "the nested launch still waits for the wake");
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000b09",
+              result: "The audit finished.",
+            }),
+          );
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-stopped-run-wake"),
+              text: "Background task completed.",
+              attachments: [],
+              providerTurnOrdinal: 3,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          yield* awaitUntil(() => harness.terminalEvents().length === 3, "wake terminal");
+          assert.equal(nestedRows()[0]?.runId, RunId.make("run-attempt-claude-stopped-run-wake"));
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("ends an earlier turn's nested subagent while the root turn is idle", () =>
     Effect.scoped(
       Effect.gen(function* () {

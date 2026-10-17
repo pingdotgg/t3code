@@ -54,10 +54,12 @@ export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
   // Set once this run's root turn ended. A child thread created after that
   // belongs to the run that is live then, so this one no longer adopts it,
-  // except a workflow member enrolled below: its coordinator keeps this run
-  // open, so the member is this run's to follow.
+  // except a thread enrolled below: a workflow member, or the thread of a
+  // live subagent attributed to this run (one its running subagent started).
+  // Their owner keeps this run open, so the thread is this run's to follow.
   readonly rootTurnEnded: boolean;
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
+  readonly subagentThreadNodes: ReadonlyMap<ThreadId, NodeId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
@@ -328,6 +330,7 @@ export function makeProviderEventRoutingState(input: {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
     rootTurnEnded: false,
     workflowMemberParents: new Map(),
+    subagentThreadNodes: new Map(),
     ownedProviderThreadIds: new Set([
       input.identity.providerThreadId,
       ...(input.relatedProviderThreadIds ?? []),
@@ -370,13 +373,16 @@ export function routeProviderEvent(
       if (event.appThread.id === input.threadId) {
         return [true, state];
       }
+      const forkedFrom = event.appThread.forkedFrom;
       const isOwnedSubagent =
         event.appThread.lineage.relationshipToParent === "subagent" &&
         event.appThread.lineage.parentThreadId !== null &&
         ownsThread(event.appThread.lineage.parentThreadId) &&
         (!state.rootTurnEnded ||
           state.workflowMemberParents.get(event.appThread.id) ===
-            event.appThread.lineage.parentThreadId);
+            event.appThread.lineage.parentThreadId ||
+          (forkedFrom?.type === "node" &&
+            state.subagentThreadNodes.get(event.appThread.id) === forkedFrom.nodeId));
       if (!isOwnedSubagent) {
         return [false, state];
       }
@@ -430,12 +436,30 @@ export function routeProviderEvent(
               ownedThreadIds: new Set([...state.ownedThreadIds, coordinator.childThreadId]),
             }
           : state;
+      // A live subagent of this run enrolls the thread it creates next, so the
+      // thread still routes here if this run's root turn has ended by then.
+      const childThreadId = coordinator.childThreadId;
+      const enrolls =
+        coordinator.origin === "provider_native" &&
+        childThreadId !== null &&
+        ownsRun(coordinator.runId) &&
+        isOrchestrationV2WorkActive(coordinator.status);
+      const enrolled =
+        childThreadId === null ||
+        enrolls === (adopted.subagentThreadNodes.get(childThreadId) === coordinator.id)
+          ? adopted
+          : {
+              ...adopted,
+              subagentThreadNodes: enrolls
+                ? new Map(adopted.subagentThreadNodes).set(childThreadId, coordinator.id)
+                : new Map([...adopted.subagentThreadNodes].filter(([id]) => id !== childThreadId)),
+            };
       if (
         !ownsRun(coordinator.runId) ||
         coordinator.workflow === undefined ||
         coordinator.childThreadId === null
       ) {
-        return [belongs, adopted];
+        return [belongs, enrolled];
       }
       const workflowMemberParents = new Map(state.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
@@ -443,7 +467,7 @@ export function routeProviderEvent(
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
         }
       }
-      return [true, { ...adopted, workflowMemberParents }];
+      return [true, { ...enrolled, workflowMemberParents }];
     }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
