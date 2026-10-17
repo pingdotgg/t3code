@@ -75,13 +75,15 @@ type PendingBackgroundWorkPullRequest = Pick<
 type PendingBackgroundWorkProviderThread = Pick<
   OrchestrationV2ProviderThread,
   "id" | "pendingBackgroundTasks"
->;
+> & { readonly providerInstanceId?: OrchestrationV2ProviderThread["providerInstanceId"] };
 
 type PendingBackgroundWorkTurnItem = {
   readonly id: OrchestrationV2TurnItem["id"] | string;
   readonly type: OrchestrationV2TurnItem["type"];
   readonly status: OrchestrationV2TurnItem["status"];
   readonly title: string | null;
+  /** Shell readers join the owner, even when its provider thread belongs to a child app thread. */
+  readonly owningProviderInstanceId?: OrchestrationV2ProviderThread["providerInstanceId"];
   readonly runId?: OrchestrationV2Run["id"] | string | null;
   readonly nativeItemRef?: {
     readonly nativeId: string | null;
@@ -139,6 +141,9 @@ function pendingTaskFromTurnItem(
       return {
         ...named,
         kind: "subagent",
+        ...(item.owningProviderInstanceId === undefined
+          ? {}
+          : { providerInstanceId: item.owningProviderInstanceId }),
         ...(item.childThreadId == null ? {} : { childThreadId: item.childThreadId }),
       };
     case "command_execution":
@@ -224,6 +229,9 @@ export function derivePendingBackgroundWork(input: {
       const description = rawDescription?.trim();
       byTaskId.set(task.taskId, {
         ...named,
+        ...(task.kind === "subagent"
+          ? { providerInstanceId: providerThread.providerInstanceId }
+          : {}),
         ...(description === undefined || description.length === 0 ? {} : { description }),
       });
     }

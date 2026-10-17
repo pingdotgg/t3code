@@ -33,7 +33,6 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProjectId,
-  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -64,6 +63,7 @@ import {
   ThreadId,
   TurnItemId,
   NodeId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -890,17 +890,20 @@ export function applyToProjection(
 /**
  * Provider sessions are process-scoped: one session row can be bound to several app
  * threads. Updating that row changes what every bound thread reads, even though the
- * application event itself belongs to one thread stream.
+ * application event itself belongs to one thread stream. Provider thread owners are global
+ * too: the latest event wins across app threads.
  */
 export interface ProjectionReplayState {
   readonly projections: Map<ThreadId, OrchestrationV2ThreadProjection>;
   readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
+  readonly providerThreadInstanceIds: Map<ProviderThreadId, ProviderInstanceId>;
 }
 
 function makeProjectionReplayState(): ProjectionReplayState {
   return {
     projections: new Map(),
     providerSessionThreadIds: new Map(),
+    providerThreadInstanceIds: new Map(),
   };
 }
 
@@ -928,6 +931,25 @@ function applyToProjectionReplayState(
   state.projections.set(event.threadId, next);
 
   switch (event.type) {
+    case "provider-thread.updated": {
+      state.providerThreadInstanceIds.set(event.payload.id, event.payload.providerInstanceId);
+      // SQL's upsert moves the provider-thread row and its roster to appThreadId.
+      for (const [threadId, projection] of state.projections) {
+        if (threadId === event.payload.appThreadId) {
+          if (threadId !== event.threadId) {
+            state.projections.set(threadId, applyToProjection(projection, event));
+          }
+          continue;
+        }
+        const providerThreads = projection.providerThreads.filter(
+          (thread) => thread.id !== event.payload.id,
+        );
+        if (providerThreads.length !== projection.providerThreads.length) {
+          state.projections.set(threadId, { ...projection, providerThreads });
+        }
+      }
+      break;
+    }
     case "provider-session.attached": {
       const boundThreadIds = new Set(state.providerSessionThreadIds.get(event.payload.id) ?? []);
       boundThreadIds.add(event.threadId);
@@ -975,6 +997,11 @@ function applyToProjectionReplayState(
 
 type PayloadRow = {
   readonly payload_json: string;
+};
+
+type ShellPendingTurnItemRow = PayloadRow & {
+  readonly thread_id: string;
+  readonly owning_provider_instance_id: string | null;
 };
 
 type ShellThreadRow = {
@@ -5448,9 +5475,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const selectShellPendingTurnItemRows = (threadIds?: ReadonlyArray<ThreadId>) =>
       threadIds === undefined
-        ? sql<PayloadRow & { readonly thread_id: string }>`
-            SELECT i.thread_id, i.payload_json
+        ? sql<ShellPendingTurnItemRow>`
+            SELECT i.thread_id, i.payload_json, p.provider_instance_id AS owning_provider_instance_id
             FROM orchestration_v2_projection_turn_items i
+            LEFT JOIN orchestration_v2_projection_provider_threads p
+              ON p.provider_thread_id = i.provider_thread_id
             LEFT JOIN orchestration_v2_projection_runs r
               ON r.run_id = i.run_id
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
@@ -5460,9 +5489,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               -- matching the item_count query's exclusion above.
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
           `
-        : sql<PayloadRow & { readonly thread_id: string }>`
-            SELECT i.thread_id, i.payload_json
+        : sql<ShellPendingTurnItemRow>`
+            SELECT i.thread_id, i.payload_json, p.provider_instance_id AS owning_provider_instance_id
             FROM orchestration_v2_projection_turn_items i
+            LEFT JOIN orchestration_v2_projection_provider_threads p
+              ON p.provider_thread_id = i.provider_thread_id
             LEFT JOIN orchestration_v2_projection_runs r
               ON r.run_id = i.run_id
             WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
@@ -5496,7 +5527,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const pendingBackgroundDataByThreadId = (input: {
       readonly providerThreadRows: ReadonlyArray<PayloadRow & { readonly thread_id: string }>;
-      readonly pendingTurnItemRows: ReadonlyArray<PayloadRow & { readonly thread_id: string }>;
+      readonly pendingTurnItemRows: ReadonlyArray<ShellPendingTurnItemRow>;
     }) =>
       Effect.gen(function* () {
         const providerThreadsByThreadId = new Map<
@@ -5517,7 +5548,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
         const pendingTurnItemsByThreadId = new Map<ThreadId, Array<OrchestrationV2TurnItem>>();
         for (const row of input.pendingTurnItemRows) {
-          const turnItem = yield* decodeTurnItemPayload(row.payload_json);
+          const turnItem = {
+            ...(yield* decodeTurnItemPayload(row.payload_json)),
+            ...(row.owning_provider_instance_id === null
+              ? {}
+              : {
+                  owningProviderInstanceId: ProviderInstanceId.make(
+                    row.owning_provider_instance_id,
+                  ),
+                }),
+          };
           const threadId = ThreadId.make(row.thread_id);
           const existing = pendingTurnItemsByThreadId.get(threadId) ?? [];
           existing.push(turnItem);
@@ -6064,6 +6104,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             const next: ProjectionReplayState = {
               projections: new Map(existing.projections),
               providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
+              providerThreadInstanceIds: new Map(existing.providerThreadInstanceIds),
             };
             if (!applyToProjectionReplayState(next, event)) {
               return [
@@ -6567,7 +6608,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
-          const existing = (yield* Ref.get(replayState)).projections;
+          const { projections: existing, providerThreadInstanceIds } = yield* Ref.get(replayState);
           const readProjection = (
             targetThreadId: ThreadId,
             seenThreadIds: ReadonlySet<ThreadId>,
@@ -6596,7 +6637,17 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           if (!projection) {
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           }
-          return projection;
+          // Match the SQL shell join, including provider threads stored on child app threads.
+          return {
+            ...projection,
+            turnItems: projection.turnItems.map((item) => {
+              const owner =
+                item.type !== "subagent" || item.providerThreadId === null
+                  ? undefined
+                  : providerThreadInstanceIds.get(item.providerThreadId);
+              return owner === undefined ? item : { ...item, owningProviderInstanceId: owner };
+            }),
+          };
         }),
       getTurnStartContext: (threadId, runId) =>
         service.getThreadProjection(threadId).pipe(

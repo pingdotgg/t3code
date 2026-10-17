@@ -23,6 +23,17 @@ const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
 const endedThreadId = ThreadId.make("thread:ended");
+const backgroundThreadId = ThreadId.make("thread:background");
+const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
+const archivedThreadId = ThreadId.make("thread:archived-background");
+const unknownOwnerThreadId = ThreadId.make("thread:unknown-background-owner");
+
+const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => ({
+  ...liveThreadShell(threadId, { activeRunId: null }),
+  pendingBackgroundTasks: [
+    { taskId: "task:background", kind: "subagent" as const, providerInstanceId },
+  ],
+});
 
 const shells = new Map([
   [supervisedThreadId, liveThreadShell(supervisedThreadId, { runtimeMode: "approval-required" })],
@@ -32,6 +43,22 @@ const shells = new Map([
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
+  [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
+  [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
+  [
+    archivedThreadId,
+    {
+      ...backgroundShell(archivedThreadId, ProviderInstanceId.make("codex")),
+      archivedAt: liveThreadShell(archivedThreadId).updatedAt,
+    },
+  ],
+  [
+    unknownOwnerThreadId,
+    {
+      ...liveThreadShell(unknownOwnerThreadId, { activeRunId: null }),
+      pendingBackgroundTasks: [{ taskId: "task:unknown", kind: "subagent" as const }],
+    },
+  ],
 ]);
 
 const threadCaller = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
@@ -189,6 +216,15 @@ const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
+// Its turn ended, but a background subagent it started still runs.
+const background = threadCaller(backgroundThreadId);
+const oldProviderBackground = threadCaller(oldProviderThreadId);
+const archivedBackground = threadCaller(archivedThreadId);
+const unknownOwnerBackground = threadCaller(unknownOwnerThreadId);
+const mismatchedProvider = {
+  ...background,
+  thread: { ...background.thread!, providerInstanceId: ProviderInstanceId.make("claude") },
+};
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
 const readOnlyClient = clientCaller("read-only");
@@ -208,10 +244,17 @@ it.effect.each([
   ["reads_as_caller", fullAccessClient, {}, "thread_credential_required"],
   ["acts_as_caller", supervised, {}, "ran"],
   ["acts_as_caller", ended, {}, "parent_not_active"],
+  ["acts_as_caller", background, {}, "ran"],
+  ["acts_as_caller", oldProviderBackground, {}, "parent_not_active"],
+  ["acts_as_caller", mismatchedProvider, {}, "parent_not_active"],
+  ["acts_as_caller", archivedBackground, {}, "parent_not_active"],
+  ["acts_as_caller", unknownOwnerBackground, {}, "parent_not_active"],
   ["acts_as_caller", fullAccessClient, {}, "thread_credential_required"],
 
   ["writes", supervised, {}, "ran"],
   ["writes", ended, {}, "parent_not_active"],
+  ["writes", background, {}, "ran"],
+  ["writes", oldProviderBackground, {}, "parent_not_active"],
   ["writes", supervisedClient, {}, "ran"],
   ["writes", previewOnly, {}, "capability_denied"],
   ["writes_environment", previewOnly, {}, "capability_denied"],
