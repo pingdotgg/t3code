@@ -4,9 +4,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, describe, expect } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Tracer from "effect/Tracer";
 
 import * as ServerConfig from "../config.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -346,6 +348,57 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         expect(error.cause).toBeInstanceOf(Error);
         expect((error.cause as NodeJS.ErrnoException).code).toBe("ENOENT");
+      }),
+    );
+
+    it.effect("resolves a missing optional file as absent instead of failing", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const spans: Array<Tracer.NativeSpan> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        });
+
+        const result = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "t3.json", allowMissing: true })
+          .pipe(Effect.withTracer(tracer));
+
+        // Diagnostics counts every failed span, nested ones included.
+        expect(spans.map((span) => span.name)).toContain("WorkspaceFileSystem.resolveReadTarget");
+        expect(
+          spans
+            .filter((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))
+            .map((span) => span.name),
+        ).toEqual([]);
+
+        expect(result).toEqual({
+          relativePath: "t3.json",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          exists: false,
+        });
+      }),
+    );
+
+    it.effect("still fails an optional read whose path exists but is not a file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, "t3.json"));
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "t3.json", allowMissing: true })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathNotFileError);
       }),
     );
   });

@@ -222,25 +222,38 @@ export const make = Effect.gen(function* () {
   /**
    * Workspace-relative paths must stay inside the root, symlinks included. An
    * absolute path reads a host file in place, such as a report an agent wrote to a
-   * temp directory; it gets no root check.
+   * temp directory; it gets no root check. An `allowMissing` read of a missing file
+   * resolves to `null` rather than failing, so the absent optional file records no
+   * failed span.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
-    const requestedPath = input.relativePath.trim();
-    if (path.isAbsolute(requestedPath)) {
-      const realTargetPath = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(requestedPath),
+    const realpathTarget = (resolvedPath: string) =>
+      Effect.tryPromise({
+        try: () => NodeFSP.realpath(resolvedPath),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: requestedPath,
-            operationPath: requestedPath,
+            resolvedPath,
+            operationPath: resolvedPath,
             operation: "realpath-target",
             cause,
           }),
-      });
+      }).pipe(
+        Effect.catchIf(
+          (error) =>
+            input.allowMissing === true &&
+            (error.cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
+          () => Effect.succeed(null),
+        ),
+      );
+
+    const requestedPath = input.relativePath.trim();
+    if (path.isAbsolute(requestedPath)) {
+      const realTargetPath = yield* realpathTarget(requestedPath);
+      if (realTargetPath === null) return null;
       return { relativePath: requestedPath, realTargetPath };
     }
 
@@ -261,18 +274,8 @@ export const make = Effect.gen(function* () {
           cause,
         }),
     });
-    const realTargetPath = yield* Effect.tryPromise({
-      try: () => NodeFSP.realpath(target.absolutePath),
-      catch: (cause) =>
-        new WorkspaceFileSystemOperationError({
-          workspaceRoot: input.cwd,
-          relativePath: input.relativePath,
-          resolvedPath: target.absolutePath,
-          operationPath: target.absolutePath,
-          operation: "realpath-target",
-          cause,
-        }),
-    });
+    const realTargetPath = yield* realpathTarget(target.absolutePath);
+    if (realTargetPath === null) return null;
     if (!isInsideRealRoot(realWorkspaceRoot, realTargetPath)) {
       return yield* new WorkspaceFilePathEscapeError({
         workspaceRoot: input.cwd,
@@ -288,6 +291,15 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.readFile",
   )(function* (input) {
     const target = yield* resolveReadTarget(input);
+    if (target === null) {
+      return {
+        relativePath: input.relativePath,
+        contents: "",
+        byteLength: 0,
+        truncated: false,
+        exists: false,
+      };
+    }
     const realTargetPath = target.realTargetPath;
 
     return yield* Effect.acquireUseRelease(
