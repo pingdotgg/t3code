@@ -27,8 +27,9 @@ const TOOL_INPUT_PATH_FIELDS = ["file_path", "notebook_path", "path", "filename"
 // An absolute POSIX or drive-letter path starting a shell word or a quoted string.
 const COMMAND_ABSOLUTE_PATH_PATTERN = /(?:^|[\s"'=(])((?:\/|[A-Za-z]:[\\/])[^\s"'`;|&<>()$*?]+)/g;
 
-// A plain relative operand: no flag, assignment, glob, variable or quoting left in it.
-const RELATIVE_OPERAND_PATTERN = /^[\w.@+][\w./@+-]*$/;
+// A plain relative operand: no flag, assignment, glob or variable. Spaces survive
+// only inside quotes, since unquoted words are already split on them.
+const RELATIVE_OPERAND_PATTERN = /^[\w.@+][\w./@+ -]*$/;
 
 // Separators after which a `cd` still governs the next command. A `cd` in a
 // pipeline or a background job runs in a subshell, and `||` runs only if it failed.
@@ -137,6 +138,7 @@ function commandPaths(command: string, workspaceRoot: string | null): string[] {
             : base !== null && RELATIVE_OPERAND_PATTERN.test(target)
               ? joinPosixPath(base, target)
               : null;
+      if (base !== null) paths.push(base);
       return;
     }
     for (const operand of operands) {

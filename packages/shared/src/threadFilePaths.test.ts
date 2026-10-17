@@ -90,7 +90,16 @@ describe("threadFilePaths", () => {
         ],
         "/repos/app-a",
       ),
-    ).toEqual(["/repos/app-b/src/api/rules/categories.ts"]);
+    ).toEqual(["/repos/app-b", "/repos/app-b/src/api/rules/categories.ts"]);
+  });
+
+  it("records the folder a relative cd moves into", () => {
+    expect(
+      threadFilePaths(
+        [item({ type: "command_execution", input: "cd ../meeting/raw && ls" })],
+        "/repos/app",
+      ),
+    ).toEqual(["/repos/meeting/raw"]);
   });
 
   it("ignores a cd that does not govern the next command", () => {
@@ -118,12 +127,20 @@ describe("threadFilePaths", () => {
     ).toContain("/notes/meeting 42/raw/recording.mp3");
   });
 
+  it("reads quoted relative operands with spaces against the folder", () => {
+    expect(
+      threadFilePaths([
+        item({ type: "command_execution", input: 'cd /other && cat "docs/my guide.md"' }),
+      ]),
+    ).toEqual(["/other", "/other/docs/my guide.md"]);
+  });
+
   it("ignores relative operands without a known folder", () => {
     expect(
       threadFilePaths([
         item({ type: "command_execution", input: "ls raw && cd - && cat notes.md" }),
         item({ type: "command_execution", input: "cd $HOME/notes && cat a.md" }),
-        item({ type: "command_execution", input: 'cd /tmp; grep -n "x y" -- "*.md" $FILE' }),
+        item({ type: "command_execution", input: 'cd /tmp; grep -n "x.*y" -- "*.md" $FILE' }),
       ]),
     ).toEqual(["/tmp"]);
   });
@@ -191,6 +208,18 @@ describe("matchThreadFilePath", () => {
     expect(matchThreadFilePath("raw/remote.mp3", "/repo/raw/remote.mp3", "/repo", listed)).toBe(
       "/records/meeting-42/raw/remote.mp3",
     );
+  });
+
+  it("places a reference inside a folder a relative cd moved into", () => {
+    const moved = buildThreadFilePathIndex(
+      threadFilePaths(
+        [item({ type: "command_execution", input: "cd ../meeting/raw && ls" })],
+        "/repos/app",
+      ),
+    );
+    expect(
+      matchThreadFilePath("raw/remote.mp3", "/repos/app/raw/remote.mp3", "/repos/app", moved),
+    ).toBe("/repos/meeting/raw/remote.mp3");
   });
 
   it("does not place a reference inside a folder within the workspace", () => {

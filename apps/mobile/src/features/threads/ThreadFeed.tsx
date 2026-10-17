@@ -1815,14 +1815,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ).join("\n"),
     [props.workspaceRoot, visibleTurnItems],
   );
-  // Verified hrefs live with the index they were checked against, so a chip's
-  // menu names the file its actions will use.
-  const { threadFilePathIndex, boundFileHrefs } = useMemo(
+  // Verified hrefs live with the index they were checked against. A chip's menu
+  // remembers the href it showed, so its actions use the file it named.
+  const { threadFilePathIndex, boundFileHrefs, menuFileHrefs } = useMemo(
     () => ({
       threadFilePathIndex: buildThreadFilePathIndex(
         threadFilePathsKey === "" ? [] : threadFilePathsKey.split("\n"),
       ),
       boundFileHrefs: new Map<string, string>(),
+      menuFileHrefs: new Map<string, string>(),
     }),
     [threadFilePathsKey],
   );
@@ -1830,6 +1831,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportFailure: false,
   });
   const fileBindRequest = useRef(0);
+  // A check that settles after the feed left its thread must not navigate.
+  const fileBindThread = useRef<string | null>(null);
+  useEffect(() => {
+    fileBindThread.current = `${props.environmentId}/${props.threadId}`;
+    return () => {
+      fileBindThread.current = null;
+    };
+  }, [props.environmentId, props.threadId]);
   // The joined path stands unless it is missing and the named file exists.
   const bindThreadFileHref = useCallback(
     async (href: string) => {
@@ -1875,11 +1884,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const withBoundFileHref = useCallback(
     (href: string, use: (bound: string) => void) => {
       const request = ++fileBindRequest.current;
+      const thread = `${props.environmentId}/${props.threadId}`;
       void bindThreadFileHref(href).then((bound) => {
-        if (request === fileBindRequest.current) use(bound);
+        if (request === fileBindRequest.current && thread === fileBindThread.current) use(bound);
       });
     },
-    [bindThreadFileHref],
+    [bindThreadFileHref, props.environmentId, props.threadId],
   );
   const onMarkdownLinkPress = useCallback(
     (href: string, imageEmbed = false) => {
@@ -1963,33 +1973,36 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       fileContextMenu: (href) => {
         const known = boundFileHrefs.get(href);
         if (known === undefined) void bindThreadFileHref(href);
-        const target = resolveFileChipTarget(known ?? href, props.workspaceRoot);
+        const shown = known ?? href;
+        menuFileHrefs.set(href, shown);
+        const target = resolveFileChipTarget(shown, props.workspaceRoot);
         return target ? fileChipMenu(target) : undefined;
       },
       onFileContextMenuAction: (href, actionId) => {
-        withBoundFileHref(href, (bound) => {
-          const target = resolveFileChipTarget(bound, props.workspaceRoot);
-          if (!target) return;
-          switch (actionId as FileChipAction) {
-            case "copy-full-path":
-              if (target.fullPath) copyTextWithHaptic(target.fullPath);
-              return;
-            case "copy-relative-path":
-              if (target.relativePath) copyTextWithHaptic(target.relativePath);
-              return;
-            case "open-file":
-              onMarkdownLinkPress(bound);
-              return;
-            case "save":
-              shareFileChip(target);
-              return;
-          }
-        });
+        fileBindRequest.current += 1;
+        const shown = menuFileHrefs.get(href) ?? href;
+        const target = resolveFileChipTarget(shown, props.workspaceRoot);
+        if (!target) return;
+        switch (actionId as FileChipAction) {
+          case "copy-full-path":
+            if (target.fullPath) copyTextWithHaptic(target.fullPath);
+            return;
+          case "copy-relative-path":
+            if (target.relativePath) copyTextWithHaptic(target.relativePath);
+            return;
+          case "open-file":
+            onMarkdownLinkPress(shown);
+            return;
+          case "save":
+            shareFileChip(target);
+            return;
+        }
       },
     }),
     [
       bindThreadFileHref,
       boundFileHrefs,
+      menuFileHrefs,
       onMarkdownLinkPress,
       props.workspaceRoot,
       shareFileChip,
