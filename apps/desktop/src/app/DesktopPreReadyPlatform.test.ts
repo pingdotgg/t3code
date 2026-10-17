@@ -11,6 +11,7 @@ const {
   hasSwitchMock,
   registerSchemesMock,
   setDesktopNameMock,
+  setNameMock,
   mkdirSyncMock,
   writeFileSyncMock,
   copyFileSyncMock,
@@ -21,6 +22,7 @@ const {
   hasSwitchMock: vi.fn(),
   registerSchemesMock: vi.fn(),
   setDesktopNameMock: vi.fn(),
+  setNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   copyFileSyncMock: vi.fn(),
@@ -30,6 +32,7 @@ const {
 vi.mock("electron", () => ({
   app: {
     setDesktopName: setDesktopNameMock,
+    setName: setNameMock,
     getVersion: () => "0.0.37",
     isPackaged: true,
     getAppPath: () => "/tmp/.mount_T3/resources/app.asar",
@@ -64,6 +67,7 @@ describe("DesktopPreReadyPlatform", () => {
     hasSwitchMock.mockReset();
     registerSchemesMock.mockReset();
     setDesktopNameMock.mockReset();
+    setNameMock.mockReset();
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
     copyFileSyncMock.mockReset();
@@ -184,6 +188,27 @@ describe("DesktopPreReadyPlatform", () => {
         assert.isTrue(identity.iconInstalled);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+  });
+
+  it.effect.each<{ readonly platform: NodeJS.Platform; readonly names: Array<string> }>([
+    { platform: "linux", names: ["T3 Code (Alpha)"] },
+    { platform: "darwin", names: ["T3 Code (Alpha)"] },
+    { platform: "win32", names: [] },
+  ])("names $platform safe storage before startup yields", ({ platform, names }) => {
+    getSwitchValueMock.mockReturnValue("");
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const namesBeforeYield = Promise.resolve().then(() =>
+          setNameMock.mock.calls.map(([name]) => name),
+        );
+        yield* Layer.build(
+          DesktopPreReadyPlatform.layer.pipe(
+            Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+          ),
+        );
+        assert.deepEqual(yield* Effect.promise(() => namesBeforeYield), names);
+      }),
+    );
   });
 
   it.effect("keeps startup available when the early desktop entry cannot be written", () => {

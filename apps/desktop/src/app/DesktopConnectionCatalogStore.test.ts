@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -17,6 +19,7 @@ import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopSafeStorageIdentity from "./DesktopSafeStorageIdentity.ts";
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
@@ -50,11 +53,26 @@ function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> |
   } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
 }
 
+const layerPreviousSafeStorageIdentity = (previousKeyLookup: Effect.Effect<void>) =>
+  Layer.succeed(DesktopSafeStorageIdentity.DesktopSafeStorageIdentity, {
+    decryptWithPreviousName: (value) => {
+      const decoded = textDecoder.decode(value);
+      return previousKeyLookup.pipe(
+        Effect.as(
+          decoded.startsWith("previous:")
+            ? Option.some(decoded.slice("previous:".length))
+            : Option.none(),
+        ),
+      );
+    },
+  } satisfies DesktopSafeStorageIdentity.DesktopSafeStorageIdentity["Service"]);
+
 function layerFor(
   baseDir: string,
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  previousKeyLookup: Effect.Effect<void> = Effect.void,
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -75,6 +93,7 @@ function layerFor(
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
+    layerPreviousSafeStorageIdentity(previousKeyLookup),
     NodeServices.layer,
     fileSystemLayer,
   );
@@ -439,5 +458,84 @@ describe("DesktopConnectionCatalogStore", () => {
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  const writeEncryptedCatalog = (encryptedCatalog: string) =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+      const contents = `${JSON.stringify({
+        version: 1,
+        encryptedCatalog: Base64.encode(textEncoder.encode(encryptedCatalog)),
+      })}\n`;
+      yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+      yield* fileSystem.writeFileString(catalogPath, contents);
+      return { catalogPath, contents };
+    });
+
+  it.effect("re-encrypts a catalog written under the previous app name", () =>
+    withStore(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const { catalogPath } = yield* writeEncryptedCatalog(`previous:${catalog}`);
+
+        assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+
+        const document = JSON.parse(yield* fileSystem.readFileString(catalogPath));
+        const encrypted = yield* Effect.fromResult(Base64.decode(document.encryptedCatalog));
+        assert.equal(textDecoder.decode(encrypted), `encrypted:${catalog}`);
+      }),
+    ),
+  );
+
+  it.effect("keeps a catalog saved while the previous key was being read", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const lookupStarted = yield* Deferred.make<void>();
+      const lookupReleased = yield* Deferred.make<void>();
+      const previousKeyLookup = Deferred.succeed(lookupStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(lookupReleased)),
+      );
+      const previous = '{"schemaVersion":1,"targets":[]}';
+      const newer = '{"schemaVersion":1,"targets":[{"newer":true}]}';
+
+      yield* Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        yield* writeEncryptedCatalog(`previous:${previous}`);
+
+        const recovery = yield* store.get.pipe(Effect.forkChild);
+        yield* Deferred.await(lookupStarted);
+        assert.isTrue(yield* store.set(newer));
+        yield* Deferred.succeed(lookupReleased, undefined);
+
+        assert.deepStrictEqual(yield* Fiber.join(recovery), Option.some(previous));
+        assert.deepStrictEqual(yield* store.get, Option.some(newer));
+      }).pipe(Effect.provide(layerFor(baseDir, true, null, NodeServices.layer, previousKeyLookup)));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("keeps the catalog when the previous name yields no catalog", () =>
+    withStore(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const { catalogPath, contents } = yield* writeEncryptedCatalog("previous:\u0007garbage");
+
+        const error = yield* store.get.pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
+        );
+        assert.equal(error.operation, "decrypt-catalog");
+        assert.equal(yield* fileSystem.readFileString(catalogPath), contents);
+      }),
+    ),
   );
 });
