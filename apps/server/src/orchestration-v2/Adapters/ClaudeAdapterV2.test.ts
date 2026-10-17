@@ -11663,6 +11663,95 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("marks a workflow coordinator's script prompt and leaves a subagent brief plain", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        const script =
+          'export const meta = { name: "probe-wf", description: "Run the alpha workflow" };';
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-workflow-script-prompt"),
+            text: "Run the workflow and an auditor.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(workflowToolUse);
+        yield* harness.offerAndWait(claudeSdkFrame({ ...workflowTaskStarted, prompt: script }));
+        yield* harness.offerAndWait(workflowLaunchAck(harness.transcriptDir));
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001289", state: "start" }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "task-plain-auditor",
+            description: "Audit recent commits",
+            task_type: "local_agent",
+            prompt: "Audit the last five commits.",
+            uuid: "00000000-0000-4000-8000-000000001290",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* awaitUntil(
+          () =>
+            workflowCoordinatorEvents(harness.events).length > 0 &&
+            harness.events.some(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.subagent.nativeTaskRef?.nativeId === "task-plain-auditor",
+            ),
+          "workflow coordinator and auditor projected",
+        );
+        const subagentPrompt = (nativeTaskId: string) => {
+          const subagent = harness.events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === nativeTaskId
+              ? [event.subagent]
+              : [],
+          )[0];
+          assert.isDefined(subagent);
+          const message = threadMessages(harness.events, subagent?.childThreadId).find(
+            (event) => event.message.role === "user",
+          )?.message;
+          const turnItem = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "user_message" &&
+              event.turnItem.messageId === message?.id,
+          );
+          return {
+            text: message?.text,
+            messageMark: message?.workflowScript,
+            itemMark:
+              turnItem?.type === "turn_item.updated" && turnItem.turnItem.type === "user_message"
+                ? turnItem.turnItem.workflowScript
+                : undefined,
+          };
+        };
+        assert.deepEqual(subagentPrompt(WORKFLOW_TASK_ID), {
+          text: script,
+          messageMark: true,
+          itemMark: true,
+        });
+        // A brief is marked as not a script, so its text is never read as one.
+        assert.deepEqual(subagentPrompt("task-plain-auditor"), {
+          text: "Audit the last five commits.",
+          messageMark: false,
+          itemMark: false,
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("scopes workflow member artifacts to the provider thread", () =>
     Effect.scoped(
       Effect.gen(function* () {
