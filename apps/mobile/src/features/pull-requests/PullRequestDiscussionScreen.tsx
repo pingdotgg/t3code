@@ -1,4 +1,5 @@
 import { Toolbar } from "../../components/ui/Toolbar";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -130,6 +131,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
         {Platform.OS === "android" ? (
           <AndroidScreenHeader
             title="Discussion"
+            hideBottomBorder
             subtitle={`#${params.number}`}
             onBack={() => navigation.goBack()}
             actions={
@@ -155,95 +157,97 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             />
           </Toolbar>
         ) : null}
-        <ScrollViewMarker style={{ flex: 1 }}>
-          <ScrollView
-            className="flex-1"
-            contentInsetAdjustmentBehavior="automatic"
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{
-              padding: 20,
-              paddingBottom: canReply ? composerHeight + bottomInset + 24 : 24,
-            }}
-          >
-            {activity.isPending && !thread ? <AppActivityIndicator /> : null}
-            {thread ? (
-              <View className="gap-2 pb-4">
-                <Text selectable className="font-mono text-xs text-foreground-muted">
-                  {thread.path}
-                  {thread.line ? `:${thread.line}` : ""}
-                </Text>
-                <Text className="text-xs text-foreground-muted">
-                  {thread.isResolved ? "Resolved" : "Unresolved"}
-                  {thread.isOutdated ? " · Outdated" : ""}
-                </Text>
-                <Button
-                  label="View file diff"
-                  onPress={() =>
-                    navigation.navigate("PullRequestFile", { ...params, path: thread.path })
-                  }
-                />
-              </View>
-            ) : !activity.isPending ? (
-              <Text>This discussion is no longer available.</Text>
-            ) : null}
-            {comments.map((comment) => (
-              <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">
-                <View className="flex-row items-center gap-2">
-                  <PullRequestAvatar actor={comment.author} size={28} />
-                  <Text className="min-w-0 flex-1 text-sm font-t3-medium">
-                    {comment.author?.login ?? "Unknown author"}
-                  </Text>
-                  <Text className="text-2xs text-foreground-muted">
-                    {relativeTime(comment.createdAt)}
-                  </Text>
-                </View>
-                <PullRequestMarkdown markdown={comment.body} />
-              </View>
-            ))}
-            {nextCursor ? (
-              <Button
-                label={busy ? "Loading…" : "Load more replies"}
-                disabled={busy}
-                onPress={() => void more()}
-              />
-            ) : null}
-            {error || activity.error ? (
-              <Text selectable className="py-4 text-sm text-danger-foreground">
-                {error ?? activity.error}
-              </Text>
-            ) : null}
-            {notice ? <Text className="py-4 text-sm text-foreground-muted">{notice}</Text> : null}
-          </ScrollView>
-        </ScrollViewMarker>
-        {canReply ? (
-          <View className="absolute inset-x-4 bottom-0" style={{ paddingBottom: bottomInset }}>
-            <GlassSurface
-              chrome="none"
-              onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
-              className="flex-row items-end gap-1 p-1"
+        <ScreenContent>
+          <ScrollViewMarker style={{ flex: 1 }}>
+            <ScrollView
+              className="flex-1"
+              contentInsetAdjustmentBehavior="automatic"
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={{
+                padding: 20,
+                paddingBottom: canReply ? composerHeight + bottomInset + 24 : 24,
+              }}
             >
-              <TextInput
-                accessibilityLabel="Discussion reply"
-                multiline
-                maxLength={65536}
-                placeholder="Reply…"
-                placeholderTextColorClassName="accent-foreground-muted"
-                value={body}
-                onChangeText={setBody}
-                editable={!busy}
-                className="max-h-36 min-h-12 min-w-0 flex-1 rounded-[24px] border-0 bg-transparent px-4 py-3 text-base text-foreground"
-              />
-              <View>
+              {activity.isPending && !thread ? <AppActivityIndicator /> : null}
+              {thread ? (
+                <View className="gap-2 pb-4">
+                  <Text selectable className="font-mono text-xs text-foreground-muted">
+                    {thread.path}
+                    {thread.line ? `:${thread.line}` : ""}
+                  </Text>
+                  <Text className="text-xs text-foreground-muted">
+                    {thread.isResolved ? "Resolved" : "Unresolved"}
+                    {thread.isOutdated ? " · Outdated" : ""}
+                  </Text>
+                  <Button
+                    label="View file diff"
+                    onPress={() =>
+                      navigation.navigate("PullRequestFile", { ...params, path: thread.path })
+                    }
+                  />
+                </View>
+              ) : !activity.isPending ? (
+                <Text>This discussion is no longer available.</Text>
+              ) : null}
+              {comments.map((comment) => (
+                <View key={comment.id} className="gap-3 border-b border-border-subtle py-4">
+                  <View className="flex-row items-center gap-2">
+                    <PullRequestAvatar actor={comment.author} size={28} />
+                    <Text className="min-w-0 flex-1 text-sm font-t3-medium">
+                      {comment.author?.login ?? "Unknown author"}
+                    </Text>
+                    <Text className="text-2xs text-foreground-muted">
+                      {relativeTime(comment.createdAt)}
+                    </Text>
+                  </View>
+                  <PullRequestMarkdown markdown={comment.body} />
+                </View>
+              ))}
+              {nextCursor ? (
                 <Button
-                  label={busy ? "Posting…" : "Reply"}
-                  tone="contrast"
-                  disabled={busy || !body.trim()}
-                  onPress={() => void post()}
+                  label={busy ? "Loading…" : "Load more replies"}
+                  disabled={busy}
+                  onPress={() => void more()}
                 />
-              </View>
-            </GlassSurface>
-          </View>
-        ) : null}
+              ) : null}
+              {error || activity.error ? (
+                <Text selectable className="py-4 text-sm text-danger-foreground">
+                  {error ?? activity.error}
+                </Text>
+              ) : null}
+              {notice ? <Text className="py-4 text-sm text-foreground-muted">{notice}</Text> : null}
+            </ScrollView>
+          </ScrollViewMarker>
+          {canReply ? (
+            <View className="absolute inset-x-4 bottom-0" style={{ paddingBottom: bottomInset }}>
+              <GlassSurface
+                chrome="none"
+                onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
+                className="flex-row items-end gap-1 p-1"
+              >
+                <TextInput
+                  accessibilityLabel="Discussion reply"
+                  multiline
+                  maxLength={65536}
+                  placeholder="Reply…"
+                  placeholderTextColorClassName="accent-foreground-muted"
+                  value={body}
+                  onChangeText={setBody}
+                  editable={!busy}
+                  className="max-h-36 min-h-12 min-w-0 flex-1 rounded-[24px] border-0 bg-transparent px-4 py-3 text-base text-foreground"
+                />
+                <View>
+                  <Button
+                    label={busy ? "Posting…" : "Reply"}
+                    tone="contrast"
+                    disabled={busy || !body.trim()}
+                    onPress={() => void post()}
+                  />
+                </View>
+              </GlassSurface>
+            </View>
+          ) : null}
+        </ScreenContent>
       </KeyboardAvoidingView>
     </PullRequestMarkdownRepository>
   );

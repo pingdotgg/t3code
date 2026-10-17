@@ -1,3 +1,5 @@
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -154,157 +156,175 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   return (
     <View className="flex-1 bg-sheet">
       <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1">
-        <View
-          className="flex-1 px-5"
-          style={{
-            paddingTop: isAndroid ? insets.top + 8 : 8,
-            paddingBottom: target ? (isAndroid ? 72 : 0) : Math.max(insets.bottom, 18),
-          }}
-        >
-          <View className="flex-row items-center justify-between py-2">
-            <Pressable
-              className="bg-subtle h-12 w-12 items-center justify-center rounded-full"
-              onPress={dismissComposer}
-            >
-              <SymbolView
-                name="xmark"
-                size={18}
-                tintColorClassName={"accent-icon"}
-                type="monochrome"
-              />
-            </Pressable>
-
-            <Text className="text-lg font-t3-bold text-foreground">Add Comment</Text>
-
-            <View className="h-12 w-12" />
-          </View>
-
-          {!target ? (
-            <View className="rounded-[22px] border border-border bg-card px-4 py-5">
-              <Text className="text-base font-t3-bold text-foreground">No selection</Text>
-              <Text className="mt-1 text-sm leading-normal text-foreground-muted">
-                Select a diff line or range first.
-              </Text>
-            </View>
-          ) : (
-            <View className="min-h-0 flex-1 gap-4">
-              <View className="gap-1 px-1">
-                <Text className="text-2xs font-t3-bold uppercase text-foreground-muted">
-                  {selectionLabel}
-                </Text>
-                <Text
-                  className="font-mono text-xs leading-snug text-foreground-muted"
-                  ellipsizeMode="middle"
-                  numberOfLines={2}
+        {isAndroid ? (
+          <AndroidScreenHeader
+            title="Add Comment"
+            hideBottomBorder
+            actions={[
+              { accessibilityLabel: "Close comment", icon: "xmark", onPress: dismissComposer },
+            ]}
+          />
+        ) : null}
+        <ScreenContent>
+          <View
+            className="flex-1 px-5"
+            style={{
+              paddingTop: 8,
+              paddingBottom: target ? (isAndroid ? 72 : 0) : Math.max(insets.bottom, 18),
+            }}
+          >
+            {!isAndroid ? (
+              <View className="flex-row items-center justify-between py-2">
+                <Pressable
+                  className="bg-subtle h-12 w-12 items-center justify-center rounded-full"
+                  onPress={dismissComposer}
                 >
-                  {target.filePath}
+                  <SymbolView
+                    name="xmark"
+                    size={18}
+                    tintColorClassName={"accent-icon"}
+                    type="monochrome"
+                  />
+                </Pressable>
+
+                <Text className="text-lg font-t3-bold text-foreground">Add Comment</Text>
+
+                <View className="h-12 w-12" />
+              </View>
+            ) : null}
+            {!target ? (
+              <View className="rounded-[22px] border border-border bg-card px-4 py-5">
+                <Text className="text-base font-t3-bold text-foreground">No selection</Text>
+                <Text className="mt-1 text-sm leading-normal text-foreground-muted">
+                  Select a diff line or range first.
                 </Text>
               </View>
-
-              <View className="overflow-hidden rounded-[22px] border border-border bg-card">
-                <ScrollView
-                  horizontal
-                  bounces={false}
-                  keyboardShouldPersistTaps="always"
-                  showsHorizontalScrollIndicator={false}
-                >
-                  <ScrollView
-                    bounces={false}
-                    scrollEnabled={selectedLines.length > REVIEW_COMMENT_PREVIEW_MAX_LINES}
-                    nestedScrollEnabled
-                    keyboardShouldPersistTaps="always"
-                    showsVerticalScrollIndicator={
-                      selectedLines.length > REVIEW_COMMENT_PREVIEW_MAX_LINES
-                    }
-                    style={{ height: previewHeight }}
+            ) : (
+              <View className="min-h-0 flex-1 gap-4">
+                <View className="gap-1 px-1">
+                  <Text className="text-2xs font-t3-bold uppercase text-foreground-muted">
+                    {selectionLabel}
+                  </Text>
+                  <Text
+                    className="font-mono text-xs leading-snug text-foreground-muted"
+                    ellipsizeMode="middle"
+                    numberOfLines={2}
                   >
-                    <View style={{ minWidth: previewViewportWidth }}>
-                      {selectedLines.map((line) => {
-                        const lineNumber = getReviewUnifiedLineNumber(line);
+                    {target.filePath}
+                  </Text>
+                </View>
 
-                        return (
-                          <View
-                            key={line.id}
-                            className={cn("flex-row items-start", changeTone(line.change))}
-                            style={{ height: codeSurface.rowHeight }}
-                          >
-                            <ReviewChangeBar change={line.change} height={codeSurface.rowHeight} />
-                            <Text className="w-9 py-1 pr-1 text-right text-2xs font-mono text-foreground-muted">
-                              {lineNumber ?? ""}
-                            </Text>
-                            <View className="min-w-0 flex-1 shrink-0 px-1 py-1">
-                              <DiffTokenText
-                                fallback={line.content}
-                                tokens={highlightedLinesById[line.id] ?? null}
+                <View className="overflow-hidden rounded-[22px] border border-border bg-card">
+                  <ScrollView
+                    horizontal
+                    bounces={false}
+                    keyboardShouldPersistTaps="always"
+                    showsHorizontalScrollIndicator={false}
+                  >
+                    <ScrollView
+                      bounces={false}
+                      scrollEnabled={selectedLines.length > REVIEW_COMMENT_PREVIEW_MAX_LINES}
+                      nestedScrollEnabled
+                      keyboardShouldPersistTaps="always"
+                      showsVerticalScrollIndicator={
+                        selectedLines.length > REVIEW_COMMENT_PREVIEW_MAX_LINES
+                      }
+                      style={{ height: previewHeight }}
+                    >
+                      <View style={{ minWidth: previewViewportWidth }}>
+                        {selectedLines.map((line) => {
+                          const lineNumber = getReviewUnifiedLineNumber(line);
+
+                          return (
+                            <View
+                              key={line.id}
+                              className={cn("flex-row items-start", changeTone(line.change))}
+                              style={{ height: codeSurface.rowHeight }}
+                            >
+                              <ReviewChangeBar
                                 change={line.change}
-                                fontSize={codeSurface.fontSize}
-                                lineHeight={codeSurface.rowHeight}
+                                height={codeSurface.rowHeight}
                               />
+                              <Text className="w-9 py-1 pr-1 text-right text-2xs font-mono text-foreground-muted">
+                                {lineNumber ?? ""}
+                              </Text>
+                              <View className="min-w-0 flex-1 shrink-0 px-1 py-1">
+                                <DiffTokenText
+                                  fallback={line.content}
+                                  tokens={highlightedLinesById[line.id] ?? null}
+                                  change={line.change}
+                                  fontSize={codeSurface.fontSize}
+                                  lineHeight={codeSurface.rowHeight}
+                                />
+                              </View>
                             </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </ScrollView>
-                </ScrollView>
-              </View>
-
-              <View className="min-h-0 flex-1 gap-2">
-                <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
-                <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
-                  <View className="min-h-0 flex-1 px-4 pt-3.5">
-                    <TextInputWrapper onPaste={handleNativePaste} style={{ flex: 1, minHeight: 0 }}>
-                      <TextInput
-                        autoFocus
-                        multiline
-                        scrollEnabled
-                        placeholder="Leave a comment..."
-                        textAlignVertical="top"
-                        value={commentText}
-                        onChangeText={setCommentText}
-                        className="h-full min-h-0 flex-1 border-0 bg-transparent px-0 py-0 font-sans text-base"
-                      />
-                    </TextInputWrapper>
-                  </View>
-                  {attachments.length > 0 ? (
-                    <View className="px-4 pb-3 pt-2">
-                      <ComposerAttachmentStrip
-                        attachments={attachments}
-                        imageBorderRadius={16}
-                        imageSize={60}
-                        onPressPreview={setPreviewFile}
-                        removeButtonPlacement="gutter"
-                        onRemove={(imageId) => {
-                          setAttachments((current) =>
-                            current.filter((image) => image.id !== imageId),
                           );
-                        }}
-                      />
+                        })}
+                      </View>
+                    </ScrollView>
+                  </ScrollView>
+                </View>
+
+                <View className="min-h-0 flex-1 gap-2">
+                  <Text className="text-sm font-t3-bold text-foreground">Comment</Text>
+                  <View className="min-h-[132px] flex-1 overflow-hidden rounded-[20px] border border-border bg-card">
+                    <View className="min-h-0 flex-1 px-4 pt-3.5">
+                      <TextInputWrapper
+                        onPaste={handleNativePaste}
+                        style={{ flex: 1, minHeight: 0 }}
+                      >
+                        <TextInput
+                          autoFocus
+                          multiline
+                          scrollEnabled
+                          placeholder="Leave a comment..."
+                          textAlignVertical="top"
+                          value={commentText}
+                          onChangeText={setCommentText}
+                          className="h-full min-h-0 flex-1 border-0 bg-transparent px-0 py-0 font-sans text-base"
+                        />
+                      </TextInputWrapper>
                     </View>
-                  ) : null}
+                    {attachments.length > 0 ? (
+                      <View className="px-4 pb-3 pt-2">
+                        <ComposerAttachmentStrip
+                          attachments={attachments}
+                          imageBorderRadius={16}
+                          imageSize={60}
+                          onPressPreview={setPreviewFile}
+                          removeButtonPlacement="gutter"
+                          onRemove={(imageId) => {
+                            setAttachments((current) =>
+                              current.filter((image) => image.id !== imageId),
+                            );
+                          }}
+                        />
+                      </View>
+                    ) : null}
+                  </View>
                 </View>
               </View>
-            </View>
-          )}
-        </View>
-        {!isAndroid && target ? (
-          <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
-            <ControlPill
-              accessibilityLabel="Add image"
-              icon="plus"
-              onPress={() => void handlePickImages()}
-            />
-            <View className="flex-1" />
-            <ControlPill
-              accessibilityLabel="Comment"
-              icon="arrow.up"
-              label="Comment"
-              variant="primary"
-              disabled={!canSubmit}
-              onPress={handleSubmit}
-            />
+            )}
           </View>
-        ) : null}
+          {!isAndroid && target ? (
+            <View className="flex-row items-center gap-3 bg-sheet px-5 py-2">
+              <ControlPill
+                accessibilityLabel="Add image"
+                icon="plus"
+                onPress={() => void handlePickImages()}
+              />
+              <View className="flex-1" />
+              <ControlPill
+                accessibilityLabel="Comment"
+                icon="arrow.up"
+                label="Comment"
+                variant="primary"
+                disabled={!canSubmit}
+                onPress={handleSubmit}
+              />
+            </View>
+          ) : null}
+        </ScreenContent>
       </KeyboardAvoidingView>
       {isAndroid && target ? (
         <KeyboardStickyView

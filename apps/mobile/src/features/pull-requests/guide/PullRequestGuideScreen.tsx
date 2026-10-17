@@ -1,4 +1,5 @@
 import { Toolbar } from "../../../components/ui/Toolbar";
+import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -140,6 +141,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
       />
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
+          hideBottomBorder
           title={`Stop ${route.params.position + 1}`}
           onBack={() => navigation.goBack()}
           trailing={
@@ -172,163 +174,165 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           </Toolbar.MenuAction>
         </Toolbar.Menu>
       </Toolbar>
-      <PullRequestMarkdownRepository
-        params={route.params}
-        value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}
-      >
-        <ScreenScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 20 }}
+      <ScreenContent>
+        <PullRequestMarkdownRepository
+          params={route.params}
+          value={`https://${route.params.host ?? "github.com"}/${route.params.repository}`}
         >
-          <View className="w-full max-w-[760px] self-center gap-5">
-            {!state.enabled ? (
-              <Text>Review guides are disabled for this server.</Text>
-            ) : changedGuide ? (
-              <Text>This guide was rewritten. Go back to start the new tour.</Text>
-            ) : !stop ? (
-              <Text>{state.error ?? "Loading stop…"}</Text>
-            ) : (
-              <>
-                <GuideNotice state={state} />
-                <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
-                <PullRequestMarkdown markdown={stop.summary} />
-                {stop.attention ? (
-                  <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
-                    <View className="flex-row items-center gap-2">
-                      <SymbolView name="eye" size={17} tintColorClassName="accent-icon-muted" />
-                      <Text className="text-sm font-t3-semibold">
-                        {attentionLabels[stop.attention.kind]}
-                      </Text>
-                    </View>
-                    <PullRequestMarkdown markdown={stop.attention.note} />
-                  </View>
-                ) : null}
-                {stale ? (
-                  <Text className="text-sm text-foreground-muted">
-                    Excerpts are hidden until the guide is rewritten for the current head.
-                  </Text>
-                ) : (
-                  stop.excerpts.map((excerpt) => (
-                    <ReviewGuideExcerpt
-                      key={`${guide?.headSha}:${JSON.stringify(excerpt)}`}
-                      onOpen={() =>
-                        navigation.dispatch(
-                          StackActions.push("PullRequestFile", {
-                            ...route.params,
-                            path: excerpt.path,
-                            focus: { side: excerpt.side, start: excerpt.start, end: excerpt.end },
-                            fileSelectionId: `guide:${position}:${excerpt.path}:${excerpt.start}`,
-                          }),
-                        )
-                      }
-                      excerpt={excerpt}
-                      file={excerptFiles.get(excerpt.path)}
-                      loading={diff.isPending || (missing && diff.nextCursor !== null)}
-                    />
-                  ))
-                )}
-                {diff.error ? <Text className="text-danger-foreground">{diff.error}</Text> : null}
-                {notes.length ? (
-                  <View className="gap-4">
-                    <Text className="font-t3-semibold">Notes on this stop</Text>
-                    {notes.map(({ marker, note }) => (
-                      <View key={marker} className="flex-row gap-3">
-                        <View className="h-7 w-7 items-center justify-center rounded-lg bg-grouped-card">
-                          <Text className="text-xs font-t3-semibold">{marker}</Text>
-                        </View>
-                        <View className="min-w-0 flex-1 gap-2">
-                          <Text className="font-t3-semibold">{note.title}</Text>
-                          <Text className="text-xs text-foreground-muted">
-                            {note.path.split("/").at(-1)}:{note.line}
-                          </Text>
-                          <PullRequestMarkdown markdown={note.body} />
-                        </View>
+          <ScreenScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 24, gap: 20 }}
+          >
+            <View className="w-full max-w-[760px] self-center gap-5">
+              {!state.enabled ? (
+                <Text>Review guides are disabled for this server.</Text>
+              ) : changedGuide ? (
+                <Text>This guide was rewritten. Go back to start the new tour.</Text>
+              ) : !stop ? (
+                <Text>{state.error ?? "Loading stop…"}</Text>
+              ) : (
+                <>
+                  <GuideNotice state={state} />
+                  <Text className="text-2xl leading-8 font-t3-semibold">{stop.title}</Text>
+                  <PullRequestMarkdown markdown={stop.summary} />
+                  {stop.attention ? (
+                    <View className="gap-3 rounded-xl border border-border bg-grouped-card p-4">
+                      <View className="flex-row items-center gap-2">
+                        <SymbolView name="eye" size={17} tintColorClassName="accent-icon-muted" />
+                        <Text className="text-sm font-t3-semibold">
+                          {attentionLabels[stop.attention.kind]}
+                        </Text>
                       </View>
-                    ))}
-                  </View>
-                ) : null}
-                {stop.files.length ? (
-                  <PullRequestCardGroup>
-                    {stop.files.map((file, index) => (
-                      <PullRequestCardRow
-                        key={file.path}
-                        title={file.path}
-                        detail={file.note}
-                        icon="doc"
-                        last={index === stop.files.length - 1}
-                        onPress={() =>
-                          navigation.navigate("PullRequestFile", {
-                            ...route.params,
-                            path: file.path,
-                          })
-                        }
-                      />
-                    ))}
-                  </PullRequestCardGroup>
-                ) : null}
-                {stop.questions.length ? (
-                  <View className="gap-3">
-                    <Text className="font-t3-semibold">Questions to consider</Text>
-                    {stop.questions.map((question) => (
-                      <PullRequestMarkdown key={question} markdown={question} />
-                    ))}
-                  </View>
-                ) : null}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    guide && position < guide.stops.length - 1
-                      ? "Next stop"
-                      : canReview
-                        ? "Finish review"
-                        : "Finish tour"
-                  }
-                  className="mt-2 flex-row items-center gap-4 border-t border-border-subtle pt-5 pb-2 active:opacity-60"
-                  onPress={() =>
-                    guide && position < guide.stops.length - 1
-                      ? navigation.dispatch(
-                          StackActions.push("PullRequestGuideStop", {
-                            ...route.params,
-                            position: stepTourPosition(position, 1, guide.stops.length),
-                          }),
-                        )
-                      : canReview
-                        ? navigation.navigate("PullRequestReview", {
-                            ...route.params,
-                            mode: "review",
-                          })
-                        : navigation.dispatch(StackActions.popTo("PullRequest", route.params))
-                  }
-                >
-                  <View className="min-w-0 flex-1 gap-1">
-                    <Text className="text-xs text-foreground-muted">
-                      {guide && position < guide.stops.length - 1
-                        ? `Next · ${position + 2} of ${guide.stops.length}`
-                        : "End of guide"}
+                      <PullRequestMarkdown markdown={stop.attention.note} />
+                    </View>
+                  ) : null}
+                  {stale ? (
+                    <Text className="text-sm text-foreground-muted">
+                      Excerpts are hidden until the guide is rewritten for the current head.
                     </Text>
-                    <Text className="text-base font-t3-semibold">
-                      {guide && position < guide.stops.length - 1
-                        ? guide.stops[position + 1]?.title
+                  ) : (
+                    stop.excerpts.map((excerpt) => (
+                      <ReviewGuideExcerpt
+                        key={`${guide?.headSha}:${JSON.stringify(excerpt)}`}
+                        onOpen={() =>
+                          navigation.dispatch(
+                            StackActions.push("PullRequestFile", {
+                              ...route.params,
+                              path: excerpt.path,
+                              focus: { side: excerpt.side, start: excerpt.start, end: excerpt.end },
+                              fileSelectionId: `guide:${position}:${excerpt.path}:${excerpt.start}`,
+                            }),
+                          )
+                        }
+                        excerpt={excerpt}
+                        file={excerptFiles.get(excerpt.path)}
+                        loading={diff.isPending || (missing && diff.nextCursor !== null)}
+                      />
+                    ))
+                  )}
+                  {diff.error ? <Text className="text-danger-foreground">{diff.error}</Text> : null}
+                  {notes.length ? (
+                    <View className="gap-4">
+                      <Text className="font-t3-semibold">Notes on this stop</Text>
+                      {notes.map(({ marker, note }) => (
+                        <View key={marker} className="flex-row gap-3">
+                          <View className="h-7 w-7 items-center justify-center rounded-lg bg-grouped-card">
+                            <Text className="text-xs font-t3-semibold">{marker}</Text>
+                          </View>
+                          <View className="min-w-0 flex-1 gap-2">
+                            <Text className="font-t3-semibold">{note.title}</Text>
+                            <Text className="text-xs text-foreground-muted">
+                              {note.path.split("/").at(-1)}:{note.line}
+                            </Text>
+                            <PullRequestMarkdown markdown={note.body} />
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                  {stop.files.length ? (
+                    <PullRequestCardGroup>
+                      {stop.files.map((file, index) => (
+                        <PullRequestCardRow
+                          key={file.path}
+                          title={file.path}
+                          detail={file.note}
+                          icon="doc"
+                          last={index === stop.files.length - 1}
+                          onPress={() =>
+                            navigation.navigate("PullRequestFile", {
+                              ...route.params,
+                              path: file.path,
+                            })
+                          }
+                        />
+                      ))}
+                    </PullRequestCardGroup>
+                  ) : null}
+                  {stop.questions.length ? (
+                    <View className="gap-3">
+                      <Text className="font-t3-semibold">Questions to consider</Text>
+                      {stop.questions.map((question) => (
+                        <PullRequestMarkdown key={question} markdown={question} />
+                      ))}
+                    </View>
+                  ) : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      guide && position < guide.stops.length - 1
+                        ? "Next stop"
                         : canReview
                           ? "Finish review"
-                          : "Finish tour"}
-                    </Text>
-                  </View>
-                  <View className="h-11 w-11 items-center justify-center rounded-full bg-foreground">
-                    <SymbolView
-                      name={
-                        guide && position < guide.stops.length - 1 ? "arrow.right" : "checkmark"
-                      }
-                      size={20}
-                      tintColorClassName="accent-screen"
-                    />
-                  </View>
-                </Pressable>
-              </>
-            )}
-          </View>
-        </ScreenScrollView>
-      </PullRequestMarkdownRepository>
+                          : "Finish tour"
+                    }
+                    className="mt-2 flex-row items-center gap-4 border-t border-border-subtle pt-5 pb-2 active:opacity-60"
+                    onPress={() =>
+                      guide && position < guide.stops.length - 1
+                        ? navigation.dispatch(
+                            StackActions.push("PullRequestGuideStop", {
+                              ...route.params,
+                              position: stepTourPosition(position, 1, guide.stops.length),
+                            }),
+                          )
+                        : canReview
+                          ? navigation.navigate("PullRequestReview", {
+                              ...route.params,
+                              mode: "review",
+                            })
+                          : navigation.dispatch(StackActions.popTo("PullRequest", route.params))
+                    }
+                  >
+                    <View className="min-w-0 flex-1 gap-1">
+                      <Text className="text-xs text-foreground-muted">
+                        {guide && position < guide.stops.length - 1
+                          ? `Next · ${position + 2} of ${guide.stops.length}`
+                          : "End of guide"}
+                      </Text>
+                      <Text className="text-base font-t3-semibold">
+                        {guide && position < guide.stops.length - 1
+                          ? guide.stops[position + 1]?.title
+                          : canReview
+                            ? "Finish review"
+                            : "Finish tour"}
+                      </Text>
+                    </View>
+                    <View className="h-11 w-11 items-center justify-center rounded-full bg-foreground">
+                      <SymbolView
+                        name={
+                          guide && position < guide.stops.length - 1 ? "arrow.right" : "checkmark"
+                        }
+                        size={20}
+                        tintColorClassName="accent-screen"
+                      />
+                    </View>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </ScreenScrollView>
+        </PullRequestMarkdownRepository>
+      </ScreenContent>
     </View>
   );
 }

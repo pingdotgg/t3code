@@ -7,7 +7,6 @@ import {
   StackActions,
   useIsFocused,
   useNavigation,
-  useRoute,
   type StaticScreenProps,
 } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -49,7 +48,6 @@ export function ConnectionsNewRouteScreen({
     pairingConnectionError,
   } = useRemoteConnections();
   const navigation = useNavigation();
-  const routeName = useRoute().name;
   const params = route.params ?? {};
   // Deep-link prefill exists for development automation only. A production
   // link must not arrive with attacker-chosen host and token already filled.
@@ -196,7 +194,6 @@ export function ConnectionsNewRouteScreen({
 
   return (
     <SettingsScreen
-      formSheet={routeName === "ConnectionsNew"}
       title="Add environment"
       actions={[
         {

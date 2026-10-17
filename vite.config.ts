@@ -248,6 +248,25 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        files: ["apps/mobile/src/features/settings/*RouteScreen.tsx"],
+        rules: {
+          "eslint/no-restricted-imports": [
+            "error",
+            {
+              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
+              patterns: [
+                {
+                  group: ["**/components/ui/AndroidScreenHeader", "**/components/ui/AppBar"],
+                  importNames: ["AndroidScreenHeader", "AndroidSheetHeader", "AppBar"],
+                  message:
+                    "Settings routes use SettingsScreen so every Android body inherits its rounded header boundary.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
         // React commits state set in a raw ResizeObserver callback after the paint, so derived
         // layout lands a frame late. observeResize flushes every observed resize in one render.
         files: ["apps/web/src/**"],

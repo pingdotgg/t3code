@@ -2,6 +2,7 @@ import { Host, ModalBottomSheet, RNHostView } from "@expo/ui/jetpack-compose";
 import { Pressable, View, useWindowDimensions } from "react-native";
 import { withUniwind } from "uniwind";
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppText as Text } from "../../components/ui/AppText";
 import type { WorktreeSetupSheetProps } from "./worktree-setup-sheet";
 
@@ -26,6 +27,7 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
             }}
           >
             <AndroidSheetHeader
+              hideBottomBorder
               title="Worktree setup"
               trailing={
                 <Pressable
@@ -38,7 +40,7 @@ export function WorktreeSetupSheet({ children, height, onClose }: WorktreeSetupS
                 </Pressable>
               }
             />
-            {children}
+            <ScreenContent>{children}</ScreenContent>
           </View>
         </RNHostView>
       </NativeBottomSheet>

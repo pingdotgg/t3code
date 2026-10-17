@@ -1,4 +1,5 @@
 import { Toolbar } from "../../components/ui/Toolbar";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
@@ -166,164 +167,174 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         }}
       />
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader title="Request review" onBack={() => navigation.goBack()} />
+        <AndroidScreenHeader
+          hideBottomBorder
+          title="Request review"
+          onBack={() => navigation.goBack()}
+        />
       ) : null}
-      {listCandidates ? (
-        <FlatList
-          ref={listRef}
-          data={candidates}
-          keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
-          renderScrollComponent={
-            Platform.OS === "ios" ? (props) => <ReviewerScrollView {...props} /> : undefined
-          }
-          contentInsetAdjustmentBehavior="never"
-          automaticallyAdjustKeyboardInsets
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ paddingBottom: 24 }}
-          ListHeaderComponent={
-            <View className="gap-3 px-4 py-4">
-              <Text className="text-xs text-foreground-muted">
-                Tap someone to request a review. Tap a requested reviewer to remove the request.
-              </Text>
-              {Platform.OS === "android" ? (
+      <ScreenContent>
+        {listCandidates ? (
+          <FlatList
+            ref={listRef}
+            data={candidates}
+            keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
+            renderScrollComponent={
+              Platform.OS === "ios" ? (props) => <ReviewerScrollView {...props} /> : undefined
+            }
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustKeyboardInsets
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: 24 }}
+            ListHeaderComponent={
+              <View className="gap-3 px-4 py-4">
+                <Text className="text-xs text-foreground-muted">
+                  Tap someone to request a review. Tap a requested reviewer to remove the request.
+                </Text>
+                {Platform.OS === "android" ? (
+                  <TextInput
+                    accessibilityLabel="Search reviewers"
+                    placeholder="Search reviewers"
+                    placeholderTextColorClassName="accent-foreground-muted"
+                    value={query}
+                    onChangeText={setQuery}
+                    autoCapitalize="none"
+                    className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
+                  />
+                ) : null}
+                {!allowed ? (
+                  <Text className="text-xs text-foreground-muted">
+                    Requesting reviews requires write access and an open pull request.
+                  </Text>
+                ) : null}
+                {error ? (
+                  <Text selectable className="text-sm text-danger-foreground">
+                    {error}
+                  </Text>
+                ) : null}
+              </View>
+            }
+            renderItem={({ item }) => {
+              const id = `${item.kind}:${item.id}`;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
+                  accessibilityState={{ disabled: !allowed || pending !== null }}
+                  disabled={!allowed || pending !== null}
+                  onPress={() => void update(item)}
+                  className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
+                >
+                  <PullRequestAvatar actor={item} size={32} />
+                  <View className="min-w-0 flex-1 gap-0.5">
+                    <Text className="text-sm font-t3-medium" numberOfLines={1}>
+                      {item.name || item.login}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                      {item.login}
+                      {item.kind === "team" ? " · Team" : ""}
+                    </Text>
+                  </View>
+                  {pending === id ? (
+                    <AppActivityIndicator />
+                  ) : item.isRequested ? (
+                    <View className="flex-row items-center gap-1.5">
+                      <Text className="text-xs text-foreground-muted">Requested</Text>
+                      <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />
+                    </View>
+                  ) : (
+                    <SymbolView name="plus" size={16} tintColorClassName="accent-icon-muted" />
+                  )}
+                </Pressable>
+              );
+            }}
+            ListEmptyComponent={
+              result.isPending && !result.data ? (
+                <AppActivityIndicator className="my-8" />
+              ) : (
+                <View className="px-4 py-6">
+                  <EmptyState
+                    title={
+                      result.error
+                        ? "Couldn't load reviewers"
+                        : query.trim()
+                          ? "No matching reviewers"
+                          : "No reviewers available"
+                    }
+                    detail={
+                      result.error ?? "Search people and teams with access to this repository."
+                    }
+                    variant="plain"
+                  />
+                  {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
+                </View>
+              )
+            }
+            ListFooterComponent={
+              result.data?.truncated ? (
+                <Text className="px-4 py-4 text-xs text-foreground-muted">
+                  The provider has more reviewers than it returned. Find additional reviewers on the
+                  provider.
+                </Text>
+              ) : undefined
+            }
+          />
+        ) : (
+          <ScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            automaticallyAdjustKeyboardInsets
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ padding: 16, gap: 16 }}
+          >
+            {!pr ? (
+              detail.isPending ? (
+                <AppActivityIndicator />
+              ) : (
+                <Text className="text-danger-foreground">
+                  {detail.error ?? "Couldn't load this pull request."}
+                </Text>
+              )
+            ) : (
+              <>
+                <Text className="text-sm text-foreground-muted">
+                  This provider accepts a reviewer ID but cannot list candidates.
+                </Text>
                 <TextInput
-                  accessibilityLabel="Search reviewers"
-                  placeholder="Search reviewers"
+                  accessibilityLabel="Reviewer ID"
+                  placeholder="Reviewer login or ID"
                   placeholderTextColorClassName="accent-foreground-muted"
                   value={query}
                   onChangeText={setQuery}
                   autoCapitalize="none"
-                  className="min-h-11 rounded-xl bg-grouped-card px-3 text-sm"
+                  autoCorrect={false}
+                  className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
                 />
-              ) : null}
-              {!allowed ? (
-                <Text className="text-xs text-foreground-muted">
-                  Requesting reviews requires write access and an open pull request.
-                </Text>
-              ) : null}
-              {error ? (
-                <Text selectable className="text-sm text-danger-foreground">
-                  {error}
-                </Text>
-              ) : null}
-            </View>
-          }
-          renderItem={({ item }) => {
-            const id = `${item.kind}:${item.id}`;
-            return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
-                accessibilityState={{ disabled: !allowed || pending !== null }}
-                disabled={!allowed || pending !== null}
-                onPress={() => void update(item)}
-                className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
-              >
-                <PullRequestAvatar actor={item} size={32} />
-                <View className="min-w-0 flex-1 gap-0.5">
-                  <Text className="text-sm font-t3-medium" numberOfLines={1}>
-                    {item.name || item.login}
-                  </Text>
-                  <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-                    {item.login}
-                    {item.kind === "team" ? " · Team" : ""}
-                  </Text>
-                </View>
-                {pending === id ? (
-                  <AppActivityIndicator />
-                ) : item.isRequested ? (
-                  <View className="flex-row items-center gap-1.5">
-                    <Text className="text-xs text-foreground-muted">Requested</Text>
-                    <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />
-                  </View>
-                ) : (
-                  <SymbolView name="plus" size={16} tintColorClassName="accent-icon-muted" />
-                )}
-              </Pressable>
-            );
-          }}
-          ListEmptyComponent={
-            result.isPending && !result.data ? (
-              <AppActivityIndicator className="my-8" />
-            ) : (
-              <View className="px-4 py-6">
-                <EmptyState
-                  title={
-                    result.error
-                      ? "Couldn't load reviewers"
-                      : query.trim()
-                        ? "No matching reviewers"
-                        : "No reviewers available"
+                <Button
+                  label="Request review"
+                  fullWidth
+                  disabled={!allowed || !query.trim() || pending !== null}
+                  onPress={() =>
+                    void update({ id: query.trim(), kind: "user", isRequested: false })
                   }
-                  detail={result.error ?? "Search people and teams with access to this repository."}
-                  variant="plain"
                 />
-                {result.error ? <Button label="Retry" onPress={result.refresh} /> : null}
-              </View>
-            )
-          }
-          ListFooterComponent={
-            result.data?.truncated ? (
-              <Text className="px-4 py-4 text-xs text-foreground-muted">
-                The provider has more reviewers than it returned. Find additional reviewers on the
-                provider.
-              </Text>
-            ) : undefined
-          }
-        />
-      ) : (
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          automaticallyAdjustKeyboardInsets
-          keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ padding: 16, gap: 16 }}
-        >
-          {!pr ? (
-            detail.isPending ? (
-              <AppActivityIndicator />
-            ) : (
-              <Text className="text-danger-foreground">
-                {detail.error ?? "Couldn't load this pull request."}
-              </Text>
-            )
-          ) : (
-            <>
-              <Text className="text-sm text-foreground-muted">
-                This provider accepts a reviewer ID but cannot list candidates.
-              </Text>
-              <TextInput
-                accessibilityLabel="Reviewer ID"
-                placeholder="Reviewer login or ID"
-                placeholderTextColorClassName="accent-foreground-muted"
-                value={query}
-                onChangeText={setQuery}
-                autoCapitalize="none"
-                autoCorrect={false}
-                className="min-h-12 rounded-xl bg-grouped-card px-3 text-base"
-              />
-              <Button
-                label="Request review"
-                fullWidth
-                disabled={!allowed || !query.trim() || pending !== null}
-                onPress={() => void update({ id: query.trim(), kind: "user", isRequested: false })}
-              />
-              <Button
-                label="Remove review request"
-                fullWidth
-                tone="text"
-                disabled={!allowed || !query.trim() || pending !== null}
-                onPress={() => void update({ id: query.trim(), kind: "user", isRequested: true })}
-              />
-              {error ? (
-                <Text selectable className="text-danger-foreground">
-                  {error}
-                </Text>
-              ) : null}
-            </>
-          )}
-        </ScrollView>
-      )}
+                <Button
+                  label="Remove review request"
+                  fullWidth
+                  tone="text"
+                  disabled={!allowed || !query.trim() || pending !== null}
+                  onPress={() => void update({ id: query.trim(), kind: "user", isRequested: true })}
+                />
+                {error ? (
+                  <Text selectable className="text-danger-foreground">
+                    {error}
+                  </Text>
+                ) : null}
+              </>
+            )}
+          </ScrollView>
+        )}
+      </ScreenContent>
     </View>
   );
 }

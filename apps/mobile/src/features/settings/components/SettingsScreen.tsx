@@ -11,7 +11,6 @@ export { SettingsScreenContent };
 export function SettingsScreen(
   props: Pick<AppBarProps, "title" | "actions" | "trailing"> & {
     readonly children: ReactNode;
-    readonly formSheet?: boolean;
   },
 ) {
   const navigation = useNavigation();
@@ -24,13 +23,9 @@ export function SettingsScreen(
         trailing={Platform.OS === "android" ? props.trailing : undefined}
         sidebar={false}
         onBack={() => navigation.goBack()}
-        hideBottomBorder={!props.formSheet}
+        hideBottomBorder
       />
-      {props.formSheet ? (
-        props.children
-      ) : (
-        <SettingsScreenContent>{props.children}</SettingsScreenContent>
-      )}
+      <SettingsScreenContent>{props.children}</SettingsScreenContent>
     </View>
   );
 }
