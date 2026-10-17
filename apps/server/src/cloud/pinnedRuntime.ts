@@ -22,6 +22,7 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+const PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT = Duration.minutes(1);
 const PINNED_RUNTIME_ARCHIVE_FILE = "t3-runtime-archive";
 // Boot-service setup and remote update can construct separate layers. Serialize
 // the complete install transaction across every caller in this process.
@@ -120,27 +121,37 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
   // The install lock is held for the whole transaction, so a stalled download
-  // must fail rather than block every other caller.
+  // must fail rather than block every other caller. A slow transfer that keeps
+  // delivering bytes is healthy, so the limit applies to each wait for the
+  // response or for the next chunk, not to the download as a whole.
+  const stalled = () => new PinnedRuntimeInstallError({ step: `${step} (timed out)` });
   return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.timeoutOrElse({
+      duration: PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT,
+      orElse: () => Effect.fail(stalled()),
+    }),
     Effect.flatMap(
       Effect.fn(function* (response) {
-        if (onProgress === undefined) return new Uint8Array(yield* response.arrayBuffer);
         const length = Number(response.headers["content-length"]);
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
         let received = 0;
-        onProgress({ stage: "download", received, total });
+        onProgress?.({ stage: "download", received, total });
         const chunks = yield* response.stream.pipe(
+          Stream.timeoutOrElse({
+            duration: PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT,
+            orElse: () => Stream.fail(stalled()),
+          }),
           Stream.tap((chunk) =>
             Effect.sync(() => {
               received += chunk.byteLength;
-              onProgress({ stage: "download", received, total });
+              onProgress?.({ stage: "download", received, total });
             }),
           ),
           Stream.runCollect,
         );
         if (total === undefined && received > 0) {
-          onProgress({ stage: "download", received, total: received });
+          onProgress?.({ stage: "download", received, total: received });
         }
         const bytes = new Uint8Array(received);
         let offset = 0;
@@ -151,11 +162,11 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         return bytes;
       }),
     ),
-    Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })),
-    Effect.timeoutOrElse({
-      duration: PINNED_RUNTIME_INSTALL_TIMEOUT,
-      orElse: () => Effect.fail(new PinnedRuntimeInstallError({ step: `${step} (timed out)` })),
-    }),
+    Effect.mapError((cause) =>
+      cause._tag === "PinnedRuntimeInstallError"
+        ? cause
+        : new PinnedRuntimeInstallError({ step, cause }),
+    ),
   );
 });
 

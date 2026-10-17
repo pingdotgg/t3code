@@ -1,10 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -213,6 +215,132 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.isTrue(cancelled);
       assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
     }),
+  );
+
+  it.effect("keeps a slow download going as long as bytes keep arriving", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-slow-" });
+      const checksums = yield* validChecksums;
+      const archiveRequested = yield* Deferred.make<void>();
+      let archiveController: ReadableStreamDefaultController<Uint8Array> | undefined;
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.endsWith("/SHA256SUMS")
+              ? new Response(checksums)
+              : new Response(
+                  new ReadableStream({
+                    start(controller) {
+                      archiveController = controller;
+                      Deferred.doneUnsafe(archiveRequested, Effect.void);
+                    },
+                  }),
+                ),
+          ),
+        ),
+      );
+      let received = 0;
+      let chunkReceived = yield* Deferred.make<void>();
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: client,
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+        onProgress: (event) => {
+          if (event.stage !== "download" || event.received === received) return;
+          received = event.received;
+          Deferred.doneUnsafe(chunkReceived, Effect.void);
+        },
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(archiveRequested);
+      assert.isDefined(archiveController);
+      // One byte every 40 seconds runs past 10 minutes without any gap near
+      // the 1 minute stall limit.
+      for (let offset = 0; offset < archiveBytes.length; offset += 1) {
+        chunkReceived = yield* Deferred.make<void>();
+        archiveController!.enqueue(archiveBytes.slice(offset, offset + 1));
+        yield* Deferred.await(chunkReceived);
+        yield* TestClock.adjust(Duration.seconds(40));
+      }
+      archiveController!.close();
+      const installed = yield* Fiber.join(install);
+      assert.equal(received, archiveBytes.length);
+      assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+    }),
+  );
+
+  it.effect(
+    "fails a download that stops delivering bytes instead of holding the install lock",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-stalled-" });
+        const checksums = yield* validChecksums;
+        let cancelled = false;
+        const client = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              request.url.endsWith("/SHA256SUMS")
+                ? new Response(checksums)
+                : new Response(
+                    new ReadableStream({
+                      start(controller) {
+                        controller.enqueue(archiveBytes.slice(0, 4));
+                      },
+                      cancel() {
+                        cancelled = true;
+                      },
+                    }),
+                  ),
+            ),
+          ),
+        );
+        const firstChunk = yield* Deferred.make<void>();
+        const install = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: client,
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.die("must not validate a stalled archive"),
+          onProgress: (event) => {
+            if (event.stage === "download" && event.received === 4)
+              Deferred.doneUnsafe(firstChunk, Effect.void);
+          },
+        }).pipe(Effect.forkScoped);
+        yield* Deferred.await(firstChunk);
+        yield* TestClock.adjust(Duration.minutes(1));
+        const error = yield* Fiber.join(install).pipe(Effect.flip);
+        assert.instanceOf(error, PinnedRuntimeInstallError);
+        assert.equal(error.step, "downloading the t3 release archive (timed out)");
+        assert.isTrue(cancelled);
+        assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
+        const installed = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(checksums),
+          runner: extractingRunner(fs, path),
+          validate: () => Effect.void,
+        });
+        assert.equal(yield* fs.readFileString(installed.sentinelPath), `${version}\n`);
+      }),
   );
 
   it.effect("refuses an archive whose checksum does not match the release", () =>
