@@ -4083,7 +4083,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     | { name: "TaskList"; input: Record<string, never>; output: TaskListOutput };
 
   function taskToolFrames(
-    tool: TaskToolCall,
+    tool:
+      | TaskToolCall
+      | { name: "ScheduleWakeup"; input: Record<string, unknown>; output: Record<string, unknown> },
     nextUuid: () => string,
     options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
   ): ReadonlyArray<SDKMessage> {
@@ -4738,6 +4740,209 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect.each([
+    "holds while pending",
+    "keeps an empty native roster",
+    "consumes a due wake",
+    "replaces during a wake",
+    "keeps an early native wake",
+    "keeps a notification wake",
+    "keeps a user turn",
+    "ignores a failed call",
+    "ignores a nested call",
+    "ignores a missing deadline",
+    "stops explicitly",
+    "stops through T3",
+    "keeps earlier success",
+    "stops before failure",
+    "keeps hold before attach",
+  ])("ScheduleWakeup %s", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let sequence = 900;
+        const nextUuid = () =>
+          `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}` as const;
+        let closes = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (queue) =>
+            Effect.sync(() => {
+              closes++;
+            }).pipe(Effect.andThen(Queue.shutdown(queue))),
+        });
+        const start = (ordinal: number, continuation = false) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: DateTime.makeUnsafe(0),
+              attemptId: RunAttemptId.make(`scheduled-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Check the timer.",
+              attachments: [],
+              ...(continuation
+                ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+                : {}),
+            }),
+          );
+        const deadline = DateTime.toEpochMillis(yield* DateTime.now) + 60_000;
+        const frames = taskToolFrames(
+          {
+            name: "ScheduleWakeup",
+            input: { delaySeconds: 60, reason: "timer probe", noop: true },
+            output:
+              scenario === "ignores a missing deadline"
+                ? {}
+                : { scheduledFor: deadline, clampedDelaySeconds: 60, wasClamped: false },
+          },
+          nextUuid,
+          {
+            isError: scenario === "ignores a failed call",
+            ...(scenario === "ignores a nested call" ? { parentToolUseId: "parent-agent" } : {}),
+          },
+        );
+        const interleaveFailure = (messages: ReadonlyArray<SDKMessage>) => {
+          const failed = taskToolFrames(
+            { name: "ScheduleWakeup", input: {}, output: {} },
+            nextUuid,
+            { isError: true },
+          );
+          return [messages[0]!, failed[0]!, ...messages.slice(1), ...failed.slice(1)];
+        };
+        const send = Effect.fnUntraced(function* (messages: ReadonlyArray<SDKMessage>) {
+          for (const message of messages) yield* harness.offerAndWait(message);
+        });
+        const finish = Effect.fnUntraced(function* () {
+          yield* harness.offerAndWait(makeResultFrame({ uuid: nextUuid(), result: "Done." }));
+          yield* Queue.take(harness.terminalReceipts);
+        });
+        const roster = () =>
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+            .pendingBackgroundTasks ?? [];
+        yield* start(1);
+        yield* send(scenario === "keeps earlier success" ? interleaveFailure(frames) : frames);
+        yield* finish();
+        if (scenario.startsWith("ignores")) {
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          return;
+        }
+        assert.deepEqual(roster(), [
+          {
+            taskId: "wakeup:tool-00000000-0000-4000-8000-000000000901",
+            kind: "background_task",
+            description: "timer probe",
+          },
+        ]);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        if (scenario === "holds while pending" || scenario === "keeps earlier success") return;
+        if (scenario === "keeps an empty native roster") {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({ ...wakeTurnInit, subtype: "background_tasks_changed", tasks: [] }),
+          );
+          assert.lengthOf(roster(), 1);
+          return;
+        }
+        if (scenario === "stops through T3") {
+          yield* harness.runtime.interruptTurn({
+            providerThread: providerThreadRosterEvents(harness.events).at(-1)!.providerThread,
+            providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+          assert.equal(closes, 1);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          return;
+        }
+        if (scenario === "stops explicitly" || scenario === "stops before failure") {
+          yield* start(2);
+          yield* harness.offerAndWait(wakeTaskStarted);
+          const stopping = taskToolFrames(
+            {
+              name: "ScheduleWakeup",
+              input: { stop: true },
+              output: { stopped: true, scheduledFor: 0, cancelledWakeups: 1 },
+            },
+            nextUuid,
+          );
+          yield* send(scenario === "stops before failure" ? interleaveFailure(stopping) : stopping);
+          yield* send(frames);
+          yield* finish();
+          assert.deepEqual(
+            roster().map((task) => task.taskId),
+            [WAKE_TASK_ID],
+          );
+          return;
+        }
+        yield* TestClock.adjust(
+          scenario === "keeps an early native wake" ? "30 seconds" : "60 seconds",
+        );
+        const beforeWake = harness.events.length;
+        if (scenario === "keeps a user turn") {
+          yield* start(2);
+        } else {
+          if (scenario === "keeps a notification wake") {
+            yield* harness.offerAndWait(wakeTaskStarted);
+            yield* harness.offerAndWait(wakeNotification);
+          }
+          yield* harness.offerAndWait(wakeTurnInit);
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.lengthOf(roster(), 1);
+          if (scenario === "keeps hold before attach") {
+            yield* harness.offerAndWait(wakeAssistant);
+            yield* harness.offerAndWait(makeResultFrame({ uuid: nextUuid(), result: "Done." }));
+          }
+          yield* start(2, true);
+          if (scenario === "keeps hold before attach") {
+            yield* Queue.take(harness.terminalReceipts);
+            const events = harness.events.slice(beforeWake);
+            const attached = events.findIndex((event) => event.type === "provider_turn.updated");
+            assert.isAtLeast(attached, 0);
+            assert.isTrue(
+              providerThreadRosterEvents(events.slice(0, attached)).every(
+                (event) => event.providerThread.pendingBackgroundTasks?.length === 1,
+              ),
+            );
+            assert.isEmpty(roster());
+            return;
+          }
+          assert.lengthOf(harness.terminalEvents(), 1);
+        }
+        yield* harness.offerAndWait({ ...wakeTurnInit, uuid: nextUuid() });
+        if (scenario === "replaces during a wake") {
+          yield* send(
+            taskToolFrames(
+              {
+                name: "ScheduleWakeup",
+                input: { reason: "replacement" },
+                output: { scheduledFor: deadline + 120_000 },
+              },
+              nextUuid,
+            ),
+          );
+          yield* send(frames);
+        }
+        yield* finish();
+        const consumed = scenario === "consumes a due wake";
+        assert.equal(yield* harness.hasPendingBackgroundWork, !consumed);
+        assert.lengthOf(roster(), consumed ? 0 : 1);
+        if (scenario === "replaces during a wake") {
+          assert.equal(roster()[0]?.description, "replacement");
+          yield* TestClock.adjust("60 seconds");
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* start(3, true);
+          yield* finish();
+          assert.isTrue(
+            yield* harness.hasPendingBackgroundWork,
+            "the replacement deadline is later",
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
   );
 
   it.effect("keeps a running Claude monitor typed after many newer monitors end", () =>

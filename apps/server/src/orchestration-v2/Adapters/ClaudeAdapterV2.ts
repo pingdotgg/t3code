@@ -2082,6 +2082,9 @@ function isClaudeTurnStartMessage(message: SDKMessage): boolean {
   return message.type === "system" && message.subtype === "init";
 }
 
+// Claude's timer fired on its scheduled minute in the native trace; allow a small clock skew.
+const CLAUDE_WAKEUP_CLOCK_SKEW_MS = 5_000;
+
 function claudePendingBackgroundTasksFromRoster(
   roster: ReadonlyMap<string, OrchestrationV2PendingBackgroundTask>,
 ): ReadonlyArray<OrchestrationV2PendingBackgroundTask> {
@@ -3465,6 +3468,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
         );
+        const wakeupCalls = new Map<string, Map<string, ClaudeNativeToolInputRecord | null>>();
+        const successfulWakeupCalls = new Map<string, number>();
+        const scheduledWakeups = new Map<
+          string,
+          { readonly taskId: string; readonly scheduledFor: number; consumed: boolean }
+        >();
         // Wake eligibility is separate from the Waiting roster. It survives empty
         // background_tasks_changed levels (SDK: empty level can precede task_notification) and
         // is consumed when the first idle notification is buffered/offered so duplicates cannot
@@ -3928,12 +3937,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           Effect.gen(function* () {
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
-              if (tasks.length === 0) {
+              const preserved = [...rosterForNativeThread(current, nativeThreadId).values()].filter(
+                (task) => task.taskId === scheduledWakeups.get(nativeThreadId)?.taskId,
+              );
+              if (tasks.length === 0 && preserved.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
                 updated.set(
                   nativeThreadId,
-                  new Map(tasks.map((task) => [task.taskId, task] as const)),
+                  new Map([...tasks, ...preserved].map((task) => [task.taskId, task] as const)),
                 );
               }
               return updated;
@@ -3980,6 +3992,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const clearPendingBackgroundTasksForNativeThread = (nativeThreadId: string) =>
           Effect.gen(function* () {
+            scheduledWakeups.delete(nativeThreadId);
+            wakeupCalls.delete(nativeThreadId);
+            successfulWakeupCalls.delete(nativeThreadId);
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               if (!current.has(nativeThreadId)) {
                 return current;
@@ -3990,6 +4005,87 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
+
+        const trackClaudeWakeupCalls = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          message: SDKMessage,
+        ) {
+          if (parentToolUseIdFromSdkMessage(message) !== null) return;
+          const calls =
+            wakeupCalls.get(nativeThreadId) ??
+            new Map<string, ClaudeNativeToolInputRecord | null>();
+          for (const tool of claudeToolUseBlocksFromAssistantMessage(message)) {
+            if (
+              tool.name !== "ScheduleWakeup" ||
+              calls.has(tool.id) ||
+              !isClaudeNativeToolInputRecord(tool.input)
+            )
+              continue;
+            calls.set(tool.id, tool.input);
+            wakeupCalls.set(nativeThreadId, calls);
+          }
+          let changed = false;
+          for (const { toolResult, output } of claudeToolResultEntriesFromMessage(message)) {
+            const id = toolResult.tool_use_id;
+            const call = calls.get(id);
+            if (call == null) continue;
+            calls.set(id, null);
+            if (
+              isClaudeToolResultError(toolResult) ||
+              claudeToolNonExecutionKind(message, id) !== undefined
+            )
+              continue;
+            const result = claudeNativeToolOutputValue(output);
+            if (!isClaudeNativeToolInputRecord(result)) continue;
+            if (
+              call.stop !== true &&
+              (typeof result.scheduledFor !== "number" || !Number.isFinite(result.scheduledFor))
+            )
+              continue;
+            const callIndex = [...calls.keys()].indexOf(id);
+            if (callIndex < (successfulWakeupCalls.get(nativeThreadId) ?? -1)) continue;
+            successfulWakeupCalls.set(nativeThreadId, callIndex);
+            const previous = scheduledWakeups.get(nativeThreadId);
+            if (previous !== undefined)
+              yield* clearPendingBackgroundTask(nativeThreadId, previous.taskId);
+            scheduledWakeups.delete(nativeThreadId);
+            if (call.stop !== true && typeof result.scheduledFor === "number") {
+              const taskId = `wakeup:${id}`;
+              scheduledWakeups.set(nativeThreadId, {
+                taskId,
+                scheduledFor: result.scheduledFor,
+                consumed: false,
+              });
+              yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) =>
+                new Map(current).set(
+                  nativeThreadId,
+                  new Map(rosterForNativeThread(current, nativeThreadId)).set(taskId, {
+                    taskId,
+                    kind: "background_task",
+                    description: typeof call.reason === "string" ? call.reason : "Scheduled wakeup",
+                  }),
+                ),
+              );
+            }
+            changed = true;
+          }
+          const wakeup = scheduledWakeups.get(nativeThreadId);
+          // Buffered output must retain the hold until its continuation attaches.
+          if (
+            message.type === "result" &&
+            wakeup?.consumed === true &&
+            (yield* Ref.get(activeTurn))?.nativeThreadId === nativeThreadId
+          ) {
+            yield* clearPendingBackgroundTask(nativeThreadId, wakeup.taskId);
+            scheduledWakeups.delete(nativeThreadId);
+            changed = true;
+          }
+          const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+            nativeThreadId,
+          );
+          if (changed && providerThread !== undefined)
+            yield* emitProviderThreadRoster({ nativeThreadId, providerThread });
+        });
 
         const clearWakeStateForNativeThread = (nativeThreadId: string) =>
           Effect.gen(function* () {
@@ -6209,6 +6305,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             buffered?.messages.some(
               (entry) => entry.type === "system" && entry.subtype === "task_notification",
             ) ?? false;
+          const wakeup = scheduledWakeups.get(wakeInput.nativeThreadId);
+          if (
+            isWakeTurnStart &&
+            !hasBufferedNotification &&
+            wakeup !== undefined &&
+            DateTime.toEpochMillis(yield* DateTime.now) >=
+              wakeup.scheduledFor - CLAUDE_WAKEUP_CLOCK_SKEW_MS
+          ) {
+            wakeup.consumed = true;
+          }
           const isNativeOpaqueWakeFrame =
             hasBufferedNotification &&
             (message.type === "assistant" || message.type === "user") &&
@@ -6432,6 +6538,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
+          if (input.replayed !== true)
+            yield* trackClaudeWakeupCalls(liveQuery.nativeThreadId, message);
           // Before routing too: the wake gate reads it while the root is idle.
           if (
             message.type === "system" &&
