@@ -61,11 +61,10 @@ Anything it can't prove, such as reading a ref during render or calling `setStat
 makes it skip the whole function without a build error. Lint reports each skip as a
 `react(...)` warning with the note "React Compiler skipped optimizing this component or hook".
 
-Files listed in [`reactCompiledFiles.ts`](../../apps/web/reactCompiledFiles.ts) must compile.
-Lint makes those rules errors there, and `t3code/no-manual-memo` rejects `useMemo` and
-`useCallback`, which the compiler makes redundant. Lint misses some bailouts, notably `try` with
-`finally` and `throw` inside `try`, so [`reactCompiledFiles.test.ts`](../../apps/web/src/reactCompiledFiles.test.ts)
-compiles each listed file and fails on any skip. Async handlers rarely need `try`: an atom
-command settles into a result, so cleanup can follow the `await`. `useStableCallback` still marks
-handlers that leave a large component, as described above. Add a file to the list once it
-compiles cleanly, and drop its manual memoization in the same change.
+Every file under `apps/web/src` must compile. Lint makes those rules errors there, and
+`t3code/no-manual-memo` rejects `useMemo` and `useCallback`, which the compiler makes redundant;
+no upstream rule bans them outright. Lint misses some bailouts, notably `try` with `finally` and
+`throw` inside `try`, so [`reactCompilerCoverage.test.ts`](../../apps/web/src/reactCompilerCoverage.test.ts)
+compiles every file and fails on any skip. Async handlers rarely need `try`: an
+atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
+marks handlers that leave a large component, as described above.
