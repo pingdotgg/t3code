@@ -1,3 +1,5 @@
+import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
+import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
@@ -1243,5 +1245,120 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const ref = resolveAutoFeatureBranchName(["main"]);
     assert.equal(ref, "feature/update");
+  });
+});
+
+describe("linked PR git actions", () => {
+  const linked: ThreadPullRequestLink = {
+    host: "github.com",
+    repository: "team/repo",
+    number: 42,
+    url: "https://github.com/team/repo/pull/42",
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    stack: null,
+    snapshot: {
+      state: "open",
+      title: "Existing PR",
+      headBranch: "feature/test",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: null,
+      syncedAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+
+  it("commits and pushes to an existing linked PR while VCS lookup is empty", () => {
+    const resolved = resolveThreadGitStatus(
+      status({ hasWorkingTreeChanges: true }),
+      [linked],
+      "github.com/team/repo",
+    );
+    assert.equal(resolveQuickAction(resolved, false).action, "commit_push");
+    assert.deepEqual(
+      buildMenuItems(resolved, false).map((item) => item.id),
+      ["commit", "push"],
+    );
+  });
+
+  it("pushes ahead commits without creating another PR", () => {
+    const resolved = resolveThreadGitStatus(
+      status({ aheadCount: 1 }),
+      [linked],
+      "github.com/team/repo",
+    );
+    assert.equal(resolveQuickAction(resolved, false).action, "push");
+  });
+
+  it("does not reuse closed, merged, unsynced, dismissed, or other-branch links", () => {
+    const original = status({ hasWorkingTreeChanges: true });
+    for (const link of [
+      { ...linked, snapshot: { ...linked.snapshot!, state: "closed" as const } },
+      { ...linked, snapshot: { ...linked.snapshot!, state: "merged" as const } },
+      { ...linked, snapshot: null },
+      { ...linked, source: "stack-dismissed" as const },
+      { ...linked, snapshot: { ...linked.snapshot!, headBranch: "other" } },
+    ]) {
+      assert.equal(resolveThreadGitStatus(original, [link], "github.com/team/repo"), original);
+      assert.equal(resolveQuickAction(original, false).action, "commit_push_pr");
+    }
+  });
+
+  it("ignores matching branch names in other repositories or unknown checkouts", () => {
+    const original = status({ hasWorkingTreeChanges: true });
+    for (const repositoryKey of [
+      "github.com/other/repo",
+      "github.example.com/team/repo",
+      null,
+      undefined,
+    ]) {
+      const resolved = resolveThreadGitStatus(original, [linked], repositoryKey);
+      assert.equal(resolved, original);
+      assert.equal(resolveQuickAction(resolved, false).action, "commit_push_pr");
+    }
+  });
+
+  it("selects the matching repository and normalizes canonical identities", () => {
+    const other = { ...linked, repository: "other/repo", number: 99 };
+    assert.equal(
+      resolveThreadGitStatus(status(), [other, linked], "GITHUB.COM/TEAM/REPO")?.pr?.number,
+      42,
+    );
+    const azure = {
+      ...linked,
+      host: "dev.azure.com",
+      repository: "project/repo",
+      url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42",
+    };
+    assert.equal(
+      resolveThreadGitStatus(status(), [azure], "ssh.dev.azure.com/v3/org/project/repo")?.pr
+        ?.number,
+      42,
+    );
+    const forgejo = {
+      ...linked,
+      host: "forge.example",
+      url: "http://forge.example:3000/team/repo/pulls/42",
+    };
+    assert.equal(
+      resolveThreadGitStatus(status(), [forgejo], "forge.example:3000/team/repo")?.pr?.number,
+      42,
+    );
+    assert.equal(
+      resolveThreadGitStatus(status(), [forgejo], "forge.example:4000/team/repo")?.pr,
+      null,
+    );
+  });
+
+  it("preserves authoritative VCS results and handles unlinking or missing status", () => {
+    const original = resolveThreadGitStatus(status(), [linked], "github.com/team/repo")!;
+    assert.equal(resolveThreadGitStatus(original, [linked], "github.com/team/repo"), original);
+    const closed = { ...original, pr: { ...original.pr!, state: "closed" as const } };
+    assert.equal(resolveThreadGitStatus(closed, [linked], "github.com/team/repo"), closed);
+    const unlinked = status();
+    assert.equal(resolveThreadGitStatus(unlinked, [], "github.com/team/repo"), unlinked);
+    const detached = status({ refName: null });
+    assert.equal(resolveThreadGitStatus(detached, [linked], "github.com/team/repo"), detached);
+    assert.equal(resolveThreadGitStatus(null, [linked], "github.com/team/repo"), null);
   });
 });

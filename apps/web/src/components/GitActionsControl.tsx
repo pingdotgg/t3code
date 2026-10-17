@@ -1,3 +1,4 @@
+import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -97,7 +98,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useThreadProjection, useThreadShell } from "~/state/entities";
+import { useProject, useThreadProjection, useThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -1027,6 +1028,12 @@ export default function GitActionsControl({
   );
   const activeServerThread =
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
+  const activeProject = useProject(
+    activeServerThread && activeEnvironmentId
+      ? { environmentId: activeEnvironmentId, projectId: activeServerThread.projectId }
+      : null,
+  );
+  const repositoryKey = activeProject?.repositoryIdentity?.canonicalKey;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -1133,7 +1140,10 @@ export default function GitActionsControl({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
-  const gitStatusForActions = gitStatus;
+  const gitStatusForActions = useMemo(
+    () => resolveThreadGitStatus(gitStatus, activeServerThread?.pullRequests, repositoryKey),
+    [gitStatus, activeServerThread?.pullRequests, repositoryKey],
+  );
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];

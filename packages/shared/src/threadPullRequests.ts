@@ -5,6 +5,7 @@ import type {
   ThreadLinkedPullRequest,
   ThreadPullRequestKey,
   ThreadPullRequestLink,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 
 import { pullRequestHostOf } from "@t3tools/contracts";
@@ -362,5 +363,39 @@ export function applyThreadPullRequestLinkUpdate(
     pullRequests: threadPullRequestsOf(thread).map((link) =>
       threadPullRequestKeysEqual(link, updated) ? updated : link,
     ),
+  };
+}
+
+/** Use a linked branch snapshot while the separate VCS PR lookup has no result. */
+export function resolveThreadGitStatus(
+  status: VcsStatusResult | null,
+  links: ReadonlyArray<ThreadPullRequestLink> | undefined,
+  repositoryKey: string | null | undefined,
+): VcsStatusResult | null {
+  if (!status || status.pr !== null || status.refName === null || !repositoryKey) return status;
+  const canonicalKey = canonicalRepositoryKey(repositoryKey.toLowerCase());
+  const link = links?.find((link) => {
+    if (
+      link.source === "stack-dismissed" ||
+      link.snapshot?.state !== "open" ||
+      link.snapshot.headBranch !== status.refName
+    )
+      return false;
+    const key = legacyThreadPullRequestKey(link, link.host);
+    return canonicalRepositoryKey(`${key.host}/${key.repository}`) === canonicalKey;
+  });
+  if (!link?.snapshot) return status;
+  return {
+    ...status,
+    pr: {
+      number: link.number,
+      url: link.url,
+      title: link.snapshot.title,
+      headRef: link.snapshot.headBranch,
+      baseRef: link.snapshot.baseBranch,
+      state: link.snapshot.state,
+      isDraft: link.snapshot.isDraft,
+      updatedAt: link.snapshot.updatedAt,
+    },
   };
 }

@@ -1,5 +1,7 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
+import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
+import { useProject, useThreadShell } from "../../state/entities";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -121,7 +123,21 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     AuthSourceControlWriteScope,
   );
   const threadId = props.threadId;
-  const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
+  const { gitOperationLabel, onPull, onRunAction } = props;
+  const thread = useThreadShell({
+    environmentId: EnvironmentId.make(String(environmentId)),
+    threadId: ThreadId.make(String(threadId)),
+  });
+  const project = useProject(
+    thread
+      ? { environmentId: EnvironmentId.make(String(environmentId)), projectId: thread.projectId }
+      : null,
+  );
+  const repositoryKey = project?.repositoryIdentity?.canonicalKey;
+  const gitStatus = useMemo(
+    () => resolveThreadGitStatus(props.gitStatus, thread?.pullRequests, repositoryKey),
+    [props.gitStatus, thread?.pullRequests, repositoryKey],
+  );
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;
@@ -261,6 +277,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   }, [environmentId, props.onOpenGitInspector, navigation, threadId]);
 
   return {
+    gitStatus,
     currentBranchLabel,
     isRepo,
     openFiles,
@@ -355,7 +372,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
         menu: {
           items: [
             {
-              description: compactMenuStatus(props.gitStatus),
+              description: compactMenuStatus(model.gitStatus),
               disabled: true,
               icon: {
                 name: "point.topleft.down.curvedto.point.bottomright.up",
@@ -421,7 +438,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       props.canOpenFiles,
       props.canOpenTerminal,
       props.canOperateTerminal,
-      props.gitStatus,
+      model.gitStatus,
       props.onMergeBack,
       props.onOpenNewTerminal,
       props.onOpenTerminal,
@@ -532,7 +549,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
+      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(model)) : null}
     </Toolbar>
   );
 }
@@ -549,13 +566,10 @@ export function ThreadGitMenu(props: ThreadGitMenuProps) {
 
 /** Returns menu data because native toolbars serialize direct items rather than rendering component children. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  return threadGitMenuDefinition(props, useThreadGitControlModel(props));
+  return threadGitMenuDefinition(useThreadGitControlModel(props));
 }
 
-function threadGitMenuDefinition(
-  props: ThreadGitMenuProps,
-  model: ReturnType<typeof useThreadGitControlModel>,
-): AppBarMenu {
+function threadGitMenuDefinition(model: ReturnType<typeof useThreadGitControlModel>): AppBarMenu {
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -566,7 +580,7 @@ function threadGitMenuDefinition(
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: "point.topleft.down.curvedto.point.bottomright.up",
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: compactMenuStatus(model.gitStatus),
         onPress: () => {},
       },
       {
