@@ -8,10 +8,25 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 
+import {
+  BOOT_SERVICE_LAUNCHD_LABEL,
+  BOOT_SERVICE_PLIST_FILE,
+  BOOT_SERVICE_UNIT_FILE,
+  bootServiceBaseDirOf,
+} from "./cloud/bootService.ts";
+import { decodeServicePreflightResult } from "./cloud/servicePreflight.ts";
+import {
+  SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_RESTART_PENDING_FILE,
+  SERVICE_STATE_FILE,
+  serviceStateActiveVersion,
+} from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -31,6 +46,17 @@ export class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyR
 
   override get message(): string {
     return `A T3 Code server already owns ${this.stateDir}. Stop that server, or use a separate T3 home and pair with it, then retry. No server was stopped.`;
+  }
+}
+
+export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceError>()(
+  "OlderBootServiceError",
+  { baseDir: Schema.String },
+) {
+  override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
+
+  override get message(): string {
+    return `A T3 Code background service set up for ${this.baseDir} runs an older release or has not restarted into its update, so it cannot share that home safely. On the machine that hosts it, update it with \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed), or remove it with \`t3 service uninstall\`. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3\` if \`t3\` is not installed. Then retry. No server was stopped.`;
   }
 }
 
@@ -82,6 +108,102 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   // ps reports whole seconds. Unknown identity stays conservative.
   return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
 });
+
+const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * Background services from before this lock never take it, and once another
+ * server replaces their runtime record nothing names them. Returns the T3 home
+ * of the boot service installed for this user when it serves this state
+ * directory, runs now or at next login, and runs a release without the lock.
+ * Best effort: anything that cannot be read or probed allows startup.
+ */
+const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
+  function* (stateDir: string) {
+    if ((yield* HostProcess.Environment)[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined) {
+      return undefined;
+    }
+    const platform = yield* HostProcess.Platform;
+    const uid = yield* HostProcess.UserId;
+    const homeDir = yield* HostProcess.HomeDirectory;
+    const fs = yield* FileSystem.FileSystem;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const run = (command: string, args: ReadonlyArray<string>) =>
+      runner.run({ command, args, timeout: Duration.seconds(5) });
+    const manager =
+      platform === "darwin" && uid !== undefined
+        ? {
+            unitPath: NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE),
+            loaded: run("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]).pipe(
+              Effect.map((result) => result.code === 0),
+            ),
+            // macOS 12 and earlier print `true` for a disabled label instead of `disabled`.
+            scheduled: run("launchctl", ["print-disabled", `gui/${uid}`]).pipe(
+              Effect.map(
+                (result) =>
+                  result.code === 0 &&
+                  !result.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) &&
+                  !result.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`),
+              ),
+            ),
+          }
+        : platform === "linux"
+          ? {
+              unitPath: NodePath.join(
+                homeDir,
+                ".config",
+                "systemd",
+                "user",
+                BOOT_SERVICE_UNIT_FILE,
+              ),
+              // A unit waiting out its `Restart=` delay is `activating`, with exit code 3.
+              loaded: run("systemctl", ["--user", "is-active", BOOT_SERVICE_UNIT_FILE]).pipe(
+                Effect.map((result) => result.code === 0 || result.stdout.trim() === "activating"),
+              ),
+              scheduled: run("systemctl", ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE]).pipe(
+                Effect.map((result) => result.stdout.trim() === "enabled"),
+              ),
+            }
+          : undefined;
+    if (manager === undefined) return undefined;
+
+    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(manager.unitPath));
+    if (
+      baseDir === undefined ||
+      (yield* fs.realPath(NodePath.join(baseDir, "userdata"))) !== (yield* fs.realPath(stateDir))
+    ) {
+      return undefined;
+    }
+    const runtimeDir = NodePath.join(baseDir, "runtime");
+    const version = serviceStateActiveVersion(
+      yield* fs.readFileString(NodePath.join(runtimeDir, SERVICE_STATE_FILE)),
+    );
+    if (version === undefined) return undefined;
+    if (yield* manager.loaded) {
+      // `t3 update` with the restart declined names the new release in
+      // service-state.json while the loaded service keeps running the old
+      // one, so probing that release would prove nothing.
+      if (yield* fs.exists(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE))) return baseDir;
+    } else if (!(yield* manager.scheduled)) {
+      return undefined;
+    }
+    const preflight = yield* runner.run({
+      command: NodePath.join(runtimeDir, "versions", version, "t3"),
+      args: [
+        "__service-preflight",
+        "--database-path",
+        NodePath.join(stateDir, "statev2.sqlite"),
+        "--launcher-protocol",
+        String(SERVICE_LAUNCHER_PROTOCOL),
+      ],
+      timeout: Duration.seconds(15),
+    });
+    if (preflight.code !== 0) return undefined;
+    const answer = decodeServicePreflightResult(yield* decodeJson(preflight.stdout));
+    return answer !== undefined && answer.ownershipProtocol === undefined ? baseDir : undefined;
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 /**
  * Hold an exclusive lock on the state directory until the scope closes. The
@@ -136,6 +258,10 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     (yield* legacyOwnerIsLive(previous.value))
   ) {
     return yield* new ServerAlreadyRunningError({ stateDir });
+  }
+  const olderServiceHome = yield* olderBootServiceHome(stateDir);
+  if (olderServiceHome !== undefined) {
+    return yield* new OlderBootServiceError({ baseDir: olderServiceHome });
   }
 
   return {

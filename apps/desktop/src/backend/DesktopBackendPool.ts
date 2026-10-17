@@ -180,7 +180,7 @@ export const layer = Layer.effect(
         electronDialog
           .showErrorBox(
             "This T3 home is unavailable",
-            "Another T3 Code server, such as the background service, is using this data directory. Stop that server and reopen T3 Code, or set a separate T3CODE_HOME and pair with the running server.",
+            "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or update the service with `t3 update` (`npx t3 update` if `t3` is not installed), then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
           )
           .pipe(Effect.andThen(electronApp.quit)),
     });

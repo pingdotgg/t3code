@@ -136,7 +136,7 @@ export const layer = Layer.effect(
                 Ref.set(
                   preflightErrorRef,
                   Option.some(
-                    "Another T3 Code server is using this distro's T3 home. Stop it, or pair with it instead.",
+                    "Another T3 Code server is using this distro's T3 home, or an older background service is set up for it. Stop that server or pair with it, or update the service by running `t3 update` (or `npx t3 update`) in the distro.",
                   ),
                 ),
               ),
