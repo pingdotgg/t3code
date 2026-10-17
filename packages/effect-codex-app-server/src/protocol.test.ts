@@ -371,6 +371,109 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("ends the session before parsing an incoming message over the length limit", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const notifications: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+      const logged: Array<unknown> = [];
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        maxIncomingMessageBytes: 16,
+        logIncoming: true,
+        logger: (event) =>
+          Effect.sync(() => {
+            logged.push(event.payload);
+          }),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            notifications.push(notification);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      const response = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      // The first line is exactly 16 bytes; the second reaches 22 across two chunks.
+      yield* Queue.offer(input, encoder.encode('{"method":"x/a"}\n{"method":"x/b",'));
+      yield* Queue.offer(input, encoder.encode('"p":1}\n'));
+      yield* Queue.end(input);
+
+      const error = yield* Deferred.await(termination);
+      assert.instanceOf(error, CodexError.CodexAppServerTransportError);
+      assert.equal(error.operation, "read-input-stream");
+      const responseError = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (failure) => failure,
+          onSuccess: () => assert.fail("Expected the oversized message to fail the request"),
+        }),
+      );
+      assert.strictEqual(responseError, error);
+      assert.deepEqual(notifications, [{ method: "x/a" }]);
+      assert.deepEqual(logged, ['{"method":"x/a"}', { method: "x/a" }]);
+    }),
+  );
+
+  it.effect(
+    "counts each incoming message from zero and handles earlier lines before rejecting",
+    () =>
+      Effect.gen(function* () {
+        const { stdio, input } = yield* makeInMemoryStdio();
+        const notifications: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+        const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+        yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+          stdio,
+          maxIncomingMessageBytes: 16,
+          onNotification: (notification) =>
+            Effect.sync(() => {
+              notifications.push(notification);
+            }),
+          onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+        });
+
+        yield* Queue.offer(input, encoder.encode('{"method":"x/a"}\n{"meth'));
+        yield* Queue.offer(input, encoder.encode('od":"x/c"}\n{"method":"x/b","p":1}\n'));
+        yield* Queue.end(input);
+
+        assert.instanceOf(
+          yield* Deferred.await(termination),
+          CodexError.CodexAppServerTransportError,
+        );
+        assert.deepEqual(notifications, [{ method: "x/a" }, { method: "x/c" }]);
+      }),
+  );
+
+  it.effect("counts the incoming message limit in UTF-8 bytes, not UTF-16 code units", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const notifications: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        maxIncomingMessageBytes: 16,
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            notifications.push(notification);
+          }),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+
+      // 14 code units and 16 bytes, then 15 code units and 17 bytes.
+      // The first "é" is split between its two bytes across chunks.
+      const bytes = encoder.encode('{"method":"xé"}\n{"method":"éé"}\n');
+      const split = bytes.indexOf(0xc3) + 1;
+      yield* Queue.offer(input, bytes.subarray(0, split));
+      yield* Queue.offer(input, bytes.subarray(split));
+      yield* Queue.end(input);
+
+      assert.instanceOf(
+        yield* Deferred.await(termination),
+        CodexError.CodexAppServerTransportError,
+      );
+      assert.deepEqual(notifications, [{ method: "xé" }]);
+    }),
+  );
+
   it.effect("reports a malformed fragmented final line before input stream termination", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
