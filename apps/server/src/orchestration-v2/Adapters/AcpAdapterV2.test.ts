@@ -85,6 +85,7 @@ import {
   acpPostSettleWakeEvidence,
   acpPostSettleWakeShouldBuffer,
   acpProjectedCommandExitCode,
+  acpMcpToolCallOutput,
   acpToolCallDiffPatch,
   acpTurnStartShouldPreserveContinuation,
   makeAcpAdapterV2,
@@ -128,6 +129,36 @@ describe("acpProjectedCommandExitCode", () => {
     assert.equal(acpProjectedCommandExitCode("completed", failedOutput), 1);
     assert.equal(acpProjectedCommandExitCode("failed", failedOutput), 1);
     assert.equal(acpProjectedCommandExitCode("completed", {}), undefined);
+  });
+});
+
+describe("acpMcpToolCallOutput", () => {
+  it("unwraps codex-acp result/content envelopes", () => {
+    const content = [{ type: "text", text: '{"ok":true}' }];
+    assert.deepStrictEqual(acpMcpToolCallOutput({ result: { content } }), content);
+    assert.deepStrictEqual(acpMcpToolCallOutput({ result: { structuredContent: { ok: true } } }), {
+      ok: true,
+    });
+  });
+
+  it("unwraps Grok's OkayOutput result string", () => {
+    const inner = JSON.stringify({
+      htmlRender: { attachmentId: "t-html", title: "T", height: 100 },
+    });
+    assert.strictEqual(
+      acpMcpToolCallOutput({
+        type: "MCP",
+        tool_name: "html_render",
+        server_name: "t3-code",
+        output: { OkayOutput: inner },
+      }),
+      inner,
+    );
+    // Non-string or missing OkayOutput passes through untouched.
+    const other = { type: "MCP", output: { OkayOutput: { nested: true } } };
+    assert.strictEqual(acpMcpToolCallOutput(other), other);
+    const plain = { htmlRender: { attachmentId: "t-html" } };
+    assert.strictEqual(acpMcpToolCallOutput(plain), plain);
   });
 });
 

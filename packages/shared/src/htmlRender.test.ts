@@ -232,6 +232,32 @@ describe("htmlRenderFromToolItem", () => {
       htmlRenderFromToolItem({ toolName: "html_render", output: { ...result, isError: true } }),
     ).toBeUndefined();
   });
+
+  it("reads htmlRender from an execute tool output", () => {
+    const executeRender = {
+      attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
+      title: "Chart",
+      height: 420,
+    };
+    const output = [{ type: "text", text: JSON.stringify({ htmlRender: executeRender }) }];
+    expect(htmlRenderFromToolItem({ toolName: "execute", output })).toEqual(executeRender);
+  });
+
+  it("reads a bare reference an execute script returned", () => {
+    const executeRender = {
+      attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
+      title: "Chart",
+      height: 420,
+    };
+    const output = [{ type: "text", text: JSON.stringify(executeRender) }];
+    expect(htmlRenderFromToolItem({ toolName: "execute", output })).toEqual(executeRender);
+    expect(
+      htmlRenderFromToolItem({
+        toolName: "execute",
+        output: { attachmentId: "thread-1-upload", title: "Chart", height: 420 },
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("htmlRenderFrameHeight", () => {

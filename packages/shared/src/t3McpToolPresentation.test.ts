@@ -94,6 +94,14 @@ describe("resolveT3McpToolPresentation", () => {
     expect(resolveT3McpToolPresentation("t3-code-thread_opencode2-adapter_not_a_tool")).toBeNull();
   });
 
+  it("ignores Grok's file-passed source annotation", () => {
+    expect(
+      resolveT3McpToolPresentation("t3-code__html_render — source file: /tmp/mcp-render.json")
+        ?.displayName,
+    ).toBe("Render an HTML page");
+    expect(resolveT3McpToolPresentation("t3-code__not_a_tool — source file: /tmp/x")).toBeNull();
+  });
+
   it("keeps unknown MCP tools on the generic renderer path", () => {
     expect(resolveT3McpToolPresentation("mcp__github__search_issues")).toBeNull();
     expect(resolveT3McpToolPresentation("t3-code.not_a_real_tool")).toBeNull();

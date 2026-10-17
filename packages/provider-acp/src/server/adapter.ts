@@ -637,10 +637,19 @@ function makeProviderThread(input: {
   };
 }
 
-function acpMcpToolCallOutput(rawOutput: unknown): unknown {
+/**
+ * Grok wraps MCP results one level deeper than codex-acp (`{ type: "MCP",
+ * output: { OkayOutput: "<json string>" } }`, Rust's Result serialization).
+ */
+export function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
-  if (!("result" in record) && !("error" in record)) return rawOutput;
+  if (!("result" in record) && !("error" in record)) {
+    const output = unknownRecord(record.output);
+    const okay = output === undefined ? undefined : output.OkayOutput;
+    if (typeof okay === "string") return okay;
+    return rawOutput;
+  }
   const result = unknownRecord(record.result);
   const resultOutput =
     result === undefined ? undefined : (result.structuredContent ?? result.content ?? undefined);
@@ -3222,7 +3231,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     type: "dynamic_tool",
                     toolName: toolCall.title ?? toolCall.kind ?? null,
                     input: rawInput ?? {},
-                    ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                    ...(rawOutput === undefined ? {} : { output: acpMcpToolCallOutput(rawOutput) }),
                   };
                 }
             }

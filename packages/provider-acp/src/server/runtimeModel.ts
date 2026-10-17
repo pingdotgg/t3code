@@ -10,7 +10,7 @@ import {
   deriveToolActivityPresentation,
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
-import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+import { T3_MCP_TOOL_NAMES, normalizeT3McpToolLabel } from "@t3tools/shared/t3McpToolPresentation";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -1081,8 +1081,18 @@ export function extractMcpToolCallIdentity(
 ): AcpMcpToolCallIdentity | undefined {
   const rawInput = isRecord(toolCall.data.rawInput) ? toolCall.data.rawInput : undefined;
   const meta = isRecord(toolCall.data.meta) ? toolCall.data.meta : undefined;
-  const server = typeof rawInput?.server === "string" ? rawInput.server.trim() : "";
-  const tool = typeof rawInput?.tool === "string" ? rawInput.tool.trim() : "";
+  const server =
+    typeof rawInput?.server === "string"
+      ? rawInput.server.trim()
+      : typeof rawInput?.server_name === "string"
+        ? rawInput.server_name.trim()
+        : "";
+  const tool =
+    typeof rawInput?.tool === "string"
+      ? rawInput.tool.trim()
+      : typeof rawInput?.tool_name === "string"
+        ? rawInput.tool_name.trim()
+        : "";
   if (meta?.is_mcp_tool_call === true && server.length > 0 && tool.length > 0) {
     return { server, tool };
   }
@@ -1127,10 +1137,14 @@ export function extractMcpToolCallIdentity(
     meta?.toolName,
     claudeCode?.toolName,
     gooseToolCall?.toolName,
+    // Devin names the inference tool in namespaced meta; CodeBuddy keeps the
+    // qualified `mcp__<server>__<tool>` name in rawInput.
+    meta?.["cognition.ai/inferenceToolName"],
+    typeof rawInput?.toolName === "string" ? rawInput.toolName : undefined,
     toolCall.data.title,
   ].filter((value): value is string => typeof value === "string");
   for (const candidate of candidates) {
-    const trimmed = candidate.trim();
+    const trimmed = normalizeT3McpToolLabel(candidate.trim());
     const qualified = /^mcp__(.+?)__(.+)$/i.exec(trimmed);
     if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
       return { server: qualified[1], tool: qualified[2] };

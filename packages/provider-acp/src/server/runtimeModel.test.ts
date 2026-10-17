@@ -1406,6 +1406,77 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers T3 identity from CodeBuddy rawInput.toolName", () => {
+    // CodeBuddy wraps injected MCP calls in its own ToolSearch layer, so the
+    // wire title/kind is generic; the qualified name survives in rawInput.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-1",
+      kind: "Tool",
+      title: "Tool",
+      status: "in_progress",
+      rawInput: { toolName: "mcp__t3-code__html_render", arguments: {} },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+
+  it("recovers T3 identity from Devin namespaced meta", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-2",
+      kind: "DeferExecuteTool",
+      title: "Deferred tool call",
+      status: "in_progress",
+      rawInput: { server_name: "other", tool_name: "html_render" },
+      _meta: { "cognition.ai/inferenceToolName": "mcp__t3-code__html_render" },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+
+  it("recovers T3 identity from Grok snake_case rawInput and annotated titles", () => {
+    // Grok's inline use_tool calls carry tool_name/tool_input/variant keys,
+    // and file-passed calls annotate the title with a source note.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-3",
+      kind: "UseTool",
+      title: "t3-code__html_render — source file: /tmp/mcp-render.json",
+      status: "in_progress",
+      rawInput: { tool_name: "html_render", tool_input: { height: 200 }, variant: "UseTool" },
+      _meta: { is_mcp_tool_call: true },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+
+  it("recovers T3 identity from snake_case rawInput pairs", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-4",
+      kind: "UseTool",
+      title: "UseTool",
+      status: "in_progress",
+      rawInput: { server_name: "t3-code", tool_name: "html_preview" },
+      _meta: { is_mcp_tool_call: true },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_preview",
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
