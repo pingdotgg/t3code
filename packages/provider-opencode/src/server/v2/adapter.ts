@@ -826,6 +826,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       lastError: string | null,
     ) =>
       Effect.gen(function* () {
+        // The session is shared by every thread on this instance and is persisted
+        // once per attached thread, so a repeat of the same state is not worth a write.
+        if (session.status === status && session.lastError === lastError) return;
         session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
         yield* emit({ type: "provider_session.updated", driver, providerSession: session });
       });
