@@ -203,13 +203,6 @@ function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
-// Resolving filters and labels every known editor; the compiler would redo
-// it every render because the open command hooks follow it.
-function useOpenInOptions(editors: ReadonlyArray<EditorId>) {
-  "use memo";
-  return resolveOpenInOptions(navigator.platform, editors);
-}
-
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
@@ -245,8 +238,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   // the viewing machine, which only the desktop app can probe.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
-  const options = useOpenInOptions(effectiveEditors);
-  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
   const openInEditor = (editorId: EditorId | null) => {
     if (!openInCwd) return;
@@ -313,6 +304,9 @@ export const OpenInPicker = memo(function OpenInPicker({
     preferredEditor,
     remote.mode,
   ]);
+  // Derived after the shortcut effect so the compiler can cache the resolved editor list.
+  const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
   const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
 
   const editorItems = (
