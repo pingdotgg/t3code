@@ -679,6 +679,82 @@ export function preferGitForWindowsBinary(
   return executable;
 }
 
+const GIT_GLOBAL_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--config-env",
+  "--super-prefix",
+  "--attr-source",
+]);
+
+const positionals = (args: ReadonlyArray<string>) => args.filter((arg) => !arg.startsWith("-"));
+
+// Git accepts abbreviated and bundled options (`--del`, `-qd`), so a read is
+// recognized by allowing its options rather than by rejecting the write ones.
+const SYMBOLIC_REF_READ_OPTIONS = new Set(["-q", "--quiet", "--short"]);
+
+const GIT_READ_SUBCOMMANDS = new Map<string, (args: ReadonlyArray<string>) => boolean>([
+  ["rev-parse", () => true],
+  ["rev-list", () => true],
+  ["merge-base", () => true],
+  ["for-each-ref", () => true],
+  ["show-ref", () => true],
+  [
+    "config",
+    (args) =>
+      args[0] === "get" ||
+      args[0] === "list" ||
+      args.some(
+        (arg) => arg === "--get" || arg.startsWith("--get-") || arg === "--list" || arg === "-l",
+      ),
+  ],
+  [
+    "symbolic-ref",
+    (args) =>
+      args.every((arg) => !arg.startsWith("-") || SYMBOLIC_REF_READ_OPTIONS.has(arg)) &&
+      positionals(args).length <= 1,
+  ],
+  [
+    "remote",
+    (args) => {
+      const [first] = positionals(args);
+      return first === undefined || first === "get-url";
+    },
+  ],
+]);
+
+/**
+ * Whether to spawn git detached, without a console. Hidden-window spawns give
+ * every git command its own console host process; Git for Windows' real
+ * git.exe runs fine without one. Commands that can start hooks or other MSYS
+ * programs, and launchers or shims that would allocate a console for the real
+ * git, keep the default.
+ */
+export function runsGitWithoutConsole(
+  platform: NodeJS.Platform,
+  executable: string,
+  args: ReadonlyArray<string>,
+): boolean {
+  if (platform !== "win32") return false;
+  const path = NodePath.win32;
+  if (path.basename(executable).toLowerCase() !== "git.exe") return false;
+  const binDirectory = path.dirname(executable);
+  if (path.basename(binDirectory).toLowerCase() !== "bin") return false;
+  const build = path.basename(path.dirname(binDirectory)).toLowerCase();
+  if (!GIT_FOR_WINDOWS_BUILDS.some((candidate) => candidate === build)) return false;
+  if (args.includes("--help")) return false;
+  let index = 0;
+  for (let arg = args[0]; arg?.startsWith("-"); arg = args[index]) {
+    index += GIT_GLOBAL_OPTIONS_WITH_VALUE.has(arg) ? 2 : 1;
+  }
+  const subcommand = args[index];
+  const isRead = subcommand === undefined ? undefined : GIT_READ_SUBCOMMANDS.get(subcommand);
+  return isRead?.(args.slice(index + 1)) ?? false;
+}
+
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,

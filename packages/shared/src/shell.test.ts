@@ -26,6 +26,7 @@ import {
   resolveKnownWindowsCliDirs,
   resolveSpawnCommand,
   resolveWindowsEnvironment,
+  runsGitWithoutConsole,
   SpawnExecutableResolution,
   type SpawnExecutableResolver,
   WindowsShellEnvironment,
@@ -590,6 +591,57 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       Effect.provideService(CommandResolutionCache, new Map()),
     ),
   );
+});
+
+describe("runsGitWithoutConsole", () => {
+  const git = "C:\\Program Files\\Git\\ucrt64\\bin\\git.exe";
+  const runs = (args: Array<string>, executable = git, platform: NodeJS.Platform = "win32") =>
+    runsGitWithoutConsole(platform, executable, args);
+
+  it("runs read-only commands of the real git.exe without a console", () => {
+    expect(runs(["rev-parse", "HEAD"])).toBe(true);
+    expect(runs(["rev-parse", "HEAD"], "D:\\PortableGit\\MINGW64\\bin\\git.EXE")).toBe(true);
+    expect(runs(["--git-dir", "X", "rev-parse", "HEAD"])).toBe(true);
+    expect(runs(["--git-dir=X", "rev-parse", "HEAD"])).toBe(true);
+    expect(runs(["-c", "k=v", "for-each-ref", "refs/heads"])).toBe(true);
+    expect(runs(["-C", "dir", "config", "--get", "k"])).toBe(true);
+    expect(runs(["config", "--get-regexp", "^remote\\."])).toBe(true);
+    expect(runs(["config", "get", "user.name"])).toBe(true);
+    expect(runs(["config", "--list"])).toBe(true);
+    expect(runs(["symbolic-ref", "--quiet", "--short", "HEAD"])).toBe(true);
+    expect(runs(["symbolic-ref", "refs/remotes/origin/HEAD"])).toBe(true);
+    expect(runs(["remote", "-v"])).toBe(true);
+    expect(runs(["remote", "get-url", "origin"])).toBe(true);
+  });
+
+  it("keeps the console for commands that can start hooks or edit", () => {
+    expect(runs(["commit", "-m", "x"])).toBe(false);
+    expect(runs(["fetch", "origin"])).toBe(false);
+    expect(runs(["status", "--porcelain"])).toBe(false);
+    expect(runs(["diff", "HEAD"])).toBe(false);
+    expect(runs(["symbolic-ref", "HEAD", "refs/heads/x"])).toBe(false);
+    expect(runs(["remote", "add", "origin", "url"])).toBe(false);
+    expect(runs(["config", "--edit"])).toBe(false);
+    expect(runs(["config", "edit", "--global"])).toBe(false);
+    expect(runs(["config", "--edi"])).toBe(false);
+    expect(runs(["config", "--edi", "user.name"])).toBe(false);
+    expect(runs(["config", "branch.x.gh-merge-base", "main"])).toBe(false);
+    expect(runs(["rev-parse", "--help"])).toBe(false);
+    expect(runs(["--help", "rev-parse"])).toBe(false);
+    expect(runs(["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"])).toBe(false);
+    expect(runs(["symbolic-ref", "--del", "refs/remotes/origin/HEAD"])).toBe(false);
+    expect(runs(["symbolic-ref", "-qd", "refs/remotes/origin/HEAD"])).toBe(false);
+    expect(runs(["-C", "rev-parse", "status"])).toBe(false);
+  });
+
+  it("keeps the console for launchers, shims and other platforms", () => {
+    expect(runs(["rev-parse", "HEAD"], "C:\\Program Files\\Git\\cmd\\git.exe")).toBe(false);
+    expect(runs(["rev-parse", "HEAD"], "D:\\PortableGit\\bin\\git.exe")).toBe(false);
+    expect(runs(["rev-parse", "HEAD"], "C:\\Users\\x\\scoop\\shims\\git.exe")).toBe(false);
+    expect(runs(["rev-parse", "HEAD"], "/usr/bin/git", "linux")).toBe(false);
+    expect(runs(["rev-parse", "HEAD"], git, "linux")).toBe(false);
+    expect(runs(["rev-parse"], "C:\\Program Files\\Git\\ucrt64\\bin\\node.exe")).toBe(false);
+  });
 });
 
 describe("preferGitForWindowsBinary", () => {
