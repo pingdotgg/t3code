@@ -1,11 +1,15 @@
 import {
   EnvironmentId,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { Atom, AtomRegistry } from "effect/reactivity";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -33,6 +37,7 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   applyServerWelcomeEvent,
+  createLastKnownServerSettingsAtomFamily,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
   isLegacyUpdateHandoffLoss,
@@ -920,4 +925,61 @@ describe("server state projection", () => {
       expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
     }),
   );
+});
+
+describe("last known source control settings", () => {
+  it("retains each environment's project choices until a newer snapshot replaces them", () => {
+    const registry = AtomRegistry.make();
+    const configs = Atom.family((_id: EnvironmentId | null) =>
+      Atom.make<ServerConfig | null>(null),
+    );
+    const snapshots = createLastKnownServerSettingsAtomFamily(configs);
+    const first = EnvironmentId.make("first");
+    const second = EnvironmentId.make("second");
+    const project = ProjectId.make("project");
+    const firstSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [project]: { pullRequestCreationEnabled: false } },
+    };
+    const secondSettings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
+    try {
+      expect(registry.get(snapshots(first))).toBeNull();
+      registry.set(configs(first), { ...CONFIG, settings: firstSettings });
+      expect(registry.get(snapshots(first))).toBe(firstSettings);
+      registry.set(configs(first), null);
+      const retained = registry.get(snapshots(first))!;
+      expect(resolveProjectSettings(retained, project).settings.pullRequestCreationEnabled).toBe(
+        false,
+      );
+      expect(resolveProjectSettings(retained, null).settings.pullRequestCreationEnabled).toBe(true);
+      expect(registry.get(snapshots(second))).toBeNull();
+      registry.set(configs(second), { ...CONFIG, settings: secondSettings });
+      expect(registry.get(snapshots(second))).toBe(secondSettings);
+      registry.set(configs(second), null);
+      expect(registry.get(snapshots(second))).toBe(secondSettings);
+      expect(registry.get(snapshots(first))).toBe(firstSettings);
+      const nextSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        pullRequestCreationEnabled: false,
+        projectSettingsOverrides: { [project]: { pullRequestCreationEnabled: true } },
+      };
+      registry.set(configs(first), { ...CONFIG, settings: nextSettings });
+      expect(registry.get(snapshots(first))).toBe(nextSettings);
+      registry.set(configs(first), null);
+      expect(
+        resolveProjectSettings(registry.get(snapshots(first))!, project).settings
+          .pullRequestCreationEnabled,
+      ).toBe(true);
+      const resetSettings = { ...nextSettings, projectSettingsOverrides: {} };
+      registry.set(configs(first), { ...CONFIG, settings: resetSettings });
+      expect(registry.get(snapshots(first))).toBe(resetSettings);
+      registry.set(configs(first), null);
+      expect(
+        resolveProjectSettings(registry.get(snapshots(first))!, project).settings
+          .pullRequestCreationEnabled,
+      ).toBe(false);
+    } finally {
+      registry.dispose();
+    }
+  });
 });

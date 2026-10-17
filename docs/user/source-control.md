@@ -10,6 +10,13 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+## Commit and push without pull requests
+
+Turn off **Settings → Source Control → Pull request creation** to hide PR creation from source
+control actions. Feature branches then offer commit and push without creating a pull request.
+Select a project in Settings to override the environment default. Turn the setting back on to
+restore PR creation. Existing pull requests remain available for review.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

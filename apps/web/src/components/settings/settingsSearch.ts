@@ -788,6 +788,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "pull-request-creation",
+    title: "Pull request creation",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["disable hide pr merge request commit push feature branch"],
+  },
+  {
     id: "git-fetch-interval",
     title: "Git fetch interval",
     to: "/settings/source-control",

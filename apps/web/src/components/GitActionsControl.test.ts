@@ -36,7 +36,10 @@ vi.mock("~/state/session", () => ({
     (environmentId === "environment" ? state.scopes : state.primaryScopes).has(scope),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
+vi.mock("~/state/server", () => ({
+  serverEnvironment: { configValueAtom: () => null, lastKnownSettingsValueAtom: () => null },
+}));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => null } }));
 vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: { discovery: () => null } }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => {} }));
 vi.mock("~/state/vcs", () => ({

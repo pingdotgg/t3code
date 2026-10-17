@@ -17,6 +17,7 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
@@ -25,6 +26,7 @@ import { threadEnvironment } from "../state/threads";
 import { vcsActionManager, vcsEnvironment } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
+import { serverEnvironment } from "./server";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { useAtomCommand } from "./use-atom-command";
@@ -378,6 +380,17 @@ export function useSelectedThreadGitActions() {
 
   const onRunSelectedThreadGitAction = useCallback(
     async (input: GitActionRequestInput): Promise<GitRunStackedActionResult | null> => {
+      if (input.action === "create_pr" || input.action === "commit_push_pr") {
+        const currentSettings = appAtomRegistry.get(
+          serverEnvironment.lastKnownSettingsValueAtom(selectedThread?.environmentId ?? null),
+        );
+        if (
+          !currentSettings ||
+          resolveProjectSettings(currentSettings, selectedThread?.projectId ?? null).settings
+            .pullRequestCreationEnabled !== true
+        )
+          return null;
+      }
       const actionId = uuidv4();
       return await runSelectedThreadGitMutation(
         "run_change_request",
@@ -426,6 +439,7 @@ export function useSelectedThreadGitActions() {
       runStackedAction,
       refreshSelectedThreadGitStatus,
       runSelectedThreadGitMutation,
+      selectedThread,
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
     ],

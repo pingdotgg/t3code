@@ -79,6 +79,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
+  const mixedPrCreation = useScopedSettingsMixed(["pullRequestCreationEnabled"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
@@ -381,6 +382,31 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : category === "source-control" ? (
         <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["pullRequestCreationEnabled"]}
+            mixed={mixedPrCreation}
+            {...searchableSetting("pull-request-creation")}
+            description="Show pull request creation in source control actions. Turn off to only commit and push from feature branches."
+            resetAction={
+              !settings.pullRequestCreationEnabled ? (
+                <SettingResetButton
+                  label="pull request creation"
+                  onClick={() => updateSettings({ pullRequestCreationEnabled: true })}
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                aria-label="Pull request creation"
+                mixed={mixedPrCreation}
+                checked={mixedPrCreation ? false : settings.pullRequestCreationEnabled}
+                onCheckedChange={(enabled) =>
+                  updateSettings({ pullRequestCreationEnabled: enabled })
+                }
+              />
+            }
+          />
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}

@@ -36,6 +36,74 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   };
 }
 
+describe("pull request creation preference", () => {
+  it("hides Create PR while keeping Commit and Push", () => {
+    const items = buildMenuItems(status({ aheadCount: 1 }), false, true, false);
+    assert.deepEqual(
+      items.map((item) => item.label),
+      ["Commit", "Push"],
+    );
+    assert.isFalse(items[1]!.disabled);
+  });
+
+  it.each([true, false])("commits and pushes with hasUpstream=%s", (hasUpstream) => {
+    assert.deepEqual(
+      resolveQuickAction(
+        status({ hasWorkingTreeChanges: true, hasUpstream }),
+        false,
+        false,
+        true,
+        false,
+      ),
+      { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" },
+    );
+  });
+
+  it.each([true, false])("pushes local commits with hasUpstream=%s", (hasUpstream) => {
+    assert.deepEqual(
+      resolveQuickAction(status({ aheadCount: 1, hasUpstream }), false, false, true, false),
+      { label: "Push", disabled: false, kind: "run_action", action: "push" },
+    );
+  });
+
+  it("does not offer a PR for a feature branch already pushed", () => {
+    const gitStatus = status({ aheadOfDefaultCount: 2 });
+    assert.equal(resolveQuickAction(gitStatus, false, false, true, true).action, "create_pr");
+    const disabled = resolveQuickAction(gitStatus, false, false, true, false);
+    assert.equal(disabled.kind, "show_hint");
+    assert.isTrue(disabled.disabled);
+    assert.isUndefined(disabled.action);
+  });
+
+  it("restores PR creation when enabled again", () => {
+    const gitStatus = status({ hasWorkingTreeChanges: true });
+    assert.equal(resolveQuickAction(gitStatus, false, false, true, false).action, "commit_push");
+    assert.equal(resolveQuickAction(gitStatus, false, false, true, true).action, "commit_push_pr");
+    assert.isTrue(
+      buildMenuItems(gitStatus, false, true, true).some(
+        (item) => item.dialogAction === "create_pr",
+      ),
+    );
+  });
+
+  it("still pulls a behind branch and commits without a remote", () => {
+    assert.equal(
+      resolveQuickAction(status({ behindCount: 1 }), false, false, true, false).kind,
+      "run_pull",
+    );
+    assert.equal(
+      resolveQuickAction(
+        status({ hasWorkingTreeChanges: true, hasUpstream: false }),
+        false,
+        false,
+        false,
+        false,
+      ).action,
+      "commit",
+    );
+  });
+});
+
 describe("git action progress presentation", () => {
   it("keeps the phase on the first row and hook output on the second", () => {
     assert.deepEqual(

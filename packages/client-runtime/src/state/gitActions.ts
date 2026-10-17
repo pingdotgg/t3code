@@ -46,6 +46,7 @@ export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
   hasOriginRemote = true,
+  pullRequestCreationEnabled = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
@@ -71,7 +72,7 @@ export function buildMenuItems(
     (gitStatus.hasUpstream || canPushWithoutUpstream);
   const canOpenPr = !isBusy && hasOpenPr;
 
-  return [
+  const items: GitActionMenuItem[] = [
     {
       id: "commit",
       label: "Commit",
@@ -105,6 +106,9 @@ export function buildMenuItems(
           dialogAction: "create_pr",
         },
   ];
+  return pullRequestCreationEnabled
+    ? items
+    : items.filter((item) => item.dialogAction !== "create_pr");
 }
 
 export function resolveQuickAction(
@@ -112,6 +116,7 @@ export function resolveQuickAction(
   isBusy: boolean,
   isDefaultBranch = false,
   hasOriginRemote = true,
+  pullRequestCreationEnabled = true,
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -146,7 +151,7 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasOriginRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || !pullRequestCreationEnabled) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
@@ -180,7 +185,7 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || !pullRequestCreationEnabled) {
       return {
         label: "Push",
         disabled: false,
@@ -214,7 +219,7 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultBranch) {
+    if (hasOpenPr || isDefaultBranch || !pullRequestCreationEnabled) {
       return {
         label: "Push",
         disabled: false,

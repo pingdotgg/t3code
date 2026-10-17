@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type ServerConfig,
+  type ServerSettings,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
   type ServerLifecycleStreamReadyEvent,
@@ -599,6 +600,22 @@ export function resolveServerConfigValue(
   return initialConfig ?? projection?.config ?? null;
 }
 
+export function createLastKnownServerSettingsAtomFamily(
+  configValueAtom: (environmentId: EnvironmentId | null) => Atom.Atom<ServerConfig | null>,
+) {
+  return Atom.family((environmentId: EnvironmentId | null) =>
+    Atom.make(
+      (get) =>
+        get(configValueAtom(environmentId))?.settings ??
+        Option.getOrNull(get.self<ServerSettings | null>()),
+    ).pipe(
+      // Keep the last choice across reconnects even while no control is mounted.
+      Atom.keepAlive,
+      Atom.withLabel(`environment-data:server:last-known-settings:${environmentId}`),
+    ),
+  );
+}
+
 export function createServerEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
@@ -891,6 +908,7 @@ export function createServerEnvironmentAtoms<R, E>(
       );
     },
   });
+  const lastKnownSettingsValueAtom = createLastKnownServerSettingsAtomFamily(configValueAtom);
   const settingsValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => get(configValueAtom(environmentId))?.settings ?? null).pipe(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
@@ -982,6 +1000,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
+    lastKnownSettingsValueAtom,
     providersValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",

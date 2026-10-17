@@ -1,3 +1,5 @@
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -977,6 +979,9 @@ export default function GitActionsControl({
   );
   const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
+  const sourceControlSettings = useAtomValue(
+    serverEnvironment.lastKnownSettingsValueAtom(activeEnvironmentId),
+  );
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
     serverConfig?.availableEditors ?? [],
@@ -1088,6 +1093,12 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
+  const pullRequestCreationEnabled = sourceControlSettings
+    ? resolveProjectSettings(
+        sourceControlSettings,
+        activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+      ).settings.pullRequestCreationEnabled === true
+    : false;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1134,12 +1145,14 @@ export default function GitActionsControl({
     gitStatusForActions,
     isGitActionRunning,
     hasPrimaryRemote,
+    pullRequestCreationEnabled,
   );
   const quickAction = resolveQuickAction(
     gitStatusForActions,
     isGitActionRunning,
     isDefaultRef,
     hasPrimaryRemote,
+    pullRequestCreationEnabled,
   );
   const quickActionDisabledReason = !canWriteSourceControl
     ? "This connection cannot change source control."
@@ -1208,6 +1221,21 @@ export default function GitActionsControl({
         !readEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope))
     )
       return;
+    // Retained toast callbacks must use current settings for their original project.
+    const canRunAction = (candidate: GitStackedAction) => {
+      if (candidate !== "create_pr" && candidate !== "commit_push_pr") return true;
+      const currentSettings = appAtomRegistry.get(
+        serverEnvironment.lastKnownSettingsValueAtom(activeEnvironmentId),
+      );
+      return (
+        currentSettings !== null &&
+        resolveProjectSettings(
+          currentSettings,
+          activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+        ).settings.pullRequestCreationEnabled === true
+      );
+    };
+    if (!canRunAction(action)) return;
     const actionStatus = statusOverride ?? gitStatusForActions;
     const actionBranch = actionStatus?.refName ?? null;
     const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -1296,7 +1324,7 @@ export default function GitActionsControl({
       children: string;
       onClick: (event: MouseEvent<HTMLButtonElement>) => void;
     } | null = null;
-    if (toastCta.kind === "run_action") {
+    if (toastCta.kind === "run_action" && canRunAction(toastCta.action.kind)) {
       toastActionProps = {
         children: toastCta.label,
         onClick: () => {

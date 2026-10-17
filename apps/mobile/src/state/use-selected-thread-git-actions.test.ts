@@ -1,15 +1,24 @@
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  settings: undefined as ServerSettings | undefined,
+  dispatchedActions: [] as string[],
   scopes: new Set<string>(),
   primaryScopes: new Set<string>(),
   branch: "main",
   worktrees: [] as string[],
   thread: {
     id: "thread",
+    projectId: "project",
     environmentId: "environment",
     branch: "main",
     worktreePath: null as string | null,
@@ -50,7 +59,17 @@ vi.mock("./queries", () => ({
   useBranches: () => ({ data: { refs: [] }, refresh: () => {} }),
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./atom-registry", () => ({
+  appAtomRegistry: {
+    get: (atom: unknown) => (atom === "last-known-settings" ? (state.settings ?? null) : null),
+  },
+}));
+vi.mock("./server", () => ({
+  serverEnvironment: {
+    configValueAtom: () => "current-settings",
+    lastKnownSettingsValueAtom: () => "last-known-settings",
+  },
+}));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: () => {} }));
 vi.mock("./use-vcs-action-state", () => ({
   showGitActionResult: (result: { type: string; description?: string }) =>
@@ -103,6 +122,7 @@ vi.mock("./vcs", () => ({
   vcsActionManager: {
     track: (_registry: unknown, _target: unknown, _operation: unknown, run: () => unknown) => run(),
     runStackedAction: () => async (input: { action: string; featureBranch?: boolean }) => {
+      state.dispatchedActions.push(input.action);
       if (input.featureBranch) state.branch = "feature";
       if (input.action === "commit") state.commits += 1;
       if (input.action === "push") state.pushes += 1;
@@ -133,6 +153,8 @@ describe("thread Git mutation permissions", () => {
     state.results = [];
     state.afterGitAction = undefined;
     state.statusRefreshes = 0;
+    state.settings = { ...DEFAULT_SERVER_SETTINGS };
+    state.dispatchedActions = [];
   });
 
   it.each([false, true])(
@@ -278,5 +300,41 @@ describe("thread Git mutation permissions", () => {
     expect(state.branch).toBe("main");
     expect(state.thread.branch).toBe("main");
     expect(state.results).toEqual([]);
+  });
+
+  it.each(["create_pr", "commit_push_pr"] as const)(
+    "rechecks the last known settings before dispatching a retained %s action",
+    async (action) => {
+      const actions = useSelectedThreadGitActions();
+      state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
+      expect(await actions.onRunSelectedThreadGitAction({ action })).toBeNull();
+      state.settings = undefined;
+      expect(await actions.onRunSelectedThreadGitAction({ action })).toBeNull();
+      state.settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [ProjectId.make("project")]: { pullRequestCreationEnabled: false },
+        },
+      };
+      expect(await actions.onRunSelectedThreadGitAction({ action })).toBeNull();
+      expect(state.dispatchedActions).toEqual([]);
+      state.settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        pullRequestCreationEnabled: false,
+        projectSettingsOverrides: {
+          [ProjectId.make("project")]: { pullRequestCreationEnabled: true },
+        },
+      };
+      expect(await actions.onRunSelectedThreadGitAction({ action })).not.toBeNull();
+      expect(state.dispatchedActions).toEqual([action]);
+    },
+  );
+
+  it("keeps commit and push actions available without current settings", async () => {
+    state.settings = undefined;
+    const actions = useSelectedThreadGitActions();
+    await actions.onRunSelectedThreadGitAction({ action: "commit" });
+    await actions.onRunSelectedThreadGitAction({ action: "push" });
+    expect(state.dispatchedActions).toEqual(["commit", "push"]);
   });
 });
