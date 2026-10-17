@@ -85,6 +85,10 @@ export function shouldPublishAgentAwarenessEvent(
   ) {
     return false;
   }
+  // Unsettling is not published: the row is already gone and republishing a
+  // completed thread with a fresh updatedAt would re-alert Done for work the
+  // user already dismissed. A later rename, model change, or PR sync after an
+  // unsettle can still re-alert (#11938).
   switch (event.type) {
     case "thread.created":
     case "thread.archived":
@@ -93,6 +97,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "run.created":
@@ -101,7 +106,6 @@ export function shouldPublishAgentAwarenessEvent(
     case "subagent.updated":
     case "provider-thread.updated":
       return true;
-    case "thread.settled":
     case "thread.unsettled":
     case "thread.snoozed":
     case "thread.unsnoozed":
