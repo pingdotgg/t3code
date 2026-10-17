@@ -72,4 +72,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx",
   "apps/web/src/components/pullRequest/LinkPullRequestDialog.tsx",
   "apps/web/src/components/settings/GitHubTokenSettings.tsx",
+  "apps/web/src/components/settings/GitHubAccountSettings.tsx",
 ] as const;

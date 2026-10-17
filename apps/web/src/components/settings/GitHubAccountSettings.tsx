@@ -55,19 +55,16 @@ export function GitHubAccountSettings({
     change: { readonly enabled?: boolean; readonly account?: string | null },
   ) => {
     setSaving(true);
-    try {
-      const result = await updateSettings({
-        environmentId,
-        input: {
-          patch: {
-            sourceControlHosts: { github: { hosts: nextGitHubHosts(hosts, host, change) } },
-          },
+    const result = await updateSettings({
+      environmentId,
+      input: {
+        patch: {
+          sourceControlHosts: { github: { hosts: nextGitHubHosts(hosts, host, change) } },
         },
-      });
-      if (result._tag === "Success") onSaved();
-    } finally {
-      setSaving(false);
-    }
+      },
+    });
+    setSaving(false);
+    if (result._tag === "Success") onSaved();
   };
 
   if (groups.length === 0) {
