@@ -28,4 +28,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
   "apps/web/src/browser/ServerBrowserSurface.tsx",
   "apps/web/src/assets/assetUrls.ts",
+  "apps/web/src/components/ui/toggle-group.tsx",
 ] as const;
