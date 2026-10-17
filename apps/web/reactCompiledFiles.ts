@@ -62,4 +62,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/sidebar/SidebarUpdatePill.tsx",
   "apps/web/src/components/ProviderUpdatesAction.tsx",
   "apps/web/src/components/media/MediaVideoPlayer.tsx",
+  "apps/web/src/components/media/MediaActions.tsx",
 ] as const;
