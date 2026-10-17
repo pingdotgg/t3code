@@ -645,14 +645,14 @@ export const BranchToolbar = memo(function BranchToolbar({
     ],
   );
 
-  const showEnvironmentPicker = Boolean(
-    availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
-  );
+  const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1;
+  const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
+  // Matches ChatView's strip visibility: started threads keep a static label.
   const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: showEnvironmentPicker,
+    canPickEnvironment: hasMultipleEnvironments,
   });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
@@ -755,7 +755,7 @@ export const BranchToolbar = memo(function BranchToolbar({
                 envLocked={envLocked}
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
-                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+                {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
               />
               {showGitControls ? (
                 <Separator
