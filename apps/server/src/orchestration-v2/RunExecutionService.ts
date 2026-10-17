@@ -1359,7 +1359,8 @@ export const layer: Layer.Layer<
 
           // A provider turn is a sign that the session is still alive. Keep
           // its already-issued MCP credential valid even when the agent goes
-          // a long time between browser-tool calls.
+          // a long time between browser-tool calls, and restore it if the
+          // thread sat idle past the liveness window.
           yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
           const appContext = (yield* mcpAppModelContext
             .forThread(input.run.threadId)
