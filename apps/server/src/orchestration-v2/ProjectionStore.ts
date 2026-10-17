@@ -291,6 +291,9 @@ export interface ProjectionRecordFilter {
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly turnItemRunId?: RunId;
   readonly messageIds?: ReadonlyArray<MessageId>;
+  readonly nodeIds?: ReadonlyArray<NodeId>;
+  readonly subagentIds?: ReadonlyArray<NodeId>;
+  readonly providerTurnIds?: ReadonlyArray<ProviderTurnId>;
   readonly messageRunIds?: ReadonlyArray<RunId>;
   readonly turnItemRunIds?: ReadonlyArray<RunId | null>;
   readonly runIds?: ReadonlyArray<RunId>;
@@ -3064,6 +3067,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_nodes AS node
             WHERE node.thread_id = ${threadId}
+              ${filter?.nodeIds === undefined ? sql`` : sql`AND node.node_id IN (SELECT value FROM json_each(${encodeIdList(filter.nodeIds)}))`}
               ${
                 filter?.omitSettledLeafNodes === true
                   ? sql`AND NOT (
@@ -3100,6 +3104,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_subagents
             WHERE thread_id = ${threadId}
+              ${filter?.subagentIds === undefined ? sql`` : sql`AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(filter.subagentIds)}))`}
             ORDER BY COALESCE(started_at, ''), subagent_id ASC
           `
               : sql<PayloadRow>`
@@ -3167,6 +3172,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json
             FROM orchestration_v2_projection_provider_turns
             WHERE thread_id = ${threadId}
+              ${filter?.providerTurnIds === undefined ? sql`` : sql`AND provider_turn_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerTurnIds)}))`}
             ORDER BY provider_thread_id ASC, ordinal ASC
           `
               : sql<PayloadRow>`
@@ -6432,10 +6438,19 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   filter.turnItemStatuses.includes(row.status)) &&
                 (filter?.turnItemRunId === undefined || filter.turnItemRunId === row.runId),
             ),
-            nodes:
-              filter?.omitSettledLeafNodes === true
-                ? projection.nodes.filter((node) => !isSettledLeafNode(node, projection.runs))
-                : projection.nodes,
+            nodes: projection.nodes.filter(
+              (node) =>
+                (filter?.nodeIds === undefined || filter.nodeIds.includes(node.id)) &&
+                (filter?.omitSettledLeafNodes !== true ||
+                  !isSettledLeafNode(node, projection.runs)),
+            ),
+            subagents: projection.subagents.filter(
+              (row) => filter?.subagentIds === undefined || filter.subagentIds.includes(row.id),
+            ),
+            providerTurns: projection.providerTurns.filter(
+              (row) =>
+                filter?.providerTurnIds === undefined || filter.providerTurnIds.includes(row.id),
+            ),
           };
           return Object.fromEntries([
             ["thread", projection.thread],

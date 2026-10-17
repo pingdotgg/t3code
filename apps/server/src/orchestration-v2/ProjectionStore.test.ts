@@ -643,6 +643,18 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     nodeNames(yield* store.getThreadRecords(threadId, ["nodes"])),
     nodes.map(([name]) => name).toSorted(),
   );
+  // A read by id returns only the named nodes.
+  assert.deepEqual(
+    nodeNames(
+      yield* store.getThreadRecords(threadId, ["nodes"], {
+        nodeIds: [
+          NodeId.make("node:settled-leaf-nodes:settled-tool"),
+          NodeId.make("node:settled-leaf-nodes:active-run-done-tool"),
+        ],
+      }),
+    ),
+    ["active-run-done-tool", "settled-tool"],
+  );
 });
 
 it.effect("memory command reads skip finished leaf nodes of finished runs", () =>
