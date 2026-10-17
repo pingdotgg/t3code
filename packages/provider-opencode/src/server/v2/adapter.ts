@@ -2935,7 +2935,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
-      const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+      const mcpSession = yield* mcpSessions.read(turnInput.threadId, instanceId);
       const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
       const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.

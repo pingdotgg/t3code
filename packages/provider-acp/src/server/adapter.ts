@@ -1286,7 +1286,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(acpMcpContext(undefined, self))
-      : mcpSessions.read(threadId).pipe(Effect.map((session) => acpMcpContext(session, self)));
+      : mcpSessions
+          .read(threadId, options.instanceId)
+          .pipe(Effect.map((session) => acpMcpContext(session, self)));
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
