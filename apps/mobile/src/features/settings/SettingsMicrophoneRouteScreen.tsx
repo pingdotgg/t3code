@@ -1,3 +1,4 @@
+import { SettingsScreen } from "./components/SettingsScreen";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -136,7 +137,7 @@ export function SettingsMicrophoneRouteScreen() {
   const dragTo = drag === null ? -1 : dragFrom + dropSteps(dragFrom, drag.translation);
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title="Microphone">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -218,7 +219,7 @@ export function SettingsMicrophoneRouteScreen() {
           Other row ranks them.
         </Text>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 

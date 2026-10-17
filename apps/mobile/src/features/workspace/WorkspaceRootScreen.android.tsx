@@ -32,14 +32,16 @@ export function WorkspaceRootScreen() {
     ) : (
       <>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="Pull requests" />
-        <View className="flex-1 items-center justify-center px-10">
-          <EmptyState
-            title="Select a pull request"
-            detail="Choose a pull request from the sidebar to review it."
-            variant="plain"
-          />
-        </View>
+        <AndroidScreenHeader title="Pull requests" hideBottomBorder />
+        <ScreenContent insetHorizontal>
+          <View className="flex-1 items-center justify-center px-10">
+            <EmptyState
+              title="Select a pull request"
+              detail="Choose a pull request from the sidebar to review it."
+              variant="plain"
+            />
+          </View>
+        </ScreenContent>
       </>
     );
   }

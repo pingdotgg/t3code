@@ -1,6 +1,8 @@
+import { AppBar } from "../../../components/ui/AppBar";
+import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
 import { useCallback, useLayoutEffect, useState } from "react";
-import { Linking, Pressable, View } from "react-native";
+import { Linking, Platform, Pressable, View } from "react-native";
 import { WebView } from "react-native-webview";
 
 import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicator";
@@ -85,48 +87,44 @@ export function SettingsLegalDocumentRouteScreen({
   const openExternalUrl = useCallback((url: string) => {
     void Linking.openURL(url).catch(() => undefined);
   }, []);
-  if (loadError) {
-    return (
-      <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
-        <SymbolView
-          name="exclamationmark.triangle"
-          size={32}
-          tintColorClassName={"accent-icon"}
-          type="monochrome"
-          weight="regular"
-        />
-        <View className="items-center gap-2">
-          <Text className="text-center font-t3-bold text-lg text-foreground">
-            Couldn&apos;t load the {documentName.toLowerCase()}
-          </Text>
-          <Text selectable className="text-center text-sm leading-normal text-foreground-muted">
-            {loadError}
-          </Text>
-        </View>
-        <View className="w-full max-w-[320px] gap-2">
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              setLoadError(null);
-              setReloadKey((value) => value + 1);
-            }}
-            className="items-center rounded-xl bg-foreground px-4 py-3 active:opacity-80"
-          >
-            <Text className="font-t3-bold text-base text-sheet">Try Again</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="link"
-            onPress={() => openExternalUrl(documentUrl)}
-            className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
-          >
-            <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
-          </Pressable>
-        </View>
+  const content = loadError ? (
+    <View className="flex-1 items-center justify-center gap-4 bg-sheet px-8">
+      <SymbolView
+        name="exclamationmark.triangle"
+        size={32}
+        tintColorClassName={"accent-icon"}
+        type="monochrome"
+        weight="regular"
+      />
+      <View className="items-center gap-2">
+        <Text className="text-center font-t3-bold text-lg text-foreground">
+          Couldn&apos;t load the {documentName.toLowerCase()}
+        </Text>
+        <Text selectable className="text-center text-sm leading-normal text-foreground-muted">
+          {loadError}
+        </Text>
       </View>
-    );
-  }
-
-  return (
+      <View className="w-full max-w-[320px] gap-2">
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            setLoadError(null);
+            setReloadKey((value) => value + 1);
+          }}
+          className="items-center rounded-xl bg-foreground px-4 py-3 active:opacity-80"
+        >
+          <Text className="font-t3-bold text-base text-sheet">Try Again</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="link"
+          onPress={() => openExternalUrl(documentUrl)}
+          className="items-center rounded-xl px-4 py-3 active:bg-foreground/5"
+        >
+          <Text className="font-t3-medium text-base text-foreground-muted">Open in Browser</Text>
+        </Pressable>
+      </View>
+    </View>
+  ) : (
     <View className="relative flex-1 bg-sheet">
       {loadProgress > 0 && loadProgress < 1 ? <LoadingStrip progress={loadProgress} /> : null}
       <WebView
@@ -178,6 +176,26 @@ export function SettingsLegalDocumentRouteScreen({
         )}
         style={{ flex: 1, backgroundColor: "transparent" }}
       />
+    </View>
+  );
+  return (
+    <View className="flex-1 bg-sheet">
+      {Platform.OS === "android" ? (
+        <AppBar
+          title={documentName}
+          sidebar={false}
+          onBack={() => navigation.goBack()}
+          hideBottomBorder
+          actions={[
+            {
+              accessibilityLabel: "Open legal documents in external browser",
+              icon: "safari",
+              onPress: () => openExternalUrl(externalUrl),
+            },
+          ]}
+        />
+      ) : null}
+      <ScreenContent>{content}</ScreenContent>
     </View>
   );
 }

@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
@@ -80,6 +81,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidSheetHeader
+          hideBottomBorder
           title="Set up T3 Connect"
           actions={[
             {
@@ -97,50 +99,52 @@ function ConfiguredConnectOnboardingRouteScreen() {
           <Toolbar.Button icon="xmark" onPress={handleClose} separateBackground />
         </Toolbar>
       )}
-      <ScrollView
-        nestedScrollEnabled
-        alwaysBounceVertical
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
-        contentContainerStyle={{
-          gap: 16,
-          paddingHorizontal: 20,
-          paddingTop: 16,
-        }}
-        refreshControl={
-          Platform.OS === "ios" ? (
-            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-          ) : undefined
-        }
-      >
-        {isSignedIn ? (
-          <CloudEnvironmentRows
-            connectedCloudEnvironments={connectedCloudEnvironments}
-            onSetEnvironmentEnabled={onSetEnvironmentEnabled}
-            onRemoveEnvironment={onRemoveEnvironmentPress}
-            showHeader={false}
-          />
-        ) : (
-          <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
-            <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
-            </Text>
-          </View>
-        )}
+      <ScreenContent>
+        <ScrollView
+          nestedScrollEnabled
+          alwaysBounceVertical
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
+          contentContainerStyle={{
+            gap: 16,
+            paddingHorizontal: 20,
+            paddingTop: 16,
+          }}
+          refreshControl={
+            Platform.OS === "ios" ? (
+              <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+            ) : undefined
+          }
+        >
+          {isSignedIn ? (
+            <CloudEnvironmentRows
+              connectedCloudEnvironments={connectedCloudEnvironments}
+              onSetEnvironmentEnabled={onSetEnvironmentEnabled}
+              onRemoveEnvironment={onRemoveEnvironmentPress}
+              showHeader={false}
+            />
+          ) : (
+            <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
+              <Text className="text-sm leading-normal text-foreground-muted">
+                Sign in to your T3 account to set up T3 Connect.
+              </Text>
+            </View>
+          )}
 
-        {userId ? (
-          <Pressable
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={handleDontShowAgain}
-            className="items-center py-1 active:opacity-70"
-          >
-            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
-          </Pressable>
-        ) : null}
-      </ScrollView>
+          {userId ? (
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={handleDontShowAgain}
+              className="items-center py-1 active:opacity-70"
+            >
+              <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
+            </Pressable>
+          ) : null}
+        </ScrollView>
+      </ScreenContent>
     </View>
   );
 }

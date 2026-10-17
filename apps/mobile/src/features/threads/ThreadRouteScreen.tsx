@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
@@ -111,9 +112,9 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 
 function ThreadPane(props: { readonly children: ReactNode }) {
   return (
-    <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
-      {props.children}
-    </View>
+    <ScreenContent background="thread">
+      <View className="flex-1 bg-screen android:bg-thread-canvas">{props.children}</View>
+    </ScreenContent>
   );
 }
 

@@ -1,10 +1,12 @@
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -109,49 +111,62 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   }, [awaitingUser, exitRequested, focused, navigation]);
 
   return (
-    <View className="flex-1 bg-screen" style={{ paddingTop: insets.top }}>
-      <View className="h-11 flex-row items-center justify-between px-3">
-        <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
-          {app?.server ?? "App"}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Exit full screen"
-          hitSlop={8}
-          onPress={onClose}
+    <View
+      className="flex-1 bg-screen"
+      style={{ paddingTop: Platform.OS === "android" ? 0 : insets.top }}
+    >
+      {Platform.OS === "android" ? (
+        <AndroidScreenHeader
+          title={app?.server ?? "App"}
+          hideBottomBorder
+          actions={[{ accessibilityLabel: "Exit full screen", icon: "xmark", onPress: onClose }]}
+        />
+      ) : (
+        <View className="h-11 flex-row items-center justify-between px-3">
+          <Text className="text-base font-semibold text-foreground" numberOfLines={1}>
+            {app?.server ?? "App"}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Exit full screen"
+            hitSlop={8}
+            onPress={onClose}
+          >
+            <SymbolView name="xmark" size={18} tintColor="gray" />
+          </Pressable>
+        </View>
+      )}
+      <ScreenContent background="screen">
+        <View
+          className="flex-1"
+          style={{ paddingBottom: insets.bottom }}
+          onLayout={(event) =>
+            setSize({
+              width: Math.round(event.nativeEvent.layout.width),
+              height: Math.round(event.nativeEvent.layout.height - insets.bottom),
+            })
+          }
         >
-          <SymbolView name="xmark" size={18} tintColor="gray" />
-        </Pressable>
-      </View>
-      <View
-        className="flex-1"
-        style={{ paddingBottom: insets.bottom }}
-        onLayout={(event) =>
-          setSize({
-            width: Math.round(event.nativeEvent.layout.width),
-            height: Math.round(event.nativeEvent.layout.height - insets.bottom),
-          })
-        }
-      >
-        {app === undefined ? (
-          detail.data === undefined ? null : (
-            <Text className="m-6 text-sm text-foreground-muted">This app cannot be shown.</Text>
-          )
-        ) : size.width > 0 ? (
-          <ThreadMcpApp
-            environmentId={environmentId}
-            threadId={threadId}
-            conversationThreadId={conversationThreadId}
-            itemId={itemId}
-            revision={params.revision ?? (item == null ? "" : turnItemDetailRevision(item))}
-            app={app}
-            width={size.width}
-            height={size.height}
-            displayMode="fullscreen"
-            onExitFullscreen={onClose}
-          />
-        ) : null}
-      </View>
+          {app === undefined ? (
+            detail.data === undefined ? null : (
+              <Text className="m-6 text-sm text-foreground-muted">This app cannot be shown.</Text>
+            )
+          ) : size.width > 0 ? (
+            <ThreadMcpApp
+              environmentId={environmentId}
+              threadId={threadId}
+              conversationThreadId={conversationThreadId}
+              itemId={itemId}
+              revision={params.revision ?? (item == null ? "" : turnItemDetailRevision(item))}
+              app={app}
+              width={size.width}
+              height={size.height}
+              displayMode="fullscreen"
+              onExitFullscreen={onClose}
+            />
+          ) : null}
+        </View>
+      </ScreenContent>
     </View>
   );
 }

@@ -3,6 +3,7 @@ import { View } from "react-native";
 import { FormSheet } from "react-native-screens";
 import { useResolveClassNames } from "uniwind";
 import { AndroidSheetHeader } from "./AndroidScreenHeader";
+import { ScreenContent } from "./ScreenContent";
 import type { SheetProps } from "./Sheet.types";
 export type { SheetProps } from "./Sheet.types";
 
@@ -19,8 +20,8 @@ export function Sheet(props: SheetProps) {
       onNativeDismiss={props.onClose}
     >
       <View collapsable={false} className="flex-1 bg-sheet">
-        <AndroidSheetHeader title={props.title} onBack={() => setIsOpen(false)} />
-        {props.children}
+        <AndroidSheetHeader title={props.title} onBack={() => setIsOpen(false)} hideBottomBorder />
+        <ScreenContent>{props.children}</ScreenContent>
       </View>
     </FormSheet>
   );

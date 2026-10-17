@@ -1,3 +1,5 @@
+import { ScreenContent } from "./components/ui/ScreenContent";
+import { AppBar } from "./components/ui/AppBar";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
 import { PullRequestInlineCommentScreen } from "./features/pull-requests/PullRequestInlineCommentScreen";
@@ -642,28 +644,39 @@ function NotFoundScreen() {
   ]);
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{
-        flexGrow: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 16,
-        paddingHorizontal: 24,
-        paddingVertical: 32,
-      }}
-      style={[{ flex: 1 }, screenBgStyle]}
-    >
-      <Text className="text-3xl font-t3-bold text-foreground" selectable>
-        Route not found
-      </Text>
-      <Pressable
-        style={returnHomeButtonStyle}
-        onPress={() => navigation.dispatch(StackActions.replace("Home"))}
-      >
-        <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
-      </Pressable>
-    </ScrollView>
+    <>
+      {Platform.OS === "android" ? (
+        <AppBar
+          title="Route not found"
+          sidebar={false}
+          onBack={() => navigation.dispatch(StackActions.replace("Home"))}
+        />
+      ) : null}
+      <ScreenContent background="screen">
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{
+            flexGrow: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 16,
+            paddingHorizontal: 24,
+            paddingVertical: 32,
+          }}
+          style={[{ flex: 1 }, screenBgStyle]}
+        >
+          <Text className="text-3xl font-t3-bold text-foreground" selectable>
+            Route not found
+          </Text>
+          <Pressable
+            style={returnHomeButtonStyle}
+            onPress={() => navigation.dispatch(StackActions.replace("Home"))}
+          >
+            <Text className="text-base font-t3-bold text-primary-foreground">Return home</Text>
+          </Pressable>
+        </ScrollView>
+      </ScreenContent>
+    </>
   );
 }
 
@@ -1001,7 +1014,16 @@ function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: 
       ? { label: "Open settings", onPress: () => navigation.navigate("SettingsSheet") }
       : { label: "Return home", onPress: () => navigation.dispatch(StackActions.replace("Home")) };
 
-  return <RenderFailureView {...props} exit={exit} />;
+  return (
+    <>
+      {Platform.OS === "android" ? (
+        <AppBar title="Something went wrong" sidebar={false} onBack={exit.onPress} />
+      ) : null}
+      <ScreenContent background="screen">
+        <RenderFailureView {...props} exit={exit} />
+      </ScreenContent>
+    </>
+  );
 }
 
 export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navigator }) {

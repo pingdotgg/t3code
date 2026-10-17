@@ -1,4 +1,5 @@
 import { Toolbar } from "../../components/ui/Toolbar";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import * as Dialog from "../../components/ui/Dialog";
 /* oxlint-disable react/no-array-index-key -- Captured table rows and columns have stable positions and may contain identical values. */
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -359,6 +360,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
       />
       {isAndroid ? (
         <AndroidScreenHeader
+          hideBottomBorder
           title={params.name}
           subtitle={subtitle}
           onBack={handleBack}
@@ -406,18 +408,20 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
             ))}
         </Toolbar.Menu>
       </Toolbar>
-      <AttachmentDocumentBody
-        document={document}
-        name={params.name}
-        environmentId={environmentId}
-        htmlRender={params.htmlRender === "1"}
-        nativeViewer={nativeViewer}
-        nativeError={nativeError}
-        onOpenNative={() => {
-          setNativeViewer((current) => (current === null ? null : "open"));
-          setNativeOpen(true);
-        }}
-      />
+      <ScreenContent>
+        <AttachmentDocumentBody
+          document={document}
+          name={params.name}
+          environmentId={environmentId}
+          htmlRender={params.htmlRender === "1"}
+          nativeViewer={nativeViewer}
+          nativeError={nativeError}
+          onOpenNative={() => {
+            setNativeViewer((current) => (current === null ? null : "open"));
+            setNativeOpen(true);
+          }}
+        />
+      </ScreenContent>
       {nativeOpen && nativeSource ? (
         <FilePreviewModal
           source={nativeSource}

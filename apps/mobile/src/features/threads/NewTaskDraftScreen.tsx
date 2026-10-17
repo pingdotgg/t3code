@@ -1349,6 +1349,9 @@ export function NewTaskDraftScreen(props: {
         ) : (
           <NativeStackScreenOptions options={{ title: "Loading task" }} />
         )}
+        <ScreenContent>
+          <View className="flex-1" />
+        </ScreenContent>
       </View>
     );
   }

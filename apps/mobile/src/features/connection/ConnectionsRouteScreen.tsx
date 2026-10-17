@@ -8,6 +8,7 @@ import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
@@ -31,6 +32,7 @@ export function ConnectionsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
+          hideBottomBorder
           title="Environments"
           onBack={() => navigation.goBack()}
           actions={[
@@ -50,27 +52,29 @@ export function ConnectionsRouteScreen() {
           />
         </Toolbar>
       )}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerStyle={{
-          paddingBottom: Math.max(insets.bottom, 18) + 18,
-          paddingHorizontal: 20,
-          paddingTop: 16,
-        }}
-      >
-        <LocalEnvironmentList
-          environments={connectedEnvironments}
-          expandedId={expandedId}
-          onToggle={handleToggle}
-          onReconnect={onReconnectEnvironment}
-          onRemove={onRemoveEnvironmentPress}
-          onSetEnabled={onSetEnvironmentEnabled}
-          onUpdate={onUpdateEnvironment}
-        />
-        <GitHubRoutingSettings />
-      </ScrollView>
+      <ScreenContent>
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentContainerStyle={{
+            paddingBottom: Math.max(insets.bottom, 18) + 18,
+            paddingHorizontal: 20,
+            paddingTop: 16,
+          }}
+        >
+          <LocalEnvironmentList
+            environments={connectedEnvironments}
+            expandedId={expandedId}
+            onToggle={handleToggle}
+            onReconnect={onReconnectEnvironment}
+            onRemove={onRemoveEnvironmentPress}
+            onSetEnabled={onSetEnvironmentEnabled}
+            onUpdate={onUpdateEnvironment}
+          />
+          <GitHubRoutingSettings />
+        </ScrollView>
+      </ScreenContent>
     </View>
   );
 }

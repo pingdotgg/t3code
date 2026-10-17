@@ -1,4 +1,5 @@
 import { Toolbar } from "../../components/ui/Toolbar";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
@@ -497,215 +498,211 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             ) : null}
           </Toolbar.Menu>
         </Toolbar>
-        <View
-          style={{
-            flex: 1,
-            marginHorizontal: Platform.OS === "android" && layout.usesSplitView ? 4 : 0,
-          }}
-          className={
-            Platform.OS === "android"
-              ? "overflow-hidden rounded-t-[28px] bg-sheet-solid"
-              : undefined
-          }
-          onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
-        >
-          {(["overview", "guide", "activity"] as const)
-            .filter((tab) => tab !== "guide" || guidesEnabled)
-            .map((tab) => (
-              <View
-                key={tab}
-                style={[StyleSheet.absoluteFill, { opacity: section === tab ? 1 : 0 }]}
-                pointerEvents={section === tab ? "auto" : "none"}
-                accessibilityElementsHidden={section !== tab}
-                importantForAccessibility={section === tab ? "auto" : "no-hide-descendants"}
-              >
-                <AnimatedLegendList
-                  ref={(list) => {
-                    scrollViews.current[tab] = list;
-                  }}
-                  initialScrollOffset={-insets.top}
-                  onScroll={(event) => {
-                    const offset = event.nativeEvent.contentOffset.y;
-                    scrollOffsets.current[tab] = offset;
-                    if (requestedSection.current === tab) currentScrollOffset.current = offset;
-                  }}
-                  className="flex-1"
-                  renderScrollComponent={
-                    Platform.OS === "ios" ? PullRequestTabScrollView : undefined
-                  }
-                  contentInsetAdjustmentBehavior="never"
-                  contentInset={
-                    Platform.OS === "ios" ? { top: insets.top, bottom: insets.bottom } : undefined
-                  }
-                  contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
-                  refreshControl={
-                    <RefreshControl
-                      refreshing={section === tab && pullRefresh.refreshing}
-                      onRefresh={refresh}
-                    />
-                  }
-                  alwaysBounceVertical
-                  scrollsToTop={section === tab}
-                  onContentSizeChange={() => {
-                    if (
-                      tab !== "overview" ||
-                      section !== "overview" ||
-                      !pendingDescriptionJump.current
-                    )
-                      return;
-                    pendingDescriptionJump.current = false;
-                    // Collapse changes the scroll range; restore the heading after that layout commits.
-                    scrollViews.current.overview?.scrollToOffset({
-                      offset: bodyY.current + descriptionY.current - insets.top,
-                      animated: false,
-                    });
-                  }}
-                  contentContainerStyle={{
-                    paddingHorizontal: 16,
-                    paddingTop: 8,
-                    paddingBottom: 24 + (Platform.OS === "android" ? toolbarHeight : 0),
-                    // Short tabs must still be tall enough to preserve the collapsed header.
-                    minHeight: Math.max(
-                      0,
-                      viewportHeight + headerHeight - insets.top - insets.bottom,
-                    ),
-                  }}
-                  data={[
-                    {
-                      key: `${tab}:body`,
-                      content: (
-                        <View>
-                          {tab === "overview" && identity ? (
-                            <View>
-                              {pr ? (
-                                <PullRequestOverview
-                                  pr={pr}
-                                  params={params}
-                                  stack={stack}
-                                  descriptionExpanded={descriptionExpanded}
-                                  onDescriptionExpandedChange={setDescriptionExpanded}
-                                  onDescriptionLayout={(y) => {
-                                    descriptionY.current = y;
-                                  }}
-                                  onDescriptionCollapse={() => {
-                                    pendingDescriptionJump.current = true;
-                                  }}
-                                />
-                              ) : summary ? (
-                                <PullRequestOverviewLoading
-                                  summary={summary}
-                                  params={params}
-                                  stack={stack}
-                                />
-                              ) : null}
-                              <View
-                                className="mt-8 border-t border-border-subtle pt-3"
-                                onLayout={(event) => {
-                                  filesY.current = event.nativeEvent.layout.y;
-                                  if (pendingFilesJump.current) {
-                                    requestAnimationFrame(() => {
-                                      if (requestedSection.current === "overview") jumpToFiles();
-                                    });
-                                  }
-                                }}
-                              >
-                                {filesContent.header}
-                              </View>
-                            </View>
-                          ) : null}
-                          {tab === "guide" ? <PullRequestGuideContent params={params} /> : null}
-                          {tab === "activity" ? (
-                            <PullRequestActivityFilters
-                              value={activityFilter}
-                              onChange={setActivityFilter}
-                              hiddenCount={tabContent.hiddenCount}
-                            />
-                          ) : null}
-                          {tab === "activity" ? (
-                            <PullRequestReadStatus
-                              pending={tabContent.pending}
-                              error={tabContent.error}
-                            />
-                          ) : null}
-                        </View>
-                      ),
-                    },
-                    ...(tab === "overview"
-                      ? identity
-                        ? filesContent.rows
-                        : []
-                      : tab === "activity"
-                        ? tabContent.rows
-                        : []
-                    ).map((row) => ({
-                      ...row,
-                      key: `${tab}:${row.key}`,
-                      content: row.content,
-                    })),
-                  ]}
-                  keyExtractor={(row) => row.key}
-                  getItemType={(row) =>
-                    row.key.endsWith(":body") ? row.key : row.key.split(":")[0]
-                  }
-                  // The overview body contains the clipped description and owns collapse scroll
-                  // correction. Animating that cell fights both; file rows still fade individually.
-                  itemLayoutAnimation={tab === "overview" ? undefined : PR_ROW_LAYOUT}
-                  onLoad={() => setListAnimationsReady(true)}
-                  renderItem={({ item }) => (
-                    <Animated.View
-                      key={item.key}
-                      entering={
-                        listAnimationsReady && !item.key.endsWith(":body")
-                          ? PR_ROW_ENTER
-                          : undefined
-                      }
-                      exiting={
-                        listAnimationsReady && !item.key.endsWith(":body") ? PR_ROW_EXIT : undefined
-                      }
-                    >
-                      {item.content}
-                    </Animated.View>
-                  )}
-                  recycleItems={false}
-                  estimatedItemSize={tab === "overview" ? 64 : 220}
-                  maintainVisibleContentPosition={false}
-                  ListHeaderComponent={
-                    <>
-                      <PullRequestReadStatus
-                        pending={result.isPending && !identity}
-                        error={result.error}
+        <ScreenContent insetHorizontal={layout.usesSplitView}>
+          <View
+            style={{ flex: 1 }}
+            onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+          >
+            {(["overview", "guide", "activity"] as const)
+              .filter((tab) => tab !== "guide" || guidesEnabled)
+              .map((tab) => (
+                <View
+                  key={tab}
+                  style={[StyleSheet.absoluteFill, { opacity: section === tab ? 1 : 0 }]}
+                  pointerEvents={section === tab ? "auto" : "none"}
+                  accessibilityElementsHidden={section !== tab}
+                  importantForAccessibility={section === tab ? "auto" : "no-hide-descendants"}
+                >
+                  <AnimatedLegendList
+                    ref={(list) => {
+                      scrollViews.current[tab] = list;
+                    }}
+                    initialScrollOffset={-insets.top}
+                    onScroll={(event) => {
+                      const offset = event.nativeEvent.contentOffset.y;
+                      scrollOffsets.current[tab] = offset;
+                      if (requestedSection.current === tab) currentScrollOffset.current = offset;
+                    }}
+                    className="flex-1"
+                    renderScrollComponent={
+                      Platform.OS === "ios" ? PullRequestTabScrollView : undefined
+                    }
+                    contentInsetAdjustmentBehavior="never"
+                    contentInset={
+                      Platform.OS === "ios" ? { top: insets.top, bottom: insets.bottom } : undefined
+                    }
+                    contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+                    refreshControl={
+                      <RefreshControl
+                        refreshing={section === tab && pullRefresh.refreshing}
+                        onRefresh={refresh}
                       />
-                      {identity ? (
-                        <View
-                          className="gap-5 pb-5"
-                          onLayout={(event) => {
-                            bodyY.current = event.nativeEvent.layout.height;
-                            setHeaderHeight(event.nativeEvent.layout.height);
-                          }}
-                        >
-                          <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
-                            options={[
-                              { value: "overview", label: "Overview" },
-                              ...(guidesEnabled
-                                ? [{ value: "guide" as const, label: "Guide" }]
-                                : []),
-                              { value: "activity", label: "Activity" },
-                            ]}
-                            selected={section}
-                            onSelect={selectSection}
-                            role="tab"
-                            size="compact"
-                          />
-                        </View>
-                      ) : null}
-                    </>
-                  }
-                  ListFooterComponent={tab === "overview" ? filesContent.footer : null}
-                />
-              </View>
-            ))}
-        </View>
+                    }
+                    alwaysBounceVertical
+                    scrollsToTop={section === tab}
+                    onContentSizeChange={() => {
+                      if (
+                        tab !== "overview" ||
+                        section !== "overview" ||
+                        !pendingDescriptionJump.current
+                      )
+                        return;
+                      pendingDescriptionJump.current = false;
+                      // Collapse changes the scroll range; restore the heading after that layout commits.
+                      scrollViews.current.overview?.scrollToOffset({
+                        offset: bodyY.current + descriptionY.current - insets.top,
+                        animated: false,
+                      });
+                    }}
+                    contentContainerStyle={{
+                      paddingHorizontal: 16,
+                      paddingTop: 8,
+                      paddingBottom: 24 + (Platform.OS === "android" ? toolbarHeight : 0),
+                      // Short tabs must still be tall enough to preserve the collapsed header.
+                      minHeight: Math.max(
+                        0,
+                        viewportHeight + headerHeight - insets.top - insets.bottom,
+                      ),
+                    }}
+                    data={[
+                      {
+                        key: `${tab}:body`,
+                        content: (
+                          <View>
+                            {tab === "overview" && identity ? (
+                              <View>
+                                {pr ? (
+                                  <PullRequestOverview
+                                    pr={pr}
+                                    params={params}
+                                    stack={stack}
+                                    descriptionExpanded={descriptionExpanded}
+                                    onDescriptionExpandedChange={setDescriptionExpanded}
+                                    onDescriptionLayout={(y) => {
+                                      descriptionY.current = y;
+                                    }}
+                                    onDescriptionCollapse={() => {
+                                      pendingDescriptionJump.current = true;
+                                    }}
+                                  />
+                                ) : summary ? (
+                                  <PullRequestOverviewLoading
+                                    summary={summary}
+                                    params={params}
+                                    stack={stack}
+                                  />
+                                ) : null}
+                                <View
+                                  className="mt-8 border-t border-border-subtle pt-3"
+                                  onLayout={(event) => {
+                                    filesY.current = event.nativeEvent.layout.y;
+                                    if (pendingFilesJump.current) {
+                                      requestAnimationFrame(() => {
+                                        if (requestedSection.current === "overview") jumpToFiles();
+                                      });
+                                    }
+                                  }}
+                                >
+                                  {filesContent.header}
+                                </View>
+                              </View>
+                            ) : null}
+                            {tab === "guide" ? <PullRequestGuideContent params={params} /> : null}
+                            {tab === "activity" ? (
+                              <PullRequestActivityFilters
+                                value={activityFilter}
+                                onChange={setActivityFilter}
+                                hiddenCount={tabContent.hiddenCount}
+                              />
+                            ) : null}
+                            {tab === "activity" ? (
+                              <PullRequestReadStatus
+                                pending={tabContent.pending}
+                                error={tabContent.error}
+                              />
+                            ) : null}
+                          </View>
+                        ),
+                      },
+                      ...(tab === "overview"
+                        ? identity
+                          ? filesContent.rows
+                          : []
+                        : tab === "activity"
+                          ? tabContent.rows
+                          : []
+                      ).map((row) => ({
+                        ...row,
+                        key: `${tab}:${row.key}`,
+                        content: row.content,
+                      })),
+                    ]}
+                    keyExtractor={(row) => row.key}
+                    getItemType={(row) =>
+                      row.key.endsWith(":body") ? row.key : row.key.split(":")[0]
+                    }
+                    // The overview body contains the clipped description and owns collapse scroll
+                    // correction. Animating that cell fights both; file rows still fade individually.
+                    itemLayoutAnimation={tab === "overview" ? undefined : PR_ROW_LAYOUT}
+                    onLoad={() => setListAnimationsReady(true)}
+                    renderItem={({ item }) => (
+                      <Animated.View
+                        key={item.key}
+                        entering={
+                          listAnimationsReady && !item.key.endsWith(":body")
+                            ? PR_ROW_ENTER
+                            : undefined
+                        }
+                        exiting={
+                          listAnimationsReady && !item.key.endsWith(":body")
+                            ? PR_ROW_EXIT
+                            : undefined
+                        }
+                      >
+                        {item.content}
+                      </Animated.View>
+                    )}
+                    recycleItems={false}
+                    estimatedItemSize={tab === "overview" ? 64 : 220}
+                    maintainVisibleContentPosition={false}
+                    ListHeaderComponent={
+                      <>
+                        <PullRequestReadStatus
+                          pending={result.isPending && !identity}
+                          error={result.error}
+                        />
+                        {identity ? (
+                          <View
+                            className="gap-5 pb-5"
+                            onLayout={(event) => {
+                              bodyY.current = event.nativeEvent.layout.height;
+                              setHeaderHeight(event.nativeEvent.layout.height);
+                            }}
+                          >
+                            <PullRequestIdentity pr={identity} params={params} />
+                            <SegmentedControl
+                              options={[
+                                { value: "overview", label: "Overview" },
+                                ...(guidesEnabled
+                                  ? [{ value: "guide" as const, label: "Guide" }]
+                                  : []),
+                                { value: "activity", label: "Activity" },
+                              ]}
+                              selected={section}
+                              onSelect={selectSection}
+                              role="tab"
+                              size="compact"
+                            />
+                          </View>
+                        ) : null}
+                      </>
+                    }
+                    ListFooterComponent={tab === "overview" ? filesContent.footer : null}
+                  />
+                </View>
+              ))}
+          </View>
+        </ScreenContent>
         <PullRequestActionToolbar
           pr={pr}
           params={params}
@@ -1086,132 +1083,126 @@ export function PullRequestFileRouteScreen({
           />
         </View>
       ) : null}
-      <View
-        className={
-          Platform.OS === "android"
-            ? "flex-1 overflow-hidden rounded-t-[28px] bg-sheet-solid"
-            : "flex-1"
-        }
-        collapsable={false}
-        style={{ marginHorizontal: Platform.OS === "android" && layout.usesSplitView ? 4 : 0 }}
-      >
-        {loadingDiff || result.error ? (
-          <View style={{ paddingTop: Platform.OS === "ios" && !staleDiff ? insets.top : 0 }}>
-            <PullRequestReadStatus pending={loadingDiff} error={result.error} />
-          </View>
-        ) : null}
-        {NativeDiffView && data.rows.length && !seekingFile ? (
-          <View className="flex-1" collapsable={false}>
-            <NativeDiffView
-              initialRowIndex={focusIndex >= 0 ? Math.max(0, focusIndex - 3) : undefined}
-              nativeViewRef={nativeView}
-              refreshing={result.refreshing}
-              onPullToRefresh={result.onPullRefresh}
-              style={StyleSheet.absoluteFill}
-              rowsJson={bridge.rowsJson}
-              themeJson={bridge.themeJson}
-              styleJson={bridge.styleJson}
-              tokensPatchJson={bridge.tokensPatchJson}
-              tokensResetKey={bridge.tokensResetKey}
-              collapsedFileIdsJson={bridge.collapsedFileIdsJson}
-              onDebug={onDebug}
-              viewedFileIdsJson={bridge.viewedFileIdsJson}
-              selectedRowIdsJson={bridge.selectedRowIdsJson}
-              onPressLine={(event) => {
-                const rowId = event.nativeEvent.rowId ?? null;
-                setSelectedRowId(rowId);
-                if (event.nativeEvent.gesture !== "longPress") commentOnLine(rowId);
-              }}
-              onToggleViewedFile={(event) => {
-                const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
-                if (!file || (!commit && !viewed.canToggle)) return;
-                const wasViewed = commit
-                  ? commitViewedPaths.has(file.path)
-                  : viewed.isViewed(file.path);
-                setCollapsedIds((ids) =>
-                  wasViewed
-                    ? ids.filter((id) => id !== file.id)
-                    : ids.includes(file.id)
-                      ? ids
-                      : [...ids, file.id],
-                );
-                if (commit)
-                  setCommitViewedPaths((current) => {
-                    const next = new Set(current);
-                    if (next.has(file.path)) next.delete(file.path);
-                    else next.add(file.path);
-                    return next;
-                  });
-                else void viewed.toggle(file.path);
-              }}
-              onToggleComment={(event) => {
-                const id = event.nativeEvent.commentId;
-                if (id?.startsWith("discussion:"))
-                  navigation.navigate("PullRequestDiscussion", {
-                    ...route.params,
-                    discussionId: id.slice("discussion:".length),
-                  });
-                if (id?.startsWith("draft:")) {
-                  const draft = reviewDraft.draft.comments.find(
-                    (draft) => draft.id === id.slice("draft:".length),
+      <ScreenContent insetHorizontal={layout.usesSplitView}>
+        <View className="flex-1" collapsable={false}>
+          {loadingDiff || result.error ? (
+            <View style={{ paddingTop: Platform.OS === "ios" && !staleDiff ? insets.top : 0 }}>
+              <PullRequestReadStatus pending={loadingDiff} error={result.error} />
+            </View>
+          ) : null}
+          {NativeDiffView && data.rows.length && !seekingFile ? (
+            <View className="flex-1" collapsable={false}>
+              <NativeDiffView
+                initialRowIndex={focusIndex >= 0 ? Math.max(0, focusIndex - 3) : undefined}
+                nativeViewRef={nativeView}
+                refreshing={result.refreshing}
+                onPullToRefresh={result.onPullRefresh}
+                style={StyleSheet.absoluteFill}
+                rowsJson={bridge.rowsJson}
+                themeJson={bridge.themeJson}
+                styleJson={bridge.styleJson}
+                tokensPatchJson={bridge.tokensPatchJson}
+                tokensResetKey={bridge.tokensResetKey}
+                collapsedFileIdsJson={bridge.collapsedFileIdsJson}
+                onDebug={onDebug}
+                viewedFileIdsJson={bridge.viewedFileIdsJson}
+                selectedRowIdsJson={bridge.selectedRowIdsJson}
+                onPressLine={(event) => {
+                  const rowId = event.nativeEvent.rowId ?? null;
+                  setSelectedRowId(rowId);
+                  if (event.nativeEvent.gesture !== "longPress") commentOnLine(rowId);
+                }}
+                onToggleViewedFile={(event) => {
+                  const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
+                  if (!file || (!commit && !viewed.canToggle)) return;
+                  const wasViewed = commit
+                    ? commitViewedPaths.has(file.path)
+                    : viewed.isViewed(file.path);
+                  setCollapsedIds((ids) =>
+                    wasViewed
+                      ? ids.filter((id) => id !== file.id)
+                      : ids.includes(file.id)
+                        ? ids
+                        : [...ids, file.id],
                   );
-                  if (draft)
-                    navigation.navigate("PullRequestInlineComment", {
-                      ...route.params,
-                      ...draft,
-                      draftId: draft.id,
+                  if (commit)
+                    setCommitViewedPaths((current) => {
+                      const next = new Set(current);
+                      if (next.has(file.path)) next.delete(file.path);
+                      else next.add(file.path);
+                      return next;
                     });
-                }
-              }}
-              onToggleFile={onToggleFile}
-              onVisibleFileChange={(event) => setVisibleFileId(event.nativeEvent.fileId ?? null)}
-              appearanceScheme={themeAppearance}
-              rowHeight={nativeReviewDiffStyle.rowHeight}
-              contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
-              contentInsetTop={Platform.OS === "ios" ? (staleDiff ? 0 : insets.top) : undefined}
-              contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
-              contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
-            />
-          </View>
-        ) : filter.hiddenCount > 0 &&
-          !data.rows.length &&
-          !result.isPending &&
-          !result.error &&
-          !seekingFile ? (
-          <View style={{ paddingTop: Platform.OS === "ios" ? insets.top : 0 }}>
+                  else void viewed.toggle(file.path);
+                }}
+                onToggleComment={(event) => {
+                  const id = event.nativeEvent.commentId;
+                  if (id?.startsWith("discussion:"))
+                    navigation.navigate("PullRequestDiscussion", {
+                      ...route.params,
+                      discussionId: id.slice("discussion:".length),
+                    });
+                  if (id?.startsWith("draft:")) {
+                    const draft = reviewDraft.draft.comments.find(
+                      (draft) => draft.id === id.slice("draft:".length),
+                    );
+                    if (draft)
+                      navigation.navigate("PullRequestInlineComment", {
+                        ...route.params,
+                        ...draft,
+                        draftId: draft.id,
+                      });
+                  }
+                }}
+                onToggleFile={onToggleFile}
+                onVisibleFileChange={(event) => setVisibleFileId(event.nativeEvent.fileId ?? null)}
+                appearanceScheme={themeAppearance}
+                rowHeight={nativeReviewDiffStyle.rowHeight}
+                contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
+                contentInsetTop={Platform.OS === "ios" ? (staleDiff ? 0 : insets.top) : undefined}
+                contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
+                contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
+              />
+            </View>
+          ) : filter.hiddenCount > 0 &&
+            !data.rows.length &&
+            !result.isPending &&
+            !result.error &&
+            !seekingFile ? (
+            <View style={{ paddingTop: Platform.OS === "ios" ? insets.top : 0 }}>
+              <EmptyState
+                title="Only test files changed"
+                detail="Test files are hidden from this review."
+                action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+                variant="plain"
+              />
+            </View>
+          ) : !result.isPending && !result.error && !seekingFile ? (
             <EmptyState
-              title="Only test files changed"
-              detail="Test files are hidden from this review."
-              action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+              title="Diff unavailable"
+              detail="Open this pull request on its provider to view the changes."
               variant="plain"
             />
-          </View>
-        ) : !result.isPending && !result.error && !seekingFile ? (
-          <EmptyState
-            title="Diff unavailable"
-            detail="Open this pull request on its provider to view the changes."
-            variant="plain"
-          />
-        ) : null}
-        {result.nextCursor && result.isPending && data.rows.length && !seekingFile ? (
-          <View className="flex-row items-center justify-center gap-2 py-2">
-            <AppActivityIndicator size="small" />
-            <Text className="text-xs text-foreground-muted">Loading more files…</Text>
-          </View>
-        ) : null}
-        {result.error && result.nextCursor ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={result.refresh}
-            className="min-h-11 items-center justify-center py-2"
-          >
-            <Text className="text-sm font-t3-medium">Retry loading remaining files</Text>
-          </Pressable>
-        ) : null}
-        {parsed.kind === "files" && parsed.notice ? (
-          <Text className="px-4 py-2 text-2xs text-foreground-muted">{parsed.notice}</Text>
-        ) : null}
-      </View>
+          ) : null}
+          {result.nextCursor && result.isPending && data.rows.length && !seekingFile ? (
+            <View className="flex-row items-center justify-center gap-2 py-2">
+              <AppActivityIndicator size="small" />
+              <Text className="text-xs text-foreground-muted">Loading more files…</Text>
+            </View>
+          ) : null}
+          {result.error && result.nextCursor ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={result.refresh}
+              className="min-h-11 items-center justify-center py-2"
+            >
+              <Text className="text-sm font-t3-medium">Retry loading remaining files</Text>
+            </Pressable>
+          ) : null}
+          {parsed.kind === "files" && parsed.notice ? (
+            <Text className="px-4 py-2 text-2xs text-foreground-muted">{parsed.notice}</Text>
+          ) : null}
+        </View>
+      </ScreenContent>
       <PullRequestActionToolbar
         pr={detail.data}
         params={route.params}

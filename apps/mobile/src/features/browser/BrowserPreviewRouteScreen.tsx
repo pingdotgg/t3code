@@ -1,4 +1,5 @@
 import { Toolbar } from "../../components/ui/Toolbar";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import * as Dialog from "../../components/ui/Dialog";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -115,6 +116,7 @@ function BrowserPreviewScreen({
   return (
     <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
       <AppBar
+        hideBottomBorder
         title={tab ? browserTabTitle(tab) : "Browser"}
         sidebar={false}
         onBack={onClose}
@@ -165,40 +167,42 @@ function BrowserPreviewScreen({
           />
         </Toolbar>
       ) : null}
-      {tab ? (
-        <>
-          <BrowserAddressBar
-            key={`address:${tab.tabId}`}
-            environmentId={environmentId}
-            tab={tab}
-            streaming={streaming}
-            ready={streaming && canControl}
-            onCommand={(input) => streamRef.current?.command(input)}
-          />
-          {live ? (
-            <PreviewStreamWebView
-              key={`stream:${tab.tabId}`}
+      <ScreenContent>
+        {tab ? (
+          <>
+            <BrowserAddressBar
+              key={`address:${tab.tabId}`}
               environmentId={environmentId}
-              threadId={threadId}
-              tabId={tab.tabId}
-              ref={streamRef}
-              interactive
-              background={themeVariables["--color-sheet-solid"]}
-              onPictureInPicture={onPictureInPicture}
-              onStreamingChange={setStreaming}
-              onControl={(control) => setCanControl(control?.controller === "you")}
+              tab={tab}
+              streaming={streaming}
+              ready={streaming && canControl}
+              onCommand={(input) => streamRef.current?.command(input)}
             />
-          ) : (
-            <View className="flex-1" />
-          )}
-        </>
-      ) : (
-        <View className="flex-1 items-center justify-center">
-          {focused && foreground ? (
-            <AppActivityIndicator color={themeVariables["--color-icon"]} />
-          ) : null}
-        </View>
-      )}
+            {live ? (
+              <PreviewStreamWebView
+                key={`stream:${tab.tabId}`}
+                environmentId={environmentId}
+                threadId={threadId}
+                tabId={tab.tabId}
+                ref={streamRef}
+                interactive
+                background={themeVariables["--color-sheet-solid"]}
+                onPictureInPicture={onPictureInPicture}
+                onStreamingChange={setStreaming}
+                onControl={(control) => setCanControl(control?.controller === "you")}
+              />
+            ) : (
+              <View className="flex-1" />
+            )}
+          </>
+        ) : (
+          <View className="flex-1 items-center justify-center">
+            {focused && foreground ? (
+              <AppActivityIndicator color={themeVariables["--color-icon"]} />
+            ) : null}
+          </View>
+        )}
+      </ScreenContent>
     </View>
   );
 }
@@ -228,7 +232,7 @@ function BrowserAddressBar({
     }
   };
   return (
-    <View className="flex-row items-center gap-1 px-2 pb-2">
+    <View className="flex-row items-center gap-1 px-2 pb-2 android:pt-3">
       <ControlPill
         icon="chevron.left"
         accessibilityLabel="Back"

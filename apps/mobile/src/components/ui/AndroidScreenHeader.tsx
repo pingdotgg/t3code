@@ -61,7 +61,7 @@ export function AndroidScreenHeader(props: {
       style={{
         paddingTop,
         paddingBottom,
-        borderBottomWidth: props.hideBottomBorder ? 0 : undefined,
+        borderBottomWidth: props.hideBottomBorder === false ? undefined : 0,
       }}
     >
       <NativeAppBar
