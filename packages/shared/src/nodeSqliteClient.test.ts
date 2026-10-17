@@ -705,6 +705,41 @@ it.effect("lets a read be cancelled while its worker is still starting", () =>
   ),
 );
 
+it.effect.each([false, true])(
+  "allows a shutdown finalizer to read after interruption (warm reader: %s)",
+  (warm) =>
+    withFileClient((sql) =>
+      Effect.gen(function* () {
+        yield* sql`PRAGMA journal_mode = WAL`;
+        yield* sql`CREATE TABLE entries(name TEXT NOT NULL)`;
+        yield* sql`INSERT INTO entries VALUES ('continuation intent')`;
+        const read = sql.withTransaction(countEntries(sql)).pipe(SqliteClient.readOnly);
+        if (warm) yield* read;
+        const registered = yield* Deferred.make<void>();
+        let observed: number | undefined;
+        const fiber = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() =>
+              read.pipe(
+                Effect.andThen((count) =>
+                  Effect.sync(() => {
+                    observed = count;
+                  }),
+                ),
+                Effect.orDie,
+              ),
+            );
+            yield* Deferred.succeed(registered, undefined);
+            return yield* Effect.never;
+          }),
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(registered);
+        yield* Fiber.interrupt(fiber);
+        assert.equal(observed, 1);
+      }),
+    ),
+);
+
 it.effect("logs one warning when concurrent first reads find the reader unavailable", () => {
   const { warnings, layer: logs } = captureWarnings();
   return withFileClient((sql, filename) =>
