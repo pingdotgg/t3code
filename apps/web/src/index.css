@@ -1710,6 +1710,7 @@ code {
    Inline code stays relative to its sentence so it never towers over prose;
    diffs and file previews take the size through --diffs-font-size. */
 .chat-markdown .chat-markdown-shiki .shiki,
+.chat-markdown .chat-markdown-codeblock pre,
 :is(.chat-markdown, .composer-tiptap) pre code {
   font-size: var(--font-size-code, inherit);
 }
