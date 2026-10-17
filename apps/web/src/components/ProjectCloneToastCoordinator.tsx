@@ -12,7 +12,7 @@ import {
   type ProjectCloneSnapshot,
   type ProjectId,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
@@ -44,6 +44,23 @@ function renderKey(clone: ProjectCloneSnapshot): string {
   return `${clone.phase}:${clone.stage}:${clone.percent ?? ""}:${clone.detail ?? ""}:${clone.error ?? ""}`;
 }
 
+async function runCloneAction(
+  title: string,
+  action: () => Promise<AtomCommandResult<unknown, unknown>>,
+) {
+  const result = await action();
+  if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  }
+}
+
 function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentId }) {
   const clones = useEnvironmentProjectClones(environmentId);
   const handleNewThread = useNewThreadHandler();
@@ -54,40 +71,18 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
   const retryClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
     reportFailure: false,
   });
-  const runCloneAction = useCallback(
-    async (title: string, action: () => Promise<AtomCommandResult<unknown, unknown>>) => {
-      const result = await action();
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title,
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    },
-    [],
-  );
   const removeClonedProject = useRemoveClonedProject();
   const toasts = useRef(new Map<ProjectId, TrackedToast>());
 
-  const isViewingProjectDraft = useCallback(
-    (projectId: ProjectId) => {
-      if (!routeDraftId) return false;
-      const draft = useComposerDraftStore.getState().getDraftSession(routeDraftId as DraftId);
-      return draft?.environmentId === environmentId && draft.projectId === projectId;
-    },
-    [environmentId, routeDraftId],
-  );
+  const isViewingProjectDraft = (projectId: ProjectId) => {
+    if (!routeDraftId) return false;
+    const draft = useComposerDraftStore.getState().getDraftSession(routeDraftId as DraftId);
+    return draft?.environmentId === environmentId && draft.projectId === projectId;
+  };
 
-  const openProject = useCallback(
-    (projectId: ProjectId) => {
-      void handleNewThread(scopeProjectRef(environmentId, projectId));
-    },
-    [environmentId, handleNewThread],
-  );
+  const openProject = (projectId: ProjectId) => {
+    void handleNewThread(scopeProjectRef(environmentId, projectId));
+  };
 
   useEffect(() => {
     const seen = new Set<ProjectId>();
@@ -205,7 +200,6 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
     openProject,
     removeClonedProject,
     retryClone,
-    runCloneAction,
   ]);
 
   useEffect(
