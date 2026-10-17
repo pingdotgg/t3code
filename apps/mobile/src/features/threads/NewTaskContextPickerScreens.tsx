@@ -228,6 +228,25 @@ export function NewTaskEnvironmentPickerRouteScreen() {
           showsVerticalScrollIndicator={false}
         >
           <PickerSurface>
+            {flow.canAutoBalance ? (
+              <SelectionRow
+                icon={
+                  <SymbolView
+                    name="scalemass"
+                    size={Platform.OS === "android" ? 24 : 17}
+                    tintColorClassName="accent-icon-muted"
+                  />
+                }
+                disabled={flow.switchingToEnvironmentId !== null}
+                onPress={() => {
+                  void Haptics.selectionAsync();
+                  if (flow.selectAutoBalance()) navigation.goBack();
+                }}
+                selected={flow.autoBalanceStatus !== null}
+                subtitle="Most free CPU and memory"
+                title="Auto balance"
+              />
+            ) : null}
             {flow.environments.map((environment, index) => (
               <SelectionRow
                 key={String(environment.environmentId)}
@@ -248,7 +267,10 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                     if (switched) navigation.goBack();
                   });
                 }}
-                selected={flow.selectedEnvironmentId === environment.environmentId}
+                selected={
+                  flow.autoBalanceStatus === null &&
+                  flow.selectedEnvironmentId === environment.environmentId
+                }
                 title={environment.environmentLabel}
               />
             ))}
@@ -301,6 +323,9 @@ export function NewTaskBranchPickerRouteScreen() {
         return;
       }
       selectingBranchNameRef.current = branch.name;
+      // The checkout below changes this machine, so auto balance must not move
+      // the draft away while it runs.
+      flow.pinEnvironment();
       void Haptics.selectionAsync();
 
       try {
@@ -343,6 +368,7 @@ export function NewTaskBranchPickerRouteScreen() {
     },
     [
       canWriteSourceControl,
+      flow.pinEnvironment,
       flow.selectBranch,
       flow.selectedProject,
       flow.setBranchQuery,

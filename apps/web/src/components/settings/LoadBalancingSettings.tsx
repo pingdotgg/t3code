@@ -1,3 +1,8 @@
+import {
+  LOAD_PREFERENCES,
+  loadPreferenceForWeight,
+  type LoadPreference,
+} from "@t3tools/client-runtime/load-balancing";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 
 import {
@@ -12,23 +17,8 @@ import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
 
-const preferences = [
-  { value: 100, label: "Prefer" },
-  { value: 50, label: "Normal" },
-  { value: 25, label: "Less often" },
-  { value: 0, label: "Manual only" },
-] as const;
-
-type LoadPreference = (typeof preferences)[number]["value"];
-
-export function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
-  if (weight === undefined || weight === 50) return 50;
-  if (weight === 0) return 0;
-  return weight < 50 ? 25 : 100;
-}
-
 function preferenceLabel(preference: LoadPreference): string {
-  return preferences.find((entry) => entry.value === preference)!.label;
+  return LOAD_PREFERENCES.find((entry) => entry.value === preference)!.label;
 }
 
 export function summarizeLoadPreferences(
@@ -89,7 +79,7 @@ export function LoadBalancingSettings({
           subtitle={environmentTransportLabel(environment)}
         >
           <Select
-            items={preferences}
+            items={LOAD_PREFERENCES}
             value={loadPreferenceForWeight(
               settings.loadBalancingWeights[environment.environmentId],
             )}
@@ -112,7 +102,7 @@ export function LoadBalancingSettings({
               <SelectValue />
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {preferences.map(({ value, label }) => (
+              {LOAD_PREFERENCES.map(({ value, label }) => (
                 <SelectItem key={value} value={value}>
                   {label}
                 </SelectItem>

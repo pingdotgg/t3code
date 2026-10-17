@@ -1,7 +1,10 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { useAtomValue } from "@effect/atom-react";
+import { canLoadBalanceToEnvironment } from "@t3tools/client-runtime/load-balancing";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
-import { environmentSession } from "../../state/session";
+import { environmentSession, useEnvironmentsWithScope } from "../../state/session";
+import { AsyncResult } from "effect/reactivity";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -14,6 +17,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import {
+  AuthOrchestrationOperateScope,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -41,6 +45,7 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
+  isNewTaskModelSelectionBlocked,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -53,6 +58,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   appendComposerDraftAttachments,
   type ComposerDraftInsertion,
+  type ComposerDraftWorkspaceSelection,
   clearComposerDraft,
   composerDraftsAtom,
   createNewTaskDraft,
@@ -109,6 +115,8 @@ import {
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
+import { mobilePreferencesAtom } from "../../state/preferences";
+import { useLoadBalancedEnvironment } from "../../state/use-load-balanced-environment";
 import {
   resolvePendingTaskInteractionMode,
   resolveProviderInteractionMode,
@@ -119,7 +127,12 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveAutoBalanceStatus,
+  resolveBalancedProjects,
+  resolveEnvironmentProjectMatch,
+  type AutoBalanceStatus,
+} from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
@@ -202,7 +215,13 @@ type NewTaskFlowContextValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
-  readonly setProject: (project: EnvironmentProject) => void;
+  readonly setProject: (
+    project: EnvironmentProject,
+    options?: {
+      /** Keeps the draft on this project's machine instead of auto balancing it. */
+      readonly pinEnvironment?: boolean;
+    },
+  ) => void;
   /**
    * Binds the composer to an existing new-task draft (a row in the thread
    * list). Returns false when the draft is gone, so the caller can fall back
@@ -212,6 +231,14 @@ type NewTaskFlowContextValue = {
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly switchEnvironment: (environmentId: EnvironmentId) => Promise<boolean>;
   readonly switchingToEnvironmentId: EnvironmentId | null;
+  /** True when auto balance is on and the draft's project spans several machines. */
+  readonly canAutoBalance: boolean;
+  /** Null while the draft's machine is the user's own choice. */
+  readonly autoBalanceStatus: AutoBalanceStatus | null;
+  /** Keeps the draft on its current machine, ahead of work that commits to it. */
+  readonly pinEnvironment: () => void;
+  /** Hands the draft back to auto balance. Returns false when it must stay put. */
+  readonly selectAutoBalance: () => boolean;
   readonly setSelectedModelKey: (
     key: string | null,
     options?: ReadonlyArray<ProviderOptionSelection>,
@@ -249,6 +276,10 @@ type NewTaskFlowContextValue = {
   readonly setExpandedProvider: (value: string | null) => void;
 };
 
+const EMPTY_LOAD_BALANCING_WEIGHTS: Readonly<Record<string, number>> = {};
+const EMPTY_ENVIRONMENT_IDS: ReadonlyArray<EnvironmentId> = [];
+const EMPTY_PROJECTS: ReadonlyArray<EnvironmentProject> = [];
+
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
@@ -282,8 +313,37 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
       ? selectedEnvironmentIdOverride
       : (projects[0]?.environmentId ?? null);
-  const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
+  const [selectedProjectKey, setSelectedProjectKeyState] = useState<string | null>(null);
+  // Mirrors the state synchronously, so an effect can tell that the project
+  // it rendered with was replaced earlier in the same commit.
+  const selectedProjectKeyRef = useRef<string | null>(null);
+  const setSelectedProjectKey = useCallback((projectKey: string | null) => {
+    selectedProjectKeyRef.current = projectKey;
+    setSelectedProjectKeyState(projectKey);
+  }, []);
+  // Pinned once the user picks a machine, branch, or saved draft; auto balance
+  // then leaves the draft alone until they choose it again.
+  const [environmentPinned, setEnvironmentPinned] = useState(false);
+  // Mirrors the state synchronously: a pin made earlier in a commit must stop
+  // the routing effect later in that same commit.
+  const environmentPinnedRef = useRef(false);
+  const [loadBalancedEnvironmentId, setLoadBalancedEnvironmentId] = useState<EnvironmentId | null>(
+    null,
+  );
+  const setEnvironmentPinning = useCallback((pinned: boolean) => {
+    environmentPinnedRef.current = pinned;
+    setEnvironmentPinned(pinned);
+    setLoadBalancedEnvironmentId(null);
+  }, []);
+  const pinEnvironment = useCallback(() => setEnvironmentPinning(true), [setEnvironmentPinning]);
+  const [activeDraftKey, setActiveDraftKeyState] = useState<string | null>(null);
+  // Mirrors the state synchronously: the draft screen and this provider can
+  // both bind a draft in one commit, and the second must see the first.
+  const activeDraftKeyRef = useRef<string | null>(null);
+  const setActiveDraftKey = useCallback((draftKey: string | null) => {
+    activeDraftKeyRef.current = draftKey;
+    setActiveDraftKeyState(draftKey);
+  }, []);
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
@@ -297,6 +357,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const reset = useCallback(() => {
     setSelectedEnvironmentId(null);
     setSelectedProjectKey(null);
+    setEnvironmentPinning(false);
     setActiveDraftKey(null);
     setSubmitting(false);
     setBranchQuery("");
@@ -311,7 +372,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       }
       releaseEditingQueuedMessage(editing.messageId);
     }
-  }, []);
+  }, [setActiveDraftKey, setEnvironmentPinning, setSelectedProjectKey]);
 
   const projectsForEnvironment = useMemo(
     () =>
@@ -441,7 +502,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? activeDraftKey
       : null;
   useEffect(() => {
-    if (activeDraftKey !== null || editingPendingTask !== null || selectedProject === null) {
+    if (
+      activeDraftKey !== null ||
+      activeDraftKeyRef.current !== null ||
+      editingPendingTask !== null ||
+      selectedProject === null
+    ) {
       return;
     }
     setActiveDraftKey(
@@ -450,7 +516,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         projectId: selectedProject.id,
       }),
     );
-  }, [activeDraftKey, editingPendingTask, selectedProject]);
+  }, [activeDraftKey, editingPendingTask, selectedProject, setActiveDraftKey]);
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
@@ -739,22 +805,26 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const carryDraftContentTo = useCallback(
     (project: EnvironmentProject) => {
       const target = { environmentId: project.environmentId, projectId: project.id };
-      if (activeDraftKey !== null && isNewTaskDraftKey(activeDraftKey)) {
-        retargetNewTaskDraft(activeDraftKey, target);
+      const draftKey = activeDraftKeyRef.current;
+      if (draftKey !== null && isNewTaskDraftKey(draftKey)) {
+        retargetNewTaskDraft(draftKey, target);
       } else if (!editingPendingTaskRef.current) {
         setActiveDraftKey(createNewTaskDraft(target));
       }
     },
-    [activeDraftKey],
+    [setActiveDraftKey],
   );
 
   const setProject = useCallback(
-    (project: EnvironmentProject) => {
+    (project: EnvironmentProject, options?: { readonly pinEnvironment?: boolean }) => {
       carryDraftContentTo(project);
       setSelectedEnvironmentId(project.environmentId);
       setSelectedProjectKey(scopedProjectKey(project.environmentId, project.id));
+      // A newly chosen project is routed afresh.
+      setLoadBalancedEnvironmentId(null);
+      if (options?.pinEnvironment) pinEnvironment();
     },
-    [carryDraftContentTo],
+    [carryDraftContentTo, pinEnvironment, setSelectedProjectKey],
   );
 
   const openDraft = useCallback(
@@ -777,9 +847,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setActiveDraftKey(draftKey);
       setSelectedEnvironmentId(stamp.environmentId);
       setSelectedProjectKey(scopedProjectKey(stamp.environmentId, stamp.projectId));
+      // A saved draft stays on the machine it was written for.
+      pinEnvironment();
       return true;
     },
-    [projects],
+    [pinEnvironment, projects, setActiveDraftKey, setSelectedProjectKey],
   );
 
   const selectEnvironment = useCallback(
@@ -794,7 +866,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedEnvironmentId(environmentId);
       setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
     },
-    [projects, selectedProject, carryDraftContentTo],
+    [projects, selectedProject, carryDraftContentTo, setSelectedProjectKey],
   );
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
@@ -804,6 +876,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = useCallback(
     async (environmentId: EnvironmentId): Promise<boolean> => {
+      pinEnvironment();
       if (environmentId === selectedEnvironmentId) {
         latestSwitchRef.current = null;
         setSwitchingToEnvironmentId(null);
@@ -840,8 +913,223 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         }
       }
     },
-    [isScratchDraft, openScratch, selectEnvironment, selectedEnvironmentId, setProject],
+    [
+      isScratchDraft,
+      openScratch,
+      pinEnvironment,
+      selectEnvironment,
+      selectedEnvironmentId,
+      setProject,
+    ],
   );
+
+  // Keeps the checkout-or-worktree choice while dropping the branch and path,
+  // which only mean something on the machine they were picked on. A worktree
+  // gets its branch from the effects below; a checkout without one follows
+  // whatever the destination has checked out.
+  const releaseWorkspaceSelectionFromMachine = useCallback(
+    (draftKey: string, selection: ComposerDraftWorkspaceSelection | undefined) => {
+      if (!selection) return;
+      pendingLocalBranchSyncDraftKeysRef.current.delete(draftKey);
+      // A pull request draft names the PR and its head branch, which every
+      // machine resolves for itself when the task is sent.
+      if (selection.pullRequestReference !== undefined) {
+        updateComposerDraftSettings(draftKey, {
+          workspaceSelection: { ...selection, worktreePath: null },
+        });
+        return;
+      }
+      updateComposerDraftSettings(draftKey, {
+        workspaceSelection: {
+          mode: selection.mode,
+          branch: null,
+          worktreePath: null,
+          ...(selection.startFromOrigin !== undefined
+            ? { startFromOrigin: selection.startFromOrigin }
+            : {}),
+        },
+      });
+    },
+    [],
+  );
+
+  const loadBalancingPreferences = useAtomValue(mobilePreferencesAtom);
+  const loadBalancingEnabled =
+    AsyncResult.isSuccess(loadBalancingPreferences) &&
+    loadBalancingPreferences.value.loadBalancingEnabled === true;
+  const loadBalancingWeights =
+    (AsyncResult.isSuccess(loadBalancingPreferences)
+      ? loadBalancingPreferences.value.loadBalancingWeights
+      : undefined) ?? EMPTY_LOAD_BALANCING_WEIGHTS;
+  // The selected project's copy on each machine of its logical group. Grouping
+  // settings decide what counts as the same project, so routing never lands on
+  // a sibling path of the same repository.
+  const balancedProjects = useMemo(
+    () => resolveBalancedProjects(projectScopes, selectedProject),
+    [projectScopes, selectedProject],
+  );
+  // Only a project the user chose is routed; the flow's first-project fallback
+  // behind the project picker must not poll machines.
+  const canAutoBalance =
+    loadBalancingEnabled &&
+    selectedProjectKey !== null &&
+    editingPendingTask === null &&
+    !isScratchDraft &&
+    balancedProjects.length > 1;
+  const needsLoadBalancing =
+    canAutoBalance &&
+    !environmentPinned &&
+    loadBalancedEnvironmentId === null &&
+    attachments.length === 0;
+  const operableEnvironments = useEnvironmentsWithScope(
+    needsLoadBalancing ? balancedProjects : EMPTY_PROJECTS,
+    AuthOrchestrationOperateScope,
+  );
+  const selectedModelInstanceId = selectedModel?.instanceId;
+  const selectedModelName = selectedModel?.model;
+  const loadBalancingCandidates = useMemo(
+    () =>
+      needsLoadBalancing
+        ? balancedProjects.flatMap(({ environmentId, id }) =>
+            (loadBalancingWeights[environmentId] ?? 50) > 0 &&
+            // Resource checks only need read access; starting a task needs more.
+            operableEnvironments.has(environmentId) &&
+            connectedEnvironments.some(
+              (environment) =>
+                environment.environmentId === environmentId &&
+                environment.connectionState === "connected",
+            ) &&
+            canLoadBalanceToEnvironment({
+              providers: serverConfigs.get(environmentId)?.providers,
+              settings: serverConfigs.get(environmentId)?.settings,
+              projectId: id,
+              providerInstanceId: selectedModelInstanceId ?? null,
+              providerDriver: selectedProviderStatus?.driver ?? null,
+            }) &&
+            // The same checks the start button applies once the draft is there.
+            !isNewTaskModelSelectionBlocked(
+              serverConfigs.get(environmentId),
+              selectedModelInstanceId !== undefined && selectedModelName !== undefined
+                ? { instanceId: selectedModelInstanceId, model: selectedModelName }
+                : null,
+              id,
+            )
+              ? [environmentId]
+              : [],
+          )
+        : EMPTY_ENVIRONMENT_IDS,
+    [
+      needsLoadBalancing,
+      balancedProjects,
+      loadBalancingWeights,
+      operableEnvironments,
+      connectedEnvironments,
+      serverConfigs,
+      selectedModelInstanceId,
+      selectedModelName,
+      selectedProviderStatus?.driver,
+    ],
+  );
+  const loadBalancing = useLoadBalancedEnvironment(loadBalancingCandidates, loadBalancingWeights);
+  useEffect(() => {
+    if (
+      !needsLoadBalancing ||
+      loadBalancing.pending ||
+      loadBalancing.environmentId === null ||
+      submitting
+    ) {
+      return;
+    }
+    // A pin, pending-task edit, project change, or attachment made earlier in
+    // this commit has not rendered yet; the refs and the live draft show
+    // whether this render is still current.
+    if (
+      environmentPinnedRef.current ||
+      editingPendingTaskRef.current !== null ||
+      selectedProjectKeyRef.current !== selectedProjectKey ||
+      selectedProject === null ||
+      selectedProjectDraftKey === null
+    ) {
+      return;
+    }
+    const target = balancedProjects.find(
+      (project) => project.environmentId === loadBalancing.environmentId,
+    );
+    if (!target) return;
+    const liveDraft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    if (liveDraft.attachments.length > 0) return;
+    const movesMachine = target.environmentId !== selectedProject.environmentId;
+    // The mode on screen travels even when it is only this machine's default,
+    // as on web, so wait until that default has settled.
+    const workspaceSelection =
+      liveDraft.workspaceSelection ??
+      (defaultWorkspaceModeSettled
+        ? { mode: workspaceMode, branch: null, worktreePath: null }
+        : undefined);
+    if (movesMachine && workspaceSelection === undefined) return;
+    // The machine was checked for the model on screen, which is not always
+    // the draft's stored one: it may be an unwritten default, or stand in for
+    // a pick this machine cannot run. Write it down so it is what travels.
+    if (selectedModel !== null && movesMachine) {
+      updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selectedModel });
+    }
+    carryDraftContentTo(target);
+    if (movesMachine) {
+      releaseWorkspaceSelectionFromMachine(selectedProjectDraftKey, workspaceSelection);
+    }
+    setSelectedEnvironmentId(target.environmentId);
+    setSelectedProjectKey(scopedProjectKey(target.environmentId, target.id));
+    setLoadBalancedEnvironmentId(target.environmentId);
+  }, [
+    needsLoadBalancing,
+    loadBalancing.pending,
+    loadBalancing.environmentId,
+    submitting,
+    balancedProjects,
+    carryDraftContentTo,
+    defaultWorkspaceModeSettled,
+    releaseWorkspaceSelectionFromMachine,
+    selectedModel,
+    selectedProject,
+    selectedProjectDraftKey,
+    selectedProjectKey,
+    setSelectedProjectKey,
+    workspaceMode,
+  ]);
+  const autoBalanceStatus = resolveAutoBalanceStatus({
+    canAutoBalance,
+    environmentPinned,
+    hasAttachments: attachments.length > 0,
+    loadBalancedEnvironmentId,
+    // Routing also waits for the workspace default it carries.
+    pending: loadBalancing.pending || !defaultWorkspaceModeSettled,
+  });
+  const refreshLoadBalancing = loadBalancing.refresh;
+  const selectAutoBalance = useCallback(() => {
+    if (attachments.length > 0) {
+      Dialog.alert(
+        "Keep attachments on this machine",
+        "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+      );
+      return false;
+    }
+    refreshLoadBalancing(balancedProjects.map((project) => project.environmentId));
+    if (selectedProjectDraftKey) {
+      releaseWorkspaceSelectionFromMachine(
+        selectedProjectDraftKey,
+        getComposerDraftSnapshot(selectedProjectDraftKey).workspaceSelection,
+      );
+    }
+    setEnvironmentPinning(false);
+    return true;
+  }, [
+    attachments.length,
+    balancedProjects,
+    refreshLoadBalancing,
+    releaseWorkspaceSelectionFromMachine,
+    selectedProjectDraftKey,
+    setEnvironmentPinning,
+  ]);
 
   const setWorkspaceMode = useCallback(
     (mode: WorkspaceMode) => {
@@ -851,6 +1139,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!selectedProject) {
         return;
       }
+      // A checkout or worktree choice is made for this machine.
+      pinEnvironment();
       const localSelection = resolveNewTaskLocalWorkspaceSelection({
         branches: availableBranches,
         projectCwd: selectedProject.workspaceRoot,
@@ -872,6 +1162,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [
       availableBranches,
       draftStartFromOrigin,
+      pinEnvironment,
       selectedBranchName,
       selectedProject,
       selectedProjectDraftKey,
@@ -886,6 +1177,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       !selectedProjectDraftKey ||
       !pendingLocalBranchSyncDraftKeysRef.current.has(selectedProjectDraftKey)
     ) {
+      return;
+    }
+    // Auto balance may have moved the draft earlier in this commit, leaving
+    // this effect with the previous machine's branches.
+    if (selectedProjectKeyRef.current !== selectedProjectKey) {
       return;
     }
     const localSelection = resolveNewTaskLocalWorkspaceSelection({
@@ -910,6 +1206,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     draftStartFromOrigin,
     selectedProject,
     selectedProjectDraftKey,
+    selectedProjectKey,
     workspaceMode,
   ]);
 
@@ -978,6 +1275,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (live && (live.mode !== "worktree" || live.branch !== null)) {
       return;
     }
+    // Auto balance may have moved the draft earlier in this commit, leaving
+    // this effect with the previous machine's branches.
+    if (selectedProjectKeyRef.current !== selectedProjectKey) {
+      return;
+    }
     // The default may only exist as origin/<default> (isRemote), which
     // availableBranches filters out — search the unfiltered refs for it.
     const preferredBranch =
@@ -994,6 +1296,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectBranch,
     selectedBranchName,
     selectedProjectDraftKey,
+    selectedProjectKey,
     workspaceMode,
   ]);
 
@@ -1016,38 +1319,41 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [selectedProjectDraftKey, selectedProviderStatus],
   );
 
-  const beginEditingPendingTask = useCallback((messageId: string): boolean => {
-    const message = findQueuedPendingTask(messageId);
-    if (!message?.creation) {
-      return false;
-    }
-    const draftKey = pendingTaskDraftKey(message.messageId);
-    if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
-      setComposerDraftText(draftKey, message.text);
-      setComposerDraftContext(draftKey, message.context);
-      replaceComposerDraftAttachments(draftKey, message.attachments);
-      updateComposerDraftSettings(draftKey, {
-        modelSelection: message.modelSelection,
-        runtimeMode: message.runtimeMode,
-        interactionMode: message.interactionMode,
-        workspaceSelection: {
-          mode: message.creation.workspaceMode,
-          branch: message.creation.branch,
-          worktreePath: message.creation.worktreePath,
-          startFromOrigin: message.creation.startFromOrigin ?? false,
-          pullRequestReference: message.creation.pullRequestReference,
-        },
-      });
-    }
-    setSelectedEnvironmentId(message.environmentId);
-    setSelectedProjectKey(scopedProjectKey(message.environmentId, message.creation.projectId));
-    activeEditingMessageId = message.messageId;
-    editingPendingTaskRef.current = message;
-    editingRevisionRef.current = capturePendingTaskEditorWriteBaseline(message.messageId);
-    setEditingPendingTask(message);
-    holdEditingQueuedMessage(message.messageId);
-    return true;
-  }, []);
+  const beginEditingPendingTask = useCallback(
+    (messageId: string): boolean => {
+      const message = findQueuedPendingTask(messageId);
+      if (!message?.creation) {
+        return false;
+      }
+      const draftKey = pendingTaskDraftKey(message.messageId);
+      if (isComposerDraftEmpty(getComposerDraftSnapshot(draftKey))) {
+        setComposerDraftText(draftKey, message.text);
+        setComposerDraftContext(draftKey, message.context);
+        replaceComposerDraftAttachments(draftKey, message.attachments);
+        updateComposerDraftSettings(draftKey, {
+          modelSelection: message.modelSelection,
+          runtimeMode: message.runtimeMode,
+          interactionMode: message.interactionMode,
+          workspaceSelection: {
+            mode: message.creation.workspaceMode,
+            branch: message.creation.branch,
+            worktreePath: message.creation.worktreePath,
+            startFromOrigin: message.creation.startFromOrigin ?? false,
+            pullRequestReference: message.creation.pullRequestReference,
+          },
+        });
+      }
+      setSelectedEnvironmentId(message.environmentId);
+      setSelectedProjectKey(scopedProjectKey(message.environmentId, message.creation.projectId));
+      activeEditingMessageId = message.messageId;
+      editingPendingTaskRef.current = message;
+      editingRevisionRef.current = capturePendingTaskEditorWriteBaseline(message.messageId);
+      setEditingPendingTask(message);
+      holdEditingQueuedMessage(message.messageId);
+      return true;
+    },
+    [setSelectedProjectKey],
+  );
 
   const buildPendingTaskMessage = useCallback(
     (
@@ -1280,6 +1586,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectEnvironment,
       switchEnvironment,
       switchingToEnvironmentId,
+      canAutoBalance,
+      autoBalanceStatus,
+      selectAutoBalance,
+      pinEnvironment,
       setSelectedModelKey,
       setWorkspaceMode,
       selectBranch,
@@ -1349,6 +1659,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectEnvironment,
       switchEnvironment,
       switchingToEnvironmentId,
+      canAutoBalance,
+      autoBalanceStatus,
+      selectAutoBalance,
+      pinEnvironment,
       setInteractionMode,
       setPrompt,
       setRuntimeMode,

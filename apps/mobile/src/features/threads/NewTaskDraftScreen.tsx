@@ -675,7 +675,7 @@ export function NewTaskDraftScreen(props: {
             selectedProject?.environmentId !== directProject.environmentId ||
             selectedProject.id !== directProject.id
           ) {
-            setProject(directProject);
+            setProject(directProject, { pinEnvironment: true });
             return;
           }
           if (!flow.draftKey) return;
@@ -691,13 +691,13 @@ export function NewTaskDraftScreen(props: {
           });
         }
         appliedInitialProjectKeyRef.current = directProjectKey;
-        if (
-          selectedProject?.environmentId === directProject.environmentId &&
-          selectedProject.id === directProject.id
-        ) {
-          return;
-        }
-        setProject(directProject);
+        // Always select explicitly, even when the flow's fallback already
+        // matches: auto balance only runs for a project the route chose. A
+        // branch or shared content belongs to this machine, so those pin it.
+        setProject(directProject, {
+          pinEnvironment:
+            Boolean(props.initialProjectRef?.branch) || props.incomingShareId !== undefined,
+        });
         return;
       }
 
@@ -1007,10 +1007,19 @@ export function NewTaskDraftScreen(props: {
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
+  // An attachment is checked against the machine on screen and keeps the
+  // draft there, so auto balance must not move it while one is on its way.
+  const keepMachineForAttachment = useCallback(() => {
+    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+      flow.pinEnvironment();
+    }
+  }, [flow]);
+
   async function handlePickMedia(): Promise<void> {
     if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
+    keepMachineForAttachment();
     const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerMedia({
@@ -1046,6 +1055,7 @@ export function NewTaskDraftScreen(props: {
       Dialog.alert("File attachments are not available on this server.");
       return;
     }
+    keepMachineForAttachment();
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerFiles({
       existingCount:
@@ -1069,6 +1079,7 @@ export function NewTaskDraftScreen(props: {
 
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
+      keepMachineForAttachment();
       try {
         const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
         const images = await convertPastedImagesToAttachments({
@@ -1085,7 +1096,7 @@ export function NewTaskDraftScreen(props: {
         console.error("[native paste] error converting images", error);
       }
     },
-    [flow],
+    [flow, keepMachineForAttachment],
   );
 
   const handleNativePasteText = useCallback(
@@ -1128,6 +1139,7 @@ export function NewTaskDraftScreen(props: {
         }) === "attachment"
       ) {
         if (canAttach && maxBytes !== null) {
+          keepMachineForAttachment();
           pendingPastedTextAttachmentCountRef.current += 1;
           setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
           try {
@@ -1183,7 +1195,7 @@ export function NewTaskDraftScreen(props: {
 
       insertPaste();
     },
-    [composerMenu, flow, selectedEnvironmentServerConfig],
+    [composerMenu, flow, keepMachineForAttachment, selectedEnvironmentServerConfig],
   );
 
   async function handleStart(): Promise<void> {
@@ -1218,6 +1230,20 @@ export function NewTaskDraftScreen(props: {
       flow.submitting ||
       (workspaceMode === "worktree" && !selectedBranchName)
     ) {
+      return;
+    }
+    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+      if (flow.autoBalanceStatus === "checking") {
+        Dialog.alert(
+          "Checking machine resources",
+          "Resource checks are still running. You can choose a machine in the composer.",
+        );
+      } else {
+        Dialog.alert(
+          "Choose a machine to continue",
+          "No eligible machine has available resources. Choose a machine in the composer to override.",
+        );
+      }
       return;
     }
     if (
@@ -1463,19 +1489,32 @@ export function NewTaskDraftScreen(props: {
     navigation.dispatch(StackActions.push(routeName));
   };
 
+  // Auto balance names itself, not the machine it picked.
+  const autoBalanceLabel =
+    flow.autoBalanceStatus === null
+      ? null
+      : flow.autoBalanceStatus === "checking"
+        ? "Checking machines…"
+        : flow.autoBalanceStatus === "unavailable"
+          ? "Auto balance unavailable"
+          : "Auto balance";
   const environmentControl = (
     <ComposerInlineControl
-      accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
+      accessibilityLabel={`Environment: ${autoBalanceLabel ?? selectedEnvironmentLabel}`}
       chevronDirection="right"
       disabled={isComposerInteractionLocked || voiceInput.isBusy}
-      renderIcon={(size) => (
-        <EnvironmentMachineSymbol
-          kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
-          size={size}
-          tintColorClassName="accent-icon-muted"
-        />
-      )}
-      label={`on ${selectedEnvironmentLabel}`}
+      renderIcon={(size) =>
+        autoBalanceLabel === null ? (
+          <EnvironmentMachineSymbol
+            kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}
+            size={size}
+            tintColorClassName="accent-icon-muted"
+          />
+        ) : (
+          <SymbolView name="scalemass" size={size} tintColorClassName="accent-icon-muted" />
+        )
+      }
+      label={autoBalanceLabel ?? `on ${selectedEnvironmentLabel}`}
       maxWidth={flow.isScratchDraft ? 170 : 260}
       onPress={
         flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
