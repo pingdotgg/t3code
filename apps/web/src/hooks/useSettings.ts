@@ -330,22 +330,10 @@ export function useMigrateModelPreferences(
   }, [clientSettings, environmentId, hydrated, migrate, settings]);
 }
 
-// A hook of its own so callers passing an inline selector still get one merged
-// object per settings change instead of one per render.
-function useMergedEnvironmentSettings(
-  serverSettings: ServerSettings,
-  clientSettings: ClientSettings,
-): UnifiedSettings {
-  "use memo";
+// Returns the merged object alone so the selector, often inline, cannot widen its cache key.
+function useMergedSettings(serverSettings: ServerSettings): UnifiedSettings {
+  const clientSettings = useClientSettingsValue();
   return mergeEnvironmentSettings(serverSettings, clientSettings);
-}
-
-function useMergedSettings<T>(
-  serverSettings: ServerSettings,
-  selector: ((settings: UnifiedSettings) => T) | undefined,
-): T {
-  const merged = useMergedEnvironmentSettings(serverSettings, useClientSettingsValue());
-  return selector ? selector(merged) : (merged as T);
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -511,7 +499,8 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   useMigrateModelPreferences(environmentId, serverSettings);
-  return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
+  const merged = useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS);
+  return selector ? selector(merged) : (merged as T);
 }
 
 export function usePersistEnvironmentProviderInstanceMutation(environmentId: EnvironmentId) {
@@ -534,7 +523,8 @@ export function usePrimarySettings<T = UnifiedSettings>(
     environment?.environmentId ?? null,
     environment?.serverConfig?.settings ?? null,
   );
-  return useMergedSettings(settings, selector);
+  const merged = useMergedSettings(settings);
+  return selector ? selector(merged) : (merged as T);
 }
 
 export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE =
