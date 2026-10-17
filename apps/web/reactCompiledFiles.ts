@@ -67,4 +67,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/device/DevicePanel.tsx",
   "apps/web/src/components/desktop/SshPasswordPromptDialog.tsx",
   "apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx",
+  "apps/web/src/components/pullRequest/usePullRequestActions.ts",
 ] as const;
