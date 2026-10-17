@@ -42,6 +42,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
+import { ThreadDetailsIssueRows } from "./chat/ThreadDetailsIssueRows";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -753,6 +754,7 @@ export function BranchToolbarBranchSelector({
             onActed={() => branchStatusQuery.refresh()}
           />
         ) : null}
+        {displayMode === "panel" ? <ThreadDetailsIssueRows threadRef={threadRef} /> : null}
       </div>
     </BranchPicker>
   );

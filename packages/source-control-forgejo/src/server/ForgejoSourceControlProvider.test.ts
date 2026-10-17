@@ -854,6 +854,7 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
         body: { body: "verified through fj" },
       });
       assert.strictEqual(result.stdout, '{"id":99}');
+      assert.strictEqual(result.repositoryUrl, "http://forgejo.local:3000/maria/project");
     }
     assert.deepStrictEqual(commands, ["fj"]);
     assert.deepStrictEqual(requests, [

@@ -2,6 +2,8 @@ import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CheckpointId,
+  CommandId,
+  IssueTrackerKind,
   CheckpointRef,
   CheckpointScopeId,
   MessageId,
@@ -36,6 +38,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import { makeSubagentChildThread } from "@t3tools/provider-core/server/subagentProjection";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
@@ -1761,6 +1764,124 @@ layer("ProviderEventIngestorV2", (it) => {
       assert.equal(messageEvents[0]?.threadId, childThreadId);
     }),
   );
+
+  for (const connectionId of [undefined, "B"]) {
+    it.effect.each(["creation", "metadata", "model"] as const)(
+      `preserves linked account ${connectionId ?? "default"} during native child %s`,
+      (operation) =>
+        Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+          const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const rootEvent = yield* threadCreatedEvent(now);
+          if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+          const parent = {
+            ...rootEvent.payload,
+            issues: [
+              {
+                tracker: IssueTrackerKind.make("linear"),
+                host: "linear.app",
+                scope: "acme/ENG",
+                key: "ENG-7",
+                projectId: rootEvent.payload.projectId,
+                ...(connectionId === undefined ? {} : { connectionId }),
+                url: "https://linear.app/acme/issue/ENG-7",
+                source: "manual" as const,
+                linkedAt: DateTime.formatIso(now),
+                linkId: CommandId.make("parent-issue-link"),
+                snapshot: null,
+              },
+            ],
+          };
+          yield* eventSink.write({ events: [{ ...rootEvent, payload: parent }] });
+          const childThreadId = idAllocator.derive.threadFromProviderThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: `linked-child-${connectionId ?? "default"}-${operation}`,
+          });
+          const appThread = makeSubagentChildThread({
+            parentThread: yield* projectionStore.getThread(rootEvent.threadId),
+            childThreadId,
+            parentNodeId: NodeId.make("node:parent"),
+            activeProviderThreadId: null,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            title: "Native child",
+            now,
+            createdBy: "agent",
+            creationSource: "provider",
+          });
+          if (operation !== "creation") {
+            yield* eventSink.write({
+              events: [
+                {
+                  ...rootEvent,
+                  id: yield* idAllocator.allocate.event({ threadId: childThreadId }),
+                  threadId: childThreadId,
+                  payload: appThread,
+                },
+              ],
+            });
+            assert.deepEqual(
+              (yield* projectionStore.getThread(childThreadId)).issues,
+              parent.issues,
+            );
+          }
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId: rootEvent.threadId,
+          });
+          yield* ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: rootEvent.threadId,
+            event:
+              operation === "model"
+                ? {
+                    type: "subagent.updated",
+                    driver: CODEX_DRIVER,
+                    subagent: {
+                      id: NodeId.make("node:child"),
+                      threadId: rootEvent.threadId,
+                      runId: null,
+                      parentNodeId: NodeId.make("node:parent"),
+                      origin: "provider_native",
+                      createdBy: "agent",
+                      driver: CODEX_DRIVER,
+                      providerInstanceId: modelSelection.instanceId,
+                      providerThreadId: null,
+                      childThreadId,
+                      nativeTaskRef: null,
+                      prompt: "Review",
+                      title: "Native child",
+                      model: "gpt-6.1-sol",
+                      status: "running",
+                      result: null,
+                      startedAt: now,
+                      completedAt: null,
+                      updatedAt: now,
+                    },
+                  }
+                : {
+                    type: "app_thread.created",
+                    driver: CODEX_DRIVER,
+                    appThread:
+                      operation === "metadata"
+                        ? { ...appThread, issues: undefined, title: "Updated child" }
+                        : appThread,
+                  },
+          });
+          const saved = yield* projectionStore.getThread(childThreadId);
+          assert.deepEqual(saved.issues, parent.issues);
+          assert.equal(saved.title, operation === "metadata" ? "Updated child" : "Native child");
+          assert.equal(
+            saved.modelSelection.model,
+            operation === "model" ? "gpt-6.1-sol" : modelSelection.model,
+          );
+        }),
+    );
+  }
 
   it.effect.each([
     { parentMoved: false, failure: null },

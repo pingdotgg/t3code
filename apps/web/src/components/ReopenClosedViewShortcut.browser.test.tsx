@@ -73,7 +73,11 @@ vi.mock(import("./ui/toast"), async (original) => {
 });
 
 import { useClosedViewStore } from "../closedViewStore";
-import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  ISSUES_PANEL_REF,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { ReopenClosedViewShortcut } from "./ReopenClosedViewShortcut";
 
@@ -150,6 +154,51 @@ afterEach(async () => {
 });
 
 describe("root reopen shortcut", () => {
+  it.each([
+    { tracker: "forgejo", host: "code.example.com:8443", scope: "Mount/Team/Repo", key: "42" },
+    { tracker: "linear", host: "linear.app", scope: "workspace/ENG", key: "ENG-7" },
+    {
+      tracker: "linear",
+      host: "linear.app",
+      scope: "workspace/ENG",
+      key: "ENG-7",
+      connectionId: "Account/B",
+    },
+  ])("restores the closed $tracker issue's URL selection", async (issue) => {
+    const selection = { ...issue, environmentId: "remote", projectId: "project-b" };
+    const panels = useRightPanelStore.getState();
+    panels.openIssue(ISSUES_PANEL_REF, selection);
+    const surface = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      ISSUES_PANEL_REF,
+    ).surfaces[0]!;
+    panels.closeSurface(ISSUES_PANEL_REF, surface.id);
+    await render();
+    await act(() => {
+      press();
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ISSUES_PANEL_REF)
+        .activeSurfaceId,
+    ).toBe(surface.id);
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/issues",
+      search: {
+        who: "all",
+        status: "open",
+        selectedEnvironmentId: selection.environmentId,
+        selectedProjectId: selection.projectId,
+        selectedHost: selection.host,
+        ...(selection.connectionId === undefined
+          ? {}
+          : { selectedConnectionId: selection.connectionId }),
+        tracker: selection.tracker,
+        scope: selection.scope,
+        key: selection.key,
+      },
+    });
+  });
+
   it("restores a tab from settings to its owning remote thread", async () => {
     useClosedViewStore
       .getState()

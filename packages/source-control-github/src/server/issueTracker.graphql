@@ -1,0 +1,850 @@
+fragment IssueFields on Issue {
+  number
+  title
+  url
+  state
+  stateReason
+  createdAt
+  updatedAt
+  closedAt
+  author {
+    login
+    avatarUrl
+    ... on User {
+      name
+    }
+  }
+  assignees(first: 20) {
+    nodes {
+      login
+      name
+      avatarUrl
+    }
+  }
+  labels(first: 20) {
+    nodes {
+      name
+      color
+    }
+    pageInfo {
+      hasNextPage
+    }
+  }
+  milestone {
+    title
+  }
+}
+
+fragment IssueRow on Issue {
+  ...IssueFields
+  comments {
+    totalCount
+  }
+}
+
+fragment IssueCommentFields on IssueComment {
+  id
+  author {
+    login
+    avatarUrl
+  }
+  body
+  createdAt
+  lastEditedAt
+  viewerCanUpdate
+  url
+  ...Reactions
+}
+
+query IssueSearch($q: String!, $cursor: String, $first: Int!) {
+  search(query: $q, type: ISSUE, first: $first, after: $cursor) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ...IssueRow
+    }
+  }
+}
+
+query RepositoryIssues(
+  $owner: String!
+  $name: String!
+  $cursor: String
+  $states: [IssueState!]
+  $orderBy: IssueOrder!
+  $first: Int!
+) {
+  repository(owner: $owner, name: $name) {
+    issues(first: $first, after: $cursor, states: $states, orderBy: $orderBy) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        ...IssueRow
+      }
+    }
+  }
+}
+
+query IssueViewer {
+  viewer {
+    login
+  }
+}
+
+query IssueDetail($owner: String!, $name: String!, $number: Int!) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    viewerPermission
+    isArchived
+    issue(number: $number) {
+      ...IssueFields
+      body
+      viewerCanUpdate
+      locked
+      ...Reactions
+      comments(last: 100) {
+        totalCount
+        pageInfo {
+          hasPreviousPage
+          startCursor
+        }
+        nodes {
+          ...IssueCommentFields
+        }
+      }
+      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        nodes {
+          number
+          title
+          url
+          state
+          isDraft
+          repository {
+            nameWithOwner
+          }
+        }
+      }
+      timelineItems(
+        last: 100
+        itemTypes: [
+          CLOSED_EVENT
+          REOPENED_EVENT
+          LABELED_EVENT
+          UNLABELED_EVENT
+          ASSIGNED_EVENT
+          UNASSIGNED_EVENT
+          RENAMED_TITLE_EVENT
+          CROSS_REFERENCED_EVENT
+        ]
+      ) {
+        pageInfo {
+          hasPreviousPage
+        }
+        nodes {
+          ...IssueTimelineItem
+        }
+      }
+    }
+  }
+}
+
+query IssueComments(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $first: Int
+  $last: Int
+  $after: String
+  $before: String
+) {
+  viewer {
+    login
+  }
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      comments(first: $first, last: $last, after: $after, before: $before) {
+        pageInfo {
+          hasPreviousPage
+          hasNextPage
+          startCursor
+          endCursor
+        }
+        nodes {
+          ...IssueCommentFields
+        }
+      }
+    }
+  }
+}
+
+query IssueHistory(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $first: Int
+  $last: Int
+  $after: String
+  $before: String
+) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      timelineItems(first: $first, last: $last, after: $after, before: $before) {
+        pageInfo {
+          hasPreviousPage
+          hasNextPage
+          startCursor
+          endCursor
+        }
+        nodes {
+          ...IssueHistoryItem
+        }
+      }
+    }
+  }
+}
+
+query IssueViewerPermissions($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    viewerPermission
+    isArchived
+    issue(number: $number) {
+      viewerCanUpdate
+      locked
+    }
+  }
+}
+
+query IssueNodeId($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      id
+    }
+  }
+}
+
+query IssueCommentScope($owner: String!, $name: String!, $number: Int!, $commentId: ID!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      id
+    }
+  }
+  node(id: $commentId) {
+    ... on IssueComment {
+      viewerCanUpdate
+      issue {
+        id
+      }
+    }
+  }
+}
+
+query IssueCandidates($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    labels(first: 100) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        name
+        color
+        description
+      }
+    }
+    assignableUsers(first: 100) {
+      pageInfo {
+        hasNextPage
+      }
+      nodes {
+        login
+        name
+        avatarUrl
+      }
+    }
+  }
+}
+
+query IssueTemplates($owner: String!, $name: String!, $includeBody: Boolean! = true) {
+  repository(owner: $owner, name: $name) {
+    nameWithOwner
+    isPrivate
+    forms: object(expression: "HEAD:.github/ISSUE_TEMPLATE") {
+      ... on Tree {
+        oid
+        entries {
+          name
+          object {
+            ... on Blob {
+              text
+            }
+          }
+        }
+      }
+    }
+    rootForms: object(expression: "HEAD:ISSUE_TEMPLATE") {
+      ... on Tree {
+        entries {
+          name
+          object {
+            ... on Blob {
+              text
+            }
+          }
+        }
+      }
+    }
+    docsForms: object(expression: "HEAD:docs/ISSUE_TEMPLATE") {
+      ... on Tree {
+        entries {
+          name
+          object {
+            ... on Blob {
+              text
+            }
+          }
+        }
+      }
+    }
+    issueTemplates {
+      filename
+      name
+      about
+      title
+      body @include(if: $includeBody)
+      assignees(first: 25) {
+        nodes {
+          login
+        }
+      }
+      labels(first: 50) {
+        nodes {
+          name
+        }
+      }
+    }
+  }
+}
+
+query IssueClosingPullRequests(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $first: Int!
+  $after: String
+) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      closedByPullRequestsReferences(
+        first: $first
+        after: $after
+        includeClosedPrs: true
+        userLinkedOnly: false
+      ) {
+        nodes {
+          ...IssueLinkedPullRequest
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+
+query IssueRelatedPullRequests(
+  $owner: String!
+  $name: String!
+  $number: Int!
+  $first: Int!
+  $after: String
+) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      timelineItems(first: $first, after: $after, itemTypes: [CROSS_REFERENCED_EVENT]) {
+        nodes {
+          ... on CrossReferencedEvent {
+            source {
+              ...IssueLinkedPullRequest
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+
+fragment IssueLinkedPullRequest on PullRequest {
+  number
+  title
+  url
+  state
+  isDraft
+  repository {
+    nameWithOwner
+  }
+}
+
+fragment IssueTimelineItem on IssueTimelineItems {
+  __typename
+  ... on ClosedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ReopenedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on LabeledEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+    label {
+      name
+    }
+  }
+  ... on UnlabeledEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+    label {
+      name
+    }
+  }
+  ... on AssignedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+    assignee {
+      ... on User {
+        login
+        name
+      }
+      ... on Bot {
+        login
+      }
+    }
+  }
+  ... on UnassignedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+    assignee {
+      ... on User {
+        login
+        name
+      }
+      ... on Bot {
+        login
+      }
+    }
+  }
+  ... on RenamedTitleEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+    currentTitle
+  }
+  ... on CrossReferencedEvent {
+    id
+    createdAt
+    url
+    actor {
+      login
+      avatarUrl
+    }
+    source {
+      __typename
+      ... on PullRequest {
+        number
+        title
+        url
+        state
+        isDraft
+        repository {
+          nameWithOwner
+        }
+      }
+      ... on Issue {
+        number
+        title
+        url
+        repository {
+          nameWithOwner
+        }
+      }
+    }
+  }
+}
+
+fragment IssueHistoryItem on IssueTimelineItems {
+  ...IssueTimelineItem
+  ... on AddedToProjectEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on AddedToProjectV2Event {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on BlockedByAddedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on BlockedByRemovedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on BlockingAddedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on BlockingRemovedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on CommentDeletedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ConnectedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ConvertedFromDraftEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ConvertedNoteToIssueEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ConvertedToDiscussionEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on DemilestonedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on DisconnectedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueCommentPinnedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueCommentUnpinnedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueFieldAddedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueFieldChangedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueFieldRemovedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueTypeAddedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueTypeChangedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on IssueTypeRemovedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on LockedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on MarkedAsDuplicateEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on MentionedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on MilestonedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on MovedColumnsInProjectEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ParentIssueAddedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ParentIssueRemovedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on PinnedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ProjectV2ItemStatusChangedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on ReferencedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on RemovedFromProjectEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on RemovedFromProjectV2Event {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on SubIssueAddedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on SubIssueRemovedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on SubscribedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on TransferredEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on UnlockedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on UnmarkedAsDuplicateEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on UnpinnedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on UnsubscribedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+  ... on UserBlockedEvent {
+    id
+    createdAt
+    actor {
+      login
+      avatarUrl
+    }
+  }
+}

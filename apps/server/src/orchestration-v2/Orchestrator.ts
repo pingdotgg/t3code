@@ -10,6 +10,7 @@ import {
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import { issueHostKey, threadIssueKeysEqual } from "@t3tools/contracts";
 import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
@@ -443,6 +444,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pull-request.link":
     case "thread.pull-request.unlink":
     case "thread.pull-request-link.sync":
+    case "thread.issue.link":
+    case "thread.issue.unlink":
+    case "thread.issue-link.sync":
     case "thread.pull-request.watch":
     case "thread.pull-request-watch.sync":
     case "thread.pull-request.sync":
@@ -2402,6 +2406,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pull-request.link"
           | "thread.pull-request.unlink"
           | "thread.pull-request-link.sync"
+          | "thread.issue.link"
+          | "thread.issue.unlink"
+          | "thread.issue-link.sync"
           | "thread.pull-request.watch"
           | "thread.pull-request-watch.sync"
           | "thread.pull-request.sync"
@@ -3097,6 +3104,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: command.type === "thread.pull-request-link.sync" ? thread.updatedAt : now,
           };
         }
+        case "thread.issue.link":
+        case "thread.issue.unlink":
+        case "thread.issue-link.sync": {
+          const links = thread.issues ?? [];
+          const existing = links.find((link) => threadIssueKeysEqual(link, command));
+          let issues = links;
+          if (command.type === "thread.issue.link") {
+            if (existing) return thread;
+            issues = [
+              ...links,
+              {
+                tracker: command.tracker,
+                ...(command.connectionId === undefined
+                  ? {}
+                  : { connectionId: command.connectionId }),
+                host: issueHostKey(command.host),
+                scope: command.scope.trim(),
+                key: command.key.trim(),
+                projectId: command.projectId,
+                linkId: command.commandId,
+                url: command.url,
+                source: command.source,
+                linkedAt: DateTime.formatIso(now),
+                snapshot: command.snapshot ?? null,
+              },
+            ];
+          } else if (command.type === "thread.issue.unlink") {
+            if (!existing) return thread;
+            issues = links.filter((link) => link !== existing);
+          } else {
+            if (
+              !existing ||
+              (command.linkedAt !== undefined && command.linkedAt !== existing.linkedAt) ||
+              (command.linkId !== undefined && command.linkId !== (existing.linkId ?? null))
+            )
+              return thread;
+            issues = links.map((link) =>
+              link === existing ? { ...link, snapshot: command.snapshot } : link,
+            );
+          }
+          return {
+            ...thread,
+            issues,
+            updatedAt: command.type === "thread.issue-link.sync" ? thread.updatedAt : now,
+          };
+        }
         case "thread.pull-request.watch":
         case "thread.pull-request-watch.sync": {
           const key = normalizeThreadPullRequestKey(command);
@@ -3261,6 +3314,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.pull-request.watch":
         case "thread.pull-request.sync":
           return "thread.pull-request-synced" as const;
+        case "thread.issue.link":
+        case "thread.issue.unlink":
+        case "thread.issue-link.sync":
+          return "thread.issue-synced" as const;
         case "thread.runtime-mode.set":
           return "thread.runtime-mode-updated" as const;
         case "thread.interaction-mode.set":
@@ -3278,6 +3335,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command,
     )({
       type: eventType,
+      ...(command.type === "thread.issue.link"
+        ? { issueOperation: "link" as const }
+        : command.type === "thread.issue.unlink"
+          ? { issueOperation: "unlink" as const }
+          : command.type === "thread.issue-link.sync"
+            ? { issueOperation: "sync" as const }
+            : {}),
       threadId: command.threadId,
       providerInstanceId: updatedThread.providerInstanceId,
       occurredAt: now,
@@ -10731,6 +10795,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pull-request.link":
       case "thread.pull-request.unlink":
       case "thread.pull-request-link.sync":
+      case "thread.issue.link":
+      case "thread.issue.unlink":
+      case "thread.issue-link.sync":
       case "thread.pull-request.watch":
       case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":

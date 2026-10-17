@@ -282,3 +282,15 @@ describe("summarizeT3ToolCalls", () => {
     });
   });
 });
+
+it.each([
+  ["update-issue", "Changed 1 issue"],
+  ["edit-issue-comment", "Edited 1 issue comment"],
+  ["react-issue", "Reacted to 1 issue"],
+  ["list-issue-sources", "Listed issue sources 1 time"],
+] as const)("describes the actual issue operation for %s", (action, label) => {
+  expect(summarizeT3ToolCalls(action, [completed({ key: "1" })])).toEqual({
+    label,
+    failedCount: 0,
+  });
+});

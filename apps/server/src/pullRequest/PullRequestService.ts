@@ -431,34 +431,20 @@ function withRateLimitBackoff(
     effect: Effect.Effect<A, PullRequestProviderError>,
     allowPaused: boolean,
   ) =>
-    limits.check(key, allowPaused ? { allowPaused: true } : undefined).pipe(
-      Effect.mapError(
-        (error) =>
-          new PullRequestProviderError({
-            provider: api.kind,
-            operation,
-            reason: "rate-limited",
-            detail: error.detail,
-            retryAt: error.retryAt,
-            cause: error,
-          }),
-      ),
-      Effect.flatMap((lease) =>
-        effect.pipe(
-          Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
-          Effect.tap(() => limits.recordSuccess({ ...key, lease })),
-          Effect.tapError((error) =>
-            error.reason === "rate-limited"
-              ? limits.recordRateLimit({
-                  ...key,
-                  lease,
-                  ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
-                })
-              : Effect.void,
-          ),
-        ),
-      ),
-    );
+    SourceControlRateLimit.withBackoff(limits, key, effect, {
+      allowPaused,
+      onPaused: (error) =>
+        new PullRequestProviderError({
+          provider: api.kind,
+          operation,
+          reason: "rate-limited",
+          detail: error.detail,
+          retryAt: error.retryAt,
+          cause: error,
+        }),
+      getRateLimit: (error) =>
+        error.reason === "rate-limited" ? { retryAt: error.retryAt } : undefined,
+    });
   const wrap =
     <Args extends ReadonlyArray<unknown>, A>(
       operation: string,

@@ -61,6 +61,18 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "list-issue-sources"
+  | "update-issue"
+  | "edit-issue-comment"
+  | "react-issue"
+  | "list-issues"
+  | "read-issue"
+  | "create-issue"
+  | "comment-issue"
+  | "set-issue-state"
+  | "link-issue"
+  | "unlink-issue"
+  | "list-thread-issues"
   | "browser"
   | "device"
   | "html-preview"
@@ -120,6 +132,40 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
+  list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
+  list_issue_sources: tool(["List", "Listing", "Listed", "issue sources"], "list-issue-sources"),
+  read_issue_history: tool(["Read", "Reading", "Read", "issue history"], "read-issue"),
+  read_issue_hierarchy: tool(["Read", "Reading", "Read", "issue hierarchy"], "read-issue"),
+  read_issue_dependencies: tool(["Read", "Reading", "Read", "issue dependencies"], "read-issue"),
+  read_issue_linked_pull_requests: tool(
+    ["Read", "Reading", "Read", "linked pull requests"],
+    "read-issue",
+  ),
+  read_issue_templates: tool(["Read", "Reading", "Read", "issue templates"], "read-issue"),
+  list_issue_labels: tool(["List", "Listing", "Listed", "issue labels"], "read-issue"),
+  list_issue_assignees: tool(["List", "Listing", "Listed", "issue assignees"], "read-issue"),
+  update_issue: tool(["Edit", "Editing", "Edited", "an issue"], "update-issue"),
+  edit_issue_comment: tool(["Edit", "Editing", "Edited", "an issue comment"], "edit-issue-comment"),
+  set_issue_reaction: tool(["React", "Reacting", "Reacted", "to an issue"], "react-issue"),
+  set_issue_labels: tool(["Change", "Changing", "Changed", "issue labels"], "update-issue"),
+  set_issue_assignees: tool(["Change", "Changing", "Changed", "issue assignees"], "update-issue"),
+  set_issue_parent: tool(["Change", "Changing", "Changed", "an issue parent"], "update-issue"),
+  set_issue_dependency: tool(
+    ["Change", "Changing", "Changed", "an issue dependency"],
+    "update-issue",
+  ),
+  read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  read_issue_comments: tool(["Read", "Reading", "Read", "older issue comments"], "read-issue"),
+  read_issue_candidates: tool(["Read", "Reading", "Read", "issue choices"], "read-issue"),
+  create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
+  comment_on_issue: tool(
+    ["Comment on", "Commenting on", "Commented on", "an issue"],
+    "comment-issue",
+  ),
+  set_issue_state: tool(["Change", "Changing", "Changed", "an issue's state"], "set-issue-state"),
+  link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
+  unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
+  list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",

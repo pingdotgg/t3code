@@ -1,33 +1,70 @@
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
 import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
+import * as AzureDevOpsIssueTrackerDriver from "@t3tools/source-control-azure-devops/server/issueTrackerDriver";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
+import * as ForgejoIssueTrackerDriver from "@t3tools/source-control-forgejo/server/issueTrackerDriver";
 import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
 import * as GitCafeDriver from "@t3tools/source-control-gitcafe/server/driver";
+import * as GitCafeIssueTrackerDriver from "@t3tools/source-control-gitcafe/server/issueTrackerDriver";
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
+import * as GitHubIssueTrackerDriver from "@t3tools/source-control-github/server/issueTrackerDriver";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
+import * as GitLabIssueTrackerDriver from "@t3tools/source-control-gitlab/server/issueTrackerDriver";
 import type { SourceControlDriver } from "@t3tools/source-control-core/server/driver";
 import * as Layer from "effect/Layer";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
-const drivers = [
-  GitHubDriver.driver,
-  GitLabDriver.driver,
-  AzureDevOpsDriver.driver,
-  BitbucketDriver.driver,
-  ForgejoDriver.driver,
-  GitCafeDriver.driver,
+const hostDrivers = [
+  {
+    sourceControl: GitHubDriver.driver,
+    issues: GitHubIssueTrackerDriver.driver,
+    sharedIssueLimits: false,
+  },
+  {
+    sourceControl: GitLabDriver.driver,
+    issues: GitLabIssueTrackerDriver.driver,
+    sharedIssueLimits: true,
+  },
+  {
+    sourceControl: AzureDevOpsDriver.driver,
+    issues: AzureDevOpsIssueTrackerDriver.driver,
+    sharedIssueLimits: true,
+  },
+  { sourceControl: BitbucketDriver.driver, issues: null, sharedIssueLimits: false },
+  {
+    sourceControl: ForgejoDriver.driver,
+    issues: ForgejoIssueTrackerDriver.driver,
+    sharedIssueLimits: true,
+  },
+  {
+    sourceControl: GitCafeDriver.driver,
+    issues: GitCafeIssueTrackerDriver.driver,
+    sharedIssueLimits: true,
+  },
 ];
+
+const drivers = hostDrivers.map(({ sourceControl }) => sourceControl);
+
+export const BUILT_IN_GIT_HOST_ISSUE_DRIVERS = hostDrivers.flatMap(({ issues }) =>
+  issues === null ? [] : [issues],
+);
+
+export const SHARED_ISSUE_RATE_LIMIT_KINDS = new Set(
+  hostDrivers.flatMap(({ issues, sharedIssueLimits }) =>
+    issues !== null && sharedIssueLimits ? [issues.kind] : [],
+  ),
+);
 
 export type BuiltInSourceControlDriversEnv =
   (typeof drivers)[number] extends SourceControlDriver<infer R> ? R : never;

@@ -21,7 +21,7 @@ import type {
   ProviderDiffSlice,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 
-const Actor = Schema.Union([
+export const Actor = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("local"),
     actorId: Schema.String,
@@ -243,13 +243,16 @@ interface RepositoryOnHost {
   readonly host: string;
 }
 
-function toActor(actor: Actor, host: string): PullRequestActor | null {
+export function toActor(actor: Actor, host: string): PullRequestActor | null {
   if (actor.kind === "unavailable") return null;
   return {
     login: actor.kind === "local" ? actor.handle : actor.login,
     name: actor.kind === "local" ? actor.displayName : null,
     // GitCafe serves its own avatars by path, so a relative one is read against the host.
-    avatarUrl: actor.avatarUrl === null ? null : new URL(actor.avatarUrl, `https://${host}`).href,
+    avatarUrl:
+      actor.avatarUrl === null
+        ? null
+        : (URL.parse(actor.avatarUrl, `https://${host}`)?.href ?? null),
   };
 }
 

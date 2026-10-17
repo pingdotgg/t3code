@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { useClosedViewStore } from "./closedViewStore";
 import {
+  issueRefOfSurface,
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
@@ -30,6 +31,47 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("keeps account IDs exact across tabs, persistence and closing", () => {
+    const target = {
+      projectId: "project",
+      tracker: "linear",
+      host: "linear.app",
+      scope: "ENG",
+      key: "ENG-1",
+    };
+    const store = useRightPanelStore.getState();
+    store.openIssue(refA, target);
+    store.openIssue(refA, { ...target, connectionId: "Account/A" });
+    store.openIssue(refA, { ...target, connectionId: "account/A" });
+    store.openIssue(refA, { ...target, connectionId: "Account/A" });
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(3);
+    expect(state.surfaces[0]!.id).toBe("issue:project:linear:linear.app:eng:ENG-1");
+    expect(
+      state.surfaces.slice(1).map((surface) => surface.kind === "issue" && surface.connectionId),
+    ).toEqual(["Account/A", "account/A"]);
+    const persisted = JSON.parse(
+      JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
+    );
+    useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual(state.surfaces);
+    for (const connectionId of [null, "", " Account/A", "x".repeat(129)]) {
+      const invalid = structuredClone(persisted);
+      invalid.byThreadKey[Object.keys(invalid.byThreadKey)[0]!].surfaces[1].connectionId =
+        connectionId;
+      expect(
+        selectThreadRightPanelState(migratePersistedRightPanelState(invalid).byThreadKey, refA)
+          .surfaces,
+      ).toEqual([state.surfaces[0], state.surfaces[2]]);
+    }
+    store.closeSurface(refA, state.surfaces[1]!.id);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([state.surfaces[0], state.surfaces[2]]);
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
@@ -654,6 +696,26 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps linked issues as one tab and restores it after closing", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "issues");
+    store.openFile(refA, "README.md");
+    store.open(refA, "issues");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["issues", "file:README.md"]);
+    store.closeSurface(refA, "issues");
+    const closed = useClosedViewStore.getState().entries[0];
+    expect(closed).toMatchObject({ kind: "panel-tab", surface: { id: "issues", kind: "issues" } });
+    store.open(refA, "issues");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "issues",
+      kind: "issues",
+    });
+  });
+
   it("keeps files as a singleton surface", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().open(refA, "files");
@@ -1031,6 +1093,83 @@ describe("rightPanelStore", () => {
       kind: "preview",
       resourceId: "tab-b",
     });
+  });
+
+  it("reads an issue tab back as the exact reference it opened", () => {
+    const store = useRightPanelStore.getState();
+    store.openIssue(refA, {
+      environmentId: "env-2",
+      projectId: "project-a",
+      tracker: "jira",
+      host: "JIRA.EXAMPLE:8443/Jira",
+      connectionId: "Account/B",
+      scope: "ENG",
+      key: "ENG-42",
+      url: "https://jira.example:8443/Jira/browse/ENG-42",
+    });
+    store.openIssue(refA, {
+      projectId: "project-a",
+      tracker: "linear",
+      scope: "ENG",
+      key: "ENG-1",
+    });
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    ).surfaces.flatMap((surface) => (surface.kind === "issue" ? [issueRefOfSurface(surface)] : []));
+    expect(surfaces).toStrictEqual([
+      {
+        projectId: "project-a",
+        tracker: "jira",
+        host: "jira.example:8443/Jira",
+        connectionId: "Account/B",
+        scope: "ENG",
+        key: "ENG-42",
+      },
+      { projectId: "project-a", tracker: "linear", scope: "ENG", key: "ENG-1" },
+    ]);
+  });
+
+  it("keeps Forgejo mount tabs separate and owner case aliases in one tab", () => {
+    const upper = {
+      projectId: "project-a",
+      tracker: "forgejo",
+      host: "forge.example",
+      scope: "Root/Mount/acme/web",
+      key: "42",
+    };
+    const lower = { ...upper, scope: "Root/mount/acme/web" };
+    const store = useRightPanelStore.getState();
+    store.openIssue(refA, upper);
+    store.openIssue(refA, lower);
+    store.openIssue(refA, { ...upper, scope: "Root/Mount/ACME/WEB", host: "FORGE.EXAMPLE" });
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(2);
+    expect(
+      state.surfaces.map((surface) => (surface.kind === "issue" ? surface.scope : null)),
+    ).toEqual([upper.scope, lower.scope]);
+    store.closeSurface(refA, state.surfaces[0]!.id);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([state.surfaces[1]]);
+  });
+
+  it("keeps Jira mount tabs separate and host case aliases in one tab", () => {
+    const target = {
+      projectId: "project-a",
+      tracker: "jira",
+      host: "jira.example/Jira",
+      scope: "ENG",
+      key: "ENG-42",
+    };
+    const store = useRightPanelStore.getState();
+    store.openIssue(refA, target);
+    store.openIssue(refA, { ...target, host: "jira.example/jira" });
+    store.openIssue(refA, { ...target, host: "JIRA.EXAMPLE/Jira" });
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(
+      state.surfaces.map((surface) => (surface.kind === "issue" ? surface.host : null)),
+    ).toEqual(["jira.example/Jira", "jira.example/jira"]);
   });
 
   it("tracks one surface per pull request", () => {

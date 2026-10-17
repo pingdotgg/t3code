@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
+    },
     "./client/definition": {
       "types": "./src/client/definition.ts",
       "import": "./src/client/definition.ts"
@@ -42,6 +46,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",

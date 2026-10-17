@@ -106,6 +106,31 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("requires the destination settings grant to connect or bind an issue tracker", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const connect = createCommandPermissions(runtime, WS_METHODS.issueTrackersConnect);
+        const bind = createCommandPermissions(runtime, WS_METHODS.issueTrackersBindProject);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(connect.permissionAtom(env))).toBe(false);
+        expect(registry.get(bind.permissionAtom(env))).toBe(false);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSettingsWriteScope],
+            permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(connect.permissionAtom(env))).toBe(true);
+        expect(registry.get(bind.permissionAtom(env))).toBe(true);
+        yield* connect.authorize(registry, env);
+        yield* bind.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -308,4 +333,48 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
+);
+
+it.effect.each([
+  WS_METHODS.issuesEditComment,
+  WS_METHODS.issuesSetParent,
+  WS_METHODS.issuesSetDependency,
+])("requires the destination source-control grant for %s", (method) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const command = createCommandPermissions(runtime, method);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(true),
+          scopes: [AuthSourceControlWriteScope],
+          permissions: [AuthSourceControlWriteScope],
+        }),
+      );
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
+      expect(registry.get(command.permissionAtom(other))).toBe(false);
+      expect((yield* command.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+        "EnvironmentAuthorizationError",
+      );
+    }),
+  ),
+);
+
+it.effect("requires the destination operate grant to refresh linked issue snapshots", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const command = createCommandPermissions(runtime, WS_METHODS.issuesRefreshThreadLinks);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      yield* command.authorize(registry, env);
+      expect(registry.get(command.permissionAtom(other))).toBe(false);
+      expect((yield* command.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+        "EnvironmentAuthorizationError",
+      );
+    }),
+  ),
 );

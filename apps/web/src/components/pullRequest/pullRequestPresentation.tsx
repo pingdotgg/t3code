@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
+  CheckIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
@@ -22,6 +23,7 @@ import {
 import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
@@ -530,4 +532,65 @@ export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestChec
   }
   if (pending > 0) return `${pending} of ${checks.length} running`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+}
+
+export function PullRequestCommentTime({
+  at,
+  url,
+}: {
+  at: string;
+  url?: string | null | undefined;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          url ? (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-foreground hover:underline"
+            />
+          ) : (
+            <span className="text-muted-foreground" />
+          )
+        }
+      >
+        <time dateTime={at}>{formatRelativeTimeLabel(at)}</time>
+      </TooltipTrigger>
+      <TooltipPopup>
+        {new Date(at).toLocaleString()}
+        {url ? " · Open comment on host" : ""}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function PullRequestLabelOption({
+  label,
+  checked,
+  checkLabel,
+}: {
+  label: Pick<PullRequestLabel, "name" | "color"> & { readonly description?: string | null };
+  checked: boolean;
+  checkLabel: string;
+}) {
+  const dot = pullRequestLabelColor(label.color);
+  return (
+    <>
+      <span
+        aria-hidden
+        className="size-2 shrink-0 rounded-full bg-muted-foreground"
+        {...(dot ? { style: { backgroundColor: dot } } : {})}
+      />
+      <span className="min-w-0 flex-1 truncate">
+        {label.name}
+        {label.description ? (
+          <span className="text-muted-foreground"> · {label.description}</span>
+        ) : null}
+      </span>
+      {checked ? <CheckIcon aria-label={checkLabel} className="size-3.5 shrink-0" /> : null}
+    </>
+  );
 }

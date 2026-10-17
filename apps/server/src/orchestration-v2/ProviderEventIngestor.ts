@@ -288,7 +288,7 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
   return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
 }
 
-const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
+const decodeDomainEvent = Schema.decodeUnknownEffect(Schema.toType(OrchestrationV2DomainEvent));
 
 export const layer: Layer.Layer<
   ProviderEventIngestorV2,

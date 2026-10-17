@@ -92,6 +92,7 @@ vi.mock("../state/threads", () => ({
 vi.mock("../state/entities", () => ({
   readEnvironmentSupportsServerBrowser: () => false,
   readThreadShell: () => ({ linkedPullRequest: state.linkedPullRequest }),
+  useThreadShell: () => ({ projectId: linkedPullRequest.projectId }),
   useProjects: () => [{ id: linkedPullRequest.projectId, environmentId: threadRef.environmentId }],
 }));
 vi.mock("../rightPanelStore", () => ({

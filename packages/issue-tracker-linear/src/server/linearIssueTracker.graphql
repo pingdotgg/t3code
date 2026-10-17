@@ -1,0 +1,719 @@
+query T3Viewer {
+  viewer {
+    id
+    name
+    displayName
+    email
+    avatarUrl
+  }
+}
+
+query T3ProbeCredential {
+  viewer {
+    id
+    name
+    displayName
+    email
+    avatarUrl
+  }
+  organization {
+    id
+    urlKey
+  }
+  teams(first: 250) {
+    nodes {
+      id
+      key
+      name
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+
+query T3Scopes($first: Int!, $after: String) {
+  organization {
+    id
+    urlKey
+  }
+  teams(first: $first, after: $after) {
+    nodes {
+      id
+      key
+      name
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+
+query T3Issue($id: String!, $comments: Int!) {
+  issue(id: $id) {
+    ...LinearIssueRow
+    team {
+      key
+      states(first: 100) {
+        nodes {
+          id
+          name
+          type
+          position
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+    labels(first: 100, includeArchived: true) {
+      nodes {
+        id
+        name
+        color
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+    comments(first: $comments, orderBy: createdAt) {
+      nodes {
+        id
+        body
+        createdAt
+        editedAt
+        url
+        user {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        reactions {
+          id
+          emoji
+          user {
+            id
+            name
+            displayName
+            email
+            avatarUrl
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+    reactions {
+      id
+      emoji
+      user {
+        id
+        name
+        displayName
+        email
+        avatarUrl
+      }
+    }
+    attachments(first: 50) {
+      nodes {
+        url
+        title
+        sourceType
+        metadata
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+    history(first: 100, orderBy: createdAt) {
+      nodes {
+        id
+        createdAt
+        actor {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        fromState {
+          id
+          name
+          type
+          position
+        }
+        toState {
+          id
+          name
+          type
+          position
+        }
+        fromAssignee {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        toAssignee {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        addedLabels {
+          id
+          name
+          color
+        }
+        removedLabels {
+          id
+          name
+          color
+        }
+        fromTitle
+        toTitle
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+
+query T3IssueReference($id: String!) {
+  issue(id: $id) {
+    id
+    identifier
+    url
+    team {
+      key
+    }
+  }
+}
+
+query T3CommentTarget($id: String!, $commentId: String!) {
+  issue(id: $id) {
+    id
+    identifier
+    url
+    team {
+      key
+    }
+  }
+  comment(id: $commentId) {
+    id
+    issue {
+      id
+      identifier
+      url
+      team {
+        key
+      }
+    }
+  }
+}
+
+query T3TeamStates($key: String!) {
+  organization {
+    id
+    urlKey
+  }
+  teams(first: 1, filter: { key: { eq: $key } }) {
+    nodes {
+      id
+      key
+      name
+      states(first: 100) {
+        nodes {
+          id
+          name
+          type
+          position
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}
+
+query T3Scope($key: String!) {
+  organization {
+    id
+    urlKey
+  }
+  teams(first: 1, filter: { key: { eq: $key } }) {
+    nodes {
+      id
+      key
+      name
+    }
+  }
+}
+
+query T3Comments(
+  $id: String!
+  $first: Int
+  $last: Int
+  $after: String
+  $before: String
+  $backward: Boolean!
+) {
+  issue(id: $id) {
+    id
+    identifier
+    url
+    team {
+      key
+    }
+    comments(first: $first, last: $last, after: $after, before: $before, orderBy: createdAt) {
+      nodes {
+        id
+        body
+        createdAt
+        editedAt
+        url
+        user {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        reactions {
+          id
+          emoji
+          user {
+            id
+            name
+            displayName
+            email
+            avatarUrl
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+        hasPreviousPage @include(if: $backward)
+        startCursor @include(if: $backward)
+      }
+    }
+  }
+}
+
+query T3Team($key: String!, $includeAncestorLabels: Boolean!) {
+  organization {
+    id
+    urlKey
+    templates(first: 100, filter: { type: { eq: "issue" } }) {
+      nodes {
+        id
+        name
+        description
+        content
+        type
+        hasFormFields
+        templateData
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+  teams(first: 1, filter: { key: { eq: $key } }) {
+    nodes {
+      ...LinearAssignmentTeam
+      states(first: 100) {
+        nodes {
+          id
+          name
+          type
+          position
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      ancestors {
+        id
+        key
+        name
+        private
+        visibility
+        restrictedBy {
+          id
+        }
+        labels(first: 250, includeArchived: true) @include(if: $includeAncestorLabels) {
+          nodes {
+            id
+            name
+            color
+            description
+            archivedAt
+            isGroup
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+        templates(first: 100, filter: { type: { eq: "issue" } }) {
+          nodes {
+            id
+            name
+            description
+            content
+            type
+            hasFormFields
+            templateData
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+      labels(first: 250, includeArchived: true) {
+        nodes {
+          id
+          name
+          color
+          description
+          archivedAt
+          isGroup
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      members(first: 250, filter: { active: { eq: true } }) {
+        nodes {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+          active
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+      templates(first: 100, filter: { type: { eq: "issue" } }) {
+        nodes {
+          id
+          name
+          description
+          content
+          type
+          hasFormFields
+          templateData
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+  issueLabels(first: 250, includeArchived: true, filter: { team: { null: true } }) {
+    nodes {
+      id
+      name
+      color
+      description
+      archivedAt
+      isGroup
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+
+mutation T3IssueCreate($input: IssueCreateInput!) {
+  issueCreate(input: $input) {
+    success
+    issue {
+      identifier
+      url
+    }
+  }
+}
+
+mutation T3IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
+    success
+  }
+}
+
+mutation T3CommentCreate($input: CommentCreateInput!) {
+  commentCreate(input: $input) {
+    success
+  }
+}
+
+mutation T3ReactionCreate($input: ReactionCreateInput!) {
+  reactionCreate(input: $input) {
+    success
+  }
+}
+
+mutation T3ReactionDelete($id: String!) {
+  reactionDelete(id: $id) {
+    success
+  }
+}
+
+query T3IssueReactions($id: String!) {
+  issue(id: $id) {
+    reactions {
+      id
+      emoji
+      user {
+        id
+        name
+        displayName
+        email
+        avatarUrl
+      }
+    }
+  }
+}
+
+query T3CommentReactions($id: String!) {
+  comment(id: $id) {
+    reactions {
+      id
+      emoji
+      user {
+        id
+        name
+        displayName
+        email
+        avatarUrl
+      }
+    }
+  }
+}
+
+query T3Hierarchy($id: String!, $first: Int!, $after: String) {
+  issue(id: $id) {
+    id
+    identifier
+    url
+    team {
+      key
+    }
+    parent {
+      id
+      identifier
+      url
+      team {
+        key
+      }
+      title
+      state {
+        id
+        name
+        type
+        position
+      }
+    }
+    children(first: $first, after: $after) {
+      nodes {
+        id
+        identifier
+        url
+        team {
+          key
+        }
+        title
+        state {
+          id
+          name
+          type
+          position
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+
+query T3History(
+  $id: String!
+  $first: Int
+  $last: Int
+  $after: String
+  $before: String
+  $backward: Boolean!
+) {
+  issue(id: $id) {
+    id
+    identifier
+    url
+    team {
+      key
+    }
+    history(first: $first, last: $last, after: $after, before: $before, orderBy: createdAt) {
+      nodes {
+        id
+        createdAt
+        actor {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        fromState {
+          id
+          name
+          type
+          position
+        }
+        toState {
+          id
+          name
+          type
+          position
+        }
+        fromAssignee {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        toAssignee {
+          id
+          name
+          displayName
+          email
+          avatarUrl
+        }
+        addedLabels {
+          id
+          name
+          color
+        }
+        removedLabels {
+          id
+          name
+          color
+        }
+        fromTitle
+        toTitle
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+        hasPreviousPage @include(if: $backward)
+        startCursor @include(if: $backward)
+      }
+    }
+  }
+}
+
+query T3Attachments($id: String!, $first: Int!, $after: String) {
+  issue(id: $id) {
+    id
+    identifier
+    url
+    team {
+      key
+    }
+    attachments(first: $first, after: $after) {
+      nodes {
+        url
+        title
+        sourceType
+        metadata
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+
+mutation T3CommentUpdate($id: String!, $input: CommentUpdateInput!) {
+  commentUpdate(id: $id, input: $input) {
+    success
+  }
+}
+
+fragment LinearIssueRow on Issue {
+  id
+  identifier
+  number
+  title
+  url
+  description
+  createdAt
+  updatedAt
+  completedAt
+  canceledAt
+  team {
+    key
+  }
+  state {
+    id
+    name
+    type
+    position
+  }
+  projectMilestone {
+    name
+  }
+  creator {
+    id
+    name
+    displayName
+    email
+    avatarUrl
+  }
+  assignee {
+    id
+    name
+    displayName
+    email
+    avatarUrl
+  }
+}
+
+fragment LinearAssignmentTeam on Team {
+  id
+  key
+  name
+  private
+  visibility
+  restrictedBy {
+    id
+  }
+}

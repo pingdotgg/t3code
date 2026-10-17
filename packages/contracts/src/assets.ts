@@ -8,6 +8,7 @@ import {
 } from "./chatAttachment.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
+import { IssueRef } from "./issue.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -52,6 +53,10 @@ export const AssetResource = Schema.Union([
   // them with the `gh` credential the repository at `cwd` authenticates with.
   Schema.TaggedStruct("github-media", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
+  Schema.TaggedStruct("linear-media", {
+    issue: IssueRef,
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
 ]);
@@ -297,6 +302,15 @@ export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<Asset
   }
 }
 
+export class AssetLinearMediaValidationError extends Schema.TaggedError<AssetLinearMediaValidationError>()(
+  "AssetLinearMediaValidationError",
+  {},
+) {
+  override get message(): string {
+    return "Linear media requires a connected Linear source and an HTTPS uploads.linear.app URL.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -311,6 +325,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetLinearMediaValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

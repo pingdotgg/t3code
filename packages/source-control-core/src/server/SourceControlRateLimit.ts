@@ -7,6 +7,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
   SourceControlProviderKind as SourceControlProviderKindSchema,
+  IssueTrackerKind as IssueTrackerKindSchema,
+  type IssueTrackerKind,
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
 
@@ -31,7 +33,7 @@ export const Interactive = Context.Reference<boolean>(
 );
 
 interface RateLimitKey {
-  readonly provider: SourceControlProviderKind;
+  readonly provider: SourceControlProviderKind | IssueTrackerKind;
   readonly host: string;
 }
 
@@ -48,7 +50,7 @@ interface RateLimitEntry {
 export class SourceControlRateLimitPausedError extends Schema.TaggedError<SourceControlRateLimitPausedError>()(
   "SourceControlRateLimitPausedError",
   {
-    provider: SourceControlProviderKindSchema,
+    provider: Schema.Union([SourceControlProviderKindSchema, IssueTrackerKindSchema]),
     host: Schema.String,
     retryAt: Schema.Number,
   },
@@ -75,6 +77,33 @@ export class SourceControlRateLimit extends Context.Service<
     readonly recordSuccess: (input: RateLimitLease) => Effect.Effect<void>;
   }
 >()("@t3tools/source-control-core/server/SourceControlRateLimit") {}
+
+export function withBackoff<A, E, R>(
+  limits: SourceControlRateLimit["Service"],
+  key: RateLimitKey,
+  effect: Effect.Effect<A, E, R>,
+  options: {
+    readonly allowPaused: boolean;
+    readonly onPaused: (error: SourceControlRateLimitPausedError) => E;
+    readonly getRateLimit: (error: E) => { readonly retryAt?: number | undefined } | undefined;
+  },
+): Effect.Effect<A, E, R> {
+  return limits.check(key, options.allowPaused ? { allowPaused: true } : undefined).pipe(
+    Effect.mapError(options.onPaused),
+    Effect.flatMap((lease) =>
+      effect.pipe(
+        Effect.provideService(Interactive, options.allowPaused),
+        Effect.tap(() => limits.recordSuccess({ ...key, lease })),
+        Effect.tapError((error) => {
+          const rateLimit = options.getRateLimit(error);
+          return rateLimit === undefined
+            ? Effect.void
+            : limits.recordRateLimit({ ...key, lease, ...rateLimit });
+        }),
+      ),
+    ),
+  );
+}
 
 function normalizedKey(key: RateLimitKey, scope: string): string {
   return `${key.provider}\0${key.host.trim().toLowerCase()}\0${scope}`;

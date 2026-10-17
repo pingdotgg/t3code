@@ -172,6 +172,13 @@ describe("searchSettings", () => {
     });
   });
 
+  it.each(["Linear", "Jira"])("opens %s setup in Integrations", (query) => {
+    expect(searchSettings(query).find((item) => item.id === "issue-trackers")).toMatchObject({
+      to: "/settings/integrations",
+      environmentOnly: true,
+    });
+  });
+
   it("hides settings whose controls are unavailable", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
@@ -186,6 +193,7 @@ describe("searchSettings", () => {
     const gatedIds = new Set<string>([
       "follow-change-request-templates",
       "git-fetch-interval",
+      "issue-trackers",
       "network-access",
       "publish-agent-activity",
       "provider-health-check-interval",
@@ -204,6 +212,24 @@ describe("searchSettings", () => {
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
+
+  it.each([false, true])(
+    "offers Issue trackers only with an environment (%s)",
+    (hasEnvironment) => {
+      const available = filterAvailableSettingsSearchItems({
+        hasCloudPublicConfig: false,
+        hasEnvironment,
+        hasProviderSettingsEnvironment: false,
+        hasMacProviderSettingsEnvironment: false,
+        canManageLocalBackend: false,
+        isWslSettingsRowVisible: false,
+        hasThreadAutoSettlement: false,
+      });
+      expect(
+        searchSettings("Issue trackers", available).some((item) => item.id === "issue-trackers"),
+      ).toBe(hasEnvironment);
+    },
+  );
 
   it("offers Cursor Keychain settings only when a macOS provider environment is available", () => {
     const availability = {

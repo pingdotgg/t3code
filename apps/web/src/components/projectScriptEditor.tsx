@@ -170,6 +170,9 @@ export function ProjectScriptEditorDialog({
       : errorState?.request === request
         ? errorState.message
         : (request.error ?? null);
+  if ((errorState?.request ?? null) !== request) {
+    setErrorState(request === null ? null : { request, message: validationError });
+  }
   const setValidationError = (message: string | null) => {
     if (request !== null) setErrorState({ request, message });
   };

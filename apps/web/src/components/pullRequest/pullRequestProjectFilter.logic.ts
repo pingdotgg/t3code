@@ -26,10 +26,12 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
   selectedProject?: Pick<AssignableProject, "id" | "environmentId">,
+  preserveCanonicalKeyCase = false,
 ) {
   const byRepository = new Map<string, Project>();
   for (const project of projects) {
-    const repository = project.repositoryIdentity?.canonicalKey?.toLowerCase();
+    const canonicalKey = project.repositoryIdentity?.canonicalKey;
+    const repository = preserveCanonicalKeyCase ? canonicalKey : canonicalKey?.toLowerCase();
     const key = JSON.stringify([
       project.environmentId,
       repository ? ["repository", repository] : ["project", project.id],

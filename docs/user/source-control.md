@@ -294,6 +294,44 @@ returns to your inbox.
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
 
+## Issues
+
+Open **Issues** from the sidebar or command palette to work with GitHub, GitLab,
+Azure DevOps, Forgejo/Gitea, GitCafe, Linear, and Jira Cloud or Data Center issues.
+Repository trackers use the source control login for that project. Use **Filters**
+to narrow or sort the list. More issues load as you scroll.
+
+For Linear or Jira, connect an account under **Settings → Integrations → Issue
+trackers** for the environment that owns your project, then bind the project to a
+Linear team or Jira project. Jira Cloud needs your site URL, account email, and API
+token. For Jira Data Center, set **Deployment** to `data-center` and use your
+instance URL and personal access token. Credentials stay on the environment that
+owns the project.
+
+Select an issue to read its conversation, history, and any linked pull requests. You
+can create issues, edit comments, change native workflow states, labels, and assignees,
+and use reactions or templates when the tracker and your account allow them. Some
+trackers also support parent issues and subissues. Issues outside the project scope
+are read-only.
+
+Comments and activity load as you scroll. Use the order control to change their
+order where the tracker supports it. Available issue templates are selected by
+default; choose **Blank issue** to start without one when the project allows it.
+
+Some actions still need the native tracker. Jira reactions, general templates,
+and complete Development-panel pull request discovery are unavailable through the
+APIs used by the current Jira connection. Remote links remain visible. Jira Software
+Data Center supports moving standard issues between epics. Use Jira for subtask
+moves and changes to higher-level parents. GitCafe does not expose parent/subissue
+or activity history APIs.
+
+Link an issue to a thread to keep its current state with your work. You can also
+start a thread from an issue, show linked issues from the command palette, and
+remove a link without changing the issue. Linked issues refresh when you view them
+and when a turn ends. Agents can use the same issue tools.
+
+Changing issues requires the connection’s `source-control:write` scope.
+
 ## GitHub stacks
 
 The Pull Requests page shows each PR's position in its GitHub stack. Open the stack badge in a

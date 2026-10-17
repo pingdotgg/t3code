@@ -12,6 +12,7 @@ import { act, type ReactNode, type ReactElement, type ComponentProps } from "rea
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 
 const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
   newThread: vi.fn(),
@@ -291,6 +292,53 @@ const unrelatedThread = {
   pullRequests: [link(9, "created")],
   linkedPullRequest: { ...surface, number: 9, url: link(9, "created").url },
 };
+
+it("keeps a panel tab for the same surface and resets it between environments", async () => {
+  useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+  try {
+    for (const environmentId of ["env-1", "env-2"]) {
+      useRightPanelStore.getState().openPullRequest(threadRef, {
+        ...surface,
+        host: "github.com",
+        environmentId,
+      });
+    }
+    const surfaces = Object.values(useRightPanelStore.getState().byThreadKey)[0]!.surfaces.filter(
+      (entry) => entry.kind === "pull-request",
+    );
+    expect(surfaces).toHaveLength(2);
+    expect(surfaces[0]!.id).not.toBe(surfaces[1]!.id);
+    const panel = (entry: (typeof surfaces)[number]) => (
+      <PullRequestDetailPanel
+        key={entry.id}
+        environmentId={EnvironmentId.make(entry.environmentId!)}
+        reference={detail}
+        context="thread"
+        threadRef={threadRef}
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />
+    );
+    await act(async () => {
+      renderer = create(panel(surfaces[0]!));
+    });
+    await click("Code");
+    expect(renderer.root.findAllByProps({ "data-test-scroll": "code" })).toHaveLength(1);
+    await act(async () => renderer.update(panel(surfaces[0]!)));
+    expect(renderer.root.findAllByProps({ "data-test-scroll": "code" })).toHaveLength(1);
+    await act(async () => renderer.update(panel(surfaces[1]!)));
+    expect(renderer.root.findAllByProps({ "data-test-scroll": "code" })).toHaveLength(0);
+  } finally {
+    useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+  }
+});
 
 describe.each([
   ["own PR, a lower layer of the thread's stack", stackThread, threadRef],

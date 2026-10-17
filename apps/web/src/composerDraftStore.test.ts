@@ -177,6 +177,90 @@ const TEST_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const OTHER_TEST_ENVIRONMENT_ID = EnvironmentId.make("environment-remote");
 const LEGACY_TEST_ENVIRONMENT_ID = EnvironmentId.make("__legacy__");
 
+describe("pending Solve issue context", () => {
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+
+  it.each([undefined, "Account/B"])(
+    "persists an issue-only draft through a machine change and promotion (%s)",
+    (connectionId) => {
+      const store = useComposerDraftStore.getState();
+      const draftId = DraftId.make("pending-issue");
+      const threadId = ThreadId.make("pending-issue-thread");
+      const url = "https://github.com/acme/web/issues/7";
+      const original = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("original"));
+      const destination = scopeProjectRef(OTHER_TEST_ENVIRONMENT_ID, ProjectId.make("destination"));
+      store.setLogicalProjectDraftThreadId("logical", original, draftId, { threadId });
+      const context =
+        connectionId === undefined
+          ? {}
+          : {
+              pendingIssueEnvironmentId: TEST_ENVIRONMENT_ID,
+              pendingIssueConnectionId: connectionId,
+            };
+      store.setPendingIssueUrl(draftId, url, context);
+      store.setDraftThreadContext(draftId, {
+        projectRef: destination,
+        environmentSelection: "manual",
+      });
+      store.clearComposerContent(draftId);
+      const persisted = JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      );
+      const merged = useComposerDraftStore.persist.getOptions().merge!(
+        persisted,
+        useComposerDraftStore.getInitialState(),
+      );
+      useComposerDraftStore.setState(merged, true);
+      expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+        environmentId: destination.environmentId,
+        projectId: destination.projectId,
+      });
+      expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.pendingIssueUrl).toBe(url);
+      const threadRef = scopeThreadRef(destination.environmentId, threadId);
+      finalizePromotedDraftThreadByRef(threadRef);
+      expect(useComposerDraftStore.getState().getDraftSession(draftId)).toBeNull();
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.pendingIssueUrl).toBe(
+        url,
+      );
+      const promoted = JSON.parse(
+        JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+      );
+      const hydrated = useComposerDraftStore.persist.getOptions().merge!(
+        promoted,
+        useComposerDraftStore.getInitialState(),
+      );
+      useComposerDraftStore.setState(hydrated, true);
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.pendingIssueUrl).toBe(
+        url,
+      );
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.pendingIssueConnectionId,
+      ).toBe(connectionId);
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.pendingIssueEnvironmentId,
+      ).toBe(connectionId === undefined ? undefined : TEST_ENVIRONMENT_ID);
+      useComposerDraftStore.getState().setPendingIssueUrl(threadRef, undefined);
+      expect(useComposerDraftStore.getState().getComposerDraft(threadRef)).toBeNull();
+    },
+  );
+
+  it("keeps unmapped pending issue drafts and removes them only on explicit discard", () => {
+    const store = useComposerDraftStore.getState();
+    const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project"));
+    const draftId = DraftId.make("solve");
+    store.setLogicalProjectDraftThreadId("logical", projectRef, draftId);
+    store.setPendingIssueUrl(draftId, "https://github.com/acme/web/issues/7");
+    store.setLogicalProjectDraftThreadId("logical", projectRef, DraftId.make("fresh"));
+    expect(
+      partializeComposerDraftStoreState(useComposerDraftStore.getState()).draftsByThreadKey[draftId]
+        ?.pendingIssueUrl,
+    ).toBeDefined();
+    store.clearDraftThread(draftId);
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)).toBeNull();
+  });
+});
+
 function threadKeyFor(
   threadId: ThreadId,
   environmentId: EnvironmentId = LEGACY_TEST_ENVIRONMENT_ID,
@@ -3535,3 +3619,27 @@ describe("composerDraftStore attachment references", () => {
     );
   });
 });
+
+it.each(["account", "environment"])(
+  "does not restore an older submitted account over the same URL on a newer %s",
+  (scope) => {
+    resetComposerDraftStore();
+    const ref = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("account-recovery"));
+    const store = useComposerDraftStore.getState();
+    const url = "https://linear.app/space/issue/ENG-1";
+    const context = {
+      pendingIssueEnvironmentId: TEST_ENVIRONMENT_ID,
+      pendingIssueConnectionId: "A",
+    };
+    store.setPendingIssueUrl(ref, url, context);
+    const submitted = store.getComposerDraft(ref)!;
+    const current =
+      scope === "account"
+        ? { ...context, pendingIssueConnectionId: "B" }
+        : { ...context, pendingIssueEnvironmentId: OTHER_TEST_ENVIRONMENT_ID };
+    store.setPendingIssueUrl(ref, url, current);
+    expect(store.restoreSubmittedDraft(ref, submitted)).toBe(false);
+    expect(store.getComposerDraft(ref)).toMatchObject(current);
+    resetComposerDraftStore();
+  },
+);

@@ -9,6 +9,10 @@ import {
   type ServerConfigStreamEvent as ServerConfigStreamEventType,
   WS_METHODS,
   UsageLimitSourceId,
+  WsRpcGroup,
+  ORCHESTRATION_V2_WS_METHODS,
+  ProjectId,
+  IssueTrackerKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -36,6 +40,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "./session.ts";
+import type { EnvironmentRpcFailure } from "./client.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
 import { applyServerConfigProjection } from "../state/serverConfigProjection.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
@@ -167,6 +172,91 @@ const encodeServerConfig = Schema.encodeSync(ServerConfig);
 const encodeServerConfigStreamEvent = Schema.encodeSync(ServerConfigStreamEvent);
 const encodeDefect = Schema.encodeSync(Schema.Defect());
 const ENCODED_SERVER_CONFIG = encodeServerConfig(SERVER_CONFIG);
+const accountRef = {
+  projectId: ProjectId.make("project"),
+  tracker: IssueTrackerKind.make("linear"),
+  host: "linear.app",
+  scope: "acme/ENG",
+  key: "ENG-7",
+};
+const accountScope = {
+  projectId: accountRef.projectId,
+  tracker: accountRef.tracker,
+  host: accountRef.host,
+  scope: accountRef.scope,
+};
+const accountRequests = [
+  [WS_METHODS.issuesList, { state: "all" }],
+  [WS_METHODS.issuesList, { state: "all", projectId: "project" }],
+  [WS_METHODS.issuesResolveUrl, { url: "https://linear.app/acme/issue/ENG-7" }],
+  [
+    WS_METHODS.issuesResolveUrl,
+    { url: "https://linear.app/acme/issue/ENG-7", projectId: "project" },
+  ],
+  [WS_METHODS.issuesDetail, accountRef],
+  [WS_METHODS.issuesComments, { ...accountRef, cursor: "older" }],
+  [WS_METHODS.issuesTemplates, accountScope],
+  [WS_METHODS.issuesCandidates, { ...accountScope, key: "ENG-7" }],
+  [WS_METHODS.issuesCreate, { ...accountScope, title: "New", body: "", labels: [], assignees: [] }],
+  [WS_METHODS.issuesComment, { ...accountRef, body: "Comment" }],
+  [WS_METHODS.issuesUpdate, { ...accountRef, title: "Edit" }],
+  [WS_METHODS.issuesSetState, { ...accountRef, state: "Done" }],
+  [WS_METHODS.issuesReact, { ...accountRef, content: "thumbs-up", reacted: true }],
+  [WS_METHODS.issuesHistory, accountRef],
+  [WS_METHODS.issuesLinkedPullRequests, accountRef],
+  [WS_METHODS.issuesHierarchy, accountRef],
+  [WS_METHODS.issuesDependencies, { ...accountRef, cursor: "next", limit: 7, direction: "blocks" }],
+  [
+    WS_METHODS.issuesSetDependency,
+    {
+      ...accountRef,
+      direction: "blocked-by",
+      targetScope: "OPS",
+      targetKey: "OPS-1",
+      linked: false,
+    },
+  ],
+  [WS_METHODS.issuesLabelCandidates, accountScope],
+  [WS_METHODS.issuesAssigneeCandidates, accountScope],
+  [WS_METHODS.issuesEditComment, { ...accountRef, commentId: "comment", body: "Edit" }],
+  [WS_METHODS.issuesSetParent, { ...accountRef, parentKey: null }],
+  ...(["thread.issue.link", "thread.issue.unlink", "thread.issue-link.sync"] as const).map(
+    (type) =>
+      [
+        ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+        {
+          type,
+          commandId: "command",
+          threadId: "thread",
+          tracker: accountRef.tracker,
+          host: accountRef.host,
+          scope: accountRef.scope,
+          key: accountRef.key,
+          ...(type === "thread.issue.link"
+            ? { projectId: "project", url: "https://linear.app/acme/issue/ENG-7", source: "manual" }
+            : {}),
+          ...(type === "thread.issue-link.sync"
+            ? {
+                snapshot: {
+                  displayKey: "ENG-7",
+                  title: "Issue",
+                  state: { category: "open", name: "Todo" },
+                  syncedAt: "2026-10-15T00:00:00Z",
+                },
+              }
+            : {}),
+        },
+      ] as const,
+  ),
+] as const;
+const accountPayloadCodecs = new Map(
+  [...WsRpcGroup.requests].map(([tag, rpc]) => [
+    tag,
+    {
+      decode: Schema.decodeUnknownSync(rpc.payloadSchema),
+    },
+  ]),
+);
 const THEME_SERVER_CONFIG: ServerConfigType = {
   ...SERVER_CONFIG,
   environment: {
@@ -288,6 +378,85 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect.each(accountRequests.map(([tag, input]) => ({ tag, input })))(
+    "encodes durable account targets in actual $tag frames",
+    ({ tag, input }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* completeInitialConfig(socket);
+        yield* Fiber.join(ready);
+        const method = session.client[tag] as (
+          input: unknown,
+        ) => Effect.Effect<unknown, EnvironmentRpcFailure<typeof tag>>;
+        const selected = { ...input, connectionId: "Account /B" };
+        const selectedFiber = yield* Effect.forkChild(method(selected));
+        const selectedRequest = yield* awaitRequest(socket, 1);
+        const field = tag === ORCHESTRATION_V2_WS_METHODS.dispatchCommand ? "key" : "projectId";
+        expect(selectedRequest.tag).toBe(tag);
+        expect(selectedRequest.payload).toEqual({
+          ...input,
+          [field]: {
+            ...(field in input ? { value: input[field as keyof typeof input] } : {}),
+            connectionId: "Account /B",
+          },
+        });
+        const { decode } = accountPayloadCodecs.get(tag)!;
+        expect(decode(selectedRequest.payload)).toEqual(selected);
+        yield* Fiber.interrupt(selectedFiber);
+        const defaultFiber = yield* Effect.forkChild(method(input));
+        const defaultRequest = yield* awaitRequest(socket, 2);
+        expect(defaultRequest.payload).toEqual(input);
+        expect(JSON.stringify(defaultRequest.payload)).toBe(JSON.stringify(input));
+        yield* Fiber.interrupt(defaultFiber);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("retains account envelopes on a second session with legacy configuration", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const richBody = {
+        format: "adf" as const,
+        document: '{"type":"doc","version":1,"content":[]}',
+      };
+      const scenarios = [ENCODED_SERVER_CONFIG, LEGACY_SERVER_CONFIG].flatMap((config) =>
+        [undefined, richBody].map((body) => ({ config, body })),
+      );
+      for (const [index, { config, body }] of scenarios.entries()) {
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets, index);
+        socket.open();
+        yield* completeInitialConfig(socket, config);
+        yield* Fiber.join(ready);
+        const input = {
+          ...accountRef,
+          title: "Retained edit",
+          connectionId: "Account /B",
+          ...(body === undefined ? {} : { richBody: body }),
+        };
+        const request = yield* Effect.forkChild(session.client[WS_METHODS.issuesUpdate](input));
+        const frame = yield* awaitRequest(socket, 1);
+        expect(frame.payload).toEqual({
+          ...accountRef,
+          title: body === undefined ? "Retained edit" : { value: "Retained edit" },
+          ...(body === undefined ? {} : { richBody: body }),
+          projectId: { value: "project", connectionId: "Account /B" },
+        });
+        expect(accountPayloadCodecs.get(WS_METHODS.issuesUpdate)!.decode(frame.payload)).toEqual(
+          input,
+        );
+        expect(socket.sent.map((message) => decodeJson(message)).filter(isRpcRequest)).toHaveLength(
+          2,
+        );
+        yield* Fiber.interrupt(request);
+      }
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

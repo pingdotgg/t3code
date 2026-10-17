@@ -10,7 +10,7 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useRightPanelStore } from "../rightPanelStore";
+import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -131,13 +131,10 @@ export function useOpenChangeRequestLink(
     const reads = (environmentId: string) =>
       serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
       true;
-    // Beside a thread the panel reads on that thread's environment, so a project from another
-    // one could not be read there whatever its remote says: two environments can hold the same
-    // repository, and handing the panel the wrong one's id opens a surface that never loads.
-    const projects = resolvedThreadRef
-      ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-      : targetEnvironmentId
-        ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+    const projects = targetEnvironmentId
+      ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+      : resolvedThreadRef
+        ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
         : allProjects
             .filter((project) => reads(project.environmentId))
             .toSorted(
@@ -180,7 +177,7 @@ export function useOpenChangeRequestLink(
         url: targetUrl,
         number: parsed.number,
       });
-      if (!resolvedThreadRef) {
+      if (!resolvedThreadRef && resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {
         void navigate({
           to: "/pull-requests",
           search: (previous) => ({

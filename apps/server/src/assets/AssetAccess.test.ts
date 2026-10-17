@@ -5,6 +5,8 @@ import * as NodeFSP from "node:fs/promises";
 import {
   AssetAccessError,
   AssetPreviewTypeValidationError,
+  IssueTrackerKind,
+  ProjectId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -38,6 +40,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as IssueService from "../issue/IssueService.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -99,6 +102,7 @@ const oversizedScreenshotItem = {
 };
 
 const layerTest = Layer.mergeAll(
+  Layer.mock(IssueService.IssueService)({ sources: () => Effect.succeed([]) }),
   NodeHttpPlatform.layer,
   Layer.mock(Orchestrator.OrchestratorV2)({
     getTurnItem: ({ itemId }) =>
@@ -121,6 +125,87 @@ const layerTest = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect(
+    "signs Linear media for the exact source, keeps its original URL, and renews expired URLs",
+    () =>
+      Effect.gen(function* () {
+        const issue = {
+          projectId: ProjectId.make("linear-project"),
+          tracker: IssueTrackerKind.make("linear"),
+          host: "linear.app",
+          scope: "workspace/ENG",
+          key: "ENG-12",
+          connectionId: "account-b",
+        };
+        const url = "https://uploads.linear.app/workspace/file/screenshot.png";
+        const resource = { _tag: "linear-media" as const, issue, url };
+        const service = IssueService.IssueService.of({
+          ...(yield* IssueService.IssueService),
+          sources: (projectId) =>
+            Effect.succeed(
+              projectId === issue.projectId
+                ? [
+                    {
+                      tracker: issue.tracker,
+                      host: issue.host,
+                      scope: issue.scope,
+                      connectionId: issue.connectionId,
+                    },
+                  ]
+                : [],
+            ),
+        });
+        const sign = () =>
+          issueAssetUrl({ resource }).pipe(
+            Effect.provideService(IssueService.IssueService, service),
+          );
+        const resolve = (relativeUrl: string) => {
+          const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        };
+        const signed = yield* sign();
+        expect(yield* resolve(signed.relativeUrl)).toEqual({
+          kind: "linear-media",
+          issue,
+          url,
+          expiresAt: signed.expiresAt,
+        });
+        expect(resource).toEqual({ _tag: "linear-media", issue, url });
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const signingKey = yield* secrets.getOrCreateRandom("asset-access-signing-key", 32);
+        const foreignKey = Uint8Array.from(signingKey, (byte) => byte ^ 255);
+        expect(
+          yield* resolve(signed.relativeUrl).pipe(
+            Effect.provideService(ServerSecretStore.ServerSecretStore, {
+              ...secrets,
+              getOrCreateRandom: () => Effect.succeed(foreignKey),
+            }),
+          ),
+        ).toBeNull();
+        yield* TestClock.adjust("1 hour");
+        expect(yield* resolve(signed.relativeUrl)).toBeNull();
+        const renewed = yield* sign();
+        expect(renewed.expiresAt).toBeGreaterThan(signed.expiresAt);
+        expect(yield* resolve(renewed.relativeUrl)).toEqual({
+          kind: "linear-media",
+          issue,
+          url,
+          expiresAt: renewed.expiresAt,
+        });
+        for (const invalid of [
+          { ...resource, issue: { ...issue, connectionId: "account-a" } },
+          { ...resource, issue: { ...issue, connectionId: undefined } },
+          { ...resource, url: "https://foreign.invalid/image.png" },
+        ]) {
+          const failure = yield* issueAssetUrl({ resource: invalid }).pipe(
+            Effect.provideService(IssueService.IssueService, service),
+            Effect.flip,
+          );
+          expect(failure._tag).toBe("AssetLinearMediaValidationError");
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
   describe("readMcpAppHtml", () => {
     it.effect("accepts snapshots at the stored HTML byte limit", () =>
       Effect.gen(function* () {

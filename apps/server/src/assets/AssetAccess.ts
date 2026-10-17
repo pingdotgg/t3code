@@ -2,6 +2,7 @@ import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetLinearMediaValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -16,6 +17,7 @@ import {
   ThreadId,
   ToolActivityNativeAppReference,
   TurnItemId,
+  IssueRef,
 } from "@t3tools/contracts";
 import {
   audioMimeTypeFromExtension,
@@ -65,6 +67,7 @@ import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { extractIcnsPng } from "./icns.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { linearMediaFetchUrl, linearMediaSourceAvailable } from "./LinearMediaFetch.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -97,6 +100,13 @@ const PREVIEW_ASSET_EXTENSIONS = new Set([
 ]);
 
 const AssetClaimsSchema = Schema.Union([
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("linear-media"),
+    issue: IssueRef,
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("workspace-file"),
@@ -172,6 +182,12 @@ const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
 export type ResolvedAsset =
+  | {
+      readonly kind: "linear-media";
+      readonly issue: IssueRef;
+      readonly url: string;
+      readonly expiresAt: number;
+    }
   | {
       readonly kind: "file";
       readonly path: string;
@@ -499,6 +515,21 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let imageDimensions: ImageDimensions | null = null;
 
   switch (input.resource._tag) {
+    case "linear-media": {
+      const fetchUrl = linearMediaFetchUrl(input.resource.url);
+      if (fetchUrl === null || !(yield* linearMediaSourceAvailable(input.resource.issue))) {
+        return yield* new AssetLinearMediaValidationError({});
+      }
+      claims = {
+        version: 1,
+        kind: "linear-media",
+        issue: input.resource.issue,
+        url: fetchUrl,
+        expiresAt,
+      };
+      fileName = "linear-media";
+      break;
+    }
     case "media-file": {
       let requestedPath = expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory);
       if (!path.isAbsolute(requestedPath)) {
@@ -834,6 +865,15 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if (claims.kind === "linear-media") {
+    return {
+      kind: "linear-media",
+      issue: claims.issue,
+      url: claims.url,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

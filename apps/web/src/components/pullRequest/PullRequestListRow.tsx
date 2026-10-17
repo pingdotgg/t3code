@@ -1,5 +1,6 @@
 import type {
   PullRequestActor,
+  PullRequestLabel,
   PullRequestMergeability,
   PullRequestState,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestActorAvatar,
   PullRequestConflictGlyph,
+  PullRequestLabelChip,
   PullRequestStateGlyph,
 } from "./pullRequestPresentation";
 
@@ -138,3 +140,46 @@ export function PullRequestRowBranches({ head, base }: { head: string; base: str
     </span>
   );
 }
+
+const LABEL_SLOTS = [
+  { overflow: "@xl/pr-row-meta:hidden" },
+  { overflow: "@3xl/pr-row-meta:hidden" },
+  { overflow: "" },
+] as const;
+
+export function PullRequestRowLabels({
+  labels,
+}: {
+  labels: ReadonlyArray<Pick<PullRequestLabel, "name" | "color">>;
+}) {
+  if (labels.length === 0) return null;
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      {LABEL_SLOTS.map((slot, index) => {
+        const label = labels[index];
+        if (!label) return null;
+        const remaining = labels.length - index - 1;
+        return (
+          <PullRequestLabelChip
+            key={slot.overflow}
+            label={label}
+            className={
+              index === 0
+                ? ""
+                : index === 1
+                  ? "hidden @xl/pr-row-meta:inline-flex"
+                  : "hidden @3xl/pr-row-meta:inline-flex"
+            }
+          >
+            {remaining > 0 ? (
+              <span className={cn("shrink-0", slot.overflow)}>+{remaining}</span>
+            ) : null}
+          </PullRequestLabelChip>
+        );
+      })}
+    </span>
+  );
+}
+
+export const PULL_REQUEST_PAGE_ROW_CLASS =
+  "min-w-0 flex-1 cursor-pointer px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";

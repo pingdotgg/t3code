@@ -2319,6 +2319,142 @@ it.effect("uses a manual rate limit to pause later reads", () =>
   }),
 );
 
+it.effect("resets PR backoff after success without crossing accounts or hosts", () =>
+  Effect.gen(function* () {
+    let limited = true;
+    const calls: string[] = [];
+    const kind = SourceControlProviderKind.make("gitlab");
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "first",
+          workspaceRoot: "/a",
+          repository: "group/repo",
+          provider: kind,
+        }),
+        project({
+          id: "p2",
+          title: "second",
+          workspaceRoot: "/b",
+          repository: "group/repo",
+          provider: kind,
+          host: "other.example",
+        }),
+      ],
+      providers: [
+        fakeProvider(kind, {
+          getReviewThreadComments: ({ host }) =>
+            Effect.gen(function* () {
+              calls.push(host);
+              assert.strictEqual(yield* SourceControlRateLimit.Interactive, false);
+              if (limited)
+                return yield* new PullRequestProviderError({
+                  provider: kind,
+                  operation: "getReviewThreadComments",
+                  reason: "rate-limited",
+                  detail: "Try again later.",
+                });
+              return { comments: [], nextCursor: null };
+            }),
+          runAction: () =>
+            Effect.gen(function* () {
+              assert.strictEqual(yield* SourceControlRateLimit.Interactive, true);
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "group/repo", number: 1 };
+    const input = { ...reference, threadId: "thread", cursor: "next" };
+    const request = service
+      .threadComments(input)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    yield* Effect.flip(request);
+    yield* service
+      .runAction({ ...reference, action: "close" })
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    yield* Effect.flip(request);
+    assert.strictEqual(calls.length, 1);
+    limited = false;
+    yield* service
+      .threadComments(input)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "second"));
+    yield* service
+      .threadComments({ ...input, projectId: "p2" as ProjectId })
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    yield* Effect.flip(request);
+    assert.deepStrictEqual(calls, ["gitlab.com", "gitlab.com", "other.example"]);
+    yield* TestClock.adjust("30 seconds");
+    yield* request;
+    limited = true;
+    yield* Effect.flip(request);
+    yield* Effect.flip(request);
+    assert.strictEqual(calls.length, 5);
+    yield* TestClock.adjust("30 seconds");
+    limited = false;
+    yield* request;
+    assert.strictEqual(calls.length, 6);
+  }),
+);
+
+it.effect("keeps a newer PR pause when an older successful read finishes", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const kind = SourceControlProviderKind.make("gitlab");
+    let calls = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "group/repo",
+          provider: kind,
+        }),
+      ],
+      providers: [
+        fakeProvider(kind, {
+          getReviewThreadComments: ({ cursor }) =>
+            Effect.gen(function* () {
+              calls += 1;
+              if (cursor === "slow") {
+                yield* Deferred.succeed(started, undefined);
+                yield* Deferred.await(release);
+                return { comments: [], nextCursor: null };
+              }
+              return yield* new PullRequestProviderError({
+                provider: kind,
+                operation: "getReviewThreadComments",
+                reason: "rate-limited",
+                detail: "Try again later.",
+              });
+            }),
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "group/repo",
+      number: 1,
+      threadId: "thread",
+      cursor: "next",
+    };
+    const older = yield* service
+      .threadComments({ ...input, cursor: "slow" })
+      .pipe(Effect.forkChild());
+    yield* Deferred.await(started);
+    yield* Effect.flip(service.threadComments(input));
+    yield* TestClock.adjust("31 seconds");
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(older);
+    yield* Effect.flip(service.threadComments(input));
+    yield* TestClock.adjust("31 seconds");
+    yield* Effect.flip(service.threadComments(input));
+    assert.strictEqual(calls, 3);
+  }),
+);
+
 it.effect("flags a review request for the viewer but not on their own change request", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

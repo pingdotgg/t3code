@@ -316,12 +316,7 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
-  }) =>
-    azure.execute({
-      cwd: input.cwd,
-      args: [...input.args, "--only-show-errors", "--output", "json"],
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-    });
+  }) => AzureDevOpsCli.executeJson(azure.execute, input);
 
   /**
    * Used in place of `az rest` because it signs in the way the azure-devops extension does: `az

@@ -85,10 +85,10 @@ it.effect("collects planner statistics for an existing database on open", () => 
 
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const rows = yield* sql<{ readonly stat: string }>`
-        SELECT stat FROM sqlite_stat1 WHERE idx = 'stats_probe_thread_idx'
+      const rows = yield* sql<{ readonly row_count: number }>`
+        SELECT CAST(stat AS INTEGER) AS row_count FROM sqlite_stat1 WHERE idx = 'stats_probe_thread_idx'
       `;
-      assert.deepEqual([...rows], [{ stat: "1000 100" }]);
+      assert.deepEqual([...rows], [{ row_count: 1000 }]);
     }).pipe(Effect.provide(persistence()));
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),

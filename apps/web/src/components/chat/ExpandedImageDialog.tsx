@@ -1,4 +1,12 @@
-import { memo, useEffect, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type Ref,
+  type KeyboardEvent,
+} from "react";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
@@ -37,6 +45,35 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
     <div role="alert" className={EXPANDED_MEDIA_STATE_CLASS_NAME}>
       {children}
     </div>
+  );
+}
+
+function ExpandedAssetImage({
+  item,
+  zoomableImageRef,
+}: {
+  readonly item: ExpandedImageItem;
+  readonly zoomableImageRef: Ref<ZoomableImageHandle>;
+}) {
+  const asset = item.actionsSource?.asset ?? null;
+  const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const src = assetUrl._tag === "Success" ? assetUrl.url + (item.srcFragment ?? "") : null;
+  if (assetUrl._tag === "Failure" || (src !== null && failedSrc === src)) {
+    return (
+      <ExpandedMediaFailure>
+        <p>This image could not be loaded.</p>
+      </ExpandedMediaFailure>
+    );
+  }
+  return src === null ? null : (
+    <ZoomableImage
+      ref={zoomableImageRef}
+      key={src}
+      src={src}
+      name={item.name}
+      onError={() => setFailedSrc(src)}
+    />
   );
 }
 
@@ -218,6 +255,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
                   className="h-[min(var(--media-height),40rem)] w-[min(var(--media-width),42rem)] transition-opacity duration-140 ease-out starting:opacity-0 rounded-lg border border-border/70 bg-background p-4 text-xs leading-5 shadow-2xl motion-reduce:transition-none"
                 />
               ) : null
+            ) : item.src === null && item.actionsSource?.asset ? (
+              <ExpandedAssetImage key={index} item={item} zoomableImageRef={zoomableImageRef} />
             ) : item.src === null || failedImageSrc === item.src ? (
               <ExpandedMediaFailure>
                 <p>

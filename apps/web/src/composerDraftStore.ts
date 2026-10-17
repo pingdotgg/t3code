@@ -6,6 +6,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   EnvironmentId,
+  IssueRef,
   ModelSelection,
   ProjectId,
   ProviderInstanceId,
@@ -225,6 +226,9 @@ type PersistedTerminalContextDraft = typeof PersistedTerminalContextDraft.Type;
 
 const PersistedComposerThreadDraftState = Schema.Struct({
   prompt: Schema.String,
+  pendingIssueUrl: Schema.optionalKey(Schema.String),
+  pendingIssueEnvironmentId: Schema.optionalKey(EnvironmentId),
+  pendingIssueConnectionId: IssueRef.fields.connectionId,
   attachments: Schema.Array(PersistedComposerImageAttachment),
   files: Schema.optionalKey(Schema.Array(PersistedComposerDraftFileAttachment)),
   terminalContexts: Schema.optionalKey(Schema.Array(PersistedTerminalContextDraft)),
@@ -350,6 +354,9 @@ const contextInsertionHandlers = new Map<string, ComposerContextInsertionHandler
 
 export interface ComposerThreadDraftState {
   prompt: string;
+  pendingIssueUrl?: string | undefined;
+  pendingIssueEnvironmentId?: EnvironmentId | undefined;
+  pendingIssueConnectionId?: string | undefined;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];
   nonPersistedImageIds: string[];
@@ -365,13 +372,34 @@ export interface ComposerThreadDraftState {
   interactionMode: ProviderInteractionMode | null;
 }
 
+export type PendingIssueContext = Pick<
+  ComposerThreadDraftState,
+  "pendingIssueEnvironmentId" | "pendingIssueConnectionId"
+>;
+
+export function pendingIssueMatches(
+  draft: ComposerThreadDraftState | null | undefined,
+  url: string | undefined,
+  context: PendingIssueContext = {},
+): boolean {
+  return (
+    draft?.pendingIssueUrl === url &&
+    draft?.pendingIssueEnvironmentId === context.pendingIssueEnvironmentId &&
+    draft?.pendingIssueConnectionId === context.pendingIssueConnectionId
+  );
+}
+
 export function composerDraftHasUserContent(
   draft: ComposerThreadDraftState | null | undefined,
+  submittedPendingIssueUrl?: string,
+  submittedPendingIssueContext: PendingIssueContext = {},
 ): boolean {
   if (!draft) {
     return false;
   }
   return (
+    (draft.pendingIssueUrl !== undefined &&
+      !pendingIssueMatches(draft, submittedPendingIssueUrl, submittedPendingIssueContext)) ||
     draft.prompt.trim().length > 0 ||
     draft.images.length > 0 ||
     draft.files.length > 0 ||
@@ -489,6 +517,11 @@ interface ComposerDraftStoreState {
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
+  setPendingIssueUrl: (
+    threadRef: ComposerThreadTarget,
+    url: string | undefined,
+    context?: PendingIssueContext,
+  ) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
   setModelSelection: (
     threadRef: ComposerThreadTarget,
@@ -607,6 +640,22 @@ interface ComposerDraftStoreState {
     attachments: PersistedComposerImageAttachment[],
   ) => Promise<void>;
   clearComposerContent: (threadRef: ComposerThreadTarget) => void;
+  restoreSubmittedDraft: (
+    threadRef: ComposerThreadTarget,
+    submitted: Pick<
+      ComposerThreadDraftState,
+      | "prompt"
+      | "images"
+      | "files"
+      | "terminalContexts"
+      | "previewAnnotations"
+      | "reviewComments"
+      | "threadContexts"
+      | "pendingIssueUrl"
+      | "pendingIssueEnvironmentId"
+      | "pendingIssueConnectionId"
+    >,
+  ) => boolean;
   /**
    * Clears the prompt text and attachments, preserving terminal / element contexts, preview annotations, and
    * review comments. Session-bound context stays in the source draft.
@@ -856,6 +905,7 @@ function normalizeTerminalContextsForThread(
 
 function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
   return (
+    draft.pendingIssueUrl === undefined &&
     draft.prompt.length === 0 &&
     draft.images.length === 0 &&
     draft.files.length === 0 &&
@@ -1751,6 +1801,18 @@ function normalizePersistedDraftsByThreadId(
       continue;
     }
     const draftCandidate = draftValue as PersistedComposerThreadDraftState;
+    const pendingIssueUrl =
+      typeof draftCandidate.pendingIssueUrl === "string"
+        ? draftCandidate.pendingIssueUrl
+        : undefined;
+    const pendingIssueEnvironmentId =
+      pendingIssueUrl !== undefined && typeof draftCandidate.pendingIssueEnvironmentId === "string"
+        ? draftCandidate.pendingIssueEnvironmentId
+        : undefined;
+    const pendingIssueConnectionId =
+      pendingIssueUrl !== undefined && typeof draftCandidate.pendingIssueConnectionId === "string"
+        ? draftCandidate.pendingIssueConnectionId
+        : undefined;
     const promptCandidate = typeof draftCandidate.prompt === "string" ? draftCandidate.prompt : "";
     const attachments = Array.isArray(draftCandidate.attachments)
       ? draftCandidate.attachments.flatMap((entry) => {
@@ -1882,6 +1944,7 @@ function normalizePersistedDraftsByThreadId(
     const hasModelData =
       Object.keys(modelSelectionByProvider).length > 0 || activeProvider !== null;
     if (
+      pendingIssueUrl === undefined &&
       promptCandidate.length === 0 &&
       attachments.length === 0 &&
       files.length === 0 &&
@@ -1909,6 +1972,9 @@ function normalizePersistedDraftsByThreadId(
             })();
     nextDraftsByThreadKey[normalizedThreadKey] = {
       prompt,
+      ...(pendingIssueUrl !== undefined ? { pendingIssueUrl } : {}),
+      ...(pendingIssueEnvironmentId === undefined ? {} : { pendingIssueEnvironmentId }),
+      ...(pendingIssueConnectionId === undefined ? {} : { pendingIssueConnectionId }),
       attachments,
       ...(files.length > 0 ? { files } : {}),
       ...(terminalContexts.length > 0 ? { terminalContexts } : {}),
@@ -1932,6 +1998,7 @@ function normalizePersistedDraftsByThreadId(
 
 function persistedComposerDraftHasUserContent(draft: PersistedComposerThreadDraftState): boolean {
   return (
+    draft.pendingIssueUrl !== undefined ||
     draft.prompt.trim().length > 0 ||
     draft.attachments.length > 0 ||
     (draft.files?.length ?? 0) > 0 ||
@@ -2010,6 +2077,7 @@ export function partializeComposerDraftStoreState(
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
     if (
+      draft.pendingIssueUrl === undefined &&
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
       draft.files.length === 0 &&
@@ -2025,6 +2093,13 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
+      ...(draft.pendingIssueUrl !== undefined ? { pendingIssueUrl: draft.pendingIssueUrl } : {}),
+      ...(draft.pendingIssueEnvironmentId === undefined
+        ? {}
+        : { pendingIssueEnvironmentId: draft.pendingIssueEnvironmentId }),
+      ...(draft.pendingIssueConnectionId === undefined
+        ? {}
+        : { pendingIssueConnectionId: draft.pendingIssueConnectionId }),
       attachments: draft.persistedAttachments,
       ...(draft.files.length > 0
         ? {
@@ -2334,6 +2409,15 @@ function toHydratedThreadDraft(
       ...files.map(fileContextReference),
     ]),
     images: hydrateImagesFromPersisted(persistedDraft.attachments),
+    ...(persistedDraft.pendingIssueUrl !== undefined
+      ? { pendingIssueUrl: persistedDraft.pendingIssueUrl }
+      : {}),
+    ...(persistedDraft.pendingIssueEnvironmentId === undefined
+      ? {}
+      : { pendingIssueEnvironmentId: persistedDraft.pendingIssueEnvironmentId }),
+    ...(persistedDraft.pendingIssueConnectionId === undefined
+      ? {}
+      : { pendingIssueConnectionId: persistedDraft.pendingIssueConnectionId }),
     files,
     nonPersistedImageIds: [],
     persistedAttachments: [...persistedDraft.attachments],
@@ -2855,6 +2939,29 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setPendingIssueUrl: (threadRef, url, context = {}) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return;
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
+            if (pendingIssueMatches(current, url, context)) return state;
+            const nextDraft = {
+              ...current,
+              pendingIssueUrl: url,
+              pendingIssueEnvironmentId:
+                url === undefined ? undefined : context.pendingIssueEnvironmentId,
+              pendingIssueConnectionId:
+                url === undefined ? undefined : context.pendingIssueConnectionId,
+            };
+            const draftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete draftsByThreadKey[threadKey];
+            } else {
+              draftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey };
           });
         },
         setPrompt: (threadRef, prompt) => {
@@ -3927,6 +4034,25 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
           await Promise.resolve();
           verifyPersistedAttachments(threadKey, attachments, set);
+        },
+        restoreSubmittedDraft: (threadRef, submitted) => {
+          const store = get();
+          if (
+            composerDraftHasUserContent(
+              store.getComposerDraft(threadRef),
+              submitted.pendingIssueUrl,
+              submitted,
+            )
+          )
+            return false;
+          store.setPrompt(threadRef, submitted.prompt);
+          store.addImages(threadRef, submitted.images);
+          store.addFiles(threadRef, submitted.files);
+          store.setTerminalContexts(threadRef, submitted.terminalContexts);
+          store.setPreviewAnnotations(threadRef, submitted.previewAnnotations);
+          store.setReviewComments(threadRef, submitted.reviewComments);
+          store.setThreadContexts(threadRef, submitted.threadContexts);
+          return true;
         },
         clearComposerContent: (threadRef) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

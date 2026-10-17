@@ -421,6 +421,46 @@ export function summarizeT3ToolCalls(
     case "read-pr-guide":
       label = phrase("Read", "read", quantity(selected.length, "review guide"));
       break;
+    case "list-issue-sources":
+      label = phrase("Listed", "list", `issue sources ${times}`);
+      break;
+    case "update-issue":
+      label = phrase("Changed", "change", quantity(selected.length, "issue"));
+      break;
+    case "edit-issue-comment":
+      label = phrase("Edited", "edit", quantity(selected.length, "issue comment"));
+      break;
+    case "react-issue":
+      label = phrase("Reacted to", "react to", quantity(selected.length, "issue"));
+      break;
+    case "list-issues":
+      label = phrase("Listed", "list", `issues ${times}`);
+      break;
+    case "read-issue":
+      label = phrase("Read", "read", quantity(selected.length, "issue"));
+      break;
+    case "create-issue":
+      label = phrase("Filed", "file", quantity(selected.length, "issue"));
+      break;
+    case "comment-issue":
+      label = phrase("Commented on", "comment on", quantity(selected.length, "issue"));
+      break;
+    case "set-issue-state":
+      label = phrase("Changed", "change", `the state of ${quantity(selected.length, "issue")}`);
+      break;
+    case "link-issue":
+      label = phrase("Linked", "link", quantity(selected.length, "issue"));
+      break;
+    case "unlink-issue":
+      label = phrase("Unlinked", "unlink", quantity(selected.length, "issue"));
+      break;
+    case "list-thread-issues":
+      label = phrase(
+        "Checked",
+        "check",
+        `linked issues${selected.length === 1 ? "" : ` ${times}`}`,
+      );
+      break;
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;

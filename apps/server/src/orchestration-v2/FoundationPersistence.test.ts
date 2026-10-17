@@ -7,6 +7,7 @@ import {
   CommandId,
   ContextTransferId,
   EventId,
+  IssueTrackerKind,
   MessageId,
   type ModelSelection,
   NodeId,
@@ -349,6 +350,366 @@ it.effect("keeps other database work runnable while discovering compaction candi
 );
 
 it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
+  it.effect.each(["link", "unlink", "sync"] as const)(
+    "rebases issue %s onto concurrent provider work before storing and publishing",
+    (issueOperation) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sink = yield* EventSink.EventSinkV2;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+          const sql = yield* SqlClient.SqlClient;
+          const now = yield* DateTime.now;
+          const providerAt = DateTime.add(now, { minutes: 2 });
+          const threadId = ThreadId.make(`thread:issue-race:${issueOperation}`);
+          const issue = {
+            tracker: IssueTrackerKind.make("linear"),
+            connectionId: "saved-account",
+            host: "linear.app",
+            scope: "acme/ENG",
+            key: "ENG-1",
+            projectId: ProjectId.make("project:issue-race"),
+            linkId: CommandId.make("issue-generation"),
+            url: "https://linear.app/acme/issue/ENG-1",
+            source: "agent" as const,
+            linkedAt: DateTime.formatIso(now),
+            snapshot: null,
+          };
+          const thread = { ...makeThread(threadId, now), issues: [issue] };
+          yield* sink.write({
+            events: [
+              threadCreatedEvent({ id: `issue-race:${issueOperation}:create`, thread, now }),
+            ],
+          });
+          const planned = {
+            ...thread,
+            issues:
+              issueOperation === "unlink"
+                ? []
+                : [
+                    {
+                      ...issue,
+                      snapshot: {
+                        displayKey: "ENG-1",
+                        title: "Fresh",
+                        state: { category: "open" as const, name: "Todo" },
+                        syncedAt: DateTime.formatIso(providerAt),
+                      },
+                    },
+                  ],
+            updatedAt: DateTime.add(now, { minutes: 1 }),
+          };
+          const providerThreadId = ProviderThreadId.make(`provider:issue-race:${issueOperation}`);
+          const provider: OrchestrationV2DomainEvent = {
+            id: EventId.make(`issue-race:${issueOperation}:provider`),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: providerAt,
+            payload: {
+              id: providerThreadId,
+              driver: providerDriver,
+              providerInstanceId,
+              providerSessionId: null,
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              pendingBackgroundTasks: [{ taskId: "working-child", kind: "subagent" }],
+              createdAt: now,
+              updatedAt: providerAt,
+            },
+          };
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`issue-race:${issueOperation}:metadata`),
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...thread,
+                  title: "Concurrent title",
+                  branch: "concurrent-branch",
+                  providerInstanceId: ProviderInstanceId.make("alternate"),
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("alternate"),
+                    model: "fake",
+                  },
+                },
+                type: "thread.metadata-updated",
+              },
+              provider,
+              {
+                id: EventId.make(`issue-race:${issueOperation}:run`),
+                type: "run.updated",
+                threadId,
+                occurredAt: providerAt,
+                payload: {
+                  id: RunId.make(`run:issue-race:${issueOperation}`),
+                  threadId,
+                  ordinal: 1,
+                  providerInstanceId,
+                  modelSelection,
+                  providerThreadId,
+                  userMessageId: MessageId.make(`message:issue-race:${issueOperation}`),
+                  rootNodeId: null,
+                  activeAttemptId: null,
+                  status: "completed",
+                  requestedAt: now,
+                  startedAt: now,
+                  completedAt: providerAt,
+                  checkpointId: null,
+                  contextHandoffId: null,
+                },
+              },
+            ],
+          });
+          const before = yield* projections.getThreadProjection(threadId);
+          const beforeShell = yield* projections.getThreadShell(threadId);
+          assert.deepEqual(
+            beforeShell?.pendingBackgroundTasks?.map((task) => task.taskId),
+            ["working-child"],
+          );
+          const pull = yield* Stream.toPull(sink.stream({ threadId }));
+          yield* pull;
+          const commandId = CommandId.make(`command:issue-race:${issueOperation}`);
+          const input = {
+            commandId,
+            threadId,
+            commandType: `thread.issue.${issueOperation}`,
+            acceptedAt: now,
+            effects: [],
+            events: [
+              {
+                id: EventId.make(`issue-race:${issueOperation}:issue`),
+                type: "thread.issue-synced" as const,
+                threadId,
+                occurredAt: now,
+                issueOperation,
+                providerInstanceId,
+                payload: planned,
+              },
+            ],
+          };
+          const written = yield* sink.commitCommand(input);
+          assert.isTrue(written.committed);
+          const canonical = written.storedEvents[0]!.event;
+          assert.equal(canonical.providerInstanceId, before.thread.providerInstanceId);
+          assert.equal(canonical.type, "thread.issue-synced");
+          if (canonical.type !== "thread.issue-synced") return;
+          assert.deepEqual(canonical.payload, { ...before.thread, issues: planned.issues });
+          assert.deepEqual((yield* pull)[0]?.event, canonical);
+          const replay = yield* sink.readByCommandId({ commandId }).pipe(Stream.runCollect);
+          assert.deepEqual(replay[0]?.event.payload, canonical.payload);
+          const [row] = yield* sql<{
+            payload_json: string;
+          }>`SELECT payload_json FROM orchestration_events WHERE event_id = ${canonical.id}`;
+          assert.equal(JSON.parse(row!.payload_json).activeProviderThreadId, providerThreadId);
+          assert.deepEqual(
+            ProjectionStore.applyToProjection(before, canonical).thread,
+            canonical.payload,
+          );
+          const saved = yield* projections.getThreadProjection(threadId);
+          assert.deepEqual(saved.thread, canonical.payload);
+          assert.deepEqual(saved.providerThreads, before.providerThreads);
+          assert.deepEqual(
+            (yield* projections.getThreadShell(threadId))?.pendingBackgroundTasks,
+            beforeShell?.pendingBackgroundTasks,
+          );
+          assert.isFalse((yield* sink.commitCommand(input)).committed);
+          assert.equal(yield* sink.latestSequence({ threadId }), written.receipt.resultSequence);
+          assert.isTrue((yield* maintenance.rebuild).valid);
+          assert.deepEqual(
+            (yield* projections.getThreadProjection(threadId)).thread,
+            canonical.payload,
+          );
+          const later = DateTime.add(providerAt, { minutes: 1 });
+          yield* sink.write({
+            events: [
+              {
+                ...canonical,
+                id: EventId.make(`issue-race:${issueOperation}:later`),
+                occurredAt: later,
+                payload: { ...planned, updatedAt: later },
+              },
+            ],
+          });
+          const activity = (yield* projections.getThreadProjection(threadId)).thread.updatedAt;
+          assert.equal(
+            DateTime.formatIso(activity),
+            DateTime.formatIso(issueOperation === "sync" ? providerAt : later),
+          );
+          yield* sink.write({
+            events: [
+              {
+                ...canonical,
+                type: "thread.deleted",
+                id: EventId.make(`issue-race:${issueOperation}:delete`),
+                payload: {
+                  ...(yield* projections.getThreadProjection(threadId)).thread,
+                  deletedAt: later,
+                },
+                occurredAt: later,
+              },
+              {
+                ...canonical,
+                id: EventId.make(`issue-race:${issueOperation}:after-delete`),
+                payload: planned,
+              },
+            ],
+          });
+          assert.deepEqual(
+            (yield* projections.getThreadProjection(threadId)).thread.deletedAt,
+            later,
+          );
+        }),
+      ),
+  );
+
+  it.effect("keeps provider claims on both sides of issue events in the same transaction", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("thread:issue-batch"), now);
+      const claim = (suffix: string): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`issue-batch:provider:${suffix}`),
+        type: "provider-thread.updated",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make(`provider:issue-batch:${suffix}`),
+          driver: providerDriver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: thread.id,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          pendingBackgroundTasks: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const issueEvent = (suffix: string): OrchestrationV2DomainEvent => ({
+        id: EventId.make(`issue-batch:issue:${suffix}`),
+        type: "thread.issue-synced",
+        threadId: thread.id,
+        occurredAt: now,
+        issueOperation: "sync",
+        payload: {
+          ...thread,
+          issues:
+            suffix === "first"
+              ? [
+                  {
+                    tracker: IssueTrackerKind.make("github"),
+                    projectId: thread.projectId,
+                    host: "github.com",
+                    scope: "owner/repo",
+                    key: "1",
+                    url: "https://github.com/owner/repo/issues/1",
+                    source: "manual",
+                    linkedAt: DateTime.formatIso(now),
+                    snapshot: null,
+                  },
+                ]
+              : [],
+        },
+      });
+      const written = yield* sink.write({
+        events: [
+          threadCreatedEvent({ id: "issue-batch:create", thread, now }),
+          claim("first"),
+          issueEvent("first"),
+          claim("second"),
+          issueEvent("second"),
+          claim("last"),
+        ],
+      });
+      for (const [index, suffix] of [
+        [2, "first"],
+        [4, "second"],
+      ] as const) {
+        const event = written[index]!.event;
+        assert.equal(event.type, "thread.issue-synced");
+        if (event.type === "thread.issue-synced") {
+          assert.equal(event.payload.activeProviderThreadId, `provider:issue-batch:${suffix}`);
+          assert.equal(event.payload.issues?.length, suffix === "first" ? 1 : 0);
+        }
+      }
+      assert.equal(
+        (yield* projections.getThread(thread.id)).activeProviderThreadId,
+        "provider:issue-batch:last",
+      );
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal(
+        (yield* projections.getThread(thread.id)).activeProviderThreadId,
+        "provider:issue-batch:last",
+      );
+    }),
+  );
+
+  it.effect("rolls back issue batches and their receipt when the target thread is missing", () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("thread:issue-rollback"), now);
+      const missing = makeThread(ThreadId.make("thread:issue-missing"), now);
+      const commandId = CommandId.make("command:issue-rollback");
+      const sequence = yield* sink.latestSequence();
+      const result = yield* sink
+        .commitCommand({
+          commandId,
+          threadId: thread.id,
+          commandType: "thread.issue.link",
+          acceptedAt: now,
+          effects: [],
+          events: [
+            threadCreatedEvent({ id: "issue-rollback:create", thread, now }),
+            {
+              id: EventId.make("issue-rollback:existing"),
+              type: "thread.issue-synced",
+              threadId: thread.id,
+              occurredAt: now,
+              issueOperation: "link",
+              payload: { ...thread, issues: [] },
+            },
+            {
+              id: EventId.make("issue-rollback:missing"),
+              type: "thread.issue-synced",
+              threadId: missing.id,
+              occurredAt: now,
+              issueOperation: "link",
+              payload: { ...missing, issues: [] },
+            },
+          ],
+        })
+        .pipe(Effect.result);
+      assert.isTrue(result._tag === "Failure");
+      assert.isTrue(Option.isNone(yield* receipts.getByCommandId(commandId)));
+      assert.equal(yield* sink.latestSequence(), sequence);
+      assert.isTrue(
+        (yield* projections.getThread(thread.id).pipe(Effect.result))._tag === "Failure",
+      );
+      assert.isTrue(
+        (yield* projections.getThread(missing.id).pipe(Effect.result))._tag === "Failure",
+      );
+    }),
+  );
+
   it.effect("projects oversized tool bodies before both replay and live RPC retention", () =>
     Effect.scoped(
       Effect.gen(function* () {

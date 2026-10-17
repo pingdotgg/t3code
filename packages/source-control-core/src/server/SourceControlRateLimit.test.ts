@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { IssueTrackerKind, SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -6,6 +6,69 @@ import * as TestClock from "effect/testing/TestClock";
 import * as SourceControlRateLimit from "./SourceControlRateLimit.ts";
 
 const github = { provider: SourceControlProviderKind.make("github"), host: "github.com" };
+
+it.effect("shares backoff bookkeeping without changing typed failures or credential context", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const failure = { reason: "limited", retryAt: 60_000 };
+    let calls = 0;
+    const request = SourceControlRateLimit.withBackoff(
+      limits,
+      github,
+      Effect.gen(function* () {
+        calls += 1;
+        assert.strictEqual(yield* SourceControlRateLimit.CredentialScope, "first");
+        assert.strictEqual(yield* SourceControlRateLimit.Interactive, false);
+        return yield* Effect.fail(failure);
+      }),
+      {
+        allowPaused: false,
+        onPaused: (error) => ({ reason: "paused", retryAt: error.retryAt }),
+        getRateLimit: (error) =>
+          error.reason === "limited" ? { retryAt: error.retryAt } : undefined,
+      },
+    ).pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    assert.strictEqual(yield* Effect.flip(request), failure);
+    assert.deepStrictEqual(yield* Effect.flip(request), { reason: "paused", retryAt: 60_000 });
+    assert.strictEqual(calls, 1);
+    yield* limits.check(github);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("leaves other typed failures outside rate-limit bookkeeping", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const failure = { status: 403 };
+    const request = SourceControlRateLimit.withBackoff(limits, github, Effect.fail(failure), {
+      allowPaused: false,
+      onPaused: () => ({ status: 429 }),
+      getRateLimit: (error) => (error.status === 429 ? {} : undefined),
+    });
+    assert.strictEqual(yield* Effect.flip(request), failure);
+    assert.strictEqual(yield* limits.check(github), 0);
+    assert.strictEqual(yield* Effect.flip(request), failure);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
+
+it.effect("isolates standalone tracker rate limits by tracker and verified credential", () =>
+  Effect.gen(function* () {
+    const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+    const jira = { provider: IssueTrackerKind.make("jira"), host: "tracker.example" };
+    yield* limits
+      .recordRateLimit({ ...jira, lease: 0 })
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    yield* limits
+      .check(jira)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "second"));
+    yield* limits
+      .check({ provider: IssueTrackerKind.make("linear"), host: jira.host })
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"));
+    const error = yield* limits
+      .check(jira)
+      .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, "first"), Effect.flip);
+    assert.equal(error.provider, jira.provider);
+  }).pipe(Effect.provide(SourceControlRateLimit.layer)),
+);
 
 it.effect("isolates cooldowns for verified credentials on the same host", () =>
   Effect.gen(function* () {

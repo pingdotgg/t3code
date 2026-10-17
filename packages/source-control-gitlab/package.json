@@ -19,6 +19,18 @@
       "types": "./src/server/GitLabCli.ts",
       "import": "./src/server/GitLabCli.ts"
     },
+    "./server/gitLabIssueJson": {
+      "types": "./src/server/gitLabIssueJson.ts",
+      "import": "./src/server/gitLabIssueJson.ts"
+    },
+    "./server/GitLabIssueTracker": {
+      "types": "./src/server/GitLabIssueTracker.ts",
+      "import": "./src/server/GitLabIssueTracker.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
+    },
     "./server/gitLabMergeRequestJson": {
       "types": "./src/server/gitLabMergeRequestJson.ts",
       "import": "./src/server/gitLabMergeRequestJson.ts"
@@ -46,6 +58,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "effect": "catalog:"

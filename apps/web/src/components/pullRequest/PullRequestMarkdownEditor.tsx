@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import type { IssueLinkContext } from "~/lib/openIssueLink";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 import { Button } from "../ui/button";
@@ -18,6 +19,8 @@ export function PullRequestMarkdownEditor({
   cwd,
   environmentId,
   threadRef = null,
+  issueLinkContext,
+  pullRequestPanelRef,
   placeholder,
   label,
   saving,
@@ -30,6 +33,8 @@ export function PullRequestMarkdownEditor({
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly threadRef?: ScopedThreadRef | null;
+  readonly issueLinkContext?: IssueLinkContext | undefined;
+  readonly pullRequestPanelRef?: ScopedThreadRef | undefined;
   readonly placeholder?: string | undefined;
   readonly label: string;
   readonly saving: boolean;
@@ -101,6 +106,8 @@ export function PullRequestMarkdownEditor({
               cwd={cwd}
               environmentId={environmentId}
               threadRef={threadRef}
+              issueLinkContext={issueLinkContext}
+              pullRequestPanelRef={pullRequestPanelRef}
             />
           )}
         </div>

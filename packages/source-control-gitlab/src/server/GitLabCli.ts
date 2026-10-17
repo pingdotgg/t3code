@@ -318,6 +318,34 @@ export class GitLabCli extends Context.Service<
   }
 >()("@t3tools/source-control-gitlab/server/GitLabCli") {}
 
+export const api = (
+  execute: GitLabCli["Service"]["execute"],
+  input: {
+    readonly cwd: string;
+    readonly path: string;
+    readonly hostname?: string;
+    readonly method?: string;
+    readonly stdin?: string;
+    readonly maxOutputBytes?: number;
+    readonly timeoutMs?: number;
+  },
+) =>
+  execute({
+    cwd: input.cwd,
+    args: [
+      "api",
+      input.path,
+      ...(input.hostname === undefined ? [] : ["--hostname", input.hostname]),
+      ...(input.method === undefined ? [] : ["--method", input.method]),
+      ...(input.stdin === undefined
+        ? []
+        : ["--input", "-", "--header", "Content-Type: application/json"]),
+    ],
+    ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+    ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+  });
+
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,
   web_url: TrimmedNonEmptyString,

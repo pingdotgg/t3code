@@ -24,7 +24,6 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
@@ -43,6 +42,7 @@ import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
+  PullRequestCommentTime,
   PullRequestLabelChip,
   PullRequestReviewOutcomeBadge,
   pullRequestReviewOutcomeLabel,
@@ -89,28 +89,7 @@ function CommentIdentity({
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            comment.url ? (
-              <a
-                href={comment.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-foreground hover:underline"
-              />
-            ) : (
-              <span className="text-muted-foreground" />
-            )
-          }
-        >
-          <time dateTime={comment.createdAt}>{formatRelativeTimeLabel(comment.createdAt)}</time>
-        </TooltipTrigger>
-        <TooltipPopup>
-          {new Date(comment.createdAt).toLocaleString()}
-          {comment.url ? " · Open comment on host" : ""}
-        </TooltipPopup>
-      </Tooltip>
+      <PullRequestCommentTime at={comment.createdAt} url={comment.url} />
     </div>
   );
 }

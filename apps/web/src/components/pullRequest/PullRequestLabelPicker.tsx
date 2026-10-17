@@ -1,6 +1,6 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
-import { CheckIcon, TagIcon } from "lucide-react";
+import { TagIcon } from "lucide-react";
 import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -10,7 +10,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
-import { pullRequestLabelColor } from "./pullRequestList.logic";
+import { PullRequestLabelOption } from "./pullRequestPresentation";
 
 function matches(candidate: PullRequestLabelCandidate, query: string): boolean {
   if (query.length === 0) return true;
@@ -91,27 +91,13 @@ export function PullRequestLabelPicker({
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}
     >
-      {(candidate) => {
-        const dot = pullRequestLabelColor(candidate.color);
-        return (
-          <>
-            <span
-              aria-hidden
-              className="size-2 shrink-0 rounded-full bg-muted-foreground"
-              {...(dot ? { style: { backgroundColor: dot } } : {})}
-            />
-            <span className="min-w-0 flex-1 truncate">
-              {candidate.name}
-              {candidate.description ? (
-                <span className="text-muted-foreground"> · {candidate.description}</span>
-              ) : null}
-            </span>
-            {candidate.isApplied ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
-            ) : null}
-          </>
-        );
-      }}
+      {(candidate) => (
+        <PullRequestLabelOption
+          label={candidate}
+          checked={candidate.isApplied}
+          checkLabel="Applied"
+        />
+      )}
     </PullRequestCandidatePicker>
   );
 }

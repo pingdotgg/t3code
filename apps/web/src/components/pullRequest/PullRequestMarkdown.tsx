@@ -7,9 +7,10 @@ import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
+import type { IssueLinkContext } from "~/lib/openIssueLink";
 import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
-import ChatMarkdown from "../ChatMarkdown";
+import ChatMarkdown, { ChatMarkdownAssetImage, linearMediaAsset } from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
 
@@ -51,12 +52,16 @@ export function PullRequestMarkdown({
   cwd,
   environmentId,
   threadRef,
+  issueLinkContext,
+  pullRequestPanelRef,
   className,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
+  issueLinkContext?: IssueLinkContext | undefined;
+  pullRequestPanelRef?: ScopedThreadRef | undefined;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
@@ -82,10 +87,27 @@ export function PullRequestMarkdown({
               text={segment.kind === "markdown" ? segment.text : `![](<${segment.url}>)`}
               cwd={cwd}
               threadRef={resolvedThreadRef}
-              pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
+              issueLinkContext={issueLinkContext}
+              pullRequestPanelRef={
+                pullRequestPanelRef ?? resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF
+              }
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
+            />
+          );
+        }
+        const linearAsset =
+          segment.media === "video" ? linearMediaAsset(issueLinkContext, segment.url) : null;
+        if (linearAsset !== null) {
+          return (
+            <ChatMarkdownAssetImage
+              key={`${segment.id}:${segment.url}`}
+              environmentId={linearAsset.environmentId}
+              resource={linearAsset.resource}
+              kind="video"
+              alt="Issue video"
+              originalUrl={segment.url}
             />
           );
         }

@@ -696,19 +696,20 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect("keeps GitCafe's explanation short and on one line", () => {
+  it.effect("keeps native error text out of the user-facing explanation", () => {
     const server = fakeGitCafe(
       {
-        "GET /repos/owner/repo/pulls/7": { title: "Conflict", detail: `Line\n${"x".repeat(900)}` },
+        "GET /repos/owner/repo/pulls/7": { title: "Conflict", detail: `Line\n${"x".repeat(9000)}` },
       },
       { status: 409 },
     );
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
       const error = yield* provider.getChangeRequest(target).pipe(Effect.flip);
-      assert.notInclude(error.detail, "\n");
-      assert.isAtMost(error.detail.length, 310);
-      assert.isTrue(error.detail.startsWith("Line x"));
+      assert.strictEqual(error.detail, "GitCafe answered HTTP 409.");
+      assert.instanceOf(error.cause, GitCafeApi.GitCafeApiError);
+      const cause = error.cause as GitCafeApi.GitCafeApiError;
+      assert.strictEqual((cause.cause as { body: string }).body.length, 2048);
     }).pipe(Effect.provide(server.layer));
   });
 });

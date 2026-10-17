@@ -69,6 +69,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   onTabIntent,
   inert,
   children,
+  "aria-label": ariaLabel = "Pull request tabs",
 }: {
   tabs: ReadonlyArray<{ readonly value: Tab; readonly label: string }>;
   value: Tab;
@@ -76,11 +77,12 @@ export function PullRequestDetailTabBar<Tab extends string>({
   onTabIntent?: (tab: Tab) => void;
   inert?: boolean;
   children?: ReactNode;
+  "aria-label"?: string;
 }) {
   return (
     <nav
       className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
-      aria-label="Pull request tabs"
+      aria-label={ariaLabel}
       inert={inert}
     >
       <ToggleGroup

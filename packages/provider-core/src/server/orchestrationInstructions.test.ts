@@ -20,6 +20,26 @@ describe("T3 orchestration provider instructions", () => {
     );
   });
 
+  it("keeps issue linking and partial parent creation guidance in provider prompts", () => {
+    for (const prompt of [
+      t3OrchestrationSystemPrompt(true),
+      t3OrchestrationPromptForFirstRun({
+        prompt: "Work on an issue.",
+        runOrdinal: 1,
+        hasT3Mcp: true,
+      }),
+      t3AcpPromptWithInstructions({
+        prompt: "Work on an issue.",
+        state: { interactionMode: "default", hasT3Mcp: true },
+      }),
+    ]) {
+      assert.include(prompt, "Before finishing issue work, call list_thread_issues");
+      assert.include(prompt, "retry set_issue_parent instead of creating it again");
+      assert.include(prompt, "read_issue_candidates");
+      assert.notInclude(prompt, "read_issue_metadata");
+    }
+  });
+
   it("documents structured schedules instead of JSON strings", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "structured object, never as JSON text");
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, '"everyMs":3600000');

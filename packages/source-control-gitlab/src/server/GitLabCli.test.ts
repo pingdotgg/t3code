@@ -29,6 +29,63 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect("sends API reads and JSON writes through the same native command", () =>
+    Effect.gen(function* () {
+      const glab = yield* GitLabCli.GitLabCli;
+      const output = { ...processOutput(" raw response "), stdoutTruncated: true };
+      mockedRun.mockReturnValue(Effect.succeed(output));
+      assert.strictEqual(
+        yield* GitLabCli.api(glab.execute, { cwd: "/repo", path: "user" }),
+        output,
+      );
+      const stdin = '{"body":"private fixture"}';
+      assert.strictEqual(
+        yield* GitLabCli.api(glab.execute, {
+          cwd: "/repo",
+          path: "projects/acme%2Fweb/issues",
+          hostname: "gitlab.example.test:8443",
+          method: "POST",
+          stdin,
+          maxOutputBytes: 8 * 1024 * 1024,
+          timeoutMs: 60_000,
+        }),
+        output,
+      );
+      assert.deepStrictEqual(
+        mockedRun.mock.calls.map(([input]) => input),
+        [
+          {
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            args: ["api", "user"],
+            timeoutMs: 30_000,
+          },
+          {
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: "/repo",
+            args: [
+              "api",
+              "projects/acme%2Fweb/issues",
+              "--hostname",
+              "gitlab.example.test:8443",
+              "--method",
+              "POST",
+              "--input",
+              "-",
+              "--header",
+              "Content-Type: application/json",
+            ],
+            stdin,
+            maxOutputBytes: 8 * 1024 * 1024,
+            timeoutMs: 60_000,
+          },
+        ],
+      );
+    }),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(

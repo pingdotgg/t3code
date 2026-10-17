@@ -93,6 +93,9 @@ jobs:
       - name: Check generated GitHub GraphQL operations
         run: vp run --filter @t3tools/source-control-github generate --check
 
+      - name: Check generated Linear GraphQL operations
+        run: vp run --filter @t3tools/issue-tracker-linear generate --check
+
       - name: Check
         run: vp check
 

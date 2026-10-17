@@ -7,6 +7,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
+  ProviderThreadId,
+  OrchestrationV2DomainEventJson,
   ThreadId,
   TurnItemId,
   type OrchestrationV2DomainEvent,
@@ -39,6 +42,49 @@ const layerTest = OrchestrationEventStore.layer.pipe(
 const layer = it.layer(layerTest);
 
 layer("OrchestrationEventStore", (it) => {
+  it.effect("returns the same provider defaults on append and replay", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:provider-defaults");
+      const event = {
+        id: EventId.make("event:provider-defaults"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make("provider-thread:defaults"),
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: ProviderSessionId.make("session:defaults"),
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "not_loaded",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      } satisfies OrchestrationV2DomainEvent;
+      const appended = yield* store.appendAgentEvents({ events: [event] });
+      const replayed = yield* store.readAgentEvents({ threadId }).pipe(Stream.runCollect);
+      assert.deepEqual(appended[0]!.event.payload, {
+        ...event.payload,
+        contextUsage: null,
+        goal: null,
+        nativeMetadata: null,
+        pendingBackgroundTasks: [],
+      });
+      assert.deepEqual(appended, replayed);
+      const encode = Schema.encodeEffect(OrchestrationV2DomainEventJson);
+      assert.deepEqual(yield* encode(appended[0]!.event), yield* encode(replayed[0]!.event));
+    }),
+  );
+
   it.effect("retains only shell metadata from oversized replay and live application events", () =>
     Effect.scoped(
       Effect.gen(function* () {

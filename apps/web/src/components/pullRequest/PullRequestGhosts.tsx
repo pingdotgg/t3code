@@ -44,11 +44,19 @@ const DEFAULT_DETAIL_TABS = [
   { value: "code", label: "Code" },
 ] as const;
 
-export function PullRequestListGhost({ rows = 7, caption }: { rows?: number; caption?: string }) {
+export function PullRequestListGhost({
+  rows = 7,
+  caption,
+  label = "Loading pull requests",
+}: {
+  rows?: number;
+  label?: string;
+  caption?: string;
+}) {
   return (
     <div
       role="status"
-      aria-label={caption ?? "Loading pull requests"}
+      aria-label={caption ?? label}
       className="motion-safe:animate-skeleton space-y-0.5"
     >
       {caption ? (

@@ -7,9 +7,15 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { RightPanelTabs } from "./RightPanelTabs";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
-vi.mock("~/browser/browserDefaults", () => ({ useBrowserDefaults: () => ({ profiles: [] }) }));
+vi.mock(import("~/browser/browserDefaults"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useBrowserDefaults: (() => ({ profiles: [] })) as never,
+}));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -33,6 +39,7 @@ beforeEach(() => {
   });
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   addFiles.mockClear();
+  useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -107,7 +114,116 @@ async function press(key: string, options: KeyboardEventInit = {}) {
   return event;
 }
 
+it("keeps native issue labels beside pull request tabs", async () => {
+  const issue = (tracker: string, scope: string, key: string) =>
+    ({
+      id: `issue:${tracker}:${scope}:${key}`,
+      kind: "issue",
+      projectId: "p",
+      tracker,
+      scope,
+      key,
+    }) as const;
+  await renderPanel({
+    surfaces: [
+      { ...issue("forgejo", "Mount/acme/web", "42"), connectionId: "Account/B" },
+      issue("github", "acme/web", "7"),
+      issue("gitlab", "acme/api", "7"),
+      issue("linear", "ENG", "ENG-12"),
+      issue("jira", "PROJ", "PROJ-3"),
+      {
+        id: "pull-request:p:acme/api:7",
+        kind: "pull-request",
+        projectId: "p",
+        repository: "acme/api",
+        number: 7,
+      },
+    ],
+  });
+  expect(
+    [...container.querySelectorAll('[aria-label^="Close "]')].map((button) =>
+      button.getAttribute("aria-label"),
+    ),
+  ).toEqual([
+    "Close Mount/acme/web#42",
+    "Close acme/web#7",
+    "Close acme/api#7",
+    "Close ENG-12",
+    "Close PROJ-3",
+    "Close #7",
+  ]);
+});
+
 describe("right panel new-tab shortcut", () => {
+  const threadRef = scopeThreadRef(EnvironmentId.make("thread-A"), ThreadId.make("thread"));
+  const otherRef = scopeThreadRef(EnvironmentId.make("other-B"), ThreadId.make("thread"));
+  const linkedState = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
+
+  describe.each(["inline", "sheet"] as const)("linked issues in %s mode", (mode) => {
+    it.each(["empty shortcut", "menu click", "menu shortcut"] as const)(
+      "opens the native thread panel using %s",
+      async (entry) => {
+        if (entry !== "empty shortcut") useRightPanelStore.getState().open(threadRef, "files");
+        await renderPanel({
+          mode,
+          environmentId: threadRef.environmentId,
+          ...linkedState(),
+          issuesAvailable: true,
+          onAddIssues: () => useRightPanelStore.getState().open(threadRef, "issues"),
+        });
+        if (entry === "empty shortcut") {
+          expect((await press("i")).defaultPrevented).toBe(true);
+          await press("i");
+        } else {
+          await press("t", { metaKey: true });
+          const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+            (element) => element.textContent?.includes("Linked issues"),
+          );
+          expect(item).toBeDefined();
+          expect(item?.getAttribute("aria-keyshortcuts")).toBe("I");
+          if (entry === "menu click") await act(() => item?.click());
+          else await press("i");
+          expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
+        }
+        expect(linkedState().surfaces.filter((surface) => surface.kind === "issues")).toEqual([
+          { id: "issues", kind: "issues" },
+        ]);
+        expect(linkedState().activeSurfaceId).toBe("issues");
+        expect(
+          selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, otherRef).surfaces,
+        ).toEqual([]);
+      },
+    );
+  });
+
+  it.each([false, true])(
+    "does not launch linked issues with unavailable configuration %s",
+    async (missingHandler) => {
+      await renderPanel(
+        missingHandler
+          ? { issuesAvailable: true }
+          : {
+              issuesAvailable: false,
+              onAddIssues: () => useRightPanelStore.getState().open(threadRef, "issues"),
+            },
+      );
+      expect((await press("i")).defaultPrevented).toBe(false);
+      expect(
+        Array.from(container.querySelectorAll("button")).some((element) =>
+          element.textContent?.includes("Linked issues"),
+        ),
+      ).toBe(false);
+      await press("t", { metaKey: true });
+      await press("i");
+      const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (element) => element.textContent?.includes("Linked issues"),
+      );
+      expect(item?.getAttribute("aria-disabled")).toBe("true");
+      expect(linkedState().surfaces).toEqual([]);
+    },
+  );
+
   it.each(["MacIntel", "Win32", "Linux x86_64"])(
     "opens the menu on %s and chooses a tab",
     async (platform) => {

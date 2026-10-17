@@ -15,6 +15,14 @@
       "types": "./src/server/azureDevOpsDiff.ts",
       "import": "./src/server/azureDevOpsDiff.ts"
     },
+    "./server/azureDevOpsIssueJson": {
+      "types": "./src/server/azureDevOpsIssueJson.ts",
+      "import": "./src/server/azureDevOpsIssueJson.ts"
+    },
+    "./server/AzureDevOpsIssueTracker": {
+      "types": "./src/server/AzureDevOpsIssueTracker.ts",
+      "import": "./src/server/AzureDevOpsIssueTracker.ts"
+    },
     "./server/AzureDevOpsPullRequestCli": {
       "types": "./src/server/AzureDevOpsPullRequestCli.ts",
       "import": "./src/server/AzureDevOpsPullRequestCli.ts"
@@ -38,6 +46,10 @@
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
     }
   },
   "scripts": {
@@ -46,6 +58,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",
     "diff": "8.0.3",

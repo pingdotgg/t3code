@@ -25,7 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -161,6 +161,50 @@ import {
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
+import {
+  IssueCandidates,
+  IssueDependenciesInput,
+  IssueDependenciesPage,
+  IssueSetDependencyInput,
+  IssueCandidatesInput,
+  IssueAssigneeCandidatesPage,
+  IssueEditCommentInput,
+  IssueHierarchyPage,
+  IssueHistoryPage,
+  IssueLabelCandidatesPage,
+  IssueLinkedPullRequestsPage,
+  IssuePageRef,
+  IssueHistoryInput,
+  IssueScopePageRef,
+  IssueSetParentInput,
+  IssueCommentInput,
+  IssueCommentsPage,
+  IssueCommentsPageInput,
+  IssueCreateInput,
+  IssueCreateResult,
+  IssueDetail,
+  IssueListInput,
+  IssueListResult,
+  IssueOperationError,
+  IssueReactionInput,
+  issueAccountRequest,
+  issueListRequest,
+  IssueRef,
+  IssueResolveUrlInput,
+  IssueResolvedUrl,
+  IssueSetStateInput,
+  IssueTemplatesInput,
+  IssueTemplateList,
+  IssueTrackerBindProjectInput,
+  IssueTrackerConnectInput,
+  IssueTrackerConnection,
+  IssueTrackerConnectionError,
+  IssueTrackerConnectionList,
+  IssueTrackerScopesInput,
+  IssueTrackerScopePage,
+  IssueUnavailableError,
+  IssueUpdateInput,
+} from "./issue.ts";
 import { PullRequestReviewGuideResult } from "./pullRequestReviewGuide.ts";
 import {
   PullRequestActionInput,
@@ -548,6 +592,34 @@ export const WS_METHODS = {
   pullRequestsRequestReviewers: "pullRequests.requestReviewers",
   pullRequestsLabelCandidates: "pullRequests.labelCandidates",
   pullRequestsSetLabels: "pullRequests.setLabels",
+
+  // Issue tracking methods
+  issuesList: "issues.list",
+  issuesDetail: "issues.detail",
+  issuesResolveUrl: "issues.resolveUrl",
+  issuesComments: "issues.comments",
+  issuesTemplates: "issues.templates",
+  issuesCandidates: "issues.candidates",
+  issuesCreate: "issues.create",
+  issuesComment: "issues.comment",
+  issuesUpdate: "issues.update",
+  issuesSetState: "issues.setState",
+  issuesReact: "issues.react",
+  issuesHistory: "issues.history",
+  issuesLinkedPullRequests: "issues.linkedPullRequests",
+  issuesHierarchy: "issues.hierarchy",
+  issuesDependencies: "issues.dependencies",
+  issuesSetDependency: "issues.setDependency",
+  issuesLabelCandidates: "issues.labelCandidates",
+  issuesAssigneeCandidates: "issues.assigneeCandidates",
+  issuesEditComment: "issues.editComment",
+  issuesSetParent: "issues.setParent",
+  issuesRefreshThreadLinks: "issues.refreshThreadLinks",
+
+  issueTrackersList: "issueTrackers.list",
+  issueTrackersScopes: "issueTrackers.scopes",
+  issueTrackersConnect: "issueTrackers.connect",
+  issueTrackersBindProject: "issueTrackers.bindProject",
 
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
@@ -1138,6 +1210,174 @@ const WsPullRequestsSetLabelsRpc = Rpc.make(WS_METHODS.pullRequestsSetLabels, {
   payload: PullRequestLabelChangeInput,
   success: Schema.Void,
   error: PullRequestRpcError,
+});
+
+const IssueRpcError = Schema.Union([
+  IssueUnavailableError,
+  IssueOperationError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsIssuesListRpc = Rpc.make(WS_METHODS.issuesList, {
+  payload: issueListRequest(IssueListInput),
+  success: IssueListResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesResolveUrlRpc = Rpc.make(WS_METHODS.issuesResolveUrl, {
+  payload: issueAccountRequest(IssueResolveUrlInput),
+  success: IssueResolvedUrl,
+  error: IssueRpcError,
+});
+
+const WsIssuesDetailRpc = Rpc.make(WS_METHODS.issuesDetail, {
+  payload: issueAccountRequest(IssueRef),
+  success: IssueDetail,
+  error: IssueRpcError,
+});
+
+/** Older comments, one page at a time, past the cursor the detail handed over. */
+const WsIssuesCommentsRpc = Rpc.make(WS_METHODS.issuesComments, {
+  payload: issueAccountRequest(IssueCommentsPageInput),
+  success: IssueCommentsPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesTemplatesRpc = Rpc.make(WS_METHODS.issuesTemplates, {
+  payload: issueAccountRequest(IssueTemplatesInput),
+  success: IssueTemplateList,
+  error: IssueRpcError,
+});
+
+/** Read when a label or assignee picker opens, not with every issue. */
+const WsIssuesCandidatesRpc = Rpc.make(WS_METHODS.issuesCandidates, {
+  payload: issueAccountRequest(IssueCandidatesInput),
+  success: IssueCandidates,
+  error: IssueRpcError,
+});
+
+const WsIssuesCreateRpc = Rpc.make(WS_METHODS.issuesCreate, {
+  payload: issueAccountRequest(IssueCreateInput, "projectId", "title"),
+  success: IssueCreateResult,
+  error: IssueRpcError,
+});
+
+const WsIssuesCommentRpc = Rpc.make(WS_METHODS.issuesComment, {
+  payload: issueAccountRequest(IssueCommentInput),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesUpdateRpc = Rpc.make(WS_METHODS.issuesUpdate, {
+  payload: issueAccountRequest(IssueUpdateInput, "projectId", "title"),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetStateRpc = Rpc.make(WS_METHODS.issuesSetState, {
+  payload: issueAccountRequest(IssueSetStateInput, "projectId", "state"),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesReactRpc = Rpc.make(WS_METHODS.issuesReact, {
+  payload: issueAccountRequest(IssueReactionInput),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesHistoryRpc = Rpc.make(WS_METHODS.issuesHistory, {
+  payload: issueAccountRequest(IssueHistoryInput),
+  success: IssueHistoryPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesLinkedPullRequestsRpc = Rpc.make(WS_METHODS.issuesLinkedPullRequests, {
+  payload: issueAccountRequest(IssuePageRef),
+  success: IssueLinkedPullRequestsPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesDependenciesRpc = Rpc.make(WS_METHODS.issuesDependencies, {
+  payload: issueAccountRequest(IssueDependenciesInput),
+  success: IssueDependenciesPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetDependencyRpc = Rpc.make(WS_METHODS.issuesSetDependency, {
+  payload: issueAccountRequest(IssueSetDependencyInput),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesHierarchyRpc = Rpc.make(WS_METHODS.issuesHierarchy, {
+  payload: issueAccountRequest(IssuePageRef),
+  success: IssueHierarchyPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesLabelCandidatesRpc = Rpc.make(WS_METHODS.issuesLabelCandidates, {
+  payload: issueAccountRequest(IssueScopePageRef),
+  success: IssueLabelCandidatesPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesAssigneeCandidatesRpc = Rpc.make(WS_METHODS.issuesAssigneeCandidates, {
+  payload: issueAccountRequest(IssueScopePageRef),
+  success: IssueAssigneeCandidatesPage,
+  error: IssueRpcError,
+});
+
+const WsIssuesEditCommentRpc = Rpc.make(WS_METHODS.issuesEditComment, {
+  payload: issueAccountRequest(IssueEditCommentInput, "projectId", "body"),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesSetParentRpc = Rpc.make(WS_METHODS.issuesSetParent, {
+  payload: issueAccountRequest(IssueSetParentInput),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const WsIssuesRefreshThreadLinksRpc = Rpc.make(WS_METHODS.issuesRefreshThreadLinks, {
+  payload: Schema.Struct({ threadId: ThreadId }),
+  success: Schema.Void,
+  error: IssueRpcError,
+});
+
+const IssueTrackerRpcError = Schema.Union([
+  IssueTrackerConnectionError,
+  EnvironmentAuthorizationError,
+]);
+
+/** Every standalone tracker this server ships, each with its connection probed afresh. */
+const WsIssueTrackersListRpc = Rpc.make(WS_METHODS.issueTrackersList, {
+  payload: Schema.Struct({}),
+  success: IssueTrackerConnectionList,
+  error: IssueTrackerRpcError,
+});
+
+const WsIssueTrackersScopesRpc = Rpc.make(WS_METHODS.issueTrackersScopes, {
+  payload: IssueTrackerScopesInput,
+  success: IssueTrackerScopePage,
+  error: IssueTrackerRpcError,
+});
+
+/**
+ * Verifies the credential against the tracker before storing it; the result is the new status.
+ * A null token disconnects, which also unbinds every project that pointed at the tracker.
+ */
+const WsIssueTrackersConnectRpc = Rpc.make(WS_METHODS.issueTrackersConnect, {
+  payload: IssueTrackerConnectInput,
+  success: IssueTrackerConnection,
+  error: IssueTrackerRpcError,
+});
+
+const WsIssueTrackersBindProjectRpc = Rpc.make(WS_METHODS.issueTrackersBindProject, {
+  payload: IssueTrackerBindProjectInput,
+  success: Schema.Void,
+  error: IssueTrackerRpcError,
 });
 
 const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLookupRepository, {
@@ -1852,7 +2092,43 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+/**
+ * Issue RPCs form their own group so the server implements them in a separate
+ * handler layer. A single `toLayer` over every WebSocket RPC hits TypeScript's
+ * instantiation depth limit near 200 RPCs, and the server's requirements then
+ * silently become `any`. Add new domains as groups merged into `WsRpcGroup`.
+ */
+export const WsIssuesRpcGroup = RpcGroup.make(
+  WsIssuesListRpc,
+  WsIssuesDetailRpc,
+  WsIssuesResolveUrlRpc,
+  WsIssuesCommentsRpc,
+  WsIssuesTemplatesRpc,
+  WsIssuesCandidatesRpc,
+  WsIssuesCreateRpc,
+  WsIssuesCommentRpc,
+  WsIssuesUpdateRpc,
+  WsIssuesSetStateRpc,
+  WsIssuesReactRpc,
+  WsIssuesHistoryRpc,
+  WsIssuesLinkedPullRequestsRpc,
+  WsIssuesHierarchyRpc,
+  WsIssuesDependenciesRpc,
+  WsIssuesSetDependencyRpc,
+  WsIssuesLabelCandidatesRpc,
+  WsIssuesAssigneeCandidatesRpc,
+  WsIssuesEditCommentRpc,
+  WsIssuesSetParentRpc,
+  WsIssuesRefreshThreadLinksRpc,
+
+  WsIssueTrackersListRpc,
+  WsIssueTrackersScopesRpc,
+  WsIssueTrackersConnectRpc,
+  WsIssueTrackersBindProjectRpc,
+).middleware(RpcScopeAuthorization);
+
+/** Every WebSocket RPC not in a domain group merged into `WsRpcGroup` below. */
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2049,3 +2325,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
 ).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsIssuesRpcGroup);

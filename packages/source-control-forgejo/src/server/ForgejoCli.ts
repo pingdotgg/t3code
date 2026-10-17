@@ -146,7 +146,10 @@ export class ForgejoCli extends Context.Service<
     ) => Effect.Effect<ForgejoRepository, ForgejoCliError>;
     readonly api: (
       input: ForgejoApiInput,
-    ) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, ForgejoCliError>;
+    ) => Effect.Effect<
+      SourceControlHost.SourceControlProcessOutput & { readonly repositoryUrl?: string },
+      ForgejoCliError
+    >;
   }
 >()("@t3tools/source-control-forgejo/server/ForgejoCli") {}
 
@@ -634,6 +637,7 @@ export const make = Effect.gen(function* () {
       input,
       input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
     );
+    const repositoryUrl = `${repository.baseUrl}/${repository.repository.split("/").map(encodeURIComponent).join("/")}`;
     const stdin =
       input.body === undefined
         ? undefined
@@ -672,7 +676,7 @@ export const make = Effect.gen(function* () {
         path,
         ...(input.method === undefined ? {} : { method: input.method }),
         ...(stdin === undefined ? {} : { body: stdin }),
-      });
+      }).pipe(Effect.map((result) => ({ ...result, repositoryUrl })));
     }
     const result = yield* execute({
       cwd: input.cwd,
@@ -714,7 +718,7 @@ export const make = Effect.gen(function* () {
                 ? "Forgejo API rate limit exceeded."
                 : `Forgejo API request failed${status ? ` (HTTP ${status})` : " without an HTTP status"}.`,
       });
-    return result;
+    return { ...result, repositoryUrl };
   });
   return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
 });

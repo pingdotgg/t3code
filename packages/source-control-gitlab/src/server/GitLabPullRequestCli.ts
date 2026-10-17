@@ -477,24 +477,7 @@ export const make = Effect.gen(function* () {
     readonly stdin?: string;
     readonly maxOutputBytes?: number;
     readonly timeoutMs?: number;
-  }) =>
-    gitlab.execute({
-      cwd: input.cwd,
-      args: [
-        "api",
-        input.path,
-        ...(input.method === undefined ? [] : ["--method", input.method]),
-        // A raw body from stdin: argv is visible in process listings and is echoed back
-        // inside process-runner failure messages. Unlike `gh`, `glab api --input` sends no
-        // Content-Type at all, and GitLab answers a bodyless content type with HTTP 415.
-        ...(input.stdin === undefined
-          ? []
-          : ["--input", "-", "--header", "Content-Type: application/json"]),
-      ],
-      ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-    });
+  }) => GitLabCli.api(gitlab.execute, input);
 
   const listPage = (input: {
     readonly cwd: string;

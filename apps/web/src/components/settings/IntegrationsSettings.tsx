@@ -111,6 +111,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { IssueTrackerSettings } from "./IssueTrackerSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
@@ -1472,6 +1473,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 export function IntegrationsSettingsPanel() {
+  const { environment } = useSettingsScope();
+  const environmentId =
+    environment?.connection.phase === "connected" ? environment.environmentId : null;
   const previewDefaultsDisabled = !isElectron;
   const previewDefaults = (
     <>
@@ -1488,6 +1492,9 @@ export function IntegrationsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {environmentId === null ? null : (
+        <IssueTrackerSettings key={environmentId} environmentId={environmentId} />
+      )}
       <ProjectDefaultsSettings category="integrations" />
       <SettingsSection id="browser" title="Browser">
         {previewDefaultsDisabled ? (

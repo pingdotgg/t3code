@@ -1,0 +1,39 @@
+{
+  "name": "@t3tools/issue-tracker-linear",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./server/LinearApi": {
+      "types": "./src/server/LinearApi.ts",
+      "import": "./src/server/LinearApi.ts"
+    },
+    "./server/LinearIssueTracker": {
+      "types": "./src/server/LinearIssueTracker.ts",
+      "import": "./src/server/LinearIssueTracker.ts"
+    },
+    "./server/issueTrackerDriver": {
+      "types": "./src/server/issueTrackerDriver.ts",
+      "import": "./src/server/issueTrackerDriver.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "generate": "graphqlgen"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-core": "workspace:*",
+    "@t3tools/provider-core": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/graphql-generator": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "graphql": "16.14.1",
+    "vite-plus": "catalog:"
+  }
+}
