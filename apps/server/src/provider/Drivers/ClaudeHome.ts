@@ -68,9 +68,15 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
   function* (
     config: Pick<ClaudeSettings, "homePath">,
     environment?: NodeJS.ProcessEnv,
-  ): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config, environment);
-    return `claude:home:${resolvedHomePath}`;
+  ): Effect.fn.Return<string, never, FileSystem.FileSystem | Path.Path> {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const projectsPath = path.join(yield* resolveClaudeHomePath(config, environment), "projects");
+    // Auth-overlay homes symlink `projects` to a shared store and resume its transcripts.
+    const transcriptsPath = yield* fileSystem
+      .realPath(projectsPath)
+      .pipe(Effect.orElseSucceed(() => projectsPath));
+    return `claude:projects:${transcriptsPath}`;
   },
 );
 
