@@ -101,6 +101,12 @@ export const buildSshHostSpecEffect = (
       }),
   });
 
+/**
+ * Every T3 invocation is non-interactive: it runs its own remote command over
+ * piped stdio or only forwards ports. A host alias that sets `RemoteCommand`
+ * (OpenSSH refuses it alongside a command line) or `RequestTTY force` (which
+ * would mangle piped scripts) must not apply to these.
+ */
 export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
   input?: { readonly batchMode?: "yes" | "no" },
@@ -110,6 +116,10 @@ export function baseSshArgs(
     `BatchMode=${input?.batchMode ?? "no"}`,
     "-o",
     "ConnectTimeout=10",
+    "-o",
+    "RemoteCommand=none",
+    "-o",
+    "RequestTTY=no",
     ...(target.port !== null ? ["-p", String(target.port)] : []),
   ];
 }

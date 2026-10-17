@@ -94,7 +94,18 @@ describe("ssh command", () => {
           },
           { batchMode: "no" },
         ),
-        ["-o", "BatchMode=no", "-o", "ConnectTimeout=10", "-p", "2222"],
+        [
+          "-o",
+          "BatchMode=no",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "RemoteCommand=none",
+          "-o",
+          "RequestTTY=no",
+          "-p",
+          "2222",
+        ],
       );
     }),
   );
