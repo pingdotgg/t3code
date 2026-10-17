@@ -66,6 +66,19 @@ describe("createAssetEnvironmentAtoms", () => {
     { name: "windows path", path: "C:\\Users\\demo\\clip.mp4", fallback: true },
     { name: "inspection failure", path: "/tmp/clip.mp4", error: "inspection", fallback: true },
     { name: "foreign thread", path: "/tmp/clip.mp4", error: "context", fallback: true },
+    { name: "missing on both hosts", path: "/tmp/clip.mp4", localFails: true },
+    {
+      name: "unreadable remotely, missing here",
+      path: "/tmp/clip.mp4",
+      error: "inspection",
+      localFails: true,
+    },
+    {
+      name: "a defect in the local retry",
+      path: "/tmp/clip.mp4",
+      localFails: true,
+      localDefect: true,
+    },
     { name: "remote success", path: "/tmp/clip.mp4", success: true },
     { name: "relative path", path: "clip.mp4" },
     { name: "no primary", path: "/tmp/clip.mp4", primary: "none" },
@@ -92,7 +105,7 @@ describe("createAssetEnvironmentAtoms", () => {
             ? new AssetWorkspaceAssetInspectionError({ resource, cause: new Error("unreadable") })
             : scenario.error === "context"
               ? new AssetWorkspaceContextNotFoundError({ resource })
-              : new AssetWorkspaceAssetNotFoundError({ resource });
+              : new AssetWorkspaceAssetNotFoundError({ resource, checkedPath: "/tmp/clip.mp4" });
       const calls: EnvironmentId[] = [];
       const supervisors = new Map<
         EnvironmentId,
@@ -102,6 +115,14 @@ describe("createAssetEnvironmentAtoms", () => {
         const client = {
           [WS_METHODS.assetsCreateUrl]: () => {
             calls.push(environmentId);
+            if (environmentId === localId && scenario.localFails) {
+              const localError = Effect.fail(
+                new AssetWorkspaceAssetNotFoundError({ resource, checkedPath: "/local/clip.mp4" }),
+              );
+              return scenario.localDefect
+                ? localError.pipe(Effect.ensuring(Effect.die("cleanup failed")))
+                : localError;
+            }
             return environmentId === remoteId && !scenario.success
               ? Effect.fail(error)
               : Effect.succeed({
@@ -167,10 +188,16 @@ describe("createAssetEnvironmentAtoms", () => {
             ? "https://local.test/api/assets/local/media"
             : "/api/assets/remote/media",
         );
+      } else if (scenario.localDefect) {
+        const cause = yield* Effect.sandbox(result).pipe(Effect.flip);
+        expect(Cause.findErrorOption(cause)).toEqual(Option.some(error));
+        expect(Cause.hasDies(cause)).toBe(true);
       } else {
         expect(yield* Effect.flip(result)).toEqual(error);
       }
-      expect(calls).toEqual(scenario.fallback ? [remoteId, localId] : [remoteId]);
+      expect(calls).toEqual(
+        scenario.fallback || scenario.localFails ? [remoteId, localId] : [remoteId],
+      );
       if (scenario.primary === "reconnecting") {
         registry.set(localEnvironment, localTarget);
         expect((yield* result).relativeUrl).toBe("https://local.test/api/assets/local/media");

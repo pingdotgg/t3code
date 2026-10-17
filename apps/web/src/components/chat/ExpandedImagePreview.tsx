@@ -1,4 +1,4 @@
-import type { SnapShotSource } from "@t3tools/contracts";
+import { AssetWorkspaceAssetNotFoundError, type SnapShotSource } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import { type ChatFileAttachment, type ChatImageAttachment, isVideoAttachment } from "../../types";
@@ -9,6 +9,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
+import * as Schema from "effect/Schema";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
@@ -104,6 +105,31 @@ export async function resolveMarkdownMediaPreview(input: {
     ],
     index: 0,
   };
+}
+
+const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
+
+/**
+ * Text for the "Media unavailable" toast. Media resolves on the environment's host, so when that
+ * host is not this device a missing file names it and the path it checked.
+ */
+export function describeMediaUnavailable(
+  error: unknown,
+  remoteEnvironmentLabel: string | null,
+): string {
+  if (!(error instanceof Error)) {
+    return "The file could not be loaded. It may have been moved or deleted.";
+  }
+  if (
+    remoteEnvironmentLabel !== null &&
+    isAssetNotFoundError(error) &&
+    error.resource._tag === "media-file"
+  ) {
+    // Older servers do not report the checked path; the chip's own path is the next best.
+    const path = error.checkedPath ?? error.resource.path;
+    return `The file was not found on ${remoteEnvironmentLabel} at ${path}.`;
+  }
+  return error.message;
 }
 
 export function buildAttachmentVideoAsset(

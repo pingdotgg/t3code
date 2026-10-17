@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@t3tools/contracts";
+import {
+  AssetPreviewTypeValidationError,
+  AssetWorkspaceAssetNotFoundError,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import {
@@ -7,6 +12,7 @@ import {
   attachVideoThumbnail,
   buildAttachmentVideoPreview,
   buildExpandedImagePreview,
+  describeMediaUnavailable,
   resolveMarkdownMediaPreview,
 } from "./ExpandedImagePreview";
 
@@ -42,6 +48,47 @@ describe("resolveMarkdownMediaPreview", () => {
       });
     },
   );
+});
+
+describe("describeMediaUnavailable", () => {
+  const resource = {
+    _tag: "media-file" as const,
+    threadId: ThreadId.make("thread-1"),
+    path: "~/Downloads/clip.mp4",
+  };
+
+  it("names the remote environment and the path its host checked", () => {
+    const error = new AssetWorkspaceAssetNotFoundError({
+      resource,
+      checkedPath: "/Users/graham/Downloads/clip.mp4",
+    });
+
+    expect(describeMediaUnavailable(error, "mac-studio")).toBe(
+      "The file was not found on mac-studio at /Users/graham/Downloads/clip.mp4.",
+    );
+  });
+
+  it("falls back to the chip's path when an older server sends no checked path", () => {
+    const error = new AssetWorkspaceAssetNotFoundError({ resource });
+
+    expect(describeMediaUnavailable(error, "mac-studio")).toBe(
+      "The file was not found on mac-studio at ~/Downloads/clip.mp4.",
+    );
+  });
+
+  it("keeps the server's message on this device and for other failures", () => {
+    const notFound = new AssetWorkspaceAssetNotFoundError({
+      resource,
+      checkedPath: "/home/me/Downloads/clip.mp4",
+    });
+    const unsupported = new AssetPreviewTypeValidationError({ resource });
+
+    expect(describeMediaUnavailable(notFound, null)).toBe("Media file was not found.");
+    expect(describeMediaUnavailable(unsupported, "mac-studio")).toBe(unsupported.message);
+    expect(describeMediaUnavailable("offline", "mac-studio")).toBe(
+      "The file could not be loaded. It may have been moved or deleted.",
+    );
+  });
 });
 
 describe("buildExpandedImagePreview", () => {

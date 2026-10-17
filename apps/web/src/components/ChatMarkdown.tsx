@@ -115,6 +115,7 @@ import {
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
+  describeMediaUnavailable,
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
@@ -179,12 +180,17 @@ import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
-import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+import {
+  resolveRemoteOpenState,
+  useRemoteOpenResolution,
+  type RemoteOpenMode,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
+import { readEnvironmentLabel } from "../state/environments";
 import {
   readEnvironmentScope,
   readPreparedConnection,
@@ -2341,14 +2347,24 @@ function useChatMarkdownState({
       },
       (error: unknown) => {
         if (mediaRequestId.current !== requestId) return;
+        // Remote-open resolution may settle while the media lookup is in flight.
+        const target =
+          environmentId === null ? null : readPreparedConnection(environmentId)?.target;
+        const isRemote =
+          resolveRemoteOpenState({
+            target: target ?? null,
+            sshAlias: null,
+            remoteOpenTargets: undefined,
+            isDesktopRenderer: window.desktopBridge !== undefined,
+          }).mode !== "local-exec";
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Media unavailable",
-            description:
-              error instanceof Error
-                ? error.message
-                : "The file could not be loaded. It may have been moved or deleted.",
+            description: describeMediaUnavailable(
+              error,
+              isRemote && environmentId !== null ? readEnvironmentLabel(environmentId) : null,
+            ),
           }),
         );
       },

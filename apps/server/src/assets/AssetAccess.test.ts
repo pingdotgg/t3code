@@ -386,6 +386,41 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    { form: "absolute", requestedPath: undefined, checked: ["absolute.mp4"] },
+    {
+      form: "workspace-relative",
+      requestedPath: "clips/relative.mp4",
+      checked: ["workspace", "clips", "relative.mp4"],
+    },
+    {
+      form: "home-relative",
+      requestedPath: "~/Downloads/home.mp4",
+      checked: ["home", "Downloads", "home.mp4"],
+    },
+  ])("reports the absolute path it checked for a missing $form media path", (scenario) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-missing-" });
+      const root = path.join(directory, "workspace");
+      yield* fs.makeDirectory(root);
+      const checkedPath = path.join(directory, ...scenario.checked);
+      const error = yield* issueAssetUrl({
+        resource: {
+          _tag: "media-file",
+          threadId: ThreadId.make("thread-1"),
+          path: scenario.requestedPath ?? checkedPath,
+        },
+        workspaceRoot: root,
+      }).pipe(
+        Effect.flip,
+        Effect.provideService(HostProcess.HomeDirectory, path.join(directory, "home")),
+      );
+      expect(error).toMatchObject({ _tag: "AssetWorkspaceAssetNotFoundError", checkedPath });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "rejects non-previewable files, disguised targets, and directories",
     () =>

@@ -359,7 +359,10 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       ),
     );
     if (!canonicalFile) {
-      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+        checkedPath: input.requestedPath,
+      });
     }
     if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
@@ -385,7 +388,10 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       ),
     );
     if (!opened) {
-      return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      return yield* new AssetWorkspaceAssetNotFoundError({
+        resource: input.resource,
+        checkedPath: input.requestedPath,
+      });
     }
     return {
       claims: {
