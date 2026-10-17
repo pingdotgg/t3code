@@ -463,6 +463,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "queue.resume":
     case "queued-run.reorder":
     case "queued-run.cancel":
+    case "queued-run.release":
     case "queued-run.edit":
     case "runtime-request.respond":
     case "thread.user-input.dismiss":
@@ -596,7 +597,8 @@ function delegatedTaskTerminalStatus(
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection)[0];
+  // A scheduled send keeps its place but never blocks the messages behind it.
+  return queuedRunsInDeliveryOrder(projection).find((run) => run.releaseAt === undefined);
 }
 
 function latestStableRun(
@@ -700,6 +702,46 @@ function pendingMergeBackTransfersForThread(
       transfer.targetThreadId === projection.thread.id &&
       transfer.status === "pending",
   );
+}
+
+/**
+ * A scheduled send is a plain user message queued for later. Shapes whose
+ * delivery is decided at dispatch time cannot wait without changing meaning.
+ */
+function scheduledDispatchUnsupportedReason(
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+  projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "thread">,
+): string | null {
+  if (
+    command.dispatchMode.type !== "queue_after_active" &&
+    command.dispatchMode.type !== "start_immediately"
+  ) {
+    return "Only a normal send can be scheduled.";
+  }
+  if (command.deliveryIntent === "steer" || command.deliveryIntent === "restart") {
+    return "Steering messages cannot be scheduled.";
+  }
+  if (
+    command.notification !== undefined ||
+    command.delegatedCompletion !== undefined ||
+    command.restartContinuationOfRunId !== undefined ||
+    command.usageLimitContinuationOfRunId !== undefined ||
+    command.manualContinuationOfRunId !== undefined
+  ) {
+    return "Automatic deliveries cannot be scheduled.";
+  }
+  // Queueing completes the source plan, so canceling a scheduled send would strand it.
+  if (command.sourcePlanRef !== undefined) {
+    return "Plan implementations cannot be scheduled.";
+  }
+  // Queued starts do not consume fork or merge-back context.
+  if (
+    pendingForkTransferForThread(projection) !== undefined ||
+    pendingMergeBackTransfersForThread(projection).length > 0
+  ) {
+    return "Send the first message of a fork or merge-back before scheduling one.";
+  }
+  return null;
 }
 
 function latestContextTransfer(
@@ -4682,11 +4724,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-      let dispatchMode = resolveMessageDispatchIntent(
-        projection,
-        command.dispatchMode,
-        command.deliveryIntent,
-      );
+      const scheduled = command.delayMs !== undefined;
+      if (scheduled) {
+        const unsupported = scheduledDispatchUnsupportedReason(command, projection);
+        if (unsupported !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: unsupported,
+          });
+        }
+      }
+      // A scheduled send always waits in the queue, even on an idle thread.
+      let dispatchMode: typeof command.dispatchMode = scheduled
+        ? { type: "queue_after_active" }
+        : resolveMessageDispatchIntent(projection, command.dispatchMode, command.deliveryIntent);
       if (dispatchMode.type === "steer_active") {
         const targetRunId = dispatchMode.targetRunId;
         const target = projection.runs.find((run) => run.id === targetRunId);
@@ -4902,10 +4954,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queueBehindRun = activeRun ?? worktreeMissingRun;
       const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
       const shouldQueue =
-        queueBehindRun !== undefined &&
-        (dispatchMode.type === "defer_start" ||
-          dispatchMode.type === "start_immediately" ||
-          dispatchMode.type === "queue_after_active");
+        scheduled ||
+        (queueBehindRun !== undefined &&
+          (dispatchMode.type === "defer_start" ||
+            dispatchMode.type === "start_immediately" ||
+            dispatchMode.type === "queue_after_active"));
       if (shouldQueue) {
         if (pendingMergeBackTransfers.length > 0) {
           return yield* new OrchestratorDispatchError({
@@ -4916,10 +4969,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         const queueProviderThread =
           activeProviderThread ??
-          projection.providerThreads.find(
-            (candidate) => candidate.id === queueBehindRun.providerThreadId,
-          );
-        if (queueProviderThread === undefined) {
+          (queueBehindRun === undefined
+            ? undefined
+            : projection.providerThreads.find(
+                (candidate) => candidate.id === queueBehindRun.providerThreadId,
+              ));
+        if (queueProviderThread === undefined && queueBehindRun !== undefined) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
@@ -4930,7 +4985,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const ordinal = nextRunOrdinal(projection);
         const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
         const targetProviderThread =
-          modelSelection.instanceId === queueProviderThread.providerInstanceId
+          modelSelection.instanceId === queueProviderThread?.providerInstanceId
             ? queueProviderThread
             : rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0];
         const queuedAdapter = yield* providerAdapters
@@ -4976,8 +5031,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         };
         const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
         const rootNodeId = idAllocator.derive.rootNode({ runId });
+        // Without a run to queue behind, the start resolves the scope against
+        // the workspace as it is at send time.
         const checkpointScope =
-          queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
+          queueBehindRun === undefined ||
+          queueBehindRun.status === "preparing" ||
+          worktreeMissingRun !== undefined
             ? null
             : yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
                 Effect.flatMap((resolvedRuntimePolicy) =>
@@ -5027,6 +5086,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 .filter((candidate) => candidate.status === "queued")
                 .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
             ) + 1,
+          ...(command.delayMs === undefined
+            ? {}
+            : { releaseAt: DateTime.add(now, { milliseconds: command.delayMs }) }),
           requestedAt: now,
           startedAt: null,
           completedAt: null,
@@ -7599,6 +7661,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: "Automatic completion deliveries cannot be promoted to Steer.",
         });
       }
+      if (queuedRun.releaseAt !== undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "Send the scheduled message now before steering with it.",
+        });
+      }
 
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
@@ -7849,6 +7918,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         });
       }
+    });
+
+  const dispatchQueuedRunRelease = (
+    command: Extract<OrchestrationV2Command, { readonly type: "queued-run.release" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) =>
+    Effect.gen(function* () {
+      const projection = yield* loadProjectionForCommand(command, ["runs"]);
+      if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is not active.`,
+        });
+      }
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Run ${command.runId} is not in thread ${command.threadId}.`,
+        });
+      }
+      // Send now, the due sweep, a queue start, and a cancel can all race.
+      // Whichever lands second finds nothing scheduled and accepts as a no-op.
+      if (run.status !== "queued" || run.releaseAt === undefined) return;
+      const now = yield* DateTime.now;
+      const { releaseAt: _releaseAt, ...released } = run;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: released,
+      });
     });
 
   const dispatchQueuedRunEdit = (
@@ -10877,6 +10986,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queued-run.cancel":
         yield* dispatchQueuedRunCancel(command, events);
         break;
+      case "queued-run.release":
+        yield* dispatchQueuedRunRelease(command, events);
+        break;
       case "queued-run.edit":
         yield* dispatchQueuedRunEdit(command, events);
         break;
@@ -10971,7 +11083,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
-      if (command.type === "queue.resume") {
+      if (command.type === "queue.resume" || command.type === "queued-run.release") {
         yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
       }
       return {
@@ -10998,7 +11110,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
-        command.type === "subagent.stop"
+        command.type === "subagent.stop" ||
+        command.type === "queued-run.release"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({
@@ -11104,7 +11217,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         detail: committed.receipt.error ?? "Previously rejected.",
       });
     }
-    if (command.type === "queue.resume") {
+    if (command.type === "queue.resume" || command.type === "queued-run.release") {
       yield* mapDispatchError(command)(startNextQueuedRun(command.threadId));
     }
     if (command.type === "notification.delivery.accept") {

@@ -1361,7 +1361,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   canResume: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage: boolean;
+  canSendLater: boolean;
   onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
+  onSendLater: (delayMs: number) => void;
   onResume: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -1406,7 +1408,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         canResume={props.canResume}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         isEditingQueuedMessage={props.isEditingQueuedMessage}
+        canSendLater={props.canSendLater}
         onSubmitMessage={props.onSubmitMessage}
+        onSendLater={props.onSendLater}
         onResume={props.onResume}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -1503,6 +1507,7 @@ export interface ChatComposerProps {
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  canSendLater: boolean;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
 
@@ -1606,6 +1611,7 @@ export interface ChatComposerProps {
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    delayMs?: number,
   ) => void;
   onResume: () => void;
   onInterrupt: () => void;
@@ -3939,6 +3945,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    delayMs?: number,
   ) => {
     if (
       noProviderAvailable ||
@@ -3985,6 +3992,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               canSteer: !isCompacting,
             }),
           submissionIntent,
+          delayMs,
         );
         return !providerInputRejectedRef.current;
       },
@@ -4010,6 +4018,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const handleSubmitMessageStable = useStableCallback(handleSubmitMessage);
+  const handleSendLater = (delayMs: number) => {
+    submitComposer(undefined, "queue", "foreground", delayMs);
+  };
+  const handleSendLaterStable = useStableCallback(handleSendLater);
   const submitCitationAndSend = () => {
     submitComposer(
       undefined,
@@ -7321,7 +7333,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     canResume={showResumeAction}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     isEditingQueuedMessage={isEditingQueuedMessage}
+                    canSendLater={props.canSendLater}
                     onSubmitMessage={handleSubmitMessageStable}
+                    onSendLater={handleSendLaterStable}
                     onResume={onResume}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryActionStable}

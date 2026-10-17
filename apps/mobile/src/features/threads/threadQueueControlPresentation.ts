@@ -1,4 +1,5 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
@@ -11,6 +12,8 @@ export interface ThreadQueueRowControls {
   readonly dismissAccessibilityLabel: string;
   readonly displayText: string;
   readonly isEditing: boolean;
+  /** "Sends at …" while a delayed message waits for its time, otherwise null. */
+  readonly releaseLabel: string | null;
 }
 
 export function resolveThreadQueueRowControls(input: {
@@ -21,9 +24,16 @@ export function resolveThreadQueueRowControls(input: {
   readonly isEditing?: boolean;
   readonly queuedCount: number;
   readonly text: string;
+  readonly releaseAt?: DateTime.Utc | string | null | undefined;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
   const isEditing = input.isEditing === true;
+  const releaseAt =
+    input.releaseAt === null || input.releaseAt === undefined
+      ? null
+      : typeof input.releaseAt === "string"
+        ? new Date(input.releaseAt)
+        : DateTime.toDate(input.releaseAt);
 
   return {
     canDismiss: !input.busy,
@@ -32,10 +42,15 @@ export function resolveThreadQueueRowControls(input: {
     canEdit: mutationEnabled && !isEditing,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
-    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
+    // Steering would send a delayed message before the time it was scheduled for.
+    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing && releaseAt === null,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     displayText: input.text,
     isEditing,
+    releaseLabel:
+      releaseAt === null || Number.isNaN(releaseAt.getTime())
+        ? null
+        : `Sends at ${releaseAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
   };
 }
 

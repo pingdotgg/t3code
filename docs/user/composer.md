@@ -213,6 +213,24 @@ you had typed in the composer before starting the edit is restored afterwards. I
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
 
+## Send later
+
+On web and desktop, choose the clock beside the send button to send the message
+in 1, 2, or 5 minutes, or open **Custom** to schedule any whole number of
+minutes from 1 to 60. It is offered in an existing thread when the server
+supports it; the first message of a new thread, plan follow-ups, and answers to
+agent questions send right away.
+
+The message waits in the thread's queue on the T3 Code server, so you can
+close or reload the browser tab, but the server must keep running. Its queued
+row shows when it sends, and other queued messages go ahead of it in the
+meantime. It sends at or shortly after that time, once the agent finishes any
+turn in progress. Choose **Send now** to send it early, or edit or remove it
+like any queued message. Steering skips a scheduled message. If you stop the
+agent or the server restarts, the queue is held and the message waits until you
+resume it. Mobile shows when a scheduled message sends and can edit or remove
+it.
+
 ## Commands and skills
 
 Type `/` for commands or `$` to add a skill from the selected environment and

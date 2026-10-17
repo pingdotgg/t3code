@@ -324,6 +324,7 @@ export const make = Effect.gen(function* () {
           continue;
         }
         if (run.queueHeld === true) continue;
+        // Scheduled sends are held too: their release then waits for the user to resume.
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",

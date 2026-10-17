@@ -100,12 +100,19 @@ export function usageLimitRunPresentedAsLatest(
   return blocked !== null && runs.some((run) => run.ordinal > blocked.ordinal) ? blocked : null;
 }
 
+// A scheduled send waits like a held queue, so neither counts as pending work.
+export function isWaitingQueuedRun(
+  run: Pick<OrchestrationV2Run, "status" | "queueHeld" | "releaseAt">,
+): boolean {
+  return run.status === "queued" && (run.queueHeld === true || run.releaseAt !== undefined);
+}
+
 export function latestUnheldRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2Run | null {
   let latest: OrchestrationV2Run | null = null;
   for (const run of runs) {
-    if (run.status === "queued" && run.queueHeld === true) continue;
+    if (isWaitingQueuedRun(run)) continue;
     if (latest === null || run.ordinal > latest.ordinal) latest = run;
   }
   return latest;

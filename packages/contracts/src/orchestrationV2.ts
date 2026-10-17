@@ -517,6 +517,9 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
+const ORCHESTRATION_V2_MESSAGE_DELAY_MIN_MS = 60_000;
+const ORCHESTRATION_V2_MESSAGE_DELAY_MAX_MS = 60 * 60_000;
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
@@ -530,6 +533,8 @@ export const OrchestrationV2Run = Schema.Struct({
   status: OrchestrationV2RunStatus,
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   queueHeld: Schema.optional(Schema.Boolean),
+  // A scheduled send waits in the queue until this time; release clears it.
+  releaseAt: Schema.optional(Schema.DateTimeUtc),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1200,6 +1205,20 @@ export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedErro
 ) {
   override get message(): string {
     return `Rollback target ${this.target} is unavailable for thread ${this.threadId}.`;
+  }
+}
+
+export class OrchestrationV2DelayedMessageUnsupportedError extends Schema.TaggedError<OrchestrationV2DelayedMessageUnsupportedError>()(
+  "OrchestrationV2DelayedMessageUnsupportedError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals(["server", "thread_launch"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "server"
+      ? "This environment cannot schedule messages. Update it to send later."
+      : "The first message of a new thread or worktree cannot be scheduled.";
   }
 }
 
@@ -1954,6 +1973,7 @@ export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => (
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   workStartedAt: Schema.optional(Schema.DateTimeUtcFromString),
+  releaseAt: Schema.optional(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2RunJson = typeof OrchestrationV2RunJson.Type;
 
@@ -2774,6 +2794,15 @@ export const OrchestrationV2Command = Schema.Union([
     manualContinuationOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
+    // Queues the message until this long after the server accepts it.
+    delayMs: Schema.optional(
+      Schema.Int.check(
+        Schema.isBetween({
+          minimum: ORCHESTRATION_V2_MESSAGE_DELAY_MIN_MS,
+          maximum: ORCHESTRATION_V2_MESSAGE_DELAY_MAX_MS,
+        }),
+      ),
+    ),
     delegatedCompletion: Schema.optional(
       Schema.Struct({
         parentRunId: RunId,
@@ -2860,6 +2889,12 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.release"),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,

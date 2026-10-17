@@ -246,6 +246,12 @@ it("waits for nested work and retains the report across monitor acknowledgements
   });
   assert.equal(held.state, "result_available");
   assert.equal(held.resultRun?.id, cancelled.id);
+  const scheduled = delegatedTaskProgress({
+    ...projection,
+    runs: [cancelled, { ...pending, releaseAt: DateTime.makeUnsafe("2026-07-24T10:30:00.000Z") }],
+  });
+  assert.equal(scheduled.state, "result_available");
+  assert.equal(scheduled.resultRun?.id, cancelled.id);
   const report = { ...pending, status: "completed" as const, startedAt: parentCreatedAt };
   const monitor = { ...report, id: RunId.make("monitor"), ordinal: 3 };
   const artifacts = makeSubagentConversationArtifacts({

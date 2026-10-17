@@ -153,6 +153,12 @@ export type ProjectionRecoveryKind =
   | "subagent-results"
   | "delegated-completions";
 
+export interface ProjectionDueScheduledRun {
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly releaseAt: DateTime.Utc;
+}
+
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
@@ -513,6 +519,9 @@ export interface ProjectionStoreV2Shape {
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly getDueScheduledRuns: (
+    now: DateTime.Utc,
+  ) => Effect.Effect<ReadonlyArray<ProjectionDueScheduledRun>, ProjectionStoreV2Error>;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
@@ -1476,8 +1485,18 @@ export function threadShellFromProjection(
             DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
         )[0] ?? null,
     );
+  // A scheduled send has not been sent yet. Counting it would present an idle
+  // thread as starting a turn until the release.
+  const scheduledRunIds = new Set(
+    projection.runs
+      .filter((run) => run.status === "queued" && run.releaseAt !== undefined)
+      .map((run) => run.id),
+  );
   const userMessages = projection.messages
-    .filter((message) => message.role === "user")
+    .filter(
+      (message) =>
+        message.role === "user" && (message.runId === null || !scheduledRunIds.has(message.runId)),
+    )
     .toSorted(
       (left, right) =>
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -3684,7 +3703,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     -- The original task still waits for the latest unheld work.
                     (SELECT status FROM orchestration_v2_projection_runs
                      WHERE thread_id = child.thread_id
-                       AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
+                       AND NOT (status = 'queued' AND (
+                         json_extract(payload_json, '$.queueHeld') IS 1
+                         OR json_extract(payload_json, '$.releaseAt') IS NOT NULL
+                       ))
                      ORDER BY ordinal DESC LIMIT 1
                     ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                     AND NOT EXISTS (
@@ -4795,7 +4817,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT 1 AS ready FROM orchestration_v2_projection_threads AS thread
           WHERE thread.thread_id = ${threadId} AND thread.archived_at IS NULL AND thread.deleted_at IS NULL
             AND EXISTS (SELECT 1 FROM orchestration_v2_projection_runs
-              WHERE thread_id = ${threadId} AND status = 'queued')
+              WHERE thread_id = ${threadId} AND status = 'queued'
+                AND json_extract(payload_json, '$.releaseAt') IS NULL)
             AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs
               WHERE thread_id = ${threadId}
                 AND (status IN ('preparing', 'starting', 'running', 'waiting')
@@ -4804,6 +4827,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getDueScheduledRuns = Effect.fn("ProjectionStore.getDueScheduledRuns")(
+      function* (now: DateTime.Utc) {
+        const rows = yield* sql<{
+          readonly thread_id: string;
+          readonly run_id: string;
+          readonly release_at: string;
+        }>`
+          SELECT run.thread_id, run.run_id,
+            json_extract(run.payload_json, '$.releaseAt') AS release_at
+          FROM orchestration_v2_projection_runs AS run
+          CROSS JOIN orchestration_v2_projection_threads AS thread
+            ON thread.thread_id = run.thread_id
+          WHERE run.status = 'queued'
+            AND json_extract(run.payload_json, '$.releaseAt') <= ${DateTime.formatIso(now)}
+            AND thread.archived_at IS NULL AND thread.deleted_at IS NULL
+          ORDER BY release_at ASC, run.run_id ASC
+        `;
+        return rows.map((row): ProjectionDueScheduledRun => ({
+          threadId: ThreadId.make(row.thread_id),
+          runId: RunId.make(row.run_id),
+          releaseAt: DateTime.makeUnsafe(row.release_at),
+        }));
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
 
     const getMessageCount: ProjectionStoreV2Shape["getMessageCount"] = (threadId) =>
       sql<{
@@ -5364,6 +5413,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
                   AND message.role = 'user'
+                  -- Matches the in-memory shell: a scheduled send is not sent yet.
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs scheduled
+                    WHERE scheduled.run_id = message.run_id
+                      AND scheduled.status = 'queued'
+                      AND json_extract(scheduled.payload_json, '$.releaseAt') IS NOT NULL
+                  )
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_message_at,
@@ -5373,6 +5429,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE message.thread_id = t.thread_id
                   AND message.role = 'user'
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs scheduled
+                    WHERE scheduled.run_id = message.run_id
+                      AND scheduled.status = 'queued'
+                      AND json_extract(scheduled.payload_json, '$.releaseAt') IS NOT NULL
+                  )
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at,
@@ -5411,7 +5473,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE candidate.thread_id = t.thread_id
                 AND NOT (
                   candidate.status = 'queued'
-                  AND json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                  AND (
+                    json_extract(candidate.payload_json, '$.queueHeld') IS 1
+                    OR json_extract(candidate.payload_json, '$.releaseAt') IS NOT NULL
+                  )
                 )
               ORDER BY candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1
@@ -5596,6 +5661,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs scheduled
+                    WHERE scheduled.run_id = message.run_id
+                      AND scheduled.status = 'queued'
+                      AND json_extract(scheduled.payload_json, '$.releaseAt') IS NOT NULL
+                  )
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_message_at,
@@ -5604,6 +5675,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
                   AND json_extract(message.payload_json, '$.createdBy') = 'user'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs scheduled
+                    WHERE scheduled.run_id = message.run_id
+                      AND scheduled.status = 'queued'
+                      AND json_extract(scheduled.payload_json, '$.releaseAt') IS NOT NULL
+                  )
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at
@@ -6081,6 +6158,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext,
       getRunMessage,
       canStartQueuedRun,
+      getDueScheduledRuns,
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
       isNodeStored,
@@ -6609,7 +6687,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           return (
             projection.thread.archivedAt === null &&
             projection.thread.deletedAt === null &&
-            projection.runs.some((run) => run.status === "queued") &&
+            projection.runs.some((run) => run.status === "queued" && run.releaseAt === undefined) &&
             !projection.runs.some(
               (run) =>
                 run.status === "preparing" ||
@@ -6620,6 +6698,28 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             )
           );
         }),
+      getDueScheduledRuns: (now) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .filter(({ thread }) => thread.archivedAt === null && thread.deletedAt === null)
+              .flatMap(({ runs }) =>
+                runs.flatMap((run): ReadonlyArray<ProjectionDueScheduledRun> =>
+                  run.status === "queued" &&
+                  run.releaseAt !== undefined &&
+                  DateTime.toEpochMillis(run.releaseAt) <= DateTime.toEpochMillis(now)
+                    ? [{ threadId: run.threadId, runId: run.id, releaseAt: run.releaseAt }]
+                    : [],
+                ),
+              )
+              .toSorted(
+                (left, right) =>
+                  DateTime.toEpochMillis(left.releaseAt) -
+                    DateTime.toEpochMillis(right.releaseAt) ||
+                  left.runId.localeCompare(right.runId),
+              ),
+          ),
+        ),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
           const { projections: existing, providerThreadInstanceIds } = yield* Ref.get(replayState);

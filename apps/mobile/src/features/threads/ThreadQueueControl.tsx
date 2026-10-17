@@ -235,6 +235,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isEditing: editing?.runId === run.id,
           queuedCount: queuedRuns.length,
           text,
+          releaseAt: run.releaseAt,
         });
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
@@ -394,7 +395,12 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         Editing
                       </Text>
                     ) : null}
-                    {workflow?.canPromoteToSteer ? (
+                    {controls.releaseLabel !== null ? (
+                      <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">
+                        {controls.releaseLabel}
+                      </Text>
+                    ) : null}
+                    {workflow?.canPromoteToSteer && controls.releaseLabel === null ? (
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Steer with message ${index + 1} now`}

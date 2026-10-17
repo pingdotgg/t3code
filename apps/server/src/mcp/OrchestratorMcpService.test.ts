@@ -2171,3 +2171,25 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
   });
 });
+
+describe("hasPendingChildRuns", () => {
+  const delegatedRun = { id: RunId.make("run:delegated"), ordinal: 1, status: "completed" };
+  const pendingWith = (followup: Record<string, unknown>) =>
+    OrchestratorMcpService.hasPendingChildRuns(
+      {
+        runs: [delegatedRun, { id: RunId.make("run:followup"), ordinal: 2, ...followup }],
+      } as unknown as Pick<OrchestrationV2ThreadProjection, "runs">,
+      delegatedRun as unknown as OrchestrationV2ThreadProjection["runs"][number],
+    );
+
+  it("leaves a completed task settled while its follow-up waits to be sent", () => {
+    assert.isTrue(pendingWith({ status: "queued" }));
+    assert.isFalse(pendingWith({ status: "queued", queueHeld: true }));
+    assert.isFalse(
+      pendingWith({
+        status: "queued",
+        releaseAt: DateTime.makeUnsafe("2026-10-16T12:05:00.000Z"),
+      }),
+    );
+  });
+});

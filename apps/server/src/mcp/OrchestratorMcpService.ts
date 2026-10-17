@@ -59,7 +59,7 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { isWaitingQueuedRun, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -389,7 +389,7 @@ export function hasPendingChildRuns(
   return childProjection.runs.some(
     (run) =>
       !ThreadManagementService.isTerminalRunStatus(run.status) &&
-      !(run.status === "queued" && run.queueHeld === true) &&
+      !isWaitingQueuedRun(run) &&
       (delegatedRun === undefined || run.ordinal > delegatedRun.ordinal),
   );
 }

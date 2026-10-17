@@ -430,6 +430,7 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
+import { canSendLater } from "./chat/sendLater";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
 import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
@@ -4726,6 +4727,21 @@ export default function ChatView(props: ChatViewProps) {
     requestedEnvMode: envMode,
     isGitRepo,
   });
+  // Mirrors the bootstrap decision in onSend: the first message of a draft, or
+  // of a thread still waiting for its new worktree, launches the thread instead
+  // of dispatching into it.
+  const sendNeedsThreadBootstrap =
+    isLocalDraftThread ||
+    (!sendQueuesBehindSetup &&
+      (!isServerThread || activeMessageCount === 0) &&
+      sendEnvMode === "worktree" &&
+      !activeThread?.worktreePath);
+  const canSendLaterInThread = canSendLater({
+    serverSupportsDelayedMessages: serverConfig?.environment.capabilities.delayedMessages === true,
+    isServerThread,
+    needsThreadBootstrap: sendNeedsThreadBootstrap,
+    sendQueuesBehindSetup,
+  });
   const localCheckoutBranchMismatch = isServerThread
     ? resolveLocalCheckoutBranchMismatch({
         effectiveEnvMode: envMode,
@@ -6040,6 +6056,7 @@ export default function ChatView(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    delayMs?: number,
   ) => {
     e?.preventDefault();
     if (
@@ -6049,6 +6066,12 @@ export default function ChatView(props: ChatViewProps) {
       !composerHasNonPromptContent &&
       isUsageLimitsCommand(promptRef.current)
     ) {
+      if (delayMs !== undefined) {
+        if (activeThread) {
+          setThreadError(activeThread.id, "Send later is not available for this message.");
+        }
+        return;
+      }
       if (openUsageLimits()) {
         promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
@@ -6109,9 +6132,15 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
+    const rejectDelayedSend = () =>
+      setThreadError(activeThread.id, "Send later is not available for this message.");
     if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
+        return;
+      }
+      if (delayMs !== undefined) {
+        rejectDelayedSend();
         return;
       }
       onAdvanceActivePendingUserInput();
@@ -6122,6 +6151,24 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const multipleModelSelections = sendCtx.multipleModelSelections;
+    // Re-read the capability: a reconnect to an older server since the menu
+    // rendered would drop the delay and send at once.
+    if (
+      delayMs !== undefined &&
+      (queuedRunEdit.isEditing ||
+        multipleModelSelections !== null ||
+        !canSendLater({
+          serverSupportsDelayedMessages:
+            appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+              .capabilities.delayedMessages === true,
+          isServerThread,
+          needsThreadBootstrap: sendNeedsThreadBootstrap,
+          sendQueuesBehindSetup,
+        }))
+    ) {
+      rejectDelayedSend();
+      return;
+    }
     if (
       multipleModelSelections !== null &&
       serverConfig?.environment.capabilities.requiredWorktreeBootstrap !== true
@@ -6217,6 +6264,10 @@ export default function ChatView(props: ChatViewProps) {
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
+      if (delayMs !== undefined) {
+        rejectDelayedSend();
+        return;
+      }
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
         toastManager.add(
           stackedThreadToast({
@@ -6270,6 +6321,10 @@ export default function ChatView(props: ChatViewProps) {
       composerImages.length === 0 &&
       composerFiles.length === 0
     ) {
+      if (delayMs !== undefined) {
+        rejectDelayedSend();
+        return;
+      }
       const followUp = resolvePlanFollowUpSubmission({
         draftText: promptForSend,
         planMarkdown: activeProposedPlan.planMarkdown,
@@ -6343,6 +6398,10 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
+      if (delayMs !== undefined) {
+        rejectDelayedSend();
+        return;
+      }
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -6432,10 +6491,20 @@ export default function ChatView(props: ChatViewProps) {
       resumeCompactionTokens !== null &&
       !keepFullHistory &&
       messageTextForSend.toLowerCase() !== "/compact";
-    const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
+    const isDelayedSend = delayMs !== undefined;
+    // The menu hides while a compaction is offered, but a choice made just
+    // before the offer appeared would compact now and hold only the message.
+    // Nothing is cleared or dispatched yet, so the draft stays put.
+    if (isDelayedSend && compactBeforeSend) {
+      rejectDelayedSend();
+      return;
+    }
+    const turnDispatchMode =
+      compactBeforeSend || sendQueuesBehindSetup || isDelayedSend ? "queue" : dispatchMode;
     const shouldQueueBehindActiveRun =
       compactBeforeSend ||
       sendQueuesBehindSetup ||
+      isDelayedSend ||
       (phase === "running" && dispatchMode === "queue");
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -7054,6 +7123,7 @@ export default function ChatView(props: ChatViewProps) {
           runtimeMode,
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
+          ...(delayMs === undefined ? {} : { delayMs }),
           ...(bootstrap ? { bootstrap } : {}),
           createdAt: messageCreatedAt,
         },
@@ -7621,7 +7691,13 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  const onComposerSendStable = useStableCallback(onSend);
+  const onComposerSend = (
+    e?: { preventDefault: () => void },
+    dispatchMode?: ComposerDispatchMode,
+    submissionIntent?: ComposerSubmissionIntent,
+    delayMs?: number,
+  ) => onSend(e, dispatchMode, submissionIntent, undefined, delayMs);
+  const onComposerSendStable = useStableCallback(onComposerSend);
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -8324,6 +8400,7 @@ export default function ChatView(props: ChatViewProps) {
                               promptHistoryMessages={timelineMessages}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
+                              canSendLater={canSendLaterInThread}
                               forceExpandedOnMobile={
                                 forceExpandedMobileComposer && isDraftHeroState
                               }

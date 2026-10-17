@@ -54,6 +54,34 @@ describe("threadQueueControlPresentation", () => {
     expect(busy.canSteer).toBe(false);
   });
 
+  it("shows when a delayed message sends and keeps it from being steered early", () => {
+    const delayed = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canReorder: true,
+      index: 0,
+      queuedCount: 1,
+      text: "Check the deploy",
+      releaseAt: "2026-10-17T15:42:00.000Z",
+    });
+    const released = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canReorder: true,
+      index: 0,
+      queuedCount: 1,
+      text: "Check the deploy",
+      releaseAt: null,
+    });
+
+    expect(delayed.releaseLabel).toMatch(/^Sends at /);
+    expect(delayed.canSteer).toBe(false);
+    expect(delayed.canEdit).toBe(true);
+    expect(delayed.canDismiss).toBe(true);
+    expect(released.releaseLabel).toBeNull();
+    expect(released.canSteer).toBe(true);
+  });
+
   it("keeps the row already open in the composer from being reopened or steered", () => {
     const editing = resolveThreadQueueRowControls({
       busy: false,

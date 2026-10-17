@@ -12,6 +12,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { SendLaterControl } from "./SendLaterControl";
 import {
   alternateComposerDispatchAction,
   resolveComposerDispatchMode,
@@ -45,7 +46,9 @@ interface ComposerPrimaryActionsProps {
   canResume?: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   isEditingQueuedMessage?: boolean;
+  canSendLater?: boolean;
   onSubmitMessage?: MouseEventHandler<HTMLButtonElement>;
+  onSendLater?: (delayMs: number) => void;
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -100,7 +103,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canResume = false,
   preserveComposerFocusOnPointerDown = false,
   isEditingQueuedMessage = false,
+  canSendLater = false,
   onSubmitMessage,
+  onSendLater,
   onResume,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -304,6 +309,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
         : submitLabel);
 
+  const isSubmitDisabled =
+    isSendBusy ||
+    isSendDisabled ||
+    isConnecting ||
+    isEnvironmentUnavailable ||
+    (!hasSendableContent && !showResume);
+
   const sendButton = (
     <button
       type={showResume ? "button" : "submit"}
@@ -315,13 +327,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       )}
       {...pointerFocusProps}
       onClick={showResume ? onResume : onSubmitMessage}
-      disabled={
-        isSendBusy ||
-        isSendDisabled ||
-        isConnecting ||
-        isEnvironmentUnavailable ||
-        (!hasSendableContent && !showResume)
-      }
+      disabled={isSubmitDisabled}
       aria-label={submitStatus ?? submitLabel}
     >
       {stageBackdropVariant ? (
@@ -357,7 +363,25 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       <TooltipPopup>{submitTooltip}</TooltipPopup>
     </Tooltip>
   );
-  if (compactTokens === null) return submit;
+  const sendLaterMenu =
+    canSendLater && onSendLater && !showResume && !isEditingQueuedMessage && !compactsBeforeSend ? (
+      <SendLaterControl
+        key="send-later"
+        canSend={canOperateThread && !isSubmitDisabled}
+        onPointerDown={pointerFocusProps?.onPointerDown}
+        onSendLater={onSendLater}
+      />
+    ) : null;
+
+  if (compactTokens === null) {
+    if (sendLaterMenu === null) return submit;
+    return (
+      <div data-chat-composer-send-later="true" className="flex items-center gap-1">
+        {sendLaterMenu}
+        {submit}
+      </div>
+    );
+  }
 
   return (
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
@@ -390,6 +414,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : `Next send compacts ${compactTokens} tokens first. Click to keep full history`}
         </TooltipPopup>
       </Tooltip>
+      {sendLaterMenu}
       {submit}
     </div>
   );

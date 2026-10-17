@@ -18,7 +18,7 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { isWaitingQueuedRun, runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
@@ -231,9 +231,7 @@ export function delegatedTaskProgress(projection: {
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  const active = workRuns.some(
-    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
-  );
+  const active = workRuns.some((run) => !terminal(run.status) && !isWaitingQueuedRun(run));
   const children =
     projection.subagents.some(
       (task) =>

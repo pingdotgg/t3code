@@ -1,12 +1,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import type {
-  ChatAttachment as ContractChatAttachment,
-  EnvironmentId,
-  MessageId,
-  RunId,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type ChatAttachment as ContractChatAttachment,
+  type EnvironmentId,
+  type MessageId,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   Clock3Icon,
@@ -18,14 +19,18 @@ import {
 import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
+import { useClientSettings } from "../../hooks/useSettings";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection } from "../../state/entities";
+import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { formatShortTimestamp } from "../../timestampFormat";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { firstSteerableQueuedRun, queuedRunReleaseIso } from "./sendLater";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
@@ -82,6 +87,9 @@ export function QueuedRunsControl({
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const release = useAtomCommand(threadEnvironment.releaseQueuedRun);
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -121,6 +129,7 @@ export function QueuedRunsControl({
       runId: run.id,
       messageId: run.userMessageId,
       serverIndex,
+      releaseIso: queuedRunReleaseIso(run),
       text,
       attachments,
       thumbnails: attachments
@@ -137,6 +146,7 @@ export function QueuedRunsControl({
       runId: null,
       messageId: null,
       serverIndex: null,
+      releaseIso: null,
       text: message.text,
       attachments: [] as ReadonlyArray<ContractChatAttachment>,
       thumbnails: (message.attachments ?? [])
@@ -183,7 +193,7 @@ export function QueuedRunsControl({
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
-      const next = queued[0];
+      const next = firstSteerableQueuedRun(queued);
       if (!next || !workflow?.canPromoteToSteer) return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
@@ -207,6 +217,17 @@ export function QueuedRunsControl({
   }));
 
   if (items.length === 0) return null;
+
+  const steerShortcutRunId = firstSteerableQueuedRun(queued)?.run.id ?? null;
+
+  const sendNow = async (runId: RunId) => {
+    setBusyRunId(runId);
+    await release({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId, runId },
+    });
+    setBusyRunId(null);
+  };
 
   const remove = async (runId: RunId) => {
     setBusyRunId(runId);
@@ -378,6 +399,11 @@ export function QueuedRunsControl({
                     </Tooltip>
                   </ComposerBanner.Content>
                   <ComposerBanner.Actions>
+                    {item.releaseIso !== null ? (
+                      <span className="shrink-0 whitespace-nowrap text-muted-foreground text-xs tabular-nums">
+                        Sends at {formatShortTimestamp(item.releaseIso, timestampFormat)}
+                      </span>
+                    ) : null}
                     {isEditing ? (
                       <Button
                         size="xs"
@@ -416,32 +442,45 @@ export function QueuedRunsControl({
                             {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger render={<span className="flex shrink-0" />}>
-                            <Button
-                              size="xs"
-                              variant="ghost-muted"
-                              disabled={
-                                item.runId === null ||
-                                busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
-                              }
-                              onClick={() => {
-                                if (item.runId !== null) {
-                                  void steer(item.runId);
+                        {item.releaseIso !== null ? (
+                          <Button
+                            size="xs"
+                            variant="ghost-muted"
+                            disabled={item.runId === null || busyRunId !== null || !canOperate}
+                            onClick={() => {
+                              if (item.runId !== null) void sendNow(item.runId);
+                            }}
+                          >
+                            Send now
+                          </Button>
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger render={<span className="flex shrink-0" />}>
+                              <Button
+                                size="xs"
+                                variant="ghost-muted"
+                                disabled={
+                                  item.runId === null ||
+                                  busyRunId !== null ||
+                                  !workflow?.canPromoteToSteer
                                 }
-                              }}
-                            >
-                              <CornerUpRightIcon />
-                              Steer
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipPopup>
-                            {activeRun === null
-                              ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
-                          </TooltipPopup>
-                        </Tooltip>
+                                onClick={() => {
+                                  if (item.runId !== null) {
+                                    void steer(item.runId);
+                                  }
+                                }}
+                              >
+                                <CornerUpRightIcon />
+                                Steer
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipPopup>
+                              {activeRun === null
+                                ? "There is no active run to steer"
+                                : `Send as a steer instead${item.runId === steerShortcutRunId && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                            </TooltipPopup>
+                          </Tooltip>
+                        )}
                         <Tooltip>
                           <TooltipTrigger
                             render={

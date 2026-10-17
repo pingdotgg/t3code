@@ -4,6 +4,7 @@ import {
   authScopeRequiredResponse,
   type EnvironmentId,
   type ClientGuardedRpcTag,
+  type ServerConfig,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -187,15 +188,36 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
   yield* guard.authorize(supervisor.target.environmentId, method, input);
 });
 
+/**
+ * `requireConfig` checks the config of the session that will carry this request. A separate
+ * capability read could see a different session if the environment reconnects in between.
+ */
 export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
->(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+  E = never,
+>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+  requireConfig?: (config: ServerConfig) => Effect.Effect<void, E>,
+) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   yield* Effect.annotateCurrentSpan({
     "environment.id": supervisor.target.environmentId,
     "rpc.method": tag,
   });
   const session = yield* currentSession();
+  if (requireConfig !== undefined) {
+    yield* session.initialConfig.pipe(
+      Effect.mapError(
+        (error) =>
+          new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: error.message,
+          }),
+      ),
+      Effect.flatMap(requireConfig),
+    );
+  }
   yield* authorizeRequest(tag, input);
   const observer = yield* EnvironmentRpcRequestObserver;
   const method = session.client[tag] as (
@@ -430,10 +452,14 @@ export function subscribe<TTag extends EnvironmentSubscriptionRpcTag>(
   return subscribeDynamic(tag, () => Effect.succeed(input), options);
 }
 
-export const request = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(
+export const request = <
+  TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>,
+  E = never,
+>(
   tag: TTag,
   input: EnvironmentRpcInput<TTag>,
-) => requestGuarded(tag, input);
+  requireConfig?: (config: ServerConfig) => Effect.Effect<void, E>,
+) => requestGuarded(tag, input, requireConfig);
 
 export const runStream = <
   TTag extends Exclude<EnvironmentStreamCommandRpcTag, ClientGuardedRpcTag>,

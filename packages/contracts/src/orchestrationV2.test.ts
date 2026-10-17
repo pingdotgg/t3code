@@ -29,6 +29,7 @@ import {
   OrchestrationV2Command,
   OrchestrationV2LimitRecoveryUpdate,
   OrchestrationV2DomainEvent,
+  OrchestrationV2DomainEventJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -1522,6 +1523,81 @@ describe("background work kinds from older or newer servers", () => {
         pendingBackgroundTasks: [{ taskId: "", kind: "command" }],
       }),
     ).toThrow();
+  });
+});
+
+describe("scheduled sends", () => {
+  const send = (delayMs: number) => ({
+    type: "message.dispatch",
+    createdBy: "user",
+    creationSource: "web",
+    commandId: "command-scheduled",
+    threadId: "thread-1",
+    messageId: "message-scheduled",
+    text: "later",
+    attachments: [],
+    dispatchMode: { type: "queue_after_active" },
+    delayMs,
+  });
+
+  it.each([60_000, 37 * 60_000, 60 * 60_000])("accepts a %dms delay", (delayMs) => {
+    expect(decodeOrchestrationV2Command(send(delayMs))).toMatchObject({ delayMs });
+  });
+
+  it.each([0, 59_999, 60 * 60_000 + 1, 90_000.5])("rejects a %dms delay", (delayMs) => {
+    expect(() => decodeOrchestrationV2Command(send(delayMs))).toThrow();
+  });
+
+  it("decodes Send now for a queued run", () => {
+    expect(
+      decodeOrchestrationV2Command({
+        type: "queued-run.release",
+        commandId: "command-release",
+        threadId: "thread-1",
+        runId: "run-1",
+      }),
+    ).toEqual({
+      type: "queued-run.release",
+      commandId: CommandId.make("command-release"),
+      threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
+    });
+  });
+
+  it("persists a run's release time through the stored event JSON", () => {
+    const codec = Schema.fromJsonString(OrchestrationV2DomainEventJson);
+    const releaseAt = DateTime.makeUnsafe("2026-04-20T00:05:00.000Z");
+    const event = decodeOrchestrationV2DomainEvent({
+      id: "event-scheduled",
+      type: "run.created",
+      threadId: "thread-1",
+      runId: "run-1",
+      occurredAt: now,
+      payload: {
+        id: "run-1",
+        threadId: "thread-1",
+        ordinal: 1,
+        providerInstanceId: "codex",
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        providerThreadId: "provider-thread-1",
+        userMessageId: "message-1",
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "queued",
+        releaseAt,
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+    const json = Schema.encodeSync(codec)(event);
+    expect(JSON.parse(json).payload.releaseAt).toBe("2026-04-20T00:05:00.000Z");
+    const decoded = Schema.decodeSync(codec)(json);
+    if (decoded.type !== "run.created")
+      throw new Error(`Expected run.created, received ${decoded.type}.`);
+    expect(decoded.payload.releaseAt).toEqual(releaseAt);
   });
 });
 
