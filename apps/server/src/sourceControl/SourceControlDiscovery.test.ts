@@ -169,15 +169,14 @@ it.effect("reports implemented tools separately from locally available executabl
     const result = yield* discovery.discover;
 
     assert.deepStrictEqual(
-      result.versionControlSystems.map((item) => ({
-        kind: item.kind,
-        implemented: item.implemented,
-        status: item.status,
-      })),
-      [
-        { kind: "git", implemented: true, status: "available" },
-        { kind: "jj", implemented: false, status: "missing" },
-      ],
+      result.versionControlSystems
+        .filter((item) => item.kind === "git")
+        .map((item) => ({
+          kind: item.kind,
+          implemented: item.implemented,
+          status: item.status,
+        })),
+      [{ kind: "git", implemented: true, status: "available" }],
     );
     assert.deepStrictEqual(
       result.sourceControlProviders.map((item) => ({

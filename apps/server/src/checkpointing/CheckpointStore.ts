@@ -6,7 +6,6 @@ import * as Layer from "effect/Layer";
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import { JJ_REPOSITORY_DETECTION_ENABLED } from "../vcs/JjRepo.ts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
@@ -84,10 +83,7 @@ export const make = Effect.gen(function* () {
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* vcsRegistry.resolve({
-      cwd,
-      ...(!JJ_REPOSITORY_DETECTION_ENABLED ? { requestedKind: "git" as const } : {}),
-    });
+    const handle = yield* vcsRegistry.resolve({ cwd });
     if (!handle.driver.checkpoints) {
       return yield* new VcsUnsupportedOperationError({
         operation,
@@ -101,10 +97,7 @@ export const make = Effect.gen(function* () {
   const supportsCheckpoints: CheckpointStore["Service"]["supportsCheckpoints"] = Effect.fn(
     "CheckpointStore.supportsCheckpoints",
   )(function* (cwd: string) {
-    const handle = yield* vcsRegistry.detect({
-      cwd,
-      ...(!JJ_REPOSITORY_DETECTION_ENABLED ? { requestedKind: "git" as const } : {}),
-    });
+    const handle = yield* vcsRegistry.detect({ cwd });
     if (!handle?.driver.checkpoints) {
       return false;
     }

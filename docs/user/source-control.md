@@ -137,8 +137,7 @@ make your first commit before pushing.
 
 ## Create a pull request
 
-Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
-messages, review titles, and descriptions from your changes.
+Use a thread's source control actions to commit, push, and create a pull request. T3 Code can generate commit messages, review titles, and descriptions from your changes. In a Jujutsu workspace, these actions use jj while keeping the same hosting integration and writing settings.
 
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to
@@ -241,6 +240,46 @@ server, but the host's own site will not show them, and the count reads **viewed
 
 On mobile, open a changed file and mark it viewed from its header. Viewed files collapse,
 and their marks follow the same rules as on web and desktop.
+
+## Jujutsu repositories
+
+T3 Code supports [Jujutsu](https://jj-vcs.github.io/jj/) repositories colocated with Git. Install Jujutsu 0.46.0 or newer on the machine running the T3 Code server, including the remote machine when using a remote environment. Git is still required for the shared object store and diff rendering.
+
+jj manages changes, bookmarks and workspaces. Hosting integrations use the colocated Git store and the same accounts, tokens and writing settings as Git projects. Adding or cloning a project does not automatically convert a Git repository to jj.
+
+Terms follow the repository: bookmarks instead of branches, workspaces instead of worktrees, changes instead of commits. New isolated thread environments use jj workspaces, with the same submodule initialization settings as Git worktrees. Existing Git worktrees remain Git checkouts. Idle jj workspaces use the same configured cleanup rules as Git worktrees, with stronger safety checks: working-copy changes, untracked files, conflicts, and commits not reachable from a bookmark or remote bookmark prevent cleanup. Cleanup keeps jj changes and unbookmarked commits.
+
+Checkpoints snapshot the working-copy change without committing it or moving bookmarks. Turn diffs use the same review surface and attribution pipeline; restoring a turn still restores the full saved workspace, not just the files shown in its diff. Restore uses `jj restore`, so `jj undo` can undo it.
+
+### Choosing the version control system
+
+Without an explicit selection, T3 Code uses the nearest `.jj` or `.git` marker. When both are at the same root, jj takes precedence. A nearer Git checkout inside a jj repository still uses Git.
+
+To pin a project, add `.t3code/vcs.json` in its root:
+
+```json
+{ "vcs": { "kind": "git" } }
+```
+
+Use `"jj"` to select Jujutsu, or delete the file to go back to detection. This selects the driver, not a repository conversion. **New project** and cloning still create Git repositories.
+
+### Commit, push and pull
+
+Committing a change runs `jj commit` and advances the selected bookmark to the committed work. A normal working-copy change does not need a bookmark, but pushing does. Create a bookmark before pushing, or use the action that creates one with your change. If the agent already committed the work and `@` is empty, T3 Code can advance the bookmark without creating another empty commit.
+
+Pull fetches the remote and only fast-forwards a bookmark when there is no local work to reconcile. If the bookmark has diverged or the working-copy change is non-empty, rebase in jj instead. T3 Code does not silently rebase local work as part of pulling.
+
+### What is different under Jujutsu
+
+- **Git hooks do not run** for commits made through T3 Code. Hooks that read the Git index, such as
+  `lint-staged` or a staged-diff format check, see nothing under Jujutsu, so T3 Code skips them
+  rather than reporting a hook run that did nothing. Run them yourself if you depend on them.
+- A change with conflicts cannot be pushed until you resolve it, and its diff shows one side of each
+  conflicted file rather than the markers on disk.
+- Jujutsu refuses to snapshot a new file above `snapshot.max-new-file-size`, 1 MiB by default. That
+  file is outside checkpoints, so reverting a turn leaves it on disk. Raise the limit in your own
+  Jujutsu config if you want those files tracked.
+- A repository without a reachable colocated Git store, a missing `jj`, or a version below 0.46.0 leaves source control actions disabled with the reason instead of falling back to Git. Checkpoints are skipped while jj is unavailable. Install or upgrade jj on the server, or use a Git-colocated repository.
 
 ## Troubleshooting
 

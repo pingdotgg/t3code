@@ -7,7 +7,7 @@ import type * as Path from "effect/Path";
 
 import { type VcsError, VcsRepositoryDetectionError } from "@t3tools/contracts";
 
-export const JJ_REPOSITORY_DETECTION_ENABLED = false;
+export const JJ_REPOSITORY_DETECTION_ENABLED = true;
 
 export type VcsMarker = "jj" | "git";
 
