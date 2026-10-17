@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { observeSelectionActions, resolveSelectionActionPosition } from "./selectionActions";
+import {
+  isSelectionRectVisible,
+  observeSelectionActions,
+  resolveSelectionActionPosition,
+} from "./selectionActions";
 
 function event(type: string, values: Record<string, unknown> = {}) {
   return Object.assign(new Event(type, { cancelable: true }), values);
 }
 
-function createSelectionSurface({ interactiveActions = false } = {}) {
+function createSelectionSurface({ interactiveActions = false, restoreAfterScroll = false } = {}) {
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   const view = Object.assign(new EventTarget(), {
@@ -42,6 +46,7 @@ function createSelectionSurface({ interactiveActions = false } = {}) {
     ...(interactiveActions
       ? { getActionElement: () => actionElement as unknown as HTMLElement }
       : {}),
+    restoreAfterScroll,
     onSelection,
     onDismiss,
   });
@@ -294,6 +299,58 @@ describe("selection action gestures", () => {
     expect(surface.onSelection).toHaveBeenCalledOnce();
   });
 
+  it("re-reads the selection once scrolling settles when restoring after scroll", () => {
+    const surface = createSelectionSurface({ restoreAfterScroll: true });
+    surface.down();
+    surface.up({ x: 420, y: 310 });
+    surface.flush();
+    surface.onDismiss.mockClear();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush(100);
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush(100);
+    expect(surface.onDismiss).toHaveBeenCalledWith("cancel");
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+    surface.flush(50);
+    expect(surface.onSelection).toHaveBeenLastCalledWith(null);
+    expect(surface.onSelection).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps an Escape dismissal through a later scroll when restoring after scroll", () => {
+    const surface = createSelectionSurface({ restoreAfterScroll: true });
+    surface.down();
+    surface.up();
+    surface.flush();
+    surface.key("Escape");
+    surface.element.dispatchEvent(event("scroll"));
+    surface.change();
+    surface.flush(1000);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an Escape during a settling scroll dismissed when restoring after scroll", () => {
+    const surface = createSelectionSurface({ restoreAfterScroll: true });
+    surface.down();
+    surface.up();
+    surface.flush();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.key("Escape");
+    surface.change();
+    surface.flush(1000);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+  });
+
+  it("teardown cancels a pending scroll restore", () => {
+    const surface = createSelectionSurface({ restoreAfterScroll: true });
+    surface.down();
+    surface.up();
+    surface.flush();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.actions.dispose();
+    surface.flush(1000);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+  });
+
   it("cancels a queued animation frame when a new press supersedes the release", () => {
     const surface = createSelectionSurface();
     surface.down();
@@ -384,6 +441,39 @@ describe("interactive selection actions", () => {
     surface.up({ x: 520, y: 320 });
     surface.flush();
     expect(surface.onSelection).toHaveBeenCalledWith({ x: 520, y: 320 });
+  });
+});
+
+describe("selection visibility", () => {
+  const rect = (left: number, top: number, right: number, bottom: number) => ({
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+  });
+  const timeline = rect(0, 0, 800, 600);
+  const codeBlock = rect(100, 200, 400, 260);
+
+  it("shows a selection inside every clipping box", () => {
+    expect(isSelectionRectVisible(rect(150, 210, 220, 226), [timeline, codeBlock])).toBe(true);
+  });
+
+  it.each([
+    ["scrolled left out of a code block", rect(40, 210, 90, 226)],
+    ["scrolled right out of a code block", rect(420, 210, 480, 226)],
+    ["touching the code block's edge", rect(60, 210, 100, 226)],
+  ])("hides a selection %s", (_, selection) => {
+    expect(isSelectionRectVisible(selection, [timeline, codeBlock])).toBe(false);
+  });
+
+  it("hides a selection above the timeline or with no width", () => {
+    expect(isSelectionRectVisible(rect(150, -40, 220, -24), [timeline])).toBe(false);
+    expect(isSelectionRectVisible(rect(150, 210, 150, 226), [timeline])).toBe(false);
+  });
+
+  it("shows a selection that is only partly clipped", () => {
+    expect(isSelectionRectVisible(rect(380, 210, 460, 226), [timeline, codeBlock])).toBe(true);
   });
 });
 
