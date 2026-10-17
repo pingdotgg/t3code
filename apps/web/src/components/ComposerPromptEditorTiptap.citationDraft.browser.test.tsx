@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
@@ -9,22 +7,15 @@ import { act, createRef, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { page, userEvent } from "vite-plus/test/browser";
 
-vi.mock("./chat/AssistantCitationSource", () => ({
-  observeAssistantCitationCommentSource: () => () => {},
-}));
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => () => {},
-  Link: ({ children }: { children: ReactNode }) => <a>{children}</a>,
-}));
-vi.mock("./ui/popover", () => ({
-  Popover: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PopoverTrigger: ({ "aria-label": label }: { "aria-label": string }) => (
-    <button aria-label={label} />
-  ),
-  PopoverPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
-  PopoverClose: ({ children }: { children: ReactNode }) => <>{children}</>,
+import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+
+// No router is mounted; the citation chip only needs navigation to exist.
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useNavigate: () => async () => {},
+  Link: (({ children }: { children: ReactNode }) => <a>{children}</a>) as never,
 }));
 
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
@@ -46,7 +37,6 @@ let root: Root;
 let container: HTMLDivElement;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -55,7 +45,6 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  vi.unstubAllGlobals();
 });
 
 function Composer({
@@ -69,6 +58,15 @@ function Composer({
   const [answer, setAnswer] = useState("");
   return (
     <>
+      <div data-assistant-citation-viewport="">
+        <p
+          data-assistant-citation-source={citation.messageId}
+          data-assistant-citation-environment={citation.environmentId}
+          data-assistant-citation-thread={citation.threadId}
+        >
+          hello world
+        </p>
+      </div>
       <output data-prompt={prompt} data-answer={answer} />
       <ComposerPromptEditor
         editorRef={editorRef}
@@ -93,22 +91,21 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   const drafts = () => container.querySelector("output")?.dataset;
 
   await act(async () => root.render(<Composer question={false} editorRef={editorRef} />));
+  const sourceAnchor = findAssistantCitationSourceAnchor(document, citation);
+  if (!sourceAnchor) throw new Error("Citation source did not resolve");
   await act(async () =>
     editorRef.current?.requestCitationComment({
       previousValue: "See ",
       value: promptBefore,
       citationStart: "See ".length,
-      sourceAnchor: {} as AssistantCitationSourceAnchor,
+      sourceAnchor,
       insertedSpaces: { before: false, after: true },
     }),
   );
-  const textarea = container.querySelector("textarea");
-  if (!textarea) throw new Error("Comment editor did not open");
-  await act(async () => {
-    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-    setValue?.call(textarea, "check this");
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+  const comment = page.getByLabelText("Comment on selected text");
+  await expect.element(comment).toBeVisible();
+  await comment.click();
+  await userEvent.keyboard("check this");
 
   await act(async () => root.render(<Composer question editorRef={editorRef} />));
   expect(drafts()?.answer).toBe("");
@@ -117,5 +114,5 @@ it("keeps an unsaved citation comment when a question takes the composer", async
   expect(drafts()?.prompt).toBe(
     `See ${serializeAssistantCitation(withAssistantCitationComment(citation, "check this"))} `,
   );
-  expect(container.querySelector('[aria-label="Edit citation comment"]')).not.toBeNull();
+  await expect.element(page.getByLabelText("Edit citation comment")).toBeInTheDocument();
 });

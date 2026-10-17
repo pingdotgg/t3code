@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -14,28 +13,28 @@ const state = vi.hoisted(() => ({
   scope: { search: {}, environmentId: null } as ScopeState,
 }));
 
-vi.mock("@tanstack/react-router", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
-  createFileRoute: () => (options: { component: () => ReactNode }) => ({
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  createFileRoute: (() => (options: { component: () => ReactNode }) => ({
     options,
     useSearch: () => state.scope.search,
     useNavigate: () => vi.fn(),
-  }),
-  useLocation: (options?: { select: (location: unknown) => unknown }) => {
+  })) as never,
+  useLocation: ((options?: { select: (location: unknown) => unknown }) => {
     const location = { pathname: state.pathname, hash: "", state: {} };
     return options ? options.select(location) : location;
-  },
-  Outlet: () => <StatefulContent />,
-  redirect: vi.fn(),
+  }) as never,
+  Outlet: (() => <StatefulContent />) as never,
 }));
-vi.mock("./SettingsScopeContext", async () => {
+vi.mock(import("./SettingsScopeContext"), async (original) => {
   const { createContext, useContext } = await import("react");
   const Scope = createContext<ScopeState>(state.scope);
   return {
-    SettingsScopeProvider: ({ children }: { children: ReactNode }) => (
+    ...(await original()),
+    SettingsScopeProvider: (({ children }: { children: ReactNode }) => (
       <Scope value={state.scope}>{children}</Scope>
-    ),
-    useSettingsScope: () => {
+    )) as never,
+    useSettingsScope: (() => {
       const { search, environmentId } = useContext(Scope);
       return {
         search,
@@ -43,23 +42,37 @@ vi.mock("./SettingsScopeContext", async () => {
         environment: environmentId ? { environmentId } : null,
         connectedEnvironments: environmentId ? [{}] : [],
       };
-    },
+    }) as never,
   };
 });
-vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
-vi.mock("../ui/sidebar", () => ({
-  SidebarInset: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock(import("../../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironments: (() => ({ environments: [] })) as never,
 }));
-vi.mock("../WorkspacePageHeader", () => ({
-  WorkspacePageHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock(import("../ui/sidebar"), async (original) => ({
+  ...(await original()),
+  SidebarInset: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock("./settingsLayout", () => ({
-  SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+vi.mock(import("../WorkspacePageHeader"), async (original) => ({
+  ...(await original()),
+  WorkspacePageHeader: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
-vi.mock("./SettingsBreadcrumb", () => ({ SettingsBreadcrumb: () => null }));
-vi.mock("../sidebar/mainAppLocation", () => ({ useNavigateToMainApp: () => vi.fn() }));
-vi.mock("../../hooks/useNavigateBack", () => ({ useEscapeToGoBack: () => undefined }));
-vi.mock("./SettingsPanels", () => ({ useSettingsRestore: () => ({ changedSettingLabels: [] }) }));
+vi.mock(import("./SettingsBreadcrumb"), async (original) => ({
+  ...(await original()),
+  SettingsBreadcrumb: (() => null) as never,
+}));
+vi.mock(import("../sidebar/mainAppLocation"), async (original) => ({
+  ...(await original()),
+  useNavigateToMainApp: () => vi.fn(),
+}));
+vi.mock(import("../../hooks/useNavigateBack"), async (original) => ({
+  ...(await original()),
+  useEscapeToGoBack: () => undefined,
+}));
+vi.mock(import("./SettingsPanels"), async (original) => ({
+  ...(await original()),
+  useSettingsRestore: (() => ({ changedSettingLabels: [] })) as never,
+}));
 
 import { Route } from "../../routes/settings";
 
@@ -86,7 +99,6 @@ function retainedValue() {
 }
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -94,7 +106,6 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  vi.unstubAllGlobals();
 });
 
 const first = { search: { machine: "first", project: "one" }, environmentId: "first" };

@@ -1,11 +1,12 @@
-// @vitest-environment jsdom
-
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 import { htmlRenderTheme, HTML_RENDER_DEFAULT_FONTS } from "@t3tools/shared/htmlRender";
 import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+
+import "~/index.css";
 
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
@@ -17,11 +18,16 @@ const { cachedUrl, refresh, showError, openLink, openChangeRequestLink } = vi.ho
   openLink: vi.fn(),
   openChangeRequestLink: vi.fn(),
 }));
-vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => openLink }));
-vi.mock("~/lib/openPullRequestLink", () => ({
+vi.mock(import("~/browser/useOpenLink"), async (original) => ({
+  ...(await original()),
+  useOpenLink: () => openLink,
+}));
+vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
+  ...(await original()),
   useOpenChangeRequestLink: () => openChangeRequestLink,
 }));
-vi.mock("~/assets/assetUrls", () => ({
+vi.mock(import("~/assets/assetUrls"), async (original) => ({
+  ...(await original()),
   useAssetUrlState: () => ({
     _tag: "Success",
     url: "https://environment.test/original.html",
@@ -29,9 +35,12 @@ vi.mock("~/assets/assetUrls", () => ({
   }),
   useAssetUrlRefresh: () => refresh,
 }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: showError } }));
-
-vi.mock("~/hooks/useHtmlRenderTheme", () => ({
+vi.mock(import("../ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: showError } };
+});
+vi.mock(import("~/hooks/useHtmlRenderTheme"), async (original) => ({
+  ...(await original()),
   useHtmlRenderTheme: () =>
     htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_DEFAULT_FONTS),
 }));
@@ -41,15 +50,6 @@ let container: HTMLDivElement;
 const onClose = vi.fn();
 
 beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    },
-  );
   refresh.mockReset();
   cachedUrl.lifeMs = 60 * 60_000;
   openLink.mockReset().mockResolvedValue(undefined);
@@ -73,23 +73,25 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(() => root.unmount());
   container.remove();
-  vi.unstubAllGlobals();
 });
 
+function button(label: string) {
+  return page.getByRole("button", { name: label, exact: true });
+}
+
+// A trusted click, so the page also gets the user activation the link handler requires.
 async function click(label: string) {
-  const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  expect(button).not.toBeNull();
-  await act(() => button!.click());
+  await button(label).click();
 }
 
 it("zooms the loaded page within bounds and resets without reloading it", async () => {
   const frame = document.querySelector("iframe")!;
   const src = frame.src;
-  for (let step = 0; step < 6; step += 1) await click("Zoom in");
-  expect(document.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')!.disabled).toBe(true);
+  for (let step = 0; step < 4; step += 1) await click("Zoom in");
+  await expect.element(button("Zoom in")).toBeDisabled();
   expect(frame.parentElement!.style.getPropertyValue("zoom")).toBe("2");
-  for (let step = 0; step < 8; step += 1) await click("Zoom out");
-  expect(document.querySelector<HTMLButtonElement>('[aria-label="Zoom out"]')!.disabled).toBe(true);
+  for (let step = 0; step < 6; step += 1) await click("Zoom out");
+  await expect.element(button("Zoom out")).toBeDisabled();
   expect(frame.parentElement!.style.getPropertyValue("zoom")).toBe("0.5");
   await click("Reset zoom");
   expect(frame.parentElement!.style.getPropertyValue("zoom")).toBe("1");
@@ -102,11 +104,7 @@ it("closes with the close button or Escape", async () => {
   await click("Close");
   expect(onClose).toHaveBeenCalledOnce();
   onClose.mockClear();
-  await act(() => {
-    document.activeElement?.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-    );
-  });
+  await userEvent.keyboard("{Escape}");
   expect(onClose).toHaveBeenCalledOnce();
 });
 

@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { RegistryProvider } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -16,20 +15,30 @@ const state = vi.hoisted(() => ({
   report: null as StorageCleanupReport | null,
 }));
 
-vi.mock("../../state/server", async () => {
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
   const { Atom } = await import("effect/reactivity");
   const report = Atom.make(() => ({ _tag: "Success", value: state.report, waiting: false }));
   const allowed = Atom.make(true);
   return {
+    ...actual,
     serverEnvironment: {
-      storageCleanupReport: () => report,
-      runStorageCleanup: { permissionAtom: () => allowed },
+      ...actual.serverEnvironment,
+      storageCleanupReport: (() => report) as never,
+      runStorageCleanup: {
+        ...actual.serverEnvironment.runStorageCleanup,
+        permissionAtom: () => allowed,
+      },
     },
   };
 });
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
-vi.mock("./SettingsScopeContext", () => ({
-  useSettingsScope: () => {
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => state.run) as never,
+}));
+vi.mock(import("./SettingsScopeContext"), async (original) => ({
+  ...(await original()),
+  useSettingsScope: (() => {
     const environment = {
       environmentId: "env",
       label: "Machine",
@@ -51,38 +60,34 @@ vi.mock("./SettingsScopeContext", () => ({
       targets: [],
       target: null,
     };
-  },
+  }) as never,
 }));
-vi.mock("./useScopedSettings", () => ({
-  useScopedSettings: () => state.settings,
+vi.mock(import("./useScopedSettings"), async (original) => ({
+  ...(await original()),
+  useScopedSettings: (() => state.settings) as never,
   useScopedSettingsMixed: () => false,
   useUpdateScopedSettings: () => vi.fn(),
   useClearScopedSettings: () => vi.fn(),
 }));
-vi.mock("./settingsLayout", () => ({
-  SettingsPageContainer: ({ children }: { children: ReactNode }) => children,
-  SettingsSection: ({ children }: { children: ReactNode }) => children,
-  SettingsRow: ({
-    title,
-    description,
-    control,
-  }: {
-    title: ReactNode;
-    description: ReactNode;
-    control: ReactNode;
-  }) => (
+// The real page container needs a router and the real row reads write permission and
+// overrides from live environment state; this suite is about the cleanup panel.
+vi.mock(import("./settingsLayout"), async (original) => ({
+  ...(await original()),
+  SettingsPageContainer: (({ children }: { children: ReactNode }) => children) as never,
+  SettingsRow: ({ title, description, control, children }) => (
     <div>
       <h3>{title}</h3>
       {description}
       {control}
+      {children}
     </div>
   ),
-  SettingResetButton: () => null,
-  useRelativeTimeTick: () => undefined,
-  useSettingsSearchTargetId: () => null,
-  useSettingsSearchTarget: () => undefined,
+  SettingResetButton: (() => null) as never,
 }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock(import("../ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: vi.fn() } };
+});
 
 import { StorageSettingsPanel } from "./StorageSettings";
 
@@ -90,7 +95,6 @@ let root: Root;
 let container: HTMLDivElement;
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.settings = {
     ...DEFAULT_SERVER_SETTINGS,
     storageCleanup: {
@@ -115,7 +119,6 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  vi.unstubAllGlobals();
 });
 
 async function render() {
