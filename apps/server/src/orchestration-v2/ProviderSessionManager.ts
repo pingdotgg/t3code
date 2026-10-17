@@ -50,6 +50,7 @@ import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -2023,10 +2024,16 @@ export const layerWithOptions = (
                 cause,
               });
               yield* Ref.set(entry.eventSubscribers, new Map());
+              // The session's lastError is shown to the user, so it carries the
+              // same redacted reason as the failed run; the full cause goes to the log.
+              yield* Effect.logWarning("orchestration-v2.provider-session-runtime-failed", {
+                providerSessionId: entry.runtime.providerSessionId,
+                cause,
+              });
               yield* releaseEntry({
                 providerSessionId: entry.runtime.providerSessionId,
                 reason: "runtime_error",
-                detail: Cause.pretty(cause),
+                detail: makeProviderFailure({ cause: Cause.squash(cause) }).message,
               }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
             }),
           ),

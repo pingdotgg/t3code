@@ -3531,6 +3531,11 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
       assert.isTrue(Option.isNone(liveSession));
       assert.equal(runtimeState.closeCount, 1);
       assert.equal(projection.providerSessions.at(-1)?.status, "error");
+      // The user sees the redacted reason, not the error's stack trace.
+      const lastError = projection.providerSessions.at(-1)?.lastError ?? "";
+      assert.include(lastError, "provider event stream closed unexpectedly");
+      assert.notInclude(lastError, "Failed while streaming");
+      assert.notInclude(lastError, "process exited");
     });
 
     yield* effect.pipe(
