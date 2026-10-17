@@ -11,7 +11,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isAbsolutePath } from "@t3tools/shared/path";
+import { isHostPath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
@@ -2579,7 +2579,7 @@ function useChatMarkdownState({
       ) !== null;
     const panelPath =
       fileLinkMeta.workspaceRelativePath ??
-      (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+      (!canPreviewMedia && isHostPath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
 
     return (
       <MarkdownFileLink

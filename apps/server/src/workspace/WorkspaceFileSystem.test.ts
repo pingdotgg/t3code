@@ -201,6 +201,26 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("reads host files in the home folder by ~/ path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const home = yield* makeTempDir;
+        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
+
+        const result = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+        expect(result).toEqual({
+          relativePath: "~/.claude/CLAUDE.md",
+          contents: "# Notes\n",
+          byteLength: 8,
+          truncated: false,
+        });
+      }),
+    );
+
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>

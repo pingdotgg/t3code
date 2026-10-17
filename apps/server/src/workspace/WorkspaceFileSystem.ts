@@ -221,22 +221,23 @@ export const make = Effect.gen(function* () {
 
   /**
    * Workspace-relative paths must stay inside the root, symlinks included. An
-   * absolute path reads a host file in place, such as a report an agent wrote to a
-   * temp directory; it gets no root check.
+   * absolute or `~/` path reads a host file in place, such as a report an agent
+   * wrote to a temp directory; it gets no root check.
    */
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
     const requestedPath = input.relativePath.trim();
-    if (path.isAbsolute(requestedPath)) {
+    const hostPath = expandHomePath(requestedPath, yield* HostProcess.HomeDirectory);
+    if (path.isAbsolute(hostPath)) {
       const realTargetPath = yield* Effect.tryPromise({
-        try: () => NodeFSP.realpath(requestedPath),
+        try: () => NodeFSP.realpath(hostPath),
         catch: (cause) =>
           new WorkspaceFileSystemOperationError({
             workspaceRoot: input.cwd,
             relativePath: input.relativePath,
-            resolvedPath: requestedPath,
-            operationPath: requestedPath,
+            resolvedPath: hostPath,
+            operationPath: hostPath,
             operation: "realpath-target",
             cause,
           }),

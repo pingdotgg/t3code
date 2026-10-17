@@ -3,6 +3,7 @@ import {
   fileBasename,
   workspaceRelativeFilePath,
   isExplicitRelativePath,
+  isHostPath,
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
@@ -40,6 +41,15 @@ describe("path helpers", () => {
     expect(isWindowsAbsolutePath("C:\\repo")).toBe(true);
     expect(isWindowsAbsolutePath("\\\\server\\share\\repo")).toBe(true);
     expect(isWindowsAbsolutePath("./repo")).toBe(false);
+  });
+
+  it("treats absolute and home-relative paths as host paths", () => {
+    expect(isHostPath("/home/me/notes.md")).toBe(true);
+    expect(isHostPath("C:\\Users\\me\\notes.md")).toBe(true);
+    expect(isHostPath("~/.claude/CLAUDE.md")).toBe(true);
+    expect(isHostPath("~\\.claude\\CLAUDE.md")).toBe(false);
+    expect(isHostPath("docs/notes.md")).toBe(false);
+    expect(isHostPath("~notes.md")).toBe(false);
   });
 
   it("detects explicit relative paths", () => {
