@@ -1528,6 +1528,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const legacyHistoryPath = (threadId: string) =>
     path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
+  // A legacy name with the current "terminal_" prefix is another thread's history file.
+  const hasLegacyHistoryPath = (threadId: string) =>
+    !legacySafeThreadId(threadId).startsWith("terminal_");
 
   const readManagerState = SynchronizedRef.get(managerStateRef);
 
@@ -1790,7 +1793,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return history;
     }
 
-    if (terminalId !== DEFAULT_TERMINAL_ID) {
+    if (terminalId !== DEFAULT_TERMINAL_ID || !hasLegacyHistoryPath(threadId)) {
       return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
     }
 
@@ -1848,7 +1851,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }),
       ),
     );
-    if (terminalId === DEFAULT_TERMINAL_ID) {
+    if (terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryPath(threadId)) {
       yield* fileSystem.remove(legacyHistoryPath(threadId), { force: true }).pipe(
         Effect.catch((error) =>
           Effect.logWarning("failed to delete terminal history", {
@@ -1872,7 +1875,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       entries.filter(
         (name) =>
           name === `${toSafeThreadId(threadId)}.log` ||
-          name === `${legacySafeThreadId(threadId)}.log` ||
+          (hasLegacyHistoryPath(threadId) && name === `${legacySafeThreadId(threadId)}.log`) ||
           name.startsWith(threadPrefix),
       ),
       (name) =>
