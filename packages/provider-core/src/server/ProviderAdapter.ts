@@ -227,6 +227,23 @@ export class ProviderAdapterResumeThreadError extends Schema.TaggedError<Provide
   }
 }
 
+/**
+ * The native thread is live in another process that owns its writes. Starting
+ * a replacement would split the conversation, so callers must not fall back.
+ */
+export class ProviderAdapterThreadInUseError extends Schema.TaggedError<ProviderAdapterThreadInUseError>()(
+  "ProviderAdapterThreadInUseError",
+  {
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export class ProviderAdapterEnsureThreadError extends Schema.TaggedError<ProviderAdapterEnsureThreadError>()(
   "ProviderAdapterEnsureThreadError",
   {
@@ -403,6 +420,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterOpenSessionError,
   ProviderAdapterCloseSessionError,
   ProviderAdapterResumeThreadError,
+  ProviderAdapterThreadInUseError,
   ProviderAdapterEnsureThreadError,
   ProviderAdapterReadThreadSnapshotError,
   ProviderAdapterRollbackThreadError,
