@@ -56,11 +56,17 @@ function restartContinuationBlocked(
     (turn.status === "completed" || turn.status === "failed" || turn.status === "interrupted")
   )
     return true;
+  // A lost native question can accept a message answer without becoming non-blocking.
+  const blockingQuestionIds = new Set(
+    projection.turnItems.flatMap((item) =>
+      item.type === "user_input_request" && item.responseMode !== "message" ? [item.requestId] : [],
+    ),
+  );
   const waitingRequest = projection.runtimeRequests.some(
     (request) =>
       request.kind !== "dynamic_tool_call" &&
       request.kind !== "auth_refresh" &&
-      request.responseCapability.type !== "message" &&
+      (request.responseCapability.type !== "message" || blockingQuestionIds.has(request.id)) &&
       (request.status === "pending" ||
         ((request.status === "expired" || request.status === "cancelled") &&
           request.responseCapability.type === "not_resumable" &&
@@ -203,12 +209,23 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     if (projection.messages.some((message) => message.id === messageId)) return;
+    const pendingQuestions = projection.runtimeRequests.some(
+      (request) =>
+        request.kind === "user_input" &&
+        request.status === "pending" &&
+        request.responseCapability.type === "message",
+    )
+      ? (yield* threads.getThreadRecords(input.threadId, ["turnItems"], {
+          turnItemTypes: ["user_input_request"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        })).turnItems
+      : [];
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
       !isRestartContinuationSource(source, projection.providerTurns) ||
       restartContinuationBlocked(
-        projection,
+        { ...projection, turnItems: [...projection.turnItems, ...pendingQuestions] },
         source,
         yield* DateTime.now,
         isRestartNoteSource(source, projection.providerTurns),

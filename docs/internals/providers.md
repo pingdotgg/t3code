@@ -113,8 +113,11 @@ panels, and requests remain pending after a turn finishes, a provider exits, or 
 answers, and commits the resolution and a user message in one transaction. Repeating the same
 command returns its receipt without posting the answer twice. The normal message path starts or
 resumes a run, queues behind active work, or steers when the adapter supports it. Blocking questions
-retain the provider's live response path. Do not infer that a request has disappeared merely because
-it is outside the recent history window.
+retain the provider's live response path while its process is alive. On server shutdown or restart,
+saved unanswered questions switch to message responses so they stay answerable. Keep the question
+item's original response mode: recovered blocking questions must still prevent automatic restart
+continuations, unlike asynchronous questions. Approvals still expire with their process. Do not infer
+that a request has disappeared merely because it is outside the recent history window.
 
 Native `/goal` state belongs to the provider and is mirrored on the provider thread. Codex starts
 the next goal turn on its own milliseconds after the last one completes, so the

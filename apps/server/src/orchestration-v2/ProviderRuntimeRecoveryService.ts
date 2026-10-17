@@ -239,6 +239,17 @@ export const make = Effect.gen(function* () {
       const requests = projection.runtimeRequests.filter(
         (request) => request.status === "pending" && request.responseCapability.type !== "message",
       );
+      const savedQuestionIds = new Set(
+        (projection.turnItems ?? []).flatMap((item) =>
+          item.type === "user_input_request" && item.questions.length > 0 ? [item.requestId] : [],
+        ),
+      );
+      // The native reply channel is gone, but an answer can resume the conversation as a message.
+      for (const request of requests) {
+        if (request.kind === "user_input" && savedQuestionIds.has(request.id)) {
+          messageRequestNodeIds.add(request.nodeId);
+        }
+      }
       // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
         ...(projection.subagents ?? []).filter(isAppOwnedDelegation).map((subagent) => subagent.id),
@@ -335,6 +346,7 @@ export const make = Effect.gen(function* () {
         });
       }
       for (const request of requests) {
+        const preserveQuestion = request.kind === "user_input" && savedQuestionIds.has(request.id);
         events.push({
           id: yield* allocateEventId(),
           type: "runtime-request.updated",
@@ -343,12 +355,14 @@ export const make = Effect.gen(function* () {
           occurredAt: now,
           payload: {
             ...request,
-            status: trigger === "startup" ? "expired" : "cancelled",
-            responseCapability: {
-              type: "not_resumable",
-              reason: `The server ${trigger === "startup" ? "restarted" : "shut down"} before this runtime request was resolved.`,
-            },
-            resolvedAt: now,
+            status: preserveQuestion ? "pending" : trigger === "startup" ? "expired" : "cancelled",
+            responseCapability: preserveQuestion
+              ? { type: "message" }
+              : {
+                  type: "not_resumable",
+                  reason: `The server ${trigger === "startup" ? "restarted" : "shut down"} before this runtime request was resolved.`,
+                },
+            resolvedAt: preserveQuestion ? null : now,
           },
         });
       }
@@ -690,7 +704,9 @@ export const make = Effect.gen(function* () {
       return {
         terminalizedRuns: runs.length,
         stoppedSessions,
-        closedRequests: requests.length,
+        closedRequests: requests.filter(
+          (request) => request.kind !== "user_input" || !savedQuestionIds.has(request.id),
+        ).length,
         retiredEffects,
       };
     },

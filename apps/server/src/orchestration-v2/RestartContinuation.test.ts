@@ -918,7 +918,17 @@ const continuationDispatches = (projection: OrchestrationV2ThreadProjection) =>
       Effect.provide(
         Layer.merge(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: () => Effect.succeed(projection),
+            getThreadRecords: (_threadId, _records, options) =>
+              Effect.succeed({
+                ...projection,
+                turnItems: projection.turnItems.filter(
+                  (item) =>
+                    (options?.turnItemTypes === undefined ||
+                      options.turnItemTypes.includes(item.type)) &&
+                    (options?.turnItemStatuses === undefined ||
+                      options.turnItemStatuses.includes(item.status)),
+                ),
+              }),
             recoverDelegatedTask: () => Effect.void,
             dispatch: (command) => {
               if (command.type === "message.dispatch") dispatches.push(command);
@@ -1205,6 +1215,53 @@ it.effect.each([
         runtimeRequests,
       } as unknown as OrchestrationV2ThreadProjection;
       assert.lengthOf(yield* continuationTexts(cut), shouldContinue ? 1 : 0);
+    }),
+);
+
+it.effect.each([
+  ["pending", undefined, false],
+  ["resolved", undefined, true],
+  ["pending", "message", true],
+] as const)(
+  "a recovered %s question with original mode %s allows a prepared continuation: %s",
+  ([status, responseMode, shouldContinue]) =>
+    Effect.gen(function* () {
+      const base = makeProjection();
+      const requestId = RuntimeRequestId.make("request:recovered-question");
+      const question = {
+        runtimeRequests: [
+          {
+            id: requestId,
+            nodeId: NodeId.make("node:recovered-question"),
+            providerTurnId: base.providerTurns[0]!.id,
+            kind: "user_input",
+            status,
+            responseCapability: { type: "message" },
+          },
+        ],
+        turnItems: [
+          {
+            type: "user_input_request",
+            requestId,
+            responseMode,
+            status: status === "pending" ? "waiting" : "completed",
+          },
+        ],
+      };
+      assert.equal(
+        restartContinuationRun(
+          { ...base, ...question } as unknown as OrchestrationV2ThreadProjection,
+          now,
+        ) !== undefined,
+        shouldContinue,
+      );
+      assert.lengthOf(
+        yield* continuationTexts({
+          ...cutMidTurn(),
+          ...question,
+        } as unknown as OrchestrationV2ThreadProjection),
+        shouldContinue ? 1 : 0,
+      );
     }),
 );
 

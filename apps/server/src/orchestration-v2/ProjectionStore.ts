@@ -4167,6 +4167,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE thread_id = ${threadId} AND origin = 'provider_native'
                       AND status IN ('pending', 'running', 'waiting')
                   )
+                  OR node.node_id IN (
+                    SELECT node_id FROM orchestration_v2_projection_runtime_requests
+                    WHERE thread_id = ${threadId} AND kind = 'user_input' AND status = 'pending'
+                  )
                 )
               ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
             `,
@@ -4311,6 +4315,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
                   )
                   OR item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  OR (
+                    item.type = 'user_input_request' AND item.node_id IN (
+                      SELECT node_id FROM orchestration_v2_projection_runtime_requests
+                      WHERE thread_id = ${threadId} AND kind = 'user_input' AND status = 'pending'
+                    )
+                  )
                   OR (
                     item.run_id IS NULL
                     AND item.node_id IN (

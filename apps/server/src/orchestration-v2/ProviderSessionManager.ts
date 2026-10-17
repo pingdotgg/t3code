@@ -653,6 +653,16 @@ export const layerWithOptions = (
             );
 
             for (const request of releasedRequests) {
+              const turnItem = projection.turnItems.find(
+                (item) =>
+                  (item.type === "approval_request" || item.type === "user_input_request") &&
+                  item.requestId === request.id,
+              );
+              const preserveQuestion =
+                input.reason === "server_shutdown" &&
+                request.kind === "user_input" &&
+                turnItem?.type === "user_input_request" &&
+                turnItem.questions.length > 0;
               events.push({
                 id: yield* idAllocator.allocate.event({
                   threadId,
@@ -665,17 +675,16 @@ export const layerWithOptions = (
                 occurredAt: now,
                 payload: {
                   ...request,
-                  status,
-                  responseCapability: {
-                    type: "not_resumable",
-                    reason,
-                  },
-                  resolvedAt: now,
+                  status: preserveQuestion ? "pending" : status,
+                  responseCapability: preserveQuestion
+                    ? { type: "message" }
+                    : { type: "not_resumable", reason },
+                  resolvedAt: preserveQuestion ? null : now,
                 },
               });
 
               const requestNode = projection.nodes.find((node) => node.id === request.nodeId);
-              if (requestNode !== undefined) {
+              if (requestNode !== undefined && !preserveQuestion) {
                 events.push({
                   id: yield* idAllocator.allocate.event({
                     threadId,
@@ -695,12 +704,7 @@ export const layerWithOptions = (
                 });
               }
 
-              const turnItem = projection.turnItems.find(
-                (item) =>
-                  (item.type === "approval_request" || item.type === "user_input_request") &&
-                  item.requestId === request.id,
-              );
-              if (turnItem !== undefined) {
+              if (turnItem !== undefined && !preserveQuestion) {
                 events.push({
                   id: yield* idAllocator.allocate.event({
                     threadId,

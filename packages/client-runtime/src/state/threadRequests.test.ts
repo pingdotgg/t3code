@@ -117,7 +117,19 @@ describe("pending v2 questions", () => {
     ]);
   });
 
-  it("only marks asynchronous questions as dismissible", () => {
+  it("allows answering and dismissing a recovered native question without its old session", () => {
+    const recovered = {
+      ...projection,
+      turnItems: projection.turnItems.map((item) =>
+        item.type === "user_input_request" ? { ...item, responseMode: undefined } : item,
+      ),
+    };
+    expect(derivePendingThreadRequests(recovered).userInputs).toEqual(
+      derivePendingThreadRequests(projection).userInputs,
+    );
+  });
+
+  it("keeps live native questions non-dismissible", () => {
     const live = {
       ...projection,
       runtimeRequests: projection.runtimeRequests.map((request) => ({
