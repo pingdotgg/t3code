@@ -34,6 +34,9 @@ import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.t
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
+import * as GitLabPullRequestProvider from "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoPullRequestProvider from "@t3tools/source-control-forgejo/server/ForgejoPullRequestProvider";
 import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
@@ -7712,5 +7715,64 @@ it.effect.each([
         action,
       });
       assert.deepStrictEqual(calls, [expected]);
+    }),
+);
+
+it.effect.each(["gitlab.com", "gitlab.example.test"])(
+  "pauses uncached GitLab activity reads after an optional endpoint rate limit on %s",
+  (host) =>
+    Effect.gen(function* () {
+      let commandCalls = 0;
+      const provider = yield* GitLabPullRequestProvider.make.pipe(
+        Effect.provide(
+          GitLabPullRequestCli.layer.pipe(
+            Layer.provide(
+              Layer.mock(GitLabCli.GitLabCli)({
+                execute: () =>
+                  Effect.sync(() => {
+                    commandCalls += 1;
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new GitLabCli.GitLabCliRateLimitError({
+                          operation: "execute",
+                          command: "glab",
+                          cwd: "/repo",
+                          cause: null,
+                        }),
+                      ),
+                    ),
+                  ),
+              }),
+            ),
+          ),
+        ),
+      );
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/repo",
+            repository: "acme/web",
+            provider: "gitlab",
+            host,
+          }),
+        ],
+        providers: [provider],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const first = yield* Effect.flip(service.activity(reference));
+      assert.instanceOf(first, PullRequestOperationError);
+      assert.instanceOf(first.cause, PullRequestProviderError);
+      assert.strictEqual(first.cause.reason, "rate-limited");
+      const firstCommandCalls = commandCalls;
+      assert.isAbove(firstCommandCalls, 0);
+      // A different request bypasses the activity cache and must stop at the host backoff.
+      const paused = yield* Effect.flip(service.activity({ ...reference, number: 2 }));
+      assert.instanceOf(paused, PullRequestOperationError);
+      assert.instanceOf(paused.cause, PullRequestProviderError);
+      assert.strictEqual(paused.cause.reason, "rate-limited");
+      assert.strictEqual(commandCalls, firstCommandCalls);
     }),
 );

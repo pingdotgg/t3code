@@ -2,6 +2,7 @@ import { assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
 
@@ -262,5 +263,104 @@ describe("expanding unchanged lines", () => {
         detail: "The diff file 'assets/logo.png' is binary.",
       });
     }),
+  );
+});
+
+describe("optional activity reads", () => {
+  const reference = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+  const comment = {
+    id: "42",
+    kind: "issue-comment" as const,
+    author: null,
+    body: "Keep this comment",
+    createdAt: "2026-07-01T00:00:00Z",
+    url: null,
+    path: null,
+    reviewState: null,
+  };
+  const commit = {
+    oid: "abc",
+    messageHeadline: "Keep this commit",
+    committedDate: "2026-07-01T00:00:00Z",
+  };
+  const reads = {
+    listNotes: () => Effect.succeed({ comments: [comment], truncated: false }),
+    listCommits: () => Effect.succeed([commit]),
+    listDiscussions: () => Effect.succeed({ threads: [], truncated: false }),
+    listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+  };
+  const context = {
+    operation: "execute" as const,
+    command: "glab" as const,
+    cwd: "/w",
+    cause: null,
+  };
+  const failures = [
+    [new GitLabCli.GitLabCliRateLimitError(context), "rate-limited"],
+    [new GitLabCli.GitLabCliAuthenticationError(context), "unauthenticated"],
+    [new GitLabCli.GitLabCliUnavailableError(context), "missing-tool"],
+  ] as const;
+
+  const operations = ["listNotes", "listCommits", "listDiscussions", "listReactions"] as const;
+  it.effect.each(
+    operations.flatMap((operation) =>
+      failures.map(([error, reason]) => ({ operation, error, reason })),
+    ),
+  )("preserves critical activity failure $operation: $reason", ({ operation, error, reason }) =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            [operation]: () => Effect.fail(error),
+          }),
+        ),
+      );
+      expect(yield* Effect.flip(provider.getChangeRequestActivity(reference))).toMatchObject({
+        provider: "gitlab",
+        operation: "getChangeRequestActivity",
+        reason,
+        cause: error,
+      });
+    }),
+  );
+
+  it.effect.each(operations)(
+    "recovers an ordinary %s failure while preserving other activity",
+    (operation) =>
+      Effect.gen(function* () {
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+              ...reads,
+              listReactions: () =>
+                Effect.succeed({
+                  reactions: [
+                    { content: "heart" as const, count: 1, actors: [], viewerHasReacted: false },
+                  ],
+                  reactionsByNoteId: new Map(),
+                }),
+              [operation]: () =>
+                Effect.fail(
+                  new GitLabPullRequestCli.GitLabMergeRequestReadError({
+                    command: "glab",
+                    cwd: "/w",
+                    operation,
+                    cause: null,
+                  }),
+                ),
+            }),
+          ),
+        );
+        const activity = yield* provider.getChangeRequestActivity(reference);
+        expect(activity.commentsTruncated).toBe(
+          operation === "listNotes" || operation === "listDiscussions",
+        );
+        expect(activity.reactions).toHaveLength(operation === "listReactions" ? 0 : 1);
+        expect(activity.comments.map(({ id }) => id)).toEqual(
+          operation === "listNotes" ? [] : [comment.id],
+        );
+        expect(activity.commits).toEqual(operation === "listCommits" ? [] : [commit]);
+      }),
   );
 });
