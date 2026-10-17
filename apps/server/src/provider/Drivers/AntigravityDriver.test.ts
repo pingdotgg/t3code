@@ -75,7 +75,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
-    loginRequired = false,
+    options: {
+      readonly loginRequired?: boolean;
+      /** `data` of the agent's "Internal error" response to `session/new`. */
+      readonly newSessionErrorData?: unknown;
+    } = {},
   ) {
     const directory = path.join(root, name);
     const executablePath = path.join(directory, "agy_acp_server.par");
@@ -87,9 +91,14 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       executablePath,
       [
         "#!/bin/sh",
-        ...(loginRequired
+        ...(options.loginRequired
           ? [`printf '%s\\n' ${shellQuote(ANTIGRAVITY_AUTH_STDOUT_PREFIX + authorizationUrl)}`]
           : []),
+        ...(options.newSessionErrorData === undefined
+          ? []
+          : [
+              `export T3_ACP_NEW_SESSION_ERROR_DATA=${shellQuote(JSON.stringify(options.newSessionErrorData))}`,
+            ]),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -108,7 +117,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
-  const signedOut = yield* makeExecutable("runtime signed-out", true);
+  const signedOut = yield* makeExecutable("runtime signed-out", { loginRequired: true });
   const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
@@ -223,6 +232,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   return {
     instance,
     refresh,
+    makeExecutable,
     fs,
     path,
     profileDirectory,
@@ -477,6 +487,64 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
     }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reports the missing SOCKS dependency when session creation fails and keeps the catalog",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const before = yield* h.instance.snapshot.getSnapshot;
+        h.controls.selected = yield* h.makeExecutable("runtime socks", {
+          newSessionErrorData: { details: "python-socks is required to use a SOCKS proxy" },
+        });
+        const error = yield* h.refresh().pipe(Effect.flip);
+        expect(error.detail).toBe(
+          "Could not refresh Antigravity models. The previous model list is unchanged. Antigravity reported: python-socks is required to use a SOCKS proxy",
+        );
+        const after = yield* h.instance.snapshot.getSnapshot;
+        expect(after.models).toEqual(before.models);
+        expect(after.auth).toEqual(before.auth);
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "never copies unrecognized agent error details into the refresh error",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.refresh();
+        const before = yield* h.instance.snapshot.getSnapshot;
+        const generic =
+          "Could not refresh Antigravity models. The previous model list is unchanged.";
+        const secret = "https://accounts.example.test/o/oauth2?code=sk-secret-123";
+        h.controls.selected = yield* h.makeExecutable("runtime socks with extra", {
+          newSessionErrorData: {
+            details: `Traceback (most recent call last):\n  proxy ${secret}\npython-socks is required to use a SOCKS proxy`,
+          },
+        });
+        const known = yield* h.refresh().pipe(Effect.flip);
+        expect(known.detail).toBe(
+          `${generic} Antigravity reported: python-socks is required to use a SOCKS proxy`,
+        );
+
+        for (const [name, data] of [
+          ["runtime unknown details", { details: `Token refresh failed for ${secret}` }],
+          ["runtime object details", { details: { stack: "secret frame", env: { HOME: "/" } } }],
+          ["runtime no details", ["python-socks is required to use a SOCKS proxy"]],
+        ] as const) {
+          h.controls.selected = yield* h.makeExecutable(name, { newSessionErrorData: data });
+          const error = yield* h.refresh().pipe(Effect.flip);
+          expect(error.detail).toBe(generic);
+        }
+        const after = yield* h.instance.snapshot.getSnapshot;
+        expect(after.models).toEqual(before.models);
+        expect(after.auth).toEqual(before.auth);
+        expect(JSON.stringify(after)).not.toContain("sk-secret-123");
+        yield* h.assertClosed;
+      }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)(
