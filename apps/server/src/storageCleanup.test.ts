@@ -1451,6 +1451,35 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live.each([
+    ["main", "removed", "No commits beyond the default branch"],
+    ["master", "removed", "No commits beyond the default branch"],
+    ["trunk", "kept", "Default branch is unavailable"],
+  ] as const)(
+    "resolves the default branch %j when the remote has no HEAD ref",
+    ([branch, outcome, reason]) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeUnchanged: true,
+          });
+          // `git remote add` followed by a push, unlike a clone, leaves
+          // refs/remotes/origin/HEAD unset.
+          const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+          yield* command(remote, ["init", "--bare", "-b", branch]);
+          yield* command(repo, ["remote", "add", "origin", remote]);
+          yield* command(repo, ["push", "origin", `main:${branch}`]);
+          const head = yield* command(repo, ["symbolic-ref", "refs/remotes/origin/HEAD"]).pipe(
+            Effect.exit,
+          );
+          expect(head._tag).toBe("Failure");
+          const report = yield* service.runNow;
+          expect(report.entries[0]).toMatchObject({ outcome, reason });
+          expect(yield* fs.exists(worktree)).toBe(outcome === "kept");
+        }),
+      ),
+  );
   it.live("preserves tracked edits written after the final status check", () =>
     runCleanupTest(
       Effect.gen(function* () {
