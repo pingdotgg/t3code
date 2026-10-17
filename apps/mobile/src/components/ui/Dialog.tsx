@@ -22,7 +22,7 @@ export function confirm(request: ConfirmDialogRequest): void {
 export function prompt(request: TextInputDialogRequest): void {
   Alert.prompt(
     request.title,
-    undefined,
+    request.message,
     [
       { text: request.cancelText ?? "Cancel", style: "cancel", onPress: request.onCancel },
       { text: request.confirmText, onPress: (value) => request.onConfirm(value ?? "") },

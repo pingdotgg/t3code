@@ -58,6 +58,8 @@ import {
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
+import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
+import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import {
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
@@ -314,6 +316,14 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleScrollBeginDrag = useCallback(() => {
     openSwipeableRef.current?.close();
   }, []);
+  const openThreadPullRequests = useOpenThreadPullRequests();
+  const handleOpenThreadPullRequests = useCallback(
+    (thread: EnvironmentThreadShell, pr: ThreadPrPresentation) => {
+      openSwipeableRef.current?.close();
+      openThreadPullRequests(thread, pr);
+    },
+    [openThreadPullRequests],
+  );
   const onFabScroll = useFabScroll();
   const listRef = useRef<LegendListRef>(null);
   const searchMode = workspace?.state.tabs.threads.searchMode;
@@ -753,6 +763,7 @@ export function HomeScreen(props: HomeScreenProps) {
           )}
           searchQuery={props.searchQuery}
           onSelectThread={props.onSelectThread}
+          onOpenThreadPullRequests={handleOpenThreadPullRequests}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
           onRenameThread={handleRenameThread}
@@ -786,6 +797,7 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [
       handleDeleteThread,
+      handleOpenThreadPullRequests,
       activeReorderEnvironmentIds,
       handleMoveThread,
       handlePinThread,

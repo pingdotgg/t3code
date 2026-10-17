@@ -83,6 +83,7 @@ export function MetaCard(props: { readonly label: string; readonly value: string
 
 export function SheetListRow(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
+  readonly iconTintClassName?: string | undefined;
   readonly title: string;
   readonly subtitle?: string | null;
   readonly disabled?: boolean;
@@ -98,7 +99,7 @@ export function SheetListRow(props: {
         <SymbolView
           name={props.icon}
           size={Platform.OS === "android" ? 24 : 16}
-          tintColorClassName="accent-icon"
+          tintColorClassName={props.iconTintClassName ?? "accent-icon"}
           type="monochrome"
         />
       </View>

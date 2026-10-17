@@ -60,6 +60,8 @@ export function pullRequestListRowsAreEqual(
       previous.url === next.url &&
       previous.state === next.state &&
       previous.isDraft === next.isDraft &&
+      previous.mergeability === next.mergeability &&
+      previous.baseBranch === next.baseBranch &&
       previous.updatedAt === next.updatedAt &&
       previous.additions === next.additions &&
       previous.deletions === next.deletions &&
