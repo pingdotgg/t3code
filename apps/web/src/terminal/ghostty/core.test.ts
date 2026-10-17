@@ -108,6 +108,15 @@ describe("GhosttyTerminalCore snapshots", () => {
     vi.restoreAllMocks();
   });
 
+  it("reports whether the cursor style conceals the next printed text", async () => {
+    const core = await createCore();
+    expect(core.isConcealing()).toBe(false);
+    core.write("\x1b[1;8m");
+    expect(core.isConcealing()).toBe(true);
+    core.resetAndWrite("plain");
+    expect(core.isConcealing()).toBe(false);
+  });
+
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {
     const core = await createCore();
     const runtime = await loadGhosttyRuntime();

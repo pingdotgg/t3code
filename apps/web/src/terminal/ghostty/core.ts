@@ -499,6 +499,19 @@ export class GhosttyTerminalCore {
     );
   }
 
+  /** Whether the next printed text is concealed (SGR 8), from the cursor's current style. */
+  isConcealing(): boolean {
+    this.ensureActive();
+    const { size, fields } = this.runtime.layout("GhosttyStyle");
+    this.runtime.bytes(this.style, size).fill(0);
+    this.runtime.setField(this.style, "GhosttyStyle", "size", size);
+    return (
+      this.runtime.call("ghostty_terminal_get", this.terminal, 10, this.style) ===
+        GHOSTTY_SUCCESS &&
+      this.runtime.memoryDataView().getUint8(this.style + fields.invisible!.offset) !== 0
+    );
+  }
+
   isApplicationCursorKeys(): boolean {
     this.ensureActive();
     this.runtime.bytes(this.scratch, 1)[0] = 0;

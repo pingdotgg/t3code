@@ -17,6 +17,7 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
+import { accessibleRowText, TerminalAnnouncer } from "./accessibility";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -520,6 +521,9 @@ export class GhosttyTerminalSurface {
   rows = 1;
 
   private readonly mount: HTMLElement;
+  private readonly accessibleRows: HTMLDivElement;
+  private readonly accessibleRowElements: HTMLDivElement[] = [];
+  private readonly announcer: TerminalAnnouncer;
   private readonly context: CanvasRenderingContext2D;
   private readonly core: GhosttyTerminalCore;
   private readonly options: GhosttyTerminalSurfaceOptions;
@@ -607,6 +611,8 @@ export class GhosttyTerminalSurface {
     input: HTMLTextAreaElement,
     scrollbar: HTMLDivElement,
     scrollbarThumb: HTMLDivElement,
+    accessibleRows: HTMLDivElement,
+    announcer: TerminalAnnouncer,
     context: CanvasRenderingContext2D,
     core: GhosttyTerminalCore,
     metrics: GhosttyCellMetrics,
@@ -617,6 +623,8 @@ export class GhosttyTerminalSurface {
     this.canvas = canvas;
     this.input = input;
     this.scrollbar = scrollbar;
+    this.accessibleRows = accessibleRows;
+    this.announcer = announcer;
     this.scrollbarThumb = scrollbarThumb;
     this.context = context;
     this.core = core;
@@ -665,7 +673,14 @@ export class GhosttyTerminalSurface {
     scrollbarThumb.className =
       "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[120ms] ease-[ease-out] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
     scrollbar.append(scrollbarThumb);
-    mount.replaceChildren(canvas, input, scrollbar);
+    // The canvas is invisible to screen readers: they read these rows in browse
+    // mode, and the announcer speaks new output while the terminal is focused.
+    const accessibleRows = document.createElement("div");
+    accessibleRows.className = "sr-only";
+    accessibleRows.setAttribute("role", "region");
+    accessibleRows.setAttribute("aria-label", "Terminal output");
+    const announcer = new TerminalAnnouncer();
+    mount.replaceChildren(canvas, input, accessibleRows, announcer.element, scrollbar);
 
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("Canvas 2D is unavailable");
@@ -694,6 +709,8 @@ export class GhosttyTerminalSurface {
       input,
       scrollbar,
       scrollbarThumb,
+      accessibleRows,
+      announcer,
       context,
       core,
       metrics,
@@ -712,6 +729,7 @@ export class GhosttyTerminalSurface {
     this.scrollbarDirty = true;
     if (!visible) {
       this.cancelRender();
+      this.announcer.reset();
       this.setSelectionAutoscroll(0);
       return;
     }
@@ -720,7 +738,12 @@ export class GhosttyTerminalSurface {
 
   write(data: string): void {
     if (this.disposed) return;
+    const announce = this.focused && this.visible;
+    // Read before the write: the announcer replays this chunk from the core's prior state.
+    const concealed = announce && this.core.isConcealing();
     this.core.write(data);
+    if (announce) this.announcer.output(data, concealed);
+    else this.announcer.skip(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.scrollbarDirty = true;
@@ -731,6 +754,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    this.announcer.replay(data);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.forceFullRender = true;
@@ -1023,6 +1047,7 @@ export class GhosttyTerminalSurface {
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
+    this.announcer.reset();
     this.removeEvents();
     this.core.dispose();
     if (
@@ -1032,6 +1057,8 @@ export class GhosttyTerminalSurface {
     ) {
       this.canvas.remove();
       this.input.remove();
+      this.accessibleRows.remove();
+      this.announcer.element.remove();
       this.scrollbar.remove();
     }
   }
@@ -1162,6 +1189,7 @@ export class GhosttyTerminalSurface {
     this.suppressedKeyCodes.delete(event.code);
     event.preventDefault();
     event.stopPropagation();
+    this.announcer.typed(data);
     this.options.onData(data);
   };
 
@@ -1187,6 +1215,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
+    this.announcer.reset();
     this.refreshHoveredLink();
     // Suppressions survive blur deliberately: a shortcut that moves focus (for
     // example terminal-toggle) must still swallow its own keyup if focus comes
@@ -1913,6 +1942,7 @@ export class GhosttyTerminalSurface {
         : {}),
     });
     this.positionInput();
+    this.syncAccessibleRows(this.snapshot);
     this.renderedCursorY =
       this.cursorOn && this.snapshot.cursorVisible && this.snapshot.cursorY >= 0
         ? this.snapshot.cursorY
@@ -1923,6 +1953,24 @@ export class GhosttyTerminalSurface {
     }
     this.forceFullRender = false;
     this.scheduleCursorBlink();
+  }
+
+  /** Mirrors the viewport rows as text; the snapshot's dirty rows cover every change since the last frame. */
+  private syncAccessibleRows(snapshot: GhosttySnapshot): void {
+    const elements = this.accessibleRowElements;
+    const known = Math.min(elements.length, snapshot.rows);
+    for (const element of elements.splice(snapshot.rows)) element.remove();
+    while (elements.length < snapshot.rows) {
+      const element = document.createElement("div");
+      elements.push(element);
+      this.accessibleRows.append(element);
+    }
+    elements.forEach((element, y) => {
+      const row = snapshot.rowData[y];
+      if (y >= known || snapshot.dirtyRows.has(y)) {
+        element.textContent = row ? accessibleRowText(row) : "";
+      }
+    });
   }
 
   private scheduleCursorBlink(): void {
