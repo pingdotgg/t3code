@@ -41,6 +41,7 @@ import {
   splitNullSeparatedGitStdoutPaths,
 } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
+import { chunkPathsForCheckIgnore } from "./VcsPathCodecs.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 export interface ExecuteGitInput {
@@ -440,36 +441,6 @@ const nowFreshness = Effect.fn("GitVcsDriver.nowFreshness")(function* () {
   };
 });
 
-function chunkPathsForGitCheckIgnore(relativePaths: ReadonlyArray<string>): string[][] {
-  const chunks: string[][] = [];
-  let chunk: string[] = [];
-  let chunkBytes = 0;
-
-  for (const relativePath of relativePaths) {
-    const relativePathBytes = Buffer.byteLength(relativePath) + 1;
-    if (chunk.length > 0 && chunkBytes + relativePathBytes > GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
-      chunks.push(chunk);
-      chunk = [];
-      chunkBytes = 0;
-    }
-
-    chunk.push(relativePath);
-    chunkBytes += relativePathBytes;
-
-    if (chunkBytes >= GIT_CHECK_IGNORE_MAX_STDIN_BYTES) {
-      chunks.push(chunk);
-      chunk = [];
-      chunkBytes = 0;
-    }
-  }
-
-  if (chunk.length > 0) {
-    chunks.push(chunk);
-  }
-
-  return chunks;
-}
-
 function parseGitRemoteVerboseOutput(
   output: string,
 ): Map<string, { url?: string; pushUrl?: string }> {
@@ -703,7 +674,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     }
 
     const ignoredPaths = new Set<string>();
-    const chunks = chunkPathsForGitCheckIgnore(relativePaths);
+    const chunks = chunkPathsForCheckIgnore(relativePaths);
 
     for (const chunk of chunks) {
       const result = yield* gitCommand(

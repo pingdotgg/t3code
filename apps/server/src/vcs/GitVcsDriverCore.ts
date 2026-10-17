@@ -97,7 +97,7 @@ const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
 const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
-const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
+export const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
   GIT_TERMINAL_PROMPT: "0",
@@ -476,7 +476,7 @@ const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 const SSH_TRANSPORT_REFUSAL_PATTERN =
   /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
 
-function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
+export function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   const diagnostics = stderr
     .split(/\r?\n/)
     .filter(

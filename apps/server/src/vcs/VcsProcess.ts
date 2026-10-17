@@ -116,7 +116,7 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
-const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
+export const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
 
   if (
@@ -154,7 +154,11 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
         normalized.includes("404"))) ||
     (command === "az" &&
       normalized.includes("pull request") &&
-      (normalized.includes("not found") || normalized.includes("does not exist")))
+      (normalized.includes("not found") || normalized.includes("does not exist"))) ||
+    (command === "jj" &&
+      (normalized.includes("there is no jj repo in") ||
+        normalized.includes("doesn't exist") ||
+        normalized.includes("no such bookmark")))
   ) {
     return "not-found";
   }

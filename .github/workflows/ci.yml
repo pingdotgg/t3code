@@ -335,6 +335,11 @@ jobs:
         if: steps.changes.outputs.test_server != 'false'
         uses: ./.github/actions/setup-ci-deps
 
+      # The jj suites in apps/server/src/jj and apps/server/src/vcs skip themselves when jj is absent,
+      # so this step is what makes them actually run.
+      - uses: ./.github/actions/setup-jj
+        if: steps.changes.outputs.test_server != 'false'
+
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.

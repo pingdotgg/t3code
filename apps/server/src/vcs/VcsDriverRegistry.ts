@@ -10,6 +10,8 @@ import * as Path from "effect/Path";
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as JjVcsDriver from "./JjVcsDriver.ts";
+import { JJ_REPOSITORY_DETECTION_ENABLED } from "./JjRepo.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
@@ -70,8 +72,10 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
+  const jj = yield* JjVcsDriver.makeVcsDriverShape;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
+    ...(JJ_REPOSITORY_DETECTION_ENABLED ? { jj } : {}),
   };
 
   const get: VcsDriverRegistry["Service"]["get"] = (kind) => {
