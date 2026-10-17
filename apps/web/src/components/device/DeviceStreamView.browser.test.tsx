@@ -1,7 +1,7 @@
 import { act, useEffect, useSyncExternalStore } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId } from "@t3tools/contracts";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 const accessStore = {
   value: { httpBase: "http://test", wsBase: "ws://test", query: {}, credentials: true },
@@ -15,50 +15,102 @@ const accessStore = {
     return () => accessStore.listeners.delete(listener);
   },
 };
-vi.mock("~/state/device", () => ({
+vi.mock(import("~/state/device"), async (original) => ({
+  ...(await original()),
   useDeviceHubAccess: () => useSyncExternalStore(accessStore.subscribe, () => accessStore.value),
   refreshDeviceHubAccess: () => accessStore.refresh(),
 }));
 let viewerMounts = 0;
 let viewerUnmounts = 0;
-vi.mock("./DevicePhoneViewport", () => ({
-  DevicePhoneViewport: function Viewer() {
+// The 3D phone frame needs WebGL; the test only cares whether it stays mounted.
+vi.mock(import("./DevicePhoneViewport"), async (original) => ({
+  ...(await original()),
+  DevicePhoneViewport: function Viewer(): React.ReactElement {
     useEffect(() => {
       viewerMounts++;
       return () => {
         viewerUnmounts++;
       };
     }, []);
-    return null;
+    return <></>;
   },
 }));
 import { DeviceStreamView } from "./DeviceStreamView";
 
-class Image extends EventTarget {
-  src = "";
-  naturalWidth = 0;
-  naturalHeight = 0;
-  removeAttribute(name: string) {
-    if (name === "src") this.src = "";
+// MJPEG frames come from the device hub, so images keep their src without loading it and a
+// test publishes a frame by setting the natural size and firing "load".
+const imageSources = new WeakMap<HTMLImageElement, string>();
+const framedImages = new WeakSet<HTMLImageElement>();
+let images: HTMLImageElement[] = [];
+const srcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")!;
+const naturalWidthDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLImageElement.prototype,
+  "naturalWidth",
+)!;
+const naturalHeightDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLImageElement.prototype,
+  "naturalHeight",
+)!;
+const removeAttribute = Element.prototype.removeAttribute;
+function stubImages() {
+  Object.defineProperty(HTMLImageElement.prototype, "src", {
+    configurable: true,
+    get(this: HTMLImageElement) {
+      return imageSources.get(this) ?? "";
+    },
+    set(this: HTMLImageElement, value: string) {
+      if (!images.includes(this)) images.push(this);
+      imageSources.set(this, value);
+    },
+  });
+  for (const name of ["naturalWidth", "naturalHeight"]) {
+    Object.defineProperty(HTMLImageElement.prototype, name, {
+      configurable: true,
+      get(this: HTMLImageElement) {
+        if (!framedImages.has(this)) return 0;
+        return name === "naturalWidth" ? 400 : 800;
+      },
+    });
   }
+  Element.prototype.removeAttribute = function (this: Element, name: string) {
+    if (this instanceof HTMLImageElement && name === "src") imageSources.delete(this);
+    return removeAttribute.call(this, name);
+  };
 }
-let renderer: ReactTestRenderer | undefined;
+function restoreImages() {
+  Object.defineProperty(HTMLImageElement.prototype, "src", srcDescriptor);
+  Object.defineProperty(HTMLImageElement.prototype, "naturalWidth", naturalWidthDescriptor);
+  Object.defineProperty(HTMLImageElement.prototype, "naturalHeight", naturalHeightDescriptor);
+  Element.prototype.removeAttribute = removeAttribute;
+}
+async function publishFrame(image: HTMLImageElement) {
+  framedImages.add(image);
+  await act(async () => image.dispatchEvent(new Event("load")));
+}
+let root: Root;
+let container: HTMLDivElement;
 let primes = 0;
 beforeEach(() => {
   primes = 0;
   viewerMounts = 0;
   viewerUnmounts = 0;
+  images = [];
+  stubImages();
+  container = document.createElement("div");
+  container.style.cssText = "width: 400px; height: 800px; display: flex";
+  document.body.append(container);
+  root = createRoot(container);
 });
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  container.remove();
+  restoreImages();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 async function setup(h264 = false) {
   vi.useFakeTimers();
-  vi.stubGlobal("window", globalThis);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let videoBody: ReadableStreamDefaultController<Uint8Array> | undefined;
   let output: VideoFrameOutputCallback | undefined;
@@ -80,6 +132,15 @@ async function setup(h264 = false) {
       },
     );
     vi.stubGlobal("EncodedVideoChunk", vi.fn());
+  } else {
+    // Without WebCodecs the iOS client streams MJPEG.
+    const videoDecoder = Object.getOwnPropertyDescriptor(globalThis, "VideoDecoder");
+    if (videoDecoder) {
+      Reflect.deleteProperty(globalThis, "VideoDecoder");
+      onTestFinished(() => {
+        Object.defineProperty(globalThis, "VideoDecoder", videoDecoder);
+      });
+    }
   }
   vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
     if (url.endsWith("stream.avcc")) {
@@ -111,14 +172,6 @@ async function setup(h264 = false) {
       close() {}
     },
   );
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-    },
-  );
-  const images: Image[] = [];
   const view = (visible: boolean) => (
     <DeviceStreamView
       hostId="local"
@@ -129,22 +182,7 @@ async function setup(h264 = false) {
       allowPhoneView={h264}
     />
   );
-  await act(async () => {
-    renderer = create(view(true), {
-      createNodeMock: (node) => {
-        if (node.type === "img") {
-          const image = new Image();
-          images.push(image);
-          return image;
-        }
-        return {
-          getContext: () => ({ drawImage() {} }),
-          style: { setProperty() {} },
-          getBoundingClientRect: () => ({ width: 400, height: 800 }),
-        };
-      },
-    });
-  });
+  await act(async () => root.render(view(true)));
   return {
     images,
     view,
@@ -160,19 +198,29 @@ async function setup(h264 = false) {
       videoBody?.enqueue(new Uint8Array([0, 0, 0, 5, 1, 1, 0x64, 0, 0x1f]));
     },
     frame() {
-      output?.({ displayWidth: 400, displayHeight: 800, close() {} } as VideoFrame);
+      const source = new OffscreenCanvas(400, 800);
+      source.getContext("2d")!.fillRect(0, 0, 400, 800);
+      output?.(new VideoFrame(source, { timestamp: 0 }));
     },
   };
 }
 
+const alert = () => container.querySelector('[role="alert"]');
+const reconnect = () =>
+  act(async () =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Reconnect"))!
+      .click(),
+  );
+
 it("removes MJPEG requests while hidden and reconnects when shown", async () => {
   const { images, view } = await setup();
   expect(images[0]!.src).toContain("stream.mjpeg");
-  await act(async () => renderer!.update(view(false)));
-  expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+  await act(async () => root.render(view(false)));
+  expect(container.querySelectorAll("img")).toHaveLength(0);
   expect(images[0]!.src).toBe("");
   expect(vi.getTimerCount()).toBe(0);
-  await act(async () => renderer!.update(view(true)));
+  await act(async () => root.render(view(true)));
   expect(images.at(-1)!.src).toContain("stream.mjpeg");
 });
 
@@ -181,20 +229,14 @@ it("offers Reconnect after the shared timeout and receives a frame after retry w
   await act(async () => {
     await vi.advanceTimersByTimeAsync(15_000);
   });
-  expect(
-    renderer!.root.findByProps({ role: "alert" }).findByType("span").children.join(""),
-  ).toContain("No video");
+  expect(alert()?.textContent).toContain("No video");
   expect(images[0]!.src).toBe("");
-  await act(async () => renderer!.root.findByType("button").props.onClick());
-  expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+  await reconnect();
+  expect(alert()).toBeNull();
   expect(images[1]!.src).toContain("stream.mjpeg");
-  await act(async () => {
-    images[1]!.naturalWidth = 400;
-    images[1]!.naturalHeight = 800;
-    images[1]!.dispatchEvent(new Event("load"));
-  });
-  expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
-  expect(renderer!.root.findAllByType("button")).toHaveLength(0);
+  await publishFrame(images[1]!);
+  expect(container.querySelector('[role="status"]')).toBeNull();
+  expect(container.querySelectorAll("button")).toHaveLength(0);
   expect(vi.getTimerCount()).toBe(0);
 });
 
@@ -204,7 +246,7 @@ it("starts exactly one new stream per Reconnect press", async () => {
     await vi.advanceTimersByTimeAsync(15_000);
   });
   expect(primes).toBe(1);
-  await act(async () => renderer!.root.findByType("button").props.onClick());
+  await reconnect();
   expect(primes).toBe(2);
 });
 
@@ -225,7 +267,7 @@ it("keeps the 3D viewer mounted across iOS video recovery and releases it when h
   });
   await act(async () => frame());
   expect(viewerMounts).toBe(1);
-  await act(async () => renderer!.update(view(false)));
+  await act(async () => root.render(view(false)));
   expect(viewerUnmounts).toBe(1);
   expect(vi.getTimerCount()).toBe(0);
 });

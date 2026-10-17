@@ -5,8 +5,8 @@ import {
   type PullRequestRef,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act, StrictMode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, StrictMode, useEffect } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { host, setFilesViewed, toastAdd } = vi.hoisted(() => ({
@@ -15,20 +15,24 @@ const { host, setFilesViewed, toastAdd } = vi.hoisted(() => ({
   toastAdd: vi.fn(),
 }));
 
-vi.mock("~/state/pullRequests", () => ({
-  pullRequestEnvironment: { filesViewed: () => null, setFilesViewed: {} },
-}));
-vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({
+vi.mock(import("~/state/query"), async (original) => ({
+  ...(await original()),
+  useEnvironmentQuery: (() => ({
     data: host.data,
     error: null,
     isPending: false,
     isSuccess: true,
     refresh: host.refresh,
-  }),
+  })) as never,
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => setFilesViewed }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: toastAdd } }));
+vi.mock(import("~/state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => setFilesViewed) as never,
+}));
+vi.mock(import("../ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: toastAdd } as never };
+});
 
 import {
   usePullRequestFilesViewed,
@@ -46,30 +50,30 @@ function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesVie
   return { files: [{ path: "a.ts", state }], truncated: false };
 }
 
-let renderer: ReactTestRenderer | null = null;
-
-function Probe(_props: { readonly view: PullRequestFilesViewedView }) {
-  return null;
-}
+let root: Root;
+let current: PullRequestFilesViewedView;
 
 function Surface() {
   const view = usePullRequestFilesViewed({ environmentId, reference, enabled: true });
-  return <Probe view={view} />;
+  useEffect(() => {
+    current = view;
+  });
+  return null;
 }
 
-function view(): PullRequestFilesViewedView {
-  return renderer!.root.findByType(Probe).props.view;
-}
-
-async function reads(state: "unviewed" | "viewed" | "dismissed") {
-  host.data = answer(state);
-  await act(async () =>
-    renderer!.update(
+const view = () => current;
+const render = () =>
+  act(async () =>
+    root.render(
       <StrictMode>
         <Surface />
       </StrictMode>,
     ),
   );
+
+async function reads(state: "unviewed" | "viewed" | "dismissed") {
+  host.data = answer(state);
+  await render();
 }
 
 beforeEach(async () => {
@@ -79,18 +83,12 @@ beforeEach(async () => {
   host.refresh.mockReset();
   toastAdd.mockReset();
   setFilesViewed.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  act(() => {
-    renderer = create(
-      <StrictMode>
-        <Surface />
-      </StrictMode>,
-    );
-  });
+  root = createRoot(document.createElement("div"));
+  await render();
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = null;
+  await act(async () => root.unmount());
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });

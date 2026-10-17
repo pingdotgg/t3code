@@ -6,50 +6,39 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
-const permissions = vi.hoisted(() => ({ canWriteSettings: false, canEditProject: true }));
+const permissions = vi.hoisted(() => ({
+  canWriteSettings: false,
+  canEditProject: true,
+  listeners: new Set<() => void>(),
+}));
 
-vi.mock("~/state/session", () => ({
-  readEnvironmentScope: (_id: EnvironmentId, scope: AuthEnvironmentScope) =>
+vi.mock(import("~/state/session"), async (original) => {
+  const { useSyncExternalStore } = await import("react");
+  const read = (scope: AuthEnvironmentScope) =>
     scope === AuthOrchestrationOperateScope
       ? permissions.canEditProject
-      : permissions.canWriteSettings,
-  useEnvironmentScope: (_id: EnvironmentId, scope: AuthEnvironmentScope) =>
-    scope === AuthOrchestrationOperateScope
-      ? permissions.canEditProject
-      : permissions.canWriteSettings,
-}));
-vi.mock("./ui/dialog", () => ({
-  Dialog: "div",
-  DialogDescription: "div",
-  DialogFooter: "div",
-  DialogHeader: "div",
-  DialogPanel: "div",
-  DialogPopup: "div",
-  DialogTitle: "div",
-}));
-vi.mock("./ui/alert-dialog", () => ({
-  AlertDialog: "div",
-  AlertDialogClose: "button",
-  AlertDialogDescription: "div",
-  AlertDialogFooter: "div",
-  AlertDialogHeader: "div",
-  AlertDialogPopup: "div",
-  AlertDialogTitle: "div",
-}));
-vi.mock("./ui/popover", () => ({
-  Popover: "div",
-  PopoverPopup: "div",
-  PopoverTrigger: "button",
-}));
-vi.mock("./ui/button", () => ({ Button: "button" }));
-vi.mock("./ui/input", () => ({ Input: "input" }));
-vi.mock("./ui/label", () => ({ Label: "label" }));
-vi.mock("./ui/switch", () => ({ Switch: "input" }));
-vi.mock("./ui/textarea", () => ({ Textarea: "textarea" }));
+      : permissions.canWriteSettings;
+  return {
+    ...(await original()),
+    readEnvironmentScope: (_id: EnvironmentId, scope: AuthEnvironmentScope) => read(scope),
+    useEnvironmentScope: (_id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
+      useSyncExternalStore(
+        (listener) => {
+          permissions.listeners.add(listener);
+          return () => permissions.listeners.delete(listener);
+        },
+        () => read(scope),
+      ),
+  };
+});
 
+/** A grant change that React has already rendered, unlike a bare assignment. */
+const publish = () => act(async () => permissions.listeners.forEach((listener) => listener()));
 import {
   ProjectScriptEditorDialog,
   type NewProjectScriptInput,
@@ -72,16 +61,18 @@ const request: ProjectScriptEditorRequest = {
 };
 
 describe("ProjectScriptEditorDialog", () => {
-  let renderer: ReactTestRenderer | undefined;
+  let root: Root;
 
   beforeEach(() => {
+    root = createRoot(document.createElement("div"));
     permissions.canWriteSettings = false;
     permissions.canEditProject = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
   afterEach(async () => {
-    await act(() => renderer?.unmount());
+    await act(async () => root.unmount());
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -93,8 +84,8 @@ describe("ProjectScriptEditorDialog", () => {
       | typeof AuthOrchestrationOperateScope
       | typeof AuthSettingsWriteScope = AuthOrchestrationOperateScope,
   ) {
-    await act(() => {
-      renderer = create(
+    await act(async () =>
+      root.render(
         <ProjectScriptEditorDialog
           environmentId={EnvironmentId.make("script-editor-test")}
           editScope={editScope}
@@ -104,9 +95,25 @@ describe("ProjectScriptEditorDialog", () => {
           onDelete={actions.onDelete}
           onClose={actions.onClose}
         />,
+      ),
+    );
+  }
+
+  const submit = () => act(async () => document.querySelector("form")!.requestSubmit());
+  async function click(label: string) {
+    const button = await vi.waitFor(() => {
+      const match = [...document.querySelectorAll("button")].find(
+        (element) => element.textContent === label,
       );
+      expect(match, label).toBeDefined();
+      return match!;
     });
-    return renderer!.root;
+    await act(async () => button.click());
+  }
+  const confirmation = () => document.querySelector('[role="alertdialog"]');
+  async function pressInShortcutField(keys: string) {
+    document.querySelector<HTMLInputElement>("#script-keybinding")!.focus();
+    await userEvent.keyboard(keys);
   }
 
   it.each([null, "test"])(
@@ -115,22 +122,12 @@ describe("ProjectScriptEditorDialog", () => {
       permissions.canEditProject = false;
       permissions.canWriteSettings = true;
       const onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-      const root = await openEditor(
-        onSubmit,
-        { ...request, scriptId },
-        undefined,
-        AuthSettingsWriteScope,
-      );
-      const submit = root.findByType("form").props.onSubmit;
+      await openEditor(onSubmit, { ...request, scriptId }, undefined, AuthSettingsWriteScope);
       permissions.canWriteSettings = false;
-      await act(async () => {
-        await submit({ preventDefault() {} });
-      });
+      await submit();
       expect(onSubmit).not.toHaveBeenCalled();
       permissions.canWriteSettings = true;
-      await act(async () => {
-        await submit({ preventDefault() {} });
-      });
+      await submit();
       expect(onSubmit).toHaveBeenCalledExactlyOnceWith(
         scriptId,
         expect.objectContaining({ command: "vp test" }),
@@ -142,16 +139,16 @@ describe("ProjectScriptEditorDialog", () => {
     permissions.canEditProject = false;
     permissions.canWriteSettings = true;
     const actions = { onDelete: vi.fn(), onClose: vi.fn() };
-    const root = await openEditor(undefined, request, actions, AuthSettingsWriteScope);
-    await act(() => {
-      root.findByProps({ variant: "destructive-outline" }).props.onClick();
-    });
-    const confirmDelete = root.findByProps({ variant: "destructive" }).props.onClick;
+    await openEditor(undefined, request, actions, AuthSettingsWriteScope);
+    await click("Delete");
     permissions.canWriteSettings = false;
-    await act(() => confirmDelete());
+    await click("Delete action");
     expect(actions.onDelete).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(confirmation()).toBeNull());
     permissions.canWriteSettings = true;
-    await act(() => confirmDelete());
+    await publish();
+    await click("Delete");
+    await click("Delete action");
     expect(actions.onDelete).toHaveBeenCalledExactlyOnceWith(request.scriptId);
   });
 
@@ -162,14 +159,12 @@ describe("ProjectScriptEditorDialog", () => {
       if (input.keybinding !== undefined) persistedKeybinding = input.keybinding;
       return AsyncResult.success(undefined);
     });
-    const root = await openEditor(onSubmit, {
+    await openEditor(onSubmit, {
       scriptId: null,
       initial: { ...request.initial, keybinding: null },
     });
 
-    await act(async () => {
-      await root.findByType("form").props.onSubmit({ preventDefault() {} });
-    });
+    await submit();
 
     expect(persistedKeybinding).toBeNull();
     expect(onSubmit).toHaveBeenCalledWith(null, expect.objectContaining({ keybinding: null }));
@@ -190,15 +185,13 @@ describe("ProjectScriptEditorDialog", () => {
         if (input.keybinding !== undefined) persisted.keybinding = input.keybinding;
         return AsyncResult.success(undefined);
       });
-      const root = await openEditor(onSubmit, {
+      await openEditor(onSubmit, {
         scriptId: null,
         initial: { ...request.initial, keybinding: null },
       });
 
       permissions.canWriteSettings = false;
-      await act(async () => {
-        await root.findByType("form").props.onSubmit({ preventDefault() {} });
-      });
+      await submit();
 
       expect(persisted).toEqual({ name: "Test", keybinding: "mod+k" });
       expect(onSubmit).toHaveBeenCalledOnce();
@@ -209,31 +202,20 @@ describe("ProjectScriptEditorDialog", () => {
     "requires settings access to override a retained shortcut when re-adding an action (revoked: %s)",
     async (revokeBeforeSubmit) => {
       permissions.canWriteSettings = true;
-      vi.stubGlobal("navigator", { platform: "Linux" });
+      vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
       const persisted = { name: null as string | null, keybinding: "mod+k" as string | null };
       const onSubmit = vi.fn(async (_id: string | null, input: NewProjectScriptInput) => {
         persisted.name = input.name;
         if (input.keybinding !== undefined) persisted.keybinding = input.keybinding;
         return AsyncResult.success(undefined);
       });
-      const root = await openEditor(onSubmit, {
+      await openEditor(onSubmit, {
         scriptId: null,
         initial: { ...request.initial, keybinding: null },
       });
-      await act(() => {
-        root.findByProps({ id: "script-keybinding" }).props.onKeyDown({
-          key: "j",
-          ctrlKey: true,
-          metaKey: false,
-          altKey: false,
-          shiftKey: false,
-          preventDefault() {},
-        });
-      });
+      await pressInShortcutField("{Control>}j{/Control}");
       if (revokeBeforeSubmit) permissions.canWriteSettings = false;
-      await act(async () => {
-        await root.findByType("form").props.onSubmit({ preventDefault() {} });
-      });
+      await submit();
 
       expect(persisted).toEqual(
         revokeBeforeSubmit
@@ -253,15 +235,13 @@ describe("ProjectScriptEditorDialog", () => {
         if (input.keybinding !== undefined) persisted.keybinding = input.keybinding;
         return AsyncResult.success(undefined);
       });
-      const root = await openEditor(onSubmit);
+      await openEditor(onSubmit);
 
       persisted.keybinding = "mod+j";
-      await act(() => {
-        root.findByProps({ id: "script-name" }).props.onChange({ target: { value: "Renamed" } });
-      });
-      await act(async () => {
-        await root.findByType("form").props.onSubmit({ preventDefault() {} });
-      });
+      const name = document.querySelector<HTMLInputElement>("#script-name")!;
+      await userEvent.clear(name);
+      await userEvent.type(name, "Renamed");
+      await submit();
 
       expect(persisted).toEqual({ name: "Renamed", keybinding: "mod+j" });
       expect(onSubmit).toHaveBeenCalledOnce();
@@ -273,17 +253,10 @@ describe("ProjectScriptEditorDialog", () => {
     async (revokeBeforeSubmit) => {
       permissions.canWriteSettings = true;
       const onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-      const root = await openEditor(onSubmit);
-      await act(() => {
-        root.findByProps({ id: "script-keybinding" }).props.onKeyDown({
-          key: "Backspace",
-          preventDefault() {},
-        });
-      });
+      await openEditor(onSubmit);
+      await pressInShortcutField("{Backspace}");
       if (revokeBeforeSubmit) permissions.canWriteSettings = false;
-      await act(async () => {
-        await root.findByType("form").props.onSubmit({ preventDefault() {} });
-      });
+      await submit();
 
       if (revokeBeforeSubmit) {
         expect(onSubmit).not.toHaveBeenCalled();
@@ -302,38 +275,33 @@ describe("ProjectScriptEditorDialog", () => {
       permissions.canEditProject = revokeBeforeSubmit;
       permissions.canWriteSettings = true;
       const onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
-      const root = await openEditor(onSubmit);
-      const submit = root.findByType("form").props.onSubmit;
+      await openEditor(onSubmit);
 
       permissions.canEditProject = false;
-      await act(async () => {
-        await submit({ preventDefault() {} });
-      });
+      await submit();
       expect(onSubmit).not.toHaveBeenCalled();
 
       permissions.canEditProject = true;
-      await act(async () => {
-        await submit({ preventDefault() {} });
-      });
+      await submit();
       expect(onSubmit).toHaveBeenCalledOnce();
     },
   );
 
   it("rechecks project access before deleting from an already open confirmation", async () => {
     const actions = { onDelete: vi.fn(), onClose: vi.fn() };
-    const root = await openEditor(undefined, request, actions);
-    await act(() => {
-      root.findByProps({ variant: "destructive-outline" }).props.onClick();
-    });
-    const confirmDelete = root.findByProps({ variant: "destructive" }).props.onClick;
+    await openEditor(undefined, request, actions);
+    await click("Delete");
 
     permissions.canEditProject = false;
-    await act(() => confirmDelete());
+    await click("Delete action");
     expect(actions.onDelete).not.toHaveBeenCalled();
     expect(actions.onClose).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(confirmation()).toBeNull());
 
     permissions.canEditProject = true;
-    await act(() => confirmDelete());
+    await publish();
+    await click("Delete");
+    await click("Delete action");
     expect(actions.onDelete).toHaveBeenCalledExactlyOnceWith(request.scriptId);
     expect(actions.onClose).toHaveBeenCalledOnce();
   });

@@ -1,8 +1,7 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
 import type { FileTree as FileTreeModel } from "@pierre/trees";
-import { FileTree } from "@pierre/trees/react";
-import { act, type MouseEvent, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, type ComponentProps } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { FileDiffMetadata } from "@pierre/diffs";
@@ -11,12 +10,19 @@ import { DiffFileTree, type DiffFileTreeEntry } from "./DiffFileTree";
 import { diffFileTreeEntries } from "./diffFileTree.logic";
 import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
 
-vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ render }: { render: ReactNode }) => render,
-  TooltipPopup: () => null,
-}));
+const captured = vi.hoisted(() => ({ model: null as unknown }));
+// Read the tree model the component builds, so tests can assert its selection and expansion.
+vi.mock(import("@pierre/trees/react"), async (original) => {
+  const actual = await original();
+  const RealFileTree = actual.FileTree;
+  return {
+    ...actual,
+    FileTree: ((props: ComponentProps<typeof RealFileTree>) => {
+      captured.model = props.model;
+      return <RealFileTree {...props} />;
+    }) as typeof RealFileTree,
+  };
+});
 
 const entries: DiffFileTreeEntry[] = [
   { path: "01-tall.ts", status: "modified" },
@@ -24,16 +30,9 @@ const entries: DiffFileTreeEntry[] = [
   { path: "03-medium.ts", status: "modified" },
 ];
 
-class TreeRow {
-  constructor(readonly path: string) {}
-
-  getAttribute(name: string) {
-    return name === "data-item-path" ? this.path : null;
-  }
-}
-
 describe("diff tree file activation", () => {
-  let renderer: ReactTestRenderer | undefined;
+  let root: Root | undefined;
+  let container: HTMLDivElement;
   const targets: CodeViewScrollTarget[] = [];
   const viewer = {
     getInstance: () => viewer,
@@ -58,56 +57,48 @@ describe("diff tree file activation", () => {
     );
   }
 
-  const model = (): FileTreeModel => renderer!.root.findByType(FileTree).props.model;
+  const model = (): FileTreeModel => captured.model as FileTreeModel;
 
   async function mount(props: Parameters<typeof Panel>[0] = {}) {
-    await act(async () => {
-      renderer = create(<Panel {...props} />);
-    });
+    root ??= createRoot(container);
+    await act(async () => root!.render(<Panel {...props} />));
   }
 
-  async function activate(path: string, modifiers: Partial<MouseEvent<HTMLElement>> = {}) {
-    const event = {
-      button: 0,
-      ctrlKey: false,
-      metaKey: false,
-      shiftKey: false,
-      altKey: false,
-      defaultPrevented: false,
-      nativeEvent: { composedPath: () => [{}, new TreeRow(path), {}] },
-      ...modifiers,
-    } as MouseEvent<HTMLElement>;
+  function row(path: string): HTMLElement {
+    const host = container.querySelector("file-tree-container");
+    const element = (host?.shadowRoot ?? container).querySelector<HTMLElement>(
+      `[data-item-path="${CSS.escape(path)}"]`,
+    );
+    expect(element, `row ${path}`).not.toBeNull();
+    return element!;
+  }
+
+  async function activate(path: string, modifiers: MouseEventInit = {}) {
     await act(async () => {
-      renderer!.root
-        .find((node) => String(node.type) === "file-tree-container")
-        .props.onClickCapture?.(event);
-      const tree = model();
-      const item = tree.getItem(path)!;
-      if (event.ctrlKey || event.metaKey) {
-        item.toggleSelect();
-      } else {
-        for (const selected of tree.getSelectedPaths()) {
-          if (selected !== path) tree.getItem(selected)?.deselect();
-        }
-        item.select();
-      }
-      item.focus();
-      if ("toggle" in item && !event.ctrlKey && !event.metaKey && !event.shiftKey) item.toggle();
+      row(path).dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          composed: true,
+          button: 0,
+          detail: 1,
+          ...modifiers,
+        }),
+      );
     });
   }
 
   beforeEach(() => {
     targets.length = 0;
-    vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("HTMLElement", TreeRow);
+    container = document.createElement("div");
+    container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px";
+    document.body.append(container);
   });
 
   afterEach(async () => {
-    await act(async () => renderer?.unmount());
-    renderer = undefined;
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
+    await act(async () => root?.unmount());
+    root = undefined;
+    container.remove();
     vi.unstubAllGlobals();
   });
 
@@ -202,7 +193,7 @@ describe("diff tree file activation", () => {
     if (!("collapse" in initialFolder)) throw new Error("Expected the directory handle");
     await act(async () => initialFolder.collapse());
     await act(async () => {
-      renderer!.update(<Panel files={[files[1]!, files[0]!]} />);
+      root!.render(<Panel files={[files[1]!, files[0]!]} />);
     });
     const folder = model().getItem("src/features/")!;
     if (!("isExpanded" in folder)) throw new Error("Expected the directory handle");
@@ -216,7 +207,7 @@ describe("diff tree file activation", () => {
     await activate("02-short.ts");
     expect(targets).toHaveLength(1);
     await act(async () => {
-      renderer!.update(<Panel selectedPath="03-medium.ts" />);
+      root!.render(<Panel selectedPath="03-medium.ts" />);
     });
     expect(model().getSelectedPaths()).toEqual(["03-medium.ts"]);
     expect(targets).toHaveLength(1);

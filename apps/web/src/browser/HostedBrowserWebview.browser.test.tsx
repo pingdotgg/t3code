@@ -7,7 +7,7 @@ import {
   type DesktopPreviewBridge,
 } from "@t3tools/contracts";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -20,26 +20,30 @@ const mocks = vi.hoisted(() => ({
   activeRecordings: new Set<string>(),
 }));
 
-vi.mock("~/localApi", () => ({
-  ensureLocalApi: () => ({ persistence: mocks }),
-}));
+vi.mock(import("~/localApi"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    ensureLocalApi: () => ({ ...actual.ensureLocalApi(), persistence: mocks as never }),
+  };
+});
 
-vi.mock("~/components/preview/previewBridge", () => ({
+vi.mock(import("./desktopTabLifetime"), { spy: true });
+
+// The Electron desktop bridge; a browser has none.
+vi.mock(import("~/components/preview/previewBridge"), async (original) => ({
+  ...(await original()),
   previewBridge: {
     createTab: mocks.createTab,
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
-  },
+  } as unknown as DesktopPreviewBridge,
 }));
 
-vi.mock("~/components/preview/usePreviewBridge", () => ({
+vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
+  ...(await original()),
   usePreviewBridge: () => undefined,
-}));
-
-vi.mock("./browserRecording", () => ({
-  useActiveBrowserRecordingTabIds: () => mocks.activeRecordings,
-  stopBrowserRecording: async () => null,
 }));
 
 import {
@@ -50,7 +54,8 @@ import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root | undefined;
+let container: HTMLDivElement;
 
 function deferred<A>() {
   let resolve!: (value: A) => void;
@@ -76,20 +81,16 @@ beforeEach(() => {
     preloadUrl: null,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", globalThis);
-  vi.stubGlobal("navigator", { platform: "Linux" });
-  vi.stubGlobal(
-    "requestAnimationFrame",
-    vi.fn(() => 0),
-  );
-  vi.stubGlobal("cancelAnimationFrame", vi.fn());
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+  container = document.createElement("div");
+  document.body.append(container);
 });
 
 afterEach(async () => {
   vi.useFakeTimers();
-  await act(() => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root?.unmount());
+  root = undefined;
+  container.remove();
   await vi.advanceTimersByTimeAsync(0);
   vi.useRealTimers();
   __resetClientSettingsPersistenceForTests();
@@ -107,10 +108,21 @@ describe("HostedBrowserWebview settings hydration", () => {
       .mockReturnValueOnce(firstRead.promise)
       .mockReturnValueOnce(retryRead.promise);
     mocks.createTab.mockReturnValueOnce(tabCreation.promise);
-    const acquire = vi.spyOn(desktopTabLifetime, "acquireDesktopTab");
-    const createGuest = vi.fn((_attributes: unknown) =>
-      Object.assign(new EventTarget(), { getWebContentsId: () => 41 }),
-    );
+    const acquire = vi.mocked(desktopTabLifetime.acquireDesktopTab);
+    // Chromium treats <webview> as an unknown element; give it the one Electron method the
+    // host calls once the guest attaches.
+    const createElement = document.createElement.bind(document);
+    const createGuest = vi.spyOn(document, "createElement").mockImplementation(((
+      tagName: string,
+      options?: ElementCreationOptions,
+    ) => {
+      const element = createElement(tagName, options);
+      return tagName === "webview"
+        ? Object.assign(element, { getWebContentsId: () => 41 })
+        : element;
+    }) as typeof document.createElement);
+    const guests = () => createGuest.mock.calls.filter(([tagName]) => tagName === "webview");
+    const guest = () => container.querySelector("webview");
     const threadRef = {
       environmentId: EnvironmentId.make("host-settings-retry"),
       threadId: ThreadId.make("thread-settings-retry"),
@@ -118,8 +130,9 @@ describe("HostedBrowserWebview settings hydration", () => {
     const runtimeTabId = "retained-background-tab";
     useBrowserSurfaceStore.getState().acquireActivity(runtimeTabId);
 
-    await act(() => {
-      renderer = create(
+    root = createRoot(container);
+    await act(async () =>
+      root!.render(
         <HostedBrowserWebview
           threadRef={threadRef}
           tabId="server-tab"
@@ -130,18 +143,12 @@ describe("HostedBrowserWebview settings hydration", () => {
           profileId="work"
           zoomFactor={1.25}
         />,
-        {
-          createNodeMock: (element) =>
-            element.type === "webview"
-              ? createGuest(element.props)
-              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
-        },
-      );
-    });
+      ),
+    );
 
     expect(mocks.getClientSettings).toHaveBeenCalledOnce();
     expect(acquire).not.toHaveBeenCalled();
-    expect(createGuest).not.toHaveBeenCalled();
+    expect(guest()).toBeNull();
     expect(mocks.createTab).not.toHaveBeenCalled();
 
     const failure = new Error("Saved settings are unavailable");
@@ -151,7 +158,7 @@ describe("HostedBrowserWebview settings hydration", () => {
       await expect(hydration).rejects.toBe(failure);
     });
     expect(acquire).not.toHaveBeenCalled();
-    expect(createGuest).not.toHaveBeenCalled();
+    expect(guest()).toBeNull();
     expect(mocks.createTab).not.toHaveBeenCalled();
 
     let retry!: Promise<void>;
@@ -160,7 +167,7 @@ describe("HostedBrowserWebview settings hydration", () => {
     });
     expect(mocks.getClientSettings).toHaveBeenCalledTimes(2);
     expect(acquire).not.toHaveBeenCalled();
-    expect(createGuest).not.toHaveBeenCalled();
+    expect(guest()).toBeNull();
     expect(mocks.createTab).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -176,13 +183,9 @@ describe("HostedBrowserWebview settings hydration", () => {
 
     expect(acquire).toHaveBeenCalledExactlyOnceWith(runtimeTabId, undefined);
     expect(mocks.getPreviewConfig).toHaveBeenCalledExactlyOnceWith(threadRef.environmentId, "work");
-    expect(createGuest).toHaveBeenCalledOnce();
-    expect(createGuest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        partition: "persist:t3-preview-work",
-        src: "https://example.com",
-      }),
-    );
+    expect(guests()).toHaveLength(1);
+    expect(guest()?.getAttribute("partition")).toBe("persist:t3-preview-work");
+    expect(guest()?.getAttribute("src")).toBe("https://example.com");
     expect(mocks.createTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId, {
       zoomFactor: 1.25,
       colorScheme: "dark",

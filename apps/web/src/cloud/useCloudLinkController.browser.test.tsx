@@ -7,7 +7,7 @@ import {
 import type { RelayManagedEndpointProviderKind } from "@t3tools/contracts/relay";
 import { AsyncResult } from "effect/reactivity";
 import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
@@ -24,8 +24,9 @@ const testState = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({
+vi.mock(import("@effect/atom-react"), async (original) => ({
+  ...(await original()),
+  useAtomValue: (() => ({
     environments: new Map(
       testState.relayProviderKind === null
         ? []
@@ -36,35 +37,56 @@ vi.mock("@effect/atom-react", () => ({
             ],
           ],
     ),
-  }),
+  })) as never,
 }));
-vi.mock("@clerk/react", () => ({
-  useAuth: () => ({ getToken: testState.getToken, isSignedIn: true }),
+vi.mock(import("@clerk/react"), async (original) => ({
+  ...(await original()),
+  useAuth: (() => ({ getToken: testState.getToken, isSignedIn: true })) as never,
 }));
-vi.mock("../components/ui/toast", () => ({ toastManager: { add: testState.toast } }));
-vi.mock("../state/relay", () => ({
-  relayEnvironmentDiscovery: { refresh: testState.refreshDiscovery, stateValueAtom: {} },
+vi.mock(import("../components/ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: testState.toast } as never };
+});
+vi.mock(import("../state/relay"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    relayEnvironmentDiscovery: {
+      ...actual.relayEnvironmentDiscovery,
+      refresh: testState.refreshDiscovery,
+    } as never,
+  };
+});
+vi.mock(import("../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: (_environmentId, scope) => testState.scopes.has(scope),
 }));
-vi.mock("../state/session", () => ({
-  readEnvironmentScope: (_environmentId: string, scope: string) => testState.scopes.has(scope),
+vi.mock(import("../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: ((command: unknown) => command) as never,
 }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("./linkEnvironmentAtoms", () => ({
-  linkPrimaryEnvironment: testState.link,
-  unlinkPrimaryEnvironment: testState.unlink,
-  updatePrimaryEnvironmentPreferences: testState.preferences,
+vi.mock(import("./linkEnvironmentAtoms"), async (original) => ({
+  ...(await original()),
+  linkPrimaryEnvironment: testState.link as never,
+  unlinkPrimaryEnvironment: testState.unlink as never,
+  updatePrimaryEnvironmentPreferences: testState.preferences as never,
 }));
-vi.mock("./primaryCloudLinkState", () => ({
+vi.mock(import("./primaryCloudLinkState"), async (original) => ({
+  ...(await original()),
   readCachedPrimaryCloudLinkState: () => testState.snapshot,
-  usePrimaryCloudLinkState: () => ({
+  usePrimaryCloudLinkState: (() => ({
     target,
     data: testState.renderedSnapshot,
     error: null,
     isPending: false,
     refresh: testState.refreshLink,
-  }),
+  })) as never,
 }));
-vi.mock("./publicConfig", () => ({ resolveRelayClerkTokenOptions: () => ({}) }));
+// The Clerk JWT template is build-time config the test environment does not set.
+vi.mock(import("./publicConfig"), async (original) => ({
+  ...(await original()),
+  resolveRelayClerkTokenOptions: () => ({}) as never,
+}));
 
 import { useCloudLinkController, type CloudLinkDesiredState } from "./useCloudLinkController";
 
@@ -83,7 +105,7 @@ const linkedState: EnvironmentCloudLinkStateResult = {
   publishAgentActivity: false,
 };
 
-let renderer: ReactTestRenderer | null = null;
+let root: Root | null = null;
 let controller: ReturnType<typeof useCloudLinkController> | null = null;
 
 function ControllerProbe() {
@@ -95,9 +117,8 @@ function ControllerProbe() {
 }
 
 async function mountController() {
-  await act(() => {
-    renderer = create(<ControllerProbe />);
-  });
+  root = createRoot(document.createElement("div"));
+  await act(async () => root!.render(<ControllerProbe />));
 }
 
 async function reconcile(desired: CloudLinkDesiredState) {
@@ -136,8 +157,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = null;
+  await act(async () => root?.unmount());
+  root = null;
   controller = null;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();

@@ -3,8 +3,8 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { act, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type DiscoveredEnvironments = Discovery.RelayEnvironmentDiscoveryState["environments"];
@@ -12,24 +12,22 @@ type DiscoveredEnvironments = Discovery.RelayEnvironmentDiscoveryState["environm
 const discovery = vi.hoisted(() => ({
   state: null as Discovery.RelayEnvironmentDiscoveryState | null,
   listeners: new Set<() => void>(),
-  refreshCommand: Symbol("refresh"),
-  registerCommand: Symbol("register"),
   refresh: vi.fn<() => Promise<AtomCommandResult<void, never>>>(),
   register: vi.fn(),
   listEnvironments: vi.fn<() => Promise<DiscoveredEnvironments>>(),
 }));
 
-vi.mock("~/state/relay", () => ({
-  relayEnvironmentDiscovery: { refresh: discovery.refreshCommand },
-}));
-vi.mock("~/connection/catalog", () => ({
-  environmentCatalog: { register: discovery.registerCommand },
-}));
-vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: unknown) =>
-    command === discovery.refreshCommand ? discovery.refresh : discovery.register,
-}));
-vi.mock("~/state/environments", async () => {
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const { relayEnvironmentDiscovery } = await import("~/state/relay");
+  return {
+    ...(await original()),
+    useAtomCommand: ((command: unknown) =>
+      command === relayEnvironmentDiscovery.refresh
+        ? discovery.refresh
+        : discovery.register) as never,
+  };
+});
+vi.mock(import("~/state/environments"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const subscribe = (listener: () => void) => {
     discovery.listeners.add(listener);
@@ -39,34 +37,11 @@ vi.mock("~/state/environments", async () => {
     if (discovery.state === null) throw new Error("Discovery fixture is not initialized");
     return discovery.state;
   };
-  return { useRelayEnvironmentDiscovery: () => useSyncExternalStore(subscribe, read, read) };
+  return {
+    ...(await original()),
+    useRelayEnvironmentDiscovery: () => useSyncExternalStore(subscribe, read, read),
+  };
 });
-vi.mock("../ConnectionStatusDot", () => ({ ConnectionStatusDot: () => null }));
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ children }: { children: ReactNode }) => <span>{children}</span>,
-  TooltipPopup: () => null,
-}));
-vi.mock("../ui/checkbox", () => ({
-  Checkbox: (props: {
-    checked: boolean;
-    disabled: boolean;
-    onCheckedChange: (checked: boolean) => void;
-  }) => (
-    <input
-      type="checkbox"
-      checked={props.checked}
-      disabled={props.disabled}
-      onChange={(event) => props.onCheckedChange(event.target.checked)}
-    />
-  ),
-}));
-vi.mock("../ui/button", () => ({
-  Button: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
-    <button {...props}>{children}</button>
-  ),
-}));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
 import { CloudEnvironmentConnectRows } from "./CloudEnvironmentConnectList";
 
@@ -92,27 +67,41 @@ const linkedMachines: DiscoveredEnvironments = new Map([
   ],
 ]);
 
-let renderer: ReactTestRenderer | null;
-let page: EventTarget & { visibilityState: DocumentVisibilityState };
-let browserWindow: EventTarget;
+let root: Root | null;
+let container: HTMLDivElement;
+let visibility: DocumentVisibilityState;
 
 function publish(state: Discovery.RelayEnvironmentDiscoveryState) {
   discovery.state = state;
   for (const listener of discovery.listeners) listener();
 }
 
+async function render(element: React.ReactElement) {
+  root ??= createRoot(container);
+  await act(async () => root!.render(element));
+}
+
 async function mount(refreshWhileEmpty = true) {
-  await act(async () => {
-    renderer = create(
-      <CloudEnvironmentConnectRows
-        primaryEnvironmentId={null}
-        savedEnvironments={[]}
-        showSavedEnvironments
-        refreshWhileEmpty={refreshWhileEmpty}
-        empty={<p>Waiting for your computer to connect.</p>}
-      />,
-    );
-  });
+  await render(
+    <CloudEnvironmentConnectRows
+      primaryEnvironmentId={null}
+      savedEnvironments={[]}
+      showSavedEnvironments
+      refreshWhileEmpty={refreshWhileEmpty}
+      empty={<p>Waiting for your computer to connect.</p>}
+    />,
+  );
+}
+
+const text = () => container.textContent ?? "";
+const button = () =>
+  [...container.querySelectorAll("button")].find((element) => element.textContent !== "");
+const checkbox = () => container.querySelector<HTMLElement>('[role="checkbox"]')!;
+const checked = () => checkbox().getAttribute("aria-checked") === "true";
+const toggle = () => act(async () => checkbox().click());
+function setVisibility(next: DocumentVisibilityState) {
+  visibility = next;
+  document.dispatchEvent(new Event("visibilitychange"));
 }
 
 async function advance(milliseconds: number) {
@@ -124,11 +113,11 @@ async function advance(milliseconds: number) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  page = Object.assign(new EventTarget(), { visibilityState: "visible" as const });
-  browserWindow = new EventTarget();
-  vi.stubGlobal("document", page);
-  vi.stubGlobal("window", browserWindow);
-  renderer = null;
+  visibility = "visible";
+  vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = null;
   discovery.listeners.clear();
   discovery.state = {
     environments: new Map(),
@@ -147,8 +136,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
+  await act(async () => root?.unmount());
+  container.remove();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -167,12 +158,10 @@ describe("cloud environment offline reasons", () => {
         ...(offlineReason ? { offlineReason } : {}),
       }),
     });
-    const rowText = () =>
-      renderer!.root.findAllByType("p").flatMap((paragraph) => paragraph.children);
 
     discovery.listEnvironments.mockResolvedValue(new Map([[newMachineId, offlineEntry()]]));
     await mount();
-    expect(rowText()).toContain("T3 Connect · Not added · Relay offline");
+    expect(text()).toContain("T3 Connect · Not added · Relay offline");
 
     await act(async () => {
       publish({
@@ -182,7 +171,7 @@ describe("cloud environment offline reasons", () => {
         error: Option.none(),
       });
     });
-    expect(rowText()).toContain(RELAY_TUNNEL_RELEASED_MESSAGE);
+    expect(text()).toContain(RELAY_TUNNEL_RELEASED_MESSAGE);
   });
 });
 
@@ -195,21 +184,19 @@ describe("cloud onboarding discovery", () => {
       }),
     );
     const onDiscoveryReady = vi.fn();
-    await act(async () => {
-      renderer = create(
-        <CloudEnvironmentConnectRows
-          primaryEnvironmentId={null}
-          savedEnvironments={[]}
-          onDiscoveryReady={onDiscoveryReady}
-        />,
-      );
-    });
+    await render(
+      <CloudEnvironmentConnectRows
+        primaryEnvironmentId={null}
+        savedEnvironments={[]}
+        onDiscoveryReady={onDiscoveryReady}
+      />,
+    );
     expect(onDiscoveryReady).not.toHaveBeenCalled();
     await act(async () => {
       finishDiscovery(linkedMachines);
     });
     expect(onDiscoveryReady).toHaveBeenCalledTimes(1);
-    expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
+    expect(button()?.textContent).toBe("Add");
   });
 
   it("keeps incompatible discoveries unselected until the user enables a compatible server", async () => {
@@ -261,19 +248,13 @@ describe("cloud onboarding discovery", () => {
         />
       );
     }
-    await act(async () => {
-      renderer = create(<Setup />);
-    });
+    await render(<Setup />);
     expect(discovery.register).not.toHaveBeenCalled();
     expect(onSelectionChange).toHaveBeenCalledWith(newMachineId, false);
-    expect(renderer!.root.findByType("input").props.checked).toBe(false);
-    expect(renderer!.root.findByType("input").props.disabled).toBe(true);
-    expect(renderer!.root.findAllByType("span").flatMap((span) => span.children)).toContain(
-      "Client not supported",
-    );
-    await act(async () => {
-      await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
-    });
+    expect(checked()).toBe(false);
+    expect(checkbox().hasAttribute("data-disabled")).toBe(true);
+    expect(text()).toContain("Client not supported");
+    await toggle();
     expect(discovery.register).not.toHaveBeenCalled();
     await act(async () =>
       publish({
@@ -282,11 +263,9 @@ describe("cloud onboarding discovery", () => {
       }),
     );
     expect(discovery.register).not.toHaveBeenCalled();
-    expect(renderer!.root.findByType("input").props.checked).toBe(false);
-    expect(renderer!.root.findByType("input").props.disabled).toBe(false);
-    await act(async () => {
-      await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
-    });
+    expect(checked()).toBe(false);
+    expect(checkbox().hasAttribute("data-disabled")).toBe(false);
+    await toggle();
     expect(discovery.register).toHaveBeenCalledTimes(1);
   });
 
@@ -314,19 +293,15 @@ describe("cloud onboarding discovery", () => {
         />
       );
     }
-    await act(async () => {
-      renderer = create(<Setup />);
-    });
+    await render(<Setup />);
 
     expect(discovery.register).toHaveBeenCalledTimes(1);
-    expect(renderer!.root.findByType("input").props.checked).toBe(true);
-    await act(async () => {
-      await renderer!.root.findByType("input").props.onChange({ target: { checked: false } });
-    });
+    expect(checked()).toBe(true);
+    await toggle();
     await act(async () => {
       publish({ ...discovery.state!, environments: new Map(linkedMachines) });
     });
-    expect(renderer!.root.findByType("input").props.checked).toBe(false);
+    expect(checked()).toBe(false);
     expect(discovery.register).toHaveBeenCalledTimes(1);
   });
 
@@ -335,16 +310,12 @@ describe("cloud onboarding discovery", () => {
       .mockResolvedValueOnce(new Map())
       .mockResolvedValueOnce(linkedMachines);
     await mount();
-    expect(renderer!.root.findByType("p").children).toEqual([
-      "Waiting for your computer to connect.",
-    ]);
+    expect(text()).toBe("Waiting for your computer to connect.");
 
     await advance(5_000);
 
-    expect(renderer!.root.findAllByType("p").map((node) => node.children)).toContainEqual([
-      "Work laptop",
-    ]);
-    expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
+    expect(text()).toContain("Work laptop");
+    expect(button()?.textContent).toBe("Add");
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(2);
   });
@@ -352,44 +323,36 @@ describe("cloud onboarding discovery", () => {
   it("keeps a discovered computer visible when it is added to the browser", async () => {
     discovery.listEnvironments.mockResolvedValue(linkedMachines);
     await mount();
-    expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
-    await act(async () => {
-      renderer!.update(
-        <CloudEnvironmentConnectRows
-          primaryEnvironmentId={null}
-          savedEnvironments={[
-            {
-              environmentId: newMachineId,
-              connection: { phase: "connected", error: null, traceId: null },
-              relayManaged: true,
-            },
-          ]}
-          showSavedEnvironments
-          refreshWhileEmpty
-        />,
-      );
-    });
-    expect(renderer!.root.findAllByType("p").map((node) => node.children)).toContainEqual([
-      "Work laptop",
-    ]);
-    expect(renderer!.root.findByType("button").children).toEqual(["Connected"]);
+    expect(button()?.textContent).toBe("Add");
+    await render(
+      <CloudEnvironmentConnectRows
+        primaryEnvironmentId={null}
+        savedEnvironments={[
+          {
+            environmentId: newMachineId,
+            connection: { phase: "connected", error: null, traceId: null },
+            relayManaged: true,
+          },
+        ]}
+        showSavedEnvironments
+        refreshWhileEmpty
+      />,
+    );
+    expect(text()).toContain("Work laptop");
+    expect(button()?.textContent).toBe("Connected");
   });
 
   it("waits while hidden and refreshes immediately when visible again", async () => {
-    page.visibilityState = "hidden";
+    visibility = "hidden";
     await mount();
     await advance(30_000);
     expect(discovery.listEnvironments).not.toHaveBeenCalled();
 
-    await act(async () => {
-      page.visibilityState = "visible";
-      page.dispatchEvent(new Event("visibilitychange"));
-    });
+    await act(async () => setVisibility("visible"));
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(1);
 
-    page.visibilityState = "hidden";
-    page.dispatchEvent(new Event("visibilitychange"));
-    browserWindow.dispatchEvent(new Event("focus"));
+    setVisibility("hidden");
+    window.dispatchEvent(new Event("focus"));
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(1);
   });
@@ -402,17 +365,15 @@ describe("cloud onboarding discovery", () => {
     discovery.listEnvironments.mockResolvedValueOnce(new Map()).mockReturnValueOnce(pending);
     await mount();
     await advance(5_000);
-    expect(renderer!.root.findByType("p").children).toEqual([
-      "Waiting for your computer to connect.",
-    ]);
+    expect(text()).toBe("Waiting for your computer to connect.");
 
-    browserWindow.dispatchEvent(new Event("focus"));
-    page.dispatchEvent(new Event("visibilitychange"));
+    window.dispatchEvent(new Event("focus"));
+    document.dispatchEvent(new Event("visibilitychange"));
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(2);
 
-    await act(async () => renderer!.unmount());
-    renderer = null;
+    await act(async () => root!.unmount());
+    root = null;
     await act(async () => resolveRefresh(new Map()));
     await advance(30_000);
     expect(discovery.listEnvironments).toHaveBeenCalledTimes(2);

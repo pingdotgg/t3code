@@ -1,9 +1,9 @@
 import { EnvironmentId, type DeviceDetail, type DeviceSummary } from "@t3tools/contracts";
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
+import * as Cause from "effect/Cause";
 import { act, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { useDeviceControls, type DeviceControls } from "./useDeviceControls";
 
 type Result = { _tag: "Success"; value: DeviceDetail } | { _tag: "Failure"; cause: unknown };
 const { read, action, subscribe } = vi.hoisted(() => ({
@@ -12,13 +12,22 @@ const { read, action, subscribe } = vi.hoisted(() => ({
   subscribe:
     vi.fn<(_target: unknown, onChange: (app: { id: string } | null) => void) => () => void>(),
 }));
-vi.mock("~/state/device", () => ({ deviceEnvironment: { detail: "detail", action: "action" } }));
-vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "detail" ? read : action),
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const { deviceEnvironment } = await import("~/state/device");
+  return {
+    ...(await original()),
+    useAtomCommand: ((command: unknown) =>
+      command === deviceEnvironment.detail ? read : action) as never,
+  };
+});
+vi.mock(import("./deviceHubApi"), async (original) => ({
+  ...(await original()),
+  subscribeDeviceForeground: subscribe as never,
 }));
-vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device action failed" }));
-vi.mock("./deviceHubApi", () => ({ subscribeDeviceForeground: subscribe }));
 
+import { useDeviceControls, type DeviceControls } from "./useDeviceControls";
+
+const offline = Cause.fail(new Error("Device offline"));
 const device: DeviceSummary = {
   hostId: "remote",
   id: "phone",
@@ -45,7 +54,7 @@ function deferred() {
   });
   return { promise, resolve };
 }
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
 let controls: DeviceControls;
 function Probe({ visible, access = null }: { visible: boolean; access?: DeviceHubAccess | null }) {
   const next = useDeviceControls({
@@ -66,14 +75,15 @@ beforeEach(() => {
   subscribe.mockReset();
   subscribe.mockReturnValue(() => {});
   read.mockResolvedValue(snapshot("light"));
+  root = createRoot(document.createElement("div"));
 });
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
+  await act(async () => root.unmount());
   vi.unstubAllGlobals();
 });
 async function mount() {
   await act(async () => {
-    renderer = create(<Probe visible />);
+    root.render(<Probe visible />);
   });
 }
 
@@ -94,10 +104,10 @@ it("serializes rapid actions and retains confirmed settings while pending or aft
     await pending;
   });
   expect(controls.detail?.settings.appearance).toBe("dark");
-  action.mockResolvedValueOnce({ _tag: "Failure", cause: "offline" });
+  action.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
   await act(async () => controls.act({ type: "setAppearance", value: "light" }));
   expect(controls.detail?.settings.appearance).toBe("dark");
-  expect(controls.error).toBe("Device action failed");
+  expect(controls.error).toBe("Device offline");
   expect(controls.disabled).toBe(false);
 });
 
@@ -109,9 +119,9 @@ it("serializes host actions across hide/reopen and discards detached results", a
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
   });
-  await act(async () => renderer!.update(<Probe visible={false} />));
+  await act(async () => root.render(<Probe visible={false} />));
   expect(controls.disabled).toBe(true);
-  await act(async () => renderer!.update(<Probe visible />));
+  await act(async () => root.render(<Probe visible />));
   await act(async () => controls.act({ type: "setAppearance", value: "light" }));
   expect(action).toHaveBeenCalledOnce();
   expect(controls.disabled).toBe(true);
@@ -143,36 +153,36 @@ it("keeps actions disabled when settings cannot be confirmed after a detached co
   await act(async () => {
     pending = controls.act({ type: "setAppearance", value: "dark" });
   });
-  await act(async () => renderer!.update(<Probe visible={false} />));
-  await act(async () => renderer!.update(<Probe visible />));
-  read.mockResolvedValueOnce({ _tag: "Failure", cause: "offline" });
+  await act(async () => root.render(<Probe visible={false} />));
+  await act(async () => root.render(<Probe visible />));
+  read.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
   await act(async () => {
     response.resolve(snapshot("dark"));
     await pending;
   });
   expect(controls.detail).toBeNull();
   expect(controls.disabled).toBe(true);
-  expect(controls.error).toBe("Device action failed");
+  expect(controls.error).toBe("Device offline");
   await act(async () => controls.act({ type: "setAppearance", value: "light" }));
   expect(action).toHaveBeenCalledOnce();
-  await act(async () => renderer!.update(<Probe visible={false} />));
-  await act(async () => renderer!.update(<Probe visible />));
+  await act(async () => root.render(<Probe visible={false} />));
+  await act(async () => root.render(<Probe visible />));
   expect(controls.disabled).toBe(false);
   expect(controls.error).toBeNull();
 });
 
 it("disables stale settings after a failed reopen read and recovers on a successful read", async () => {
   await mount();
-  await act(async () => renderer!.update(<Probe visible={false} />));
-  read.mockResolvedValueOnce({ _tag: "Failure", cause: "offline" });
-  await act(async () => renderer!.update(<Probe visible />));
+  await act(async () => root.render(<Probe visible={false} />));
+  read.mockResolvedValueOnce({ _tag: "Failure", cause: offline });
+  await act(async () => root.render(<Probe visible />));
   expect(controls.detail).toBeNull();
   expect(controls.disabled).toBe(true);
-  expect(controls.error).toBe("Device action failed");
+  expect(controls.error).toBe("Device offline");
   await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
   expect(action).not.toHaveBeenCalled();
-  await act(async () => renderer!.update(<Probe visible={false} />));
-  await act(async () => renderer!.update(<Probe visible />));
+  await act(async () => root.render(<Probe visible={false} />));
+  await act(async () => root.render(<Probe visible />));
   expect(controls.detail?.settings.appearance).toBe("light");
   expect(controls.disabled).toBe(false);
   expect(controls.error).toBeNull();
@@ -180,10 +190,10 @@ it("disables stale settings after a failed reopen read and recovers on a success
 
 it("does not let an older refresh overwrite a newer confirmed action", async () => {
   await mount();
-  await act(async () => renderer!.update(<Probe visible={false} />));
+  await act(async () => root.render(<Probe visible={false} />));
   const refresh = deferred();
   read.mockReturnValueOnce(refresh.promise);
-  await act(async () => renderer!.update(<Probe visible />));
+  await act(async () => root.render(<Probe visible />));
   action.mockResolvedValueOnce(snapshot("dark"));
   await act(async () => controls.act({ type: "setAppearance", value: "dark" }));
   await act(async () => {
@@ -209,17 +219,17 @@ it.each(["hidden", "access renewed"] as const)(
       value: { ...detail.value, foregroundApp: { id: "snapshot.app" } },
     });
     await act(async () => {
-      renderer = create(<Probe visible access={access} />);
+      root.render(<Probe visible access={access} />);
     });
     const oldEvent = subscribe.mock.calls[0]![1];
     await act(async () => oldEvent({ id: "previous.live.app" }));
     expect(controls.foregroundApp?.id).toBe("previous.live.app");
     if (restart === "hidden") {
-      await act(async () => renderer!.update(<Probe visible={false} access={access} />));
-      await act(async () => renderer!.update(<Probe visible access={access} />));
+      await act(async () => root.render(<Probe visible={false} access={access} />));
+      await act(async () => root.render(<Probe visible access={access} />));
     } else {
       await act(async () =>
-        renderer!.update(<Probe visible access={{ ...access, query: { ticket: "renewed" } }} />),
+        root.render(<Probe visible access={{ ...access, query: { ticket: "renewed" } }} />),
       );
     }
     expect(controls.foregroundApp?.id).toBe("snapshot.app");
