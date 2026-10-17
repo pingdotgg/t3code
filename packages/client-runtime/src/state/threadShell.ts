@@ -1,17 +1,17 @@
 import type {
   EnvironmentId,
   OrchestrationV2ShellSnapshot,
-  OrchestrationV2ThreadShell,
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { isProviderNativeSubagentThread, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
-import { presentThreadShell } from "./models.ts";
+import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -91,6 +91,41 @@ export function childThreadInputsTitle(
   return children.length === 1
     ? `Subagent needs ${need}`
     : `${children.length} subagents need ${need}`;
+}
+
+const sameWireThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
+
+// While a run streams, the server bumps the shell's timestamps, item counts and
+// latest message several times a second. Only the zero crossing of the counts
+// says anything (whether the thread has started). Once the run stops every
+// field counts again, so snooze wakes and failure times read the current value.
+function sameApartFromStreaming(
+  previous: EnvironmentThreadShell,
+  next: EnvironmentThreadShell,
+): boolean {
+  if (
+    previous.environmentId !== next.environmentId ||
+    previous.pendingSubagentRequest !== next.pendingSubagentRequest ||
+    !threadRuntimeIsActive(next.runtime)
+  ) {
+    return false;
+  }
+  const before = previous.source;
+  const after = next.source;
+  return (
+    before.itemCount > 0 === after.itemCount > 0 &&
+    before.visibleItemCount > 0 === after.visibleItemCount > 0 &&
+    sameWireThreadShell(
+      {
+        ...before,
+        updatedAt: after.updatedAt,
+        itemCount: after.itemCount,
+        visibleItemCount: after.visibleItemCount,
+        latestVisibleMessage: after.latestVisibleMessage,
+      },
+      after,
+    )
+  );
 }
 
 export function createEnvironmentThreadShellAtoms(input: {
@@ -229,6 +264,21 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-shell:${key}`));
   });
 
+  // Keeps the previous shell while only streaming ticks changed. During a run,
+  // its timestamps, item counts and latest message are as of the last kept
+  // change; anything that needs them current reads threadShellAtom.
+  const quietThreadShellAtomFamily = Atom.family((key: string) => {
+    let previous: EnvironmentThreadShell | null = null;
+    return Atom.make((get) => {
+      const next = get(threadShellAtomFamily(key));
+      if (previous !== null && next !== null && sameApartFromStreaming(previous, next)) {
+        return previous;
+      }
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`environment-quiet-thread-shell:${key}`));
+  });
+
   // Child approvals and questions are hidden with their sidebar rows. Read their
   // shell summaries, without subscribing to every child transcript.
   const childThreadInputsAtomFamily = Atom.family((key: string) => {
@@ -365,6 +415,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),
     threadShellAtom: (ref: ScopedThreadRef) => threadShellAtomFamily(threadKey(ref)),
+    quietThreadShellAtom: (ref: ScopedThreadRef) => quietThreadShellAtomFamily(threadKey(ref)),
     childThreadInputsAtom: (ref: ScopedThreadRef) => childThreadInputsAtomFamily(threadKey(ref)),
   };
 }

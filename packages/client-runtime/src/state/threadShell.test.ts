@@ -5,7 +5,9 @@ import {
   RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
@@ -329,6 +331,55 @@ describe("v2 thread shell lists", () => {
       expect(harness.registry.get(listAtom)).toEqual([]);
     } finally {
       disposeList();
+      harness.registry.dispose();
+    }
+  });
+
+  it("keeps the quiet shell through streaming ticks and follows every change once the run stops", () => {
+    const harness = makeHarness();
+    const runId = RunId.make("streaming-run");
+    const running: OrchestrationV2ThreadShell = {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running",
+      itemCount: 1,
+      visibleItemCount: 1,
+    };
+    const setThread = (thread: OrchestrationV2ThreadShell, sequence: number) =>
+      harness.registry.set(harness.snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        snapshotSequence: sequence,
+        threads: [thread],
+      });
+    const at = (seconds: number) => DateTime.add(v2Now, { seconds });
+    setThread(running, 1);
+    const ref = { environmentId, threadId: v2ThreadShell.id };
+    const quietAtom = harness.threads.quietThreadShellAtom(ref);
+    const dispose = harness.registry.mount(quietAtom);
+    try {
+      const first = harness.registry.get(quietAtom);
+      setThread({ ...running, updatedAt: at(1), itemCount: 4, visibleItemCount: 3 }, 2);
+      expect(harness.registry.get(quietAtom)).toBe(first);
+      expect(harness.registry.get(harness.threads.threadShellAtom(ref))?.itemCount).toBe(4);
+
+      setThread({ ...running, updatedAt: at(2), itemCount: 5, title: "Renamed" }, 3);
+      const renamed = harness.registry.get(quietAtom);
+      expect(renamed?.title).toBe("Renamed");
+
+      const stopped: OrchestrationV2ThreadShell = {
+        ...running,
+        activeRunId: null,
+        status: "completed",
+      };
+      setThread({ ...stopped, title: "Renamed", updatedAt: at(3) }, 4);
+      const completed = harness.registry.get(quietAtom);
+      expect(completed).not.toBe(renamed);
+      setThread({ ...stopped, title: "Renamed", updatedAt: at(4) }, 5);
+      expect(harness.registry.get(quietAtom)?.updatedAt).toBe(DateTime.formatIso(at(4)));
+      expect(harness.registry.get(quietAtom)).not.toBe(completed);
+    } finally {
+      dispose();
       harness.registry.dispose();
     }
   });

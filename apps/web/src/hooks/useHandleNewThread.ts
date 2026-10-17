@@ -27,7 +27,7 @@ import {
   readThreadShell,
   readThreadShells,
   useProjects,
-  useThreadShell,
+  useQuietThreadShell,
 } from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
@@ -388,7 +388,7 @@ export function useHandleNewThread() {
   const routeTarget = useThreadRouteTarget();
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
   const routeDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
-  const activeThread = useThreadShell(routeThreadRef);
+  const activeThread = useQuietThreadShell(routeThreadRef);
   const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const activeDraftThread = useComposerDraftStore(() =>
     routeTarget

@@ -27,7 +27,7 @@ vi.mock("@effect/atom-react", () => ({
 vi.mock("~/state/entities", () => ({
   useThreadProjection: (ref: unknown) =>
     ref === null || state.detail === null ? null : { projection: { thread: state.detail } },
-  useThreadShell: () => state.shell,
+  useQuietThreadShell: () => state.shell,
 }));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>

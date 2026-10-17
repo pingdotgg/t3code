@@ -9,7 +9,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { normalizeHostname } from "~/browser/browserTargetResolver";
-import { useThreadShell } from "~/state/entities";
+import { useQuietThreadShell } from "~/state/entities";
 import { usePreparedConnection } from "~/state/session";
 
 import {
@@ -196,7 +196,7 @@ export function registerFaviconProjectForThread(
 }
 
 export function useFaviconProjectRefForThread(threadRef: ScopedThreadRef): ScopedProjectRef | null {
-  const shell = useThreadShell(threadRef);
+  const shell = useQuietThreadShell(threadRef);
   const shellProjectId = shell?.projectId ?? null;
   const environmentId = threadRef.environmentId;
   const shellProjectRef = shellProjectId ? scopeProjectRef(environmentId, shellProjectId) : null;

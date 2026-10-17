@@ -23,7 +23,7 @@ vi.mock("../composerDraftStore", () => ({
     select({ getDraftThreadByRef: () => null, setDraftThreadContext: vi.fn() }),
 }));
 vi.mock("../state/entities", () => ({
-  useThreadShell: () => ({
+  useQuietThreadShell: () => ({
     environmentId: "local",
     projectId: "project",
     worktreePath: state.worktreePath,
