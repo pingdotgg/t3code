@@ -26,7 +26,6 @@ const KNOWN_BAILOUTS: Record<string, string> = {
   "src/components/ui/Menu.tsx": "ref read during render",
   "src/components/ui/OverlayPortal.tsx": "unsupported syntax",
   "src/features/connection/ConnectionsNewRouteScreen.tsx": "try without catch",
-  "src/features/devices/DevicePreviewRouteScreen.tsx": "try without catch",
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
   "src/features/files/AttachmentFileScreen.tsx": "manual memo not preserved",
   "src/features/files/FileMarkdownPreview.tsx": "try without catch",
