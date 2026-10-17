@@ -1308,6 +1308,9 @@ importers:
       playwright:
         specifier: 1.60.0
         version: 1.60.0
+      react-test-renderer:
+        specifier: 19.2.6
+        version: 19.2.6(react@19.2.6)
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3
