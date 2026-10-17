@@ -422,7 +422,14 @@ export const make = Effect.gen(function* () {
 
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
-      if (!local.isRepo || !local.isDefaultRef || local.hasWorkingTreeChanges) return null;
+      if (
+        local.vcs?.kind === "jj" ||
+        !local.isRepo ||
+        !local.isDefaultRef ||
+        local.hasWorkingTreeChanges
+      ) {
+        return null;
+      }
 
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
