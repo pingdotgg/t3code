@@ -8,6 +8,7 @@ describe("ComposerStashMenu", () => {
   it("shows saved image thumbnails and incomplete image states", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu
+        composerFormRef={{ current: null }}
         entries={[
           {
             id: "with-images",
@@ -51,6 +52,7 @@ describe("ComposerStashMenu", () => {
   it("labels mixed file and image stashes without treating images as files", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu
+        composerFormRef={{ current: null }}
         entries={[
           {
             id: "mixed-attachments",
