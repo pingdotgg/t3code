@@ -4,7 +4,9 @@ import {
   type ComposerContextKind,
   type ComposerContextRecord,
   type ElementContextDetails,
+  type EnvironmentId,
   type KnownComposerContextRecord,
+  type ThreadContextRecord,
 } from "@t3tools/contracts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
@@ -318,6 +320,27 @@ export function projectComposerContextForProvider(input: {
   }
   if (entries.length === 0) return body;
   return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
+}
+
+/**
+ * Attached threads an agent on `environmentId` cannot read: `t3_thread_read` only sees its own
+ * server's threads, so a draft moved to another machine strands these references.
+ */
+export function threadContextsOutsideEnvironment(input: {
+  text: string;
+  records: ReadonlyArray<ComposerContextRecord>;
+  environmentId: EnvironmentId;
+}): ThreadContextRecord[] {
+  const referenced = new Set(
+    collectComposerContextReferences(input.text).map((occurrence) => occurrence.contextId),
+  );
+  return input.records.filter(
+    (record): record is ThreadContextRecord =>
+      record.kind === "thread" &&
+      "threadId" in record &&
+      referenced.has(record.contextId) &&
+      record.environmentId !== input.environmentId,
+  );
 }
 
 export function remapComposerContextAttachments(

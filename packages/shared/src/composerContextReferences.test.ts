@@ -11,6 +11,7 @@ import {
   projectComposerContextForProvider,
   replaceComposerContextReferences,
   sanitizeComposerContextLabel,
+  threadContextsOutsideEnvironment,
   toComposerContextId,
   toKindScopedComposerContextId,
 } from "./composerContextReferences.ts";
@@ -298,6 +299,38 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+});
+
+describe("threadContextsOutsideEnvironment", () => {
+  const thread = (id: string, environmentId: string): ComposerContextRecord => ({
+    version: 1,
+    kind: "thread",
+    contextId: ctx(`thread_${id}`),
+    label: id,
+    environmentId: environmentId as never,
+    threadId: id as never,
+    title: id,
+  });
+  const text = "[a](t3-context://v1/thread/thread_a) [b](t3-context://v1/thread/thread_b)";
+
+  it("returns referenced threads owned by another environment", () => {
+    const stranded = threadContextsOutsideEnvironment({
+      text,
+      records: [thread("a", "env-a"), thread("b", "env-b")],
+      environmentId: "env-b" as never,
+    });
+    expect(stranded.map((record) => record.threadId)).toEqual(["a"]);
+  });
+
+  it("ignores records whose chip was removed from the text", () => {
+    expect(
+      threadContextsOutsideEnvironment({
+        text: "no references left",
+        records: [thread("a", "env-a")],
+        environmentId: "env-b" as never,
+      }),
+    ).toEqual([]);
   });
 });
 
