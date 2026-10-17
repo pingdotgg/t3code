@@ -7,26 +7,22 @@ import { useThreadShells } from "./entities";
 import { pullRequestStackAtom } from "./pullRequests";
 import { useEnvironmentQuery } from "./query";
 
-function useSavedPullRequestStack(environmentId: EnvironmentId, reference: PullRequestRef | null) {
-  "use memo";
-  const threads = useThreadShells();
-  return reference === null
-    ? null
-    : savedPullRequestStack(
-        threads
-          .filter((thread) => thread.environmentId === environmentId)
-          .flatMap((thread) => thread.pullRequests ?? []),
-        reference,
-      );
-}
-
 export function usePullRequestStack(
   environmentId: EnvironmentId,
   reference: PullRequestRef | null,
 ) {
-  const saved = useSavedPullRequestStack(environmentId, reference);
+  const threads = useThreadShells();
   const query = useEnvironmentQuery(
     reference === null ? null : pullRequestStackAtom({ environmentId, input: reference }),
   );
+  const saved =
+    reference === null
+      ? null
+      : savedPullRequestStack(
+          threads
+            .filter((thread) => thread.environmentId === environmentId)
+            .flatMap((thread) => thread.pullRequests ?? []),
+          reference,
+        );
   return { ...query, ...pullRequestStackView(query, saved) };
 }
