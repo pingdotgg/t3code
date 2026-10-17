@@ -601,6 +601,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "schedule-delete":
     case "schedule-run":
     case "thread-configure":
+    case "mcp-login":
     case "thread-fork":
     case "thread-merge":
     case "thread-organize":

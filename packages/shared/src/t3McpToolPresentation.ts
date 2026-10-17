@@ -23,6 +23,9 @@ export type T3McpToolSummaryAction =
   | "thread-interrupt"
   | "workflow-stop"
   | "thread-configuration"
+  | "mcp-status"
+  | "mcp-login"
+  | "mcp-login-wait"
   | "thread-configure"
   | "thread-fork"
   | "thread-merge"
@@ -85,6 +88,15 @@ function tool(
 const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
 
 const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
+  t3_mcp_server_status: tool(
+    ["Check", "Checking", "Checked", "MCP server connection"],
+    "mcp-status",
+  ),
+  t3_mcp_server_login: tool(["Start", "Starting", "Started", "MCP server sign-in"], "mcp-login"),
+  t3_mcp_server_login_wait: tool(
+    ["Wait", "Waiting", "Finished waiting", "for MCP server sign-in"],
+    "mcp-login-wait",
+  ),
   link_pull_request: tool(
     ["Link", "Linking", "Linked", "a pull request"],
     "link-pr",

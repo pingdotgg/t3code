@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
 import {
@@ -12,6 +12,7 @@ import {
   OrchestratorMcpThreadReadResult,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -21,6 +22,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer, Tool } from "effect/ai";
@@ -42,6 +44,7 @@ import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ThreadMcpServers from "../../provider/ThreadMcpServers.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -85,6 +88,7 @@ const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadMcpServers.ThreadMcpServers)({})),
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
 );
@@ -423,6 +427,246 @@ const clientScope = (
   issuedAt: 0,
   capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
 });
+
+const layerMcpServerToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(NodeCrypto.layer),
+);
+
+it.effect.each([
+  {
+    label: "a supervised thread",
+    invocation: scope,
+    caller: McpToolAccessTestkit.liveThreadShell(threadId, { runtimeMode: "approval-required" }),
+    code: "capability_denied",
+  },
+  {
+    label: "a planning thread",
+    invocation: scope,
+    caller: McpToolAccessTestkit.liveThreadShell(threadId, { interactionMode: "plan" }),
+    code: "capability_denied",
+  },
+  {
+    label: "an ended run",
+    invocation: scope,
+    caller: McpToolAccessTestkit.liveThreadShell(threadId, { activeRunId: null }),
+    code: "parent_not_active",
+  },
+  {
+    label: "a read-only client",
+    invocation: clientScope("read-only"),
+    caller: McpToolAccessTestkit.liveThreadShell(threadId),
+    code: "capability_denied",
+  },
+  {
+    label: "a full-access client without a thread",
+    invocation: clientScope("full-access"),
+    caller: McpToolAccessTestkit.liveThreadShell(threadId),
+    code: "thread_credential_required",
+  },
+  {
+    label: "a caller without orchestration access",
+    invocation: { ...scope, capabilities: new Set<never>() },
+    caller: McpToolAccessTestkit.liveThreadShell(threadId),
+    code: "capability_denied",
+  },
+])("does not start native MCP OAuth for $label through production registration", (testCase) =>
+  Effect.gen(function* () {
+    const invoked = yield* Ref.make(false);
+    yield* Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "t3_mcp_server_login",
+          arguments: { server: "example" },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, testCase.invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      assert.containsSubset(declaredFailure(result), { code: testCase.code });
+      assert.isFalse(yield* Ref.get(invoked));
+    }).pipe(
+      Effect.provide(
+        layerMcpServerToolkit.pipe(
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(testCase.caller),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(ThreadMcpServers.ThreadMcpServers)({
+              login: () =>
+                Ref.set(invoked, true).pipe(
+                  Effect.as({
+                    loginId: "unexpected-login",
+                    providerThreadId: ProviderThreadId.make("unexpected-provider-thread"),
+                    authorizationUrl: "https://example.test/authorize",
+                  }),
+                ),
+            }),
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "starts native MCP OAuth from a live full-access/default caller and returns the opaque binding",
+  () =>
+    Effect.gen(function* () {
+      const received = yield* Ref.make<
+        Parameters<ThreadMcpServers.ThreadMcpServers["Service"]["login"]>[0] | undefined
+      >(undefined);
+      const started = {
+        loginId: "opaque-login",
+        providerThreadId: ProviderThreadId.make("provider-thread:oauth"),
+        authorizationUrl: "https://example.test/authorize",
+      };
+      yield* Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        const result = yield* server
+          .callTool({
+            name: "t3_mcp_server_login",
+            arguments: { server: "example", threadId: "thread:other" },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        assert.notStrictEqual(result.isError, true);
+        assert.deepStrictEqual(result.structuredContent, started);
+        assert.deepStrictEqual(yield* Ref.get(received), {
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          server: "example",
+        });
+      }).pipe(
+        Effect.provide(
+          layerMcpServerToolkit.pipe(
+            Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provide(
+              Layer.mock(ThreadMcpServers.ThreadMcpServers)({
+                login: (input) => Ref.set(received, input).pipe(Effect.as(started)),
+              }),
+            ),
+          ),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "keeps status and OAuth waits in the caller's thread and preserves failed connectivity",
+  () =>
+    Effect.gen(function* () {
+      const received = yield* Ref.make<
+        ReadonlyArray<
+          | Parameters<ThreadMcpServers.ThreadMcpServers["Service"]["status"]>[0]
+          | Parameters<ThreadMcpServers.ThreadMcpServers["Service"]["waitForLogin"]>[0]
+        >
+      >([]);
+      const status = {
+        name: "example",
+        status: "failed" as const,
+        authStatus: "oAuth",
+        toolCount: 0,
+      };
+      const providerThreadId = ProviderThreadId.make("provider-thread:oauth");
+      yield* Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        const current = yield* server
+          .callTool({
+            name: "t3_mcp_server_status",
+            arguments: { server: "example", threadId: "thread:other" },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        assert.deepStrictEqual(current.structuredContent, status);
+        const waited = yield* server
+          .callTool({
+            name: "t3_mcp_server_login_wait",
+            arguments: {
+              server: "example",
+              loginId: "opaque-login",
+              providerThreadId,
+              threadId: "thread:other",
+            },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        assert.deepStrictEqual(waited.structuredContent, { oauthCompleted: true, server: status });
+        assert.deepStrictEqual(yield* Ref.get(received), [
+          { server: "example", threadId, providerInstanceId: ProviderInstanceId.make("codex") },
+          {
+            server: "example",
+            threadId,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            loginId: "opaque-login",
+            providerThreadId,
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          layerMcpServerToolkit.pipe(
+            Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provide(
+              Layer.mock(ThreadMcpServers.ThreadMcpServers)({
+                status: (input) =>
+                  Ref.update(received, (current) => [...current, input]).pipe(Effect.as(status)),
+                waitForLogin: (input) =>
+                  Ref.update(received, (current) => [...current, input]).pipe(Effect.as(status)),
+              }),
+            ),
+          ),
+        ),
+      );
+    }),
+);
+
+it.effect.each(["t3_mcp_server_status", "t3_mcp_server_login_wait"])(
+  "requires a thread credential and orchestration access for %s",
+  (name) =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      for (const invocation of [
+        clientScope("full-access"),
+        { ...scope, capabilities: new Set<never>() },
+      ]) {
+        const result = yield* server
+          .callTool({
+            name,
+            arguments: {
+              server: "example",
+              loginId: "opaque-login",
+              providerThreadId: "provider-thread:oauth",
+            },
+          })
+          .pipe(
+            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+            Effect.provideService(McpSchema.McpServerClient, client),
+          );
+        assert.containsSubset(declaredFailure(result), {
+          code:
+            invocation.thread === undefined ? "thread_credential_required" : "capability_denied",
+        });
+      }
+    }).pipe(
+      Effect.provide(
+        layerMcpServerToolkit.pipe(
+          Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+          Layer.provide(Layer.mock(ThreadMcpServers.ThreadMcpServers)({})),
+        ),
+      ),
+    ),
+);
 
 it.effect("a client caller targets any thread within its ceiling and cannot act as a thread", () =>
   Effect.gen(function* () {

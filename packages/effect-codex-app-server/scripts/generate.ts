@@ -144,6 +144,27 @@ const ManualSchemas: Record<string, Schema.Json> = {
 // `account/read` decode and take the provider down with it.
 const DefinitionOverrides: Record<string, Schema.Json> = {
   PlanType: { type: "string" },
+  McpServerOauthLoginResponse: {
+    type: "object",
+    title: "McpServerOauthLoginResponse",
+    properties: {
+      authorizationUrl: { type: "string" },
+      loginId: { anyOf: [{ type: "string" }, { type: "null" }] },
+    },
+    required: ["authorizationUrl"],
+  },
+  McpServerOauthLoginCompletedNotification: {
+    type: "object",
+    title: "McpServerOauthLoginCompletedNotification",
+    properties: {
+      error: { anyOf: [{ type: "string" }, { type: "null" }] },
+      loginId: { anyOf: [{ type: "string" }, { type: "null" }] },
+      name: { type: "string" },
+      success: { type: "boolean" },
+      threadId: { anyOf: [{ type: "string" }, { type: "null" }] },
+    },
+    required: ["name", "success"],
+  },
 };
 
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
@@ -662,7 +683,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     aggregateSchemas[file.exportName] = stripNullDefaults(
       normalizeNullableTypes(
         rewriteExternalRefs(
-          topLevelSchema,
+          DefinitionOverrides[file.fileName.replace(/\.json$/, "")] ?? topLevelSchema,
           localDefinitionNames,
           file.namespace,
           exportNameByQualifiedName,

@@ -32,6 +32,8 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  ThreadMcpLoginStarted,
+  ThreadMcpServerStatus,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -368,6 +370,51 @@ export class ProviderAdapterProtocolError extends Schema.TaggedError<ProviderAda
   }
 }
 
+export class ProviderAdapterMcpAuthVersionError extends Schema.TaggedError<ProviderAdapterMcpAuthVersionError>()(
+  "ProviderAdapterMcpAuthVersionError",
+  { driver: ProviderDriverKind },
+) {
+  override get message(): string {
+    return "Update the provider to a version that supports correlated MCP OAuth login.";
+  }
+
+  get detail(): string {
+    return this.message;
+  }
+}
+
+export class ProviderAdapterMcpAuthError extends Schema.TaggedError<ProviderAdapterMcpAuthError>()(
+  "ProviderAdapterMcpAuthError",
+  {
+    driver: ProviderDriverKind,
+    reason: Schema.Literals([
+      "login-failed",
+      "login-expired",
+      "login-not-found",
+      "login-pending",
+      "status-check-failed",
+    ]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return {
+      "login-failed": "MCP authorization failed. Start a new login and try again.",
+      "login-expired": "MCP authorization expired. Start a new login and try again.",
+      "login-not-found":
+        "No pending MCP login matches this thread, server, and login id. Start a new login.",
+      "login-pending":
+        "An MCP login is already pending for this thread and server. Wait for it to finish.",
+      "status-check-failed":
+        "MCP authorization completed, but the server connection could not be checked. Check the server status before starting another login.",
+    }[this.reason];
+  }
+
+  get detail(): string {
+    return this.message;
+  }
+}
+
 export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterCapabilitiesError,
   ProviderAdapterOpenSessionError,
@@ -384,6 +431,8 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterEventStreamError,
   ProviderAdapterProtocolError,
+  ProviderAdapterMcpAuthVersionError,
+  ProviderAdapterMcpAuthError,
 ]);
 export type ProviderAdapterV2Error = typeof ProviderAdapterV2Error.Type;
 
@@ -526,6 +575,22 @@ export interface ProviderAdapterV2McpApps {
   }) => Effect.Effect<{ readonly contents: ReadonlyArray<unknown> }, ProviderAdapterV2Error>;
 }
 
+export interface ProviderAdapterV2McpServers {
+  readonly status: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<ThreadMcpServerStatus, ProviderAdapterV2Error>;
+  readonly login: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+  }) => Effect.Effect<ThreadMcpLoginStarted, ProviderAdapterV2Error>;
+  readonly waitForLogin: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly server: string;
+    readonly loginId: string;
+  }) => Effect.Effect<ThreadMcpServerStatus, ProviderAdapterV2Error>;
+}
+
 export type ProviderAdapterV2SubagentOutcome = {
   readonly status: "completed" | "failed" | "cancelled";
   readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
@@ -620,6 +685,7 @@ export interface ProviderAdapterV2SessionRuntime {
    * calls stay plain tool rows.
    */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  readonly mcpServers?: ProviderAdapterV2McpServers;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

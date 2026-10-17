@@ -213,6 +213,15 @@ export function summarizeT3ToolCalls(
     case "thread-configuration":
       label = phrase("Checked", "check", `thread configuration ${times}`);
       break;
+    case "mcp-status":
+      label = phrase("Checked", "check", `MCP server connections ${times}`);
+      break;
+    case "mcp-login":
+      label = phrase("Started", "start", `MCP server sign-in ${times}`);
+      break;
+    case "mcp-login-wait":
+      label = phrase("Checked", "check", `MCP sign-in completion ${times}`);
+      break;
     case "thread-configure":
       label = phrase("Set", "set", `thread model ${times}`);
       break;

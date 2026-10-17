@@ -18,6 +18,9 @@ import {
   RunId,
   NonNegativeInt,
   ProjectId,
+  ProviderThreadId,
+  ThreadMcpServerStatus,
+  ThreadMcpLoginStarted,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -26,6 +29,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ThreadMcpServers from "../../../provider/ThreadMcpServers.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
@@ -254,6 +258,46 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+const mcpServerTool = {
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [...commandTool.dependencies, ThreadMcpServers.ThreadMcpServers],
+};
+
+const McpServerStatusTool = Tool.make("t3_mcp_server_status", {
+  ...mcpServerTool,
+  description:
+    "Inspect one configured MCP server through this chat's existing provider connection. Requires an active T3 chat; does not launch another agent or run a model turn. Currently supported by Codex. Connected confirms native MCP initialization, not application-level permissions.",
+  parameters: Schema.Struct({ server: TrimmedNonEmptyString }),
+  success: ThreadMcpServerStatus,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const McpServerLoginTool = Tool.make("t3_mcp_server_login", {
+  ...mcpServerTool,
+  description:
+    "Start native OAuth for a configured MCP server using this chat's provider process. Requires a live full-access/default chat. Show the returned authorizationUrl to the user, then call t3_mcp_server_login_wait with the returned loginId and providerThreadId. Credentials stay with the provider and may be shared by other chats. A loopback callback must finish in a browser on the environment's machine. This does not sign in to the model provider or restart the chat.",
+  parameters: Schema.Struct({ server: TrimmedNonEmptyString }),
+  success: Schema.Struct({ ...ThreadMcpLoginStarted.fields, providerThreadId: ProviderThreadId }),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
+const McpServerLoginWaitTool = Tool.make("t3_mcp_server_login_wait", {
+  ...mcpServerTool,
+  description:
+    "Wait for a native MCP OAuth attempt started in this chat, then check the server on the same provider connection. Pass server, loginId and providerThreadId from t3_mcp_server_login. OAuth completion and server connectivity are separate: report connected only when server.status is connected. No tool call is replayed. A changed/stopped session, failed login or expired attempt returns an error. Closing this wait does not cancel native OAuth.",
+  parameters: Schema.Struct({
+    server: TrimmedNonEmptyString,
+    loginId: TrimmedNonEmptyString,
+    providerThreadId: ProviderThreadId,
+  }),
+  success: Schema.Struct({ oauthCompleted: Schema.Literal(true), server: ThreadMcpServerStatus }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   ...commandTool,
   description:
@@ -272,6 +316,9 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
   .annotate(Tool.OpenWorld, true);
 
 export const ThreadToolkit = Toolkit.make(
+  McpServerStatusTool,
+  McpServerLoginTool,
+  McpServerLoginWaitTool,
   ScheduledTaskRunTool,
   ThreadSearchTool,
   ThreadForkTool,

@@ -104,6 +104,7 @@ import {
   describeMcpElicitation,
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
+import * as CodexMcpAuth from "../../provider/CodexMcpAuth.ts";
 import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
@@ -1448,9 +1449,9 @@ export function makeCodexAppServerProtocolLogger(input: {
   };
 }
 
-function redactCodexProtocolValue(value: unknown): unknown {
+function redactCodexProtocolValue(value: unknown, redactOAuthError = false): unknown {
   if (Array.isArray(value)) {
-    return value.map(redactCodexProtocolValue);
+    return value.map((entry) => redactCodexProtocolValue(entry, redactOAuthError));
   }
   if (value === null || typeof value !== "object") {
     if (typeof value !== "string") {
@@ -1470,16 +1471,23 @@ function redactCodexProtocolValue(value: unknown): unknown {
     }
     try {
       return JSON.stringify(
-        redactCodexProtocolValue(boundProviderEventForLogging(JSON.parse(trimmed) as unknown)),
+        redactCodexProtocolValue(
+          boundProviderEventForLogging(JSON.parse(trimmed) as unknown),
+          redactOAuthError,
+        ),
       );
     } catch {
       return value;
     }
   }
+  const oauthCompletion =
+    redactOAuthError || ("method" in value && value.method === "mcpServer/oauthLogin/completed");
   return Object.fromEntries(
     Object.entries(value).map(([key, nested]) => [
       key,
-      isSensitiveCodexProtocolKey(key) ? "[REDACTED]" : redactCodexProtocolValue(nested),
+      isSensitiveCodexProtocolKey(key) || (oauthCompletion && key === "error")
+        ? "[REDACTED]"
+        : redactCodexProtocolValue(nested, oauthCompletion),
     ]),
   );
 }
@@ -1488,6 +1496,7 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   return (
     normalized.endsWith("authorization") ||
+    normalized.endsWith("authorizationurl") ||
     normalized.endsWith("apikey") ||
     normalized.endsWith("token") ||
     normalized.endsWith("password") ||
@@ -1712,6 +1721,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
         });
+        const mcpAuth = yield* CodexMcpAuth.make.pipe(
+          Effect.provideService(CodexClient.CodexAppServerClient, client),
+        );
         const additionalContextByThread = yield* Ref.make(
           new Map<
             string,
@@ -6400,6 +6412,41 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }).pipe(Effect.mapError(mcpAppsError("Codex MCP resource read failed."))),
         };
 
+        const ensureMcpInitialized = ensureInitialized.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CODEX_PROVIDER,
+                detail: "Failed to initialize Codex for MCP authentication",
+                cause,
+              }),
+          ),
+        );
+        const mcpServers: ProviderAdapter.ProviderAdapterV2McpServers = {
+          status: (statusInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(statusInput.providerThread);
+              yield* ensureMcpInitialized;
+              return yield* mcpAuth.status({ threadId, server: statusInput.server });
+            }),
+          login: (loginInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(loginInput.providerThread);
+              yield* ensureMcpInitialized;
+              return yield* mcpAuth.login({ threadId, server: loginInput.server });
+            }),
+          waitForLogin: (loginInput) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(loginInput.providerThread);
+              yield* ensureMcpInitialized;
+              return yield* mcpAuth.waitForLogin({
+                threadId,
+                server: loginInput.server,
+                loginId: loginInput.loginId,
+              });
+            }),
+        };
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CODEX_PROVIDER,
@@ -6412,6 +6459,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           // against a long-delayed resume. Codex emits no resume-expected
           // signal to pin on.
           hasPendingBackgroundWork: Effect.gen(function* () {
+            if (yield* mcpAuth.hasPendingLogin()) return true;
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
               if (items.size > 0) {
                 return true;
@@ -6434,6 +6482,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           hasPendingBackgroundWorkForThread: (providerThread) =>
             Effect.gen(function* () {
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+              if (nativeThreadId && (yield* mcpAuth.hasPendingLogin(nativeThreadId))) return true;
               const contexts = [
                 ...(yield* Ref.get(activeTurns)).values(),
                 ...(yield* Ref.get(settledTurns)).values(),
@@ -7142,6 +7192,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             ),
           mcpApps,
+          mcpServers,
           readThreadSnapshot: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);
