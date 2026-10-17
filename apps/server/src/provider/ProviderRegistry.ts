@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
@@ -426,6 +427,12 @@ export const layer = Layer.effect(
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
     >(new Map());
+    // Cwds that live instances report through `workspaceRescans`, rescanned in
+    // order once `refreshWorkspaceSnapshot` below is defined.
+    const workspaceRescans = yield* Queue.unbounded<{
+      readonly instanceId: ProviderInstanceId;
+      readonly cwd: string;
+    }>();
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -749,6 +756,11 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              Queue.offer(workspaceRescans, { instanceId: instance.instanceId, cwd }),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -853,7 +865,11 @@ export const layer = Layer.effect(
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
+      // The instance reported the cwd may have changed: scan again without
+      // the machine-wide work of a fresh scan.
+      readonly rescan?: boolean;
     }) {
+      const forced = input.fresh === true || input.rescan === true;
       if (input.fresh) {
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
@@ -872,7 +888,7 @@ export const layer = Layer.effect(
       if (
         !provider ||
         !provider.enabled ||
-        (!input.fresh &&
+        (!forced &&
           scannedFrom &&
           !scannedFrom.slashCommandsPending &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
@@ -884,6 +900,20 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
+      // Snapshots reach every client and are capped, so a rescan only covers a
+      // cwd a client asked about: one with a snapshot, or whose first scan is
+      // still running and may have read the folder too early.
+      // Read the claims first: a scan commits its snapshot before it releases
+      // its claim, so this order cannot see neither.
+      if (
+        input.rescan &&
+        !(yield* Ref.get(workspaceRefreshesRef)).get(instance)?.has(input.cwd) &&
+        !workspaceSnapshotOf(
+          (yield* Ref.get(providersRef)).find((c) => c.instanceId === input.instanceId),
+        )
+      ) {
+        return providers;
+      }
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
         if (current?.has(input.cwd)) return [false, refreshes] as const;
@@ -891,7 +921,8 @@ export const layer = Layer.effect(
         next.set(instance, new Set(current).add(input.cwd));
         return [true, next] as const;
       });
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      // A forced scan never joins a running one, which may predate the change.
+      if (!claimed && !forced) return yield* Ref.get(providersRef);
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
@@ -905,10 +936,13 @@ export const layer = Layer.effect(
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
                   if (currentInstance !== instance) return Ref.get(providersRef);
+                  // A rescan read the files after the change it reports, so it replaces any
+                  // earlier scan; one that started after it can lose, until the next scan.
                   return updateProviders((currentProviders) =>
                     currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
-                      Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                      (input.rescan === true ||
+                        Equal.equals(workspaceSnapshotOf(candidate), scannedFrom))
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
                             ...scopedSnapshot,
                             checkedAt: scannedAt,
@@ -933,6 +967,11 @@ export const layer = Layer.effect(
         ),
       );
     });
+    yield* Stream.runForEach(Stream.fromQueue(workspaceRescans), ({ instanceId, cwd }) =>
+      refreshWorkspaceSnapshot({ instanceId, cwd, rescan: true }).pipe(
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
     return {
       getProviders: Ref.get(providersRef),

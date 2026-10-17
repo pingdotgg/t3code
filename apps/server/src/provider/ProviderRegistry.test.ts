@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -1689,6 +1690,8 @@ it.layer(
         const returnPendingSnapshot = yield* Ref.make(true);
         const probeStarted = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
+        const rescans = yield* Queue.unbounded<string>();
+        const lastScannedCwd = yield* Ref.make("");
         const makeInstance = (
           provider: ServerProvider,
           snapshotForCwd: NonNullable<ProviderInstance["snapshotForCwd"]>,
@@ -1715,13 +1718,15 @@ it.layer(
             applyUsageLimits: () => Effect.void,
           },
           snapshotForCwd,
+          workspaceRescans: Stream.fromQueue(rescans),
           invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
           orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
           textGeneration: {} as ProviderInstance["textGeneration"],
         });
-        const firstInstance = makeInstance(machineProvider, () =>
+        const firstInstance = makeInstance(machineProvider, (cwd) =>
           Effect.gen(function* () {
             yield* Ref.update(snapshotCalls, (count) => count + 1);
+            yield* Ref.set(lastScannedCwd, cwd);
             if (yield* Ref.get(returnPendingSnapshot)) return pendingScopedProvider;
             yield* Deferred.succeed(probeStarted, undefined);
             yield* Deferred.await(releaseProbe);
@@ -1873,6 +1878,43 @@ it.layer(
             (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
             [latestSkills],
           );
+
+          // A composer scans a new worktree before its SessionStart hook ran.
+          // The session then reports the cwd, and its rescan wins even though
+          // the older scan lands first.
+          const gate = Effect.all({
+            started: Deferred.make<void>(),
+            release: Deferred.make<void>(),
+          });
+          const composerGate = yield* gate;
+          yield* Ref.set(scanGate, composerGate);
+          const composerScan = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/worktree" })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(composerGate.started);
+          const hookSkills = [{ name: "hooked", path: "/worktree/SKILL.md", enabled: true }];
+          yield* Ref.set(scopedResult, { ...scopedProvider, skills: hookSkills });
+          const rescanGate = yield* gate;
+          yield* Ref.set(scanGate, rescanGate);
+          yield* Queue.offer(rescans, "/worktree");
+          yield* Deferred.await(rescanGate.started);
+          yield* Deferred.succeed(composerGate.release, undefined);
+          yield* Fiber.join(composerScan);
+          yield* Deferred.succeed(rescanGate.release, undefined);
+          // Reports are handled in order. Once the last one scans, the rescan
+          // has landed and /elsewhere, which no client asked about, was skipped.
+          const lastGate = yield* gate;
+          yield* Ref.set(scanGate, lastGate);
+          yield* Queue.offerAll(rescans, ["/elsewhere", "/worktree"]);
+          yield* Deferred.await(lastGate.started);
+          assert.strictEqual(yield* Ref.get(lastScannedCwd), "/worktree");
+          assert.deepStrictEqual(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+              (s) => s.cwd === "/worktree",
+            )?.skills,
+            hookSkills,
+          );
+          yield* Deferred.succeed(lastGate.release, undefined);
 
           yield* Ref.set(instancesRef, [rebuiltInstance]);
           yield* PubSub.publish(registryChanges, undefined);

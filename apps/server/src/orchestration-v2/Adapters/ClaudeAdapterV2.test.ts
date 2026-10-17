@@ -2339,6 +2339,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
@@ -2392,6 +2393,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
         idAllocator,
+        ...(options?.onSessionInit === undefined ? {} : { onSessionInit: options.onSessionInit }),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -3174,6 +3176,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* Queue.take(harness.terminalReceipts);
       assert.lengthOf(notices(), 3);
       assert.notEqual(notices()[0]?.id, notices()[2]?.id);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("reports the session cwd once per process, when the CLI's first init arrives", () =>
+    Effect.gen(function* () {
+      const initCwds: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        onSessionInit: (cwd) =>
+          Effect.sync(() => {
+            initCwds.push(cwd);
+          }),
+      });
+      const now = yield* DateTime.now;
+      const cwd = "/synthetic/worktree";
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd,
+      });
+      const startTurn = (ordinal: number, text: string) =>
+        harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-init-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text,
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+      const init = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          // The CLI may report a resolved path, not the one clients key on.
+          cwd: "/private/synthetic/worktree",
+          session_id: WAKE_NATIVE_SESSION,
+          uuid,
+        });
+      yield* startTurn(1, "First.");
+      yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000701"));
+      assert.deepEqual(initCwds, [cwd]);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "One." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      // The CLI repeats init on every turn of one process; its hooks ran once.
+      yield* startTurn(2, "Second.");
+      yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000703"));
+      assert.deepEqual(initCwds, [cwd]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
