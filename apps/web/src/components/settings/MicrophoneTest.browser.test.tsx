@@ -1,24 +1,21 @@
-import { createElement, type ReactNode } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { MicrophoneTest } from "./MicrophoneTest";
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
-vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
-vi.mock("~/hooks/useMediaQuery", () => ({ useMediaQuery: () => false }));
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ render }: { render: ReactNode }) => render,
-  TooltipPopup: () => null,
-}));
-vi.mock("../ui/button", () => ({ Button: "button" }));
-vi.mock("./settingsLayout", () => ({
-  SettingsRow: ({ control, children }: { control: ReactNode; children: ReactNode }) =>
-    createElement("div", null, control, children),
+vi.mock(import("./settingsLayout"), async (original) => ({
+  ...(await original()),
+  SettingsRow: ({ control, children }) => (
+    <div>
+      {control}
+      {children}
+    </div>
+  ),
 }));
 
-let root: ReactTestRenderer;
+let root: Root;
+let container: HTMLDivElement;
 let recorder: TestRecorder;
 const stopTrack = vi.fn();
 const closeContext = vi.fn(async () => {});
@@ -47,7 +44,7 @@ class TestRecorder extends EventTarget {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+  vi.spyOn(navigator.mediaDevices, "getUserMedia").mockImplementation(getUserMedia);
   vi.stubGlobal("MediaRecorder", function () {
     recorder = new TestRecorder();
     return recorder;
@@ -70,48 +67,51 @@ beforeEach(() => {
       close = closeContext;
     },
   );
-  vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:test"), revokeObjectURL });
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(revokeObjectURL);
   getUserMedia.mockResolvedValue(stream);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
 afterEach(async () => {
   if (root) await act(async () => root.unmount());
+  container.remove();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
 async function click(label: string) {
   await act(async () => {
-    root.root
-      .findAllByType("button")
-      .find((button) => (button.props["aria-label"] ?? button.props.children) === label)
-      ?.props.onClick();
+    const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    expect(button).not.toBeNull();
+    button!.click();
   });
 }
 
 it("records the selected mic, stops after ten seconds, and discards playback on retry", async () => {
   await act(async () => {
-    root = create(createElement(MicrophoneTest, { microphoneId: "selected" }));
+    root.render(<MicrophoneTest microphoneId="selected" />);
   });
   await click("Test mic");
   expect(getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: "selected" } } });
   await act(async () => {
     vi.advanceTimersByTime(4_000);
   });
-  expect(root.root.findByType("meter").props.value).toBeGreaterThan(0);
-  expect(root.root.findByProps({ "aria-label": "Recording time" }).children.join("")).toBe(
-    "0:04 / 0:10",
-  );
+  expect(container.querySelector("meter")!.value).toBeGreaterThan(0);
+  expect(container.querySelector('[aria-label="Recording time"]')!.textContent).toBe("0:04 / 0:10");
   await act(async () => {
     vi.advanceTimersByTime(6_000);
   });
-  expect(root.root.findByType("audio").props.src).toBe("blob:test");
+  expect(container.querySelector("audio")!.getAttribute("src")).toBe("blob:test");
   expect(stopTrack).toHaveBeenCalledTimes(1);
   expect(closeContext).toHaveBeenCalledTimes(1);
   await click("Try again");
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
-  expect(root.root.findAllByType("audio")).toHaveLength(0);
+  expect(container.querySelector("audio")).toBeNull();
   expect(recorder.state).toBe("recording");
   await act(async () => root.unmount());
   expect(recorder.state).toBe("inactive");
@@ -126,7 +126,7 @@ it("releases a microphone granted after leaving the page", async () => {
     }),
   );
   await act(async () => {
-    root = create(createElement(MicrophoneTest, { microphoneId: "" }));
+    root.render(<MicrophoneTest microphoneId="" />);
   });
   await click("Test mic");
   await act(async () => root.unmount());
@@ -138,10 +138,10 @@ it("releases a microphone granted after leaving the page", async () => {
 it("shows permission failures and lets the user try again", async () => {
   getUserMedia.mockRejectedValueOnce(new DOMException("Permission denied", "NotAllowedError"));
   await act(async () => {
-    root = create(createElement(MicrophoneTest, { microphoneId: "" }));
+    root.render(<MicrophoneTest microphoneId="" />);
   });
   await click("Test mic");
-  expect(root.root.findByProps({ role: "status" }).props["aria-label"]).toBe(
+  expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(
     "Microphone access is required for voice input. Allow access in your browser or system settings and try again.",
   );
   await click("Record again");
@@ -149,16 +149,16 @@ it("shows permission failures and lets the user try again", async () => {
   await click("Stop recording");
   await click("Done");
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
-  expect(root.root.findAllByType("audio")).toHaveLength(0);
+  expect(container.querySelector("audio")).toBeNull();
 });
 
 it("reports unavailable capture and can retry after microphone support becomes available", async () => {
   vi.stubGlobal("MediaRecorder", undefined);
   await act(async () => {
-    root = create(createElement(MicrophoneTest, { microphoneId: "" }));
+    root.render(<MicrophoneTest microphoneId="" />);
   });
   await click("Test mic");
-  expect(root.root.findByProps({ role: "status" }).props["aria-label"]).toBe(
+  expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(
     "Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.",
   );
   expect(getUserMedia).not.toHaveBeenCalled();

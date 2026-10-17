@@ -1,6 +1,7 @@
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
-import { createElement, type ReactNode } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { userEvent } from "vite-plus/test/browser";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import type { createBrowserVoiceInputPlatform } from "../../speech/browserVoiceInput";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -32,68 +33,62 @@ vi.mock("../../speech/browserVoiceInput", () => ({
     };
   },
 }));
-vi.mock("../chat/ComposerSpeechButton", () => ({
-  ComposerSpeechRecordingPill: ({
-    state,
-    onStart,
-    onStop,
-    onCancel,
-  }: {
-    state: { phase: string; error: string | null };
-    onStart(): void;
-    onStop(): void;
-    onCancel(): void;
-  }) =>
-    createElement(
-      "div",
-      null,
-      state.phase === "error" ? createElement("span", { role: "status" }, state.error) : null,
-      createElement(
-        "button",
-        { onClick: state.phase === "error" ? onStart : onStop },
-        state.phase === "error" ? "Retry" : "Stop",
-      ),
-      createElement("button", { onClick: onCancel }, "Cancel"),
-    ),
-}));
-vi.mock("../ui/button", () => ({ Button: "button" }));
-vi.mock("./settingsSearch", () => ({ searchableSetting: () => ({}) }));
-vi.mock("./settingsLayout", () => ({
-  SettingsRow: ({ control, children }: { control: ReactNode; children: ReactNode }) =>
-    createElement("div", null, control, children),
+vi.mock(import("./settingsLayout"), async (original) => ({
+  ...(await original()),
+  SettingsRow: ({ control, children }) => (
+    <div>
+      {control}
+      {children}
+    </div>
+  ),
 }));
 import { TranscriptionTest } from "./TranscriptionTest";
 
-let root: ReactTestRenderer;
+let root: Root;
+let container: HTMLDivElement;
 const prepared = {} as PreparedConnection;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
 afterEach(async () => {
   if (root) await act(async () => root.unmount());
+  container.remove();
   vi.resetAllMocks();
   vi.unstubAllGlobals();
 });
 async function mount() {
   mocks.prepare.mockResolvedValue({ locale: "en", transcribe: mocks.transcribe });
   await act(async () => {
-    root = create(
-      createElement(TranscriptionTest, {
-        prepared,
-        options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-        microphoneId: "mic",
-        modelName: "Test model",
-        disabled: false,
-      }),
+    root.render(
+      <TranscriptionTest
+        prepared={prepared}
+        options={DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS}
+        microphoneId="mic"
+        modelName="Test model"
+        disabled={false}
+      />,
     );
   });
 }
 async function click(label: string) {
-  await act(async () => {
-    root.root
-      .findAllByType("button")
-      .find((button) => button.children.includes(label))
-      ?.props.onClick();
-  });
+  const name =
+    (
+      {
+        Stop: "Finish voice input",
+        Cancel: "Cancel voice input",
+        Retry: "Retry transcription",
+      } as Record<string, string>
+    )[label] ?? label;
+  const button = [...container.querySelectorAll("button")].find(
+    (button) => button.getAttribute("aria-label") === name || button.textContent?.trim() === name,
+  );
+  expect(button, name).toBeDefined();
+  await userEvent.click(button!);
 }
+const result = () => container.querySelector('[aria-label="Test transcription"]');
 
 it("transcribes a ten-second test through the voice controller and clears the result on Done", async () => {
   mocks.transcribe.mockResolvedValue("A model test.");
@@ -102,12 +97,10 @@ it("transcribes a ten-second test through the voice controller and clears the re
   expect(mocks.record).toHaveBeenCalledWith({ forDuration: 10 });
   await click("Stop");
   expect(mocks.transcribe).toHaveBeenCalledWith("blob:pcm", { signal: expect.any(AbortSignal) });
-  expect(root.root.findByProps({ "aria-label": "Test transcription" }).children.join("")).toBe(
-    "A model test.",
-  );
+  expect(result()!.textContent).toBe("A model test.");
   expect(mocks.remove).toHaveBeenCalledWith("blob:pcm");
   await click("Done");
-  expect(root.root.findAllByProps({ "aria-label": "Test transcription" })).toHaveLength(0);
+  expect(container.querySelectorAll('[aria-label="Test transcription"]')).toHaveLength(0);
 });
 
 it("cancels recording without transcribing", async () => {
@@ -116,7 +109,7 @@ it("cancels recording without transcribing", async () => {
   await click("Cancel");
   expect(mocks.transcribe).not.toHaveBeenCalled();
   expect(mocks.release).toHaveBeenCalled();
-  expect(root.root.findAllByProps({ "aria-label": "Test transcription" })).toHaveLength(0);
+  expect(container.querySelectorAll('[aria-label="Test transcription"]')).toHaveLength(0);
 });
 
 it("shows transcription errors and allows another test", async () => {
@@ -124,14 +117,12 @@ it("shows transcription errors and allows another test", async () => {
   await mount();
   await click("Test model");
   await click("Stop");
-  expect(root.root.findByProps({ role: "status" }).children.join("")).toBe(
+  expect(container.querySelector('[role="status"]')!.getAttribute("aria-label")).toBe(
     "Could not transcribe this recording.",
   );
   mocks.transcribe.mockResolvedValue("Try again.");
   await click("Retry");
-  expect(root.root.findByProps({ "aria-label": "Test transcription" }).children.join("")).toBe(
-    "Try again.",
-  );
+  expect(result()!.textContent).toBe("Try again.");
 });
 
 it("shows live streaming text and finishes through the streaming session", async () => {
@@ -147,17 +138,9 @@ it("shows live streaming text and finishes through the streaming session", async
     typeof createBrowserVoiceInputPlatform
   >[0];
   await act(async () => input.onText({ committed: "Live ", tentative: "text" }));
-  const result = root.root.findByProps({ "aria-label": "Test transcription" });
-  expect(
-    result
-      .findAllByType("span")
-      .map((span) => span.children.join(""))
-      .join(""),
-  ).toBe("Live text");
+  expect(result()!.textContent).toBe("Live text");
   await click("Stop");
   expect(finish).toHaveBeenCalled();
   expect(mocks.transcribe).not.toHaveBeenCalled();
-  expect(root.root.findByProps({ "aria-label": "Test transcription" }).children.join("")).toBe(
-    "Finished streaming text.",
-  );
+  expect(result()!.textContent).toBe("Finished streaming text.");
 });

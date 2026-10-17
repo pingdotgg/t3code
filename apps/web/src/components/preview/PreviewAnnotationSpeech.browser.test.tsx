@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, it, expect, vi } from "vite-plus/test";
@@ -30,9 +29,11 @@ vi.mock("../../speech/useEnvironmentSpeechInput", () => ({
 vi.mock("../../hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("../../commandPaletteBus", () => ({ isCommandPaletteOpen: () => false }));
 vi.mock("../../lib/terminalFocus", () => ({ getTerminalFocusOwner: () => null }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useNavigate: () => vi.fn(),
+}));
 vi.mock("../../state/entities", () => ({ useThreadShell: () => null, useProject: () => null }));
-vi.mock("../../composerDraftStore", () => ({ useComposerDraftStore: () => null }));
 vi.mock("../chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
 vi.mock("../chat/ComposerSpeechButton", () => ({
   resolveSpeechPresentation: () => ({ status: null }),

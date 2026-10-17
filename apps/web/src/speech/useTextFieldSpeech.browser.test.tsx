@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -47,8 +46,10 @@ vi.mock("./useEnvironmentSpeechInput", () => ({
     };
   },
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => DEFAULT_RESOLVED_KEYBINDINGS }));
-vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("~/state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryServerKeybindingsAtom: Atom.make(DEFAULT_RESOLVED_KEYBINDINGS) };
+});
 vi.mock("~/hooks/useSettings", () => ({ useClientSettings: () => "toggle" }));
 vi.mock("~/components/chat/VoiceInputSetup", () => ({ VoiceInputSetup: () => null }));
 vi.mock("~/components/chat/ComposerSpeechButton", () => ({
