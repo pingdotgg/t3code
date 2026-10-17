@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import {
   clampPercent,
@@ -34,6 +35,28 @@ const WINDOWS: Readonly<
  */
 const OVERAGE_INCLUDED_EVENT_TYPE = "seven_day_overage_included";
 
+// Claude's SDK typings do not include the spend budget returned by newer
+// `get_usage` responses. Decode the shape before reading it so malformed
+// provider data cannot become a misleading monthly bar.
+const SpendMoney = Schema.Struct({
+  amount_minor: Schema.Natural,
+  currency: Schema.NonEmptyString,
+  exponent: Schema.Natural,
+});
+const SpendBudget = Schema.Struct({
+  enabled: Schema.Boolean,
+  used: Schema.optional(SpendMoney),
+  limit: Schema.optional(SpendMoney),
+});
+const ExtraUsage = Schema.Struct({
+  is_enabled: Schema.Boolean,
+  monthly_limit: Schema.optional(Schema.NullOr(Schema.Number)),
+  used_credits: Schema.optional(Schema.NullOr(Schema.Number)),
+  utilization: Schema.optional(Schema.NullOr(Schema.Number)),
+});
+const decodeSpendBudget = Schema.decodeUnknownOption(SpendBudget);
+const decodeExtraUsage = Schema.decodeUnknownOption(ExtraUsage);
+
 export interface ClaudeScopedLimitNames {
   readonly overageIncluded: string | undefined;
 }
@@ -59,6 +82,59 @@ function scopedWindow(
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),
   };
+}
+
+function percentFromAmounts(used: number, limit: number): number | undefined {
+  if (!Number.isFinite(used) || !Number.isFinite(limit) || used < 0 || limit <= 0) {
+    return undefined;
+  }
+  const percent = (used / limit) * 100;
+  if (!Number.isFinite(percent)) return undefined;
+  return clampPercent(percent);
+}
+
+function percentFromUtilization(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return clampPercent(value);
+}
+
+/**
+ * Spend-only Claude accounts have no rolling windows. Prefer the newer money
+ * shape, but fall back to the older credits shape when it is valid. Amounts
+ * are compared as minor units, so matching currency and exponent are required
+ * even though this mapper only exposes the resulting percentage.
+ */
+function readSpendPercent(rateLimits: object): number | undefined {
+  const raw = rateLimits as {
+    readonly spend?: unknown;
+    readonly extra_usage?: unknown;
+  };
+  const spend = Option.getOrUndefined(decodeSpendBudget(raw.spend));
+  if (spend?.enabled && spend.used !== undefined && spend.limit !== undefined) {
+    const usedCurrency = spend.used.currency.trim();
+    const limitCurrency = spend.limit.currency.trim();
+    if (
+      usedCurrency.length > 0 &&
+      usedCurrency === limitCurrency &&
+      spend.used.exponent === spend.limit.exponent
+    ) {
+      const percent = percentFromAmounts(spend.used.amount_minor, spend.limit.amount_minor);
+      if (percent !== undefined) return percent;
+    }
+  }
+
+  const extra = Option.getOrUndefined(decodeExtraUsage(raw.extra_usage));
+  if (extra?.is_enabled) {
+    const amountPercent =
+      extra.used_credits !== null &&
+      extra.used_credits !== undefined &&
+      extra.monthly_limit !== null &&
+      extra.monthly_limit !== undefined
+        ? percentFromAmounts(extra.used_credits, extra.monthly_limit)
+        : undefined;
+    return amountPercent ?? percentFromUtilization(extra.utilization);
+  }
+  return undefined;
 }
 
 /**
@@ -105,6 +181,15 @@ function makeWindow(
     ...window,
     usedPercent: clampPercent(usedPercent),
     ...(resetsAt ? { resetsAt } : {}),
+  };
+}
+
+function spendWindow(usedPercent: number): ServerProviderUsageWindow {
+  return {
+    id: "monthly_spend",
+    kind: "monthly",
+    label: "Monthly spend",
+    usedPercent,
   };
 }
 
@@ -162,6 +247,8 @@ export function claudeUsageResponseToLimits(input: {
     );
     overageIncluded ??= entry.display_name;
   }
+  const spendPercent = readSpendPercent(response.rate_limits);
+  if (spendPercent !== undefined) windows.push(spendWindow(spendPercent));
   return {
     limits: makeUsageLimits({ checkedAt, windows }),
     names: { overageIncluded },

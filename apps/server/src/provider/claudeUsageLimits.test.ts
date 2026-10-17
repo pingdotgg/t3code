@@ -117,6 +117,149 @@ describe("claudeUsageResponseToLimits", () => {
       },
     ]);
   });
+
+  it("maps a valid spend-only budget and preserves its precise percentage", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: null,
+          seven_day: null,
+          extra_usage: {
+            is_enabled: true,
+            monthly_limit: 50_000,
+            // Conflicting older data must not override the valid spend budget.
+            used_credits: 30_000,
+            utilization: 60,
+          },
+          ...({
+            spend: {
+              enabled: true,
+              used: { amount_minor: 4_631, currency: " USD ", exponent: 2 },
+              limit: { amount_minor: 50_000, currency: "USD", exponent: 2 },
+              percent: 9,
+            },
+          } as object),
+        },
+      },
+    });
+
+    expect(limits).toMatchObject({
+      checkedAt,
+      windows: [{ id: "monthly_spend", kind: "monthly", label: "Monthly spend" }],
+    });
+    expect(limits.windows[0]?.usedPercent).toBeCloseTo(9.262);
+  });
+
+  it("ignores disabled spend and clamps extra usage percentages", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          ...({
+            spend: {
+              enabled: false,
+              used: { amount_minor: 1, currency: "USD", exponent: 2 },
+              limit: { amount_minor: 2, currency: "USD", exponent: 2 },
+            },
+          } as object),
+          extra_usage: {
+            is_enabled: true,
+            monthly_limit: 100,
+            used_credits: 250,
+            utilization: 250,
+          },
+        },
+      },
+    });
+
+    expect(limits.windows).toEqual([
+      { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 100 },
+    ]);
+  });
+
+  it("falls back to valid extra usage beside rolling windows", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 12, resets_at: null },
+          extra_usage: {
+            is_enabled: true,
+            monthly_limit: 2_000,
+            used_credits: 1_500,
+            utilization: 75,
+          },
+          ...({ spend: { enabled: true, used: null, limit: null } } as object),
+        },
+      },
+    });
+
+    expect(limits.windows.map((window) => window.id)).toEqual(["five_hour", "monthly_spend"]);
+    expect(limits.windows[1]).toEqual({
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 75,
+    });
+  });
+
+  it("uses extra usage utilization when its amounts are unavailable", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          extra_usage: {
+            is_enabled: true,
+            monthly_limit: null,
+            used_credits: null,
+            utilization: 9.262,
+          },
+        },
+      },
+    });
+
+    expect(limits.windows).toEqual([
+      { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 9.262 },
+    ]);
+  });
+
+  it.each([
+    { used: -1, limit: 100, label: "negative amount" },
+    { used: Number.NaN, limit: 100, label: "non-finite amount" },
+    { used: 1, limit: 0, label: "zero limit" },
+    { used: 1, limit: 100, label: "currency mismatch", limitCurrency: "EUR" },
+    { used: 1, limit: 100, label: "exponent mismatch", limitExponent: 3 },
+  ])(
+    "ignores a malformed spend budget ($label)",
+    ({ used, limit, limitCurrency, limitExponent }) => {
+      expect(
+        claudeUsageResponseToLimits({
+          checkedAt,
+          response: {
+            rate_limits_available: true,
+            rate_limits: {
+              ...({
+                spend: {
+                  enabled: true,
+                  used: { amount_minor: used, currency: "USD", exponent: 2 },
+                  limit: {
+                    amount_minor: limit,
+                    currency: limitCurrency ?? "USD",
+                    exponent: limitExponent ?? 2,
+                  },
+                },
+              } as object),
+            },
+          },
+        }).limits.windows,
+      ).toEqual([]);
+    },
+  );
 });
 
 describe("claudeRateLimitEventToUpdate", () => {
