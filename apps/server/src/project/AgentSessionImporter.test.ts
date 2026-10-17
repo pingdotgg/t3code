@@ -57,6 +57,7 @@ it.effect("imports messages once and preserves the provider native resume bindin
             { role: "assistant", text: "Fixed", createdAt: "2026-09-01T10:01:00.000Z" },
           ],
         },
+        worktree: { path: "/workspace/project-feature", branch: "feature" },
       }),
   });
   const layerTest = AgentSessionImporter.layer.pipe(
@@ -121,6 +122,8 @@ it.effect("imports messages once and preserves the provider native resume bindin
       id: threadId,
       activeProviderThreadId: providerThread?.payload.id,
       historyOrigin: "v1_import",
+      branch: "feature",
+      worktreePath: "/workspace/project-feature",
     });
     expect(providerThread?.payload).toMatchObject({
       appThreadId: threadId,

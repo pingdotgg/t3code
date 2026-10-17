@@ -115,6 +115,55 @@ const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(fu
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
 
+/** Lays out a linked worktree the way `git worktree add` does, without running git. */
+const addLinkedWorktree = Effect.fn("AgentSessionScanner.test.addLinkedWorktree")(
+  function* (input: {
+    readonly commonGitDir: string;
+    readonly directory: string;
+    readonly branch: string;
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const gitDir = path.join(input.commonGitDir, "worktrees", input.branch);
+    yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+    yield* fileSystem.makeDirectory(input.directory, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(gitDir, "commondir"), "../..\n");
+    yield* fileSystem.writeFileString(
+      path.join(gitDir, "HEAD"),
+      `ref: refs/heads/${input.branch}\n`,
+    );
+    yield* fileSystem.writeFileString(path.join(input.directory, ".git"), `gitdir: ${gitDir}\n`);
+  },
+);
+
+const writeClaudeSession = Effect.fn("AgentSessionScanner.test.writeClaudeSession")(
+  function* (input: {
+    readonly claudeHomePath: string;
+    readonly sessionId: string;
+    readonly cwd: string;
+    readonly mtimeMs: number;
+  }) {
+    const path = yield* Path.Path;
+    yield* writeTranscript({
+      filePath: path.join(input.claudeHomePath, "projects", input.sessionId, "session.jsonl"),
+      contents: `${JSON.stringify({
+        type: "user",
+        cwd: input.cwd,
+        sessionId: input.sessionId,
+        message: { role: "user", content: "Fix the project" },
+      })}\n`,
+      mtimeMs: input.mtimeMs,
+    });
+  },
+);
+
+const importedWorktrees = (outcomes: ReadonlyArray<AgentSessionScanner.AgentSessionRecentThread>) =>
+  outcomes.flatMap((outcome) =>
+    outcome._tag === "Importable"
+      ? [{ sessionId: outcome.thread.providerSessionId, worktree: outcome.worktree }]
+      : [],
+  );
+
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
 
@@ -2386,6 +2435,89 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         expect(threads).toEqual([]);
+      }),
+    );
+
+    it.effect("imports sessions from linked worktrees of the project with their branch", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        const otherRepo = yield* makeTempDir("t3code-workspace-other-");
+
+        const worktree = path.join(repo, ".claude", "worktrees", "feature");
+        const managedWorktree = path.join(configBaseDir, "worktrees", "repo", "managed");
+        const otherWorktree = path.join(otherRepo, "elsewhere");
+        const commonGitDir = path.join(repo, ".git");
+        yield* addLinkedWorktree({ commonGitDir, directory: worktree, branch: "feature" });
+        yield* addLinkedWorktree({ commonGitDir, directory: managedWorktree, branch: "managed" });
+        yield* addLinkedWorktree({
+          commonGitDir: path.join(otherRepo, ".git"),
+          directory: otherWorktree,
+          branch: "elsewhere",
+        });
+
+        for (const [index, session] of [
+          { sessionId: "root-session", cwd: repo },
+          { sessionId: "worktree-session", cwd: worktree },
+          { sessionId: "managed-session", cwd: managedWorktree },
+          { sessionId: "other-session", cwd: otherWorktree },
+        ].entries()) {
+          yield* writeClaudeSession({
+            ...session,
+            claudeHomePath,
+            mtimeMs: nowMs - (index + 1) * 60 * 1000,
+          });
+        }
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          configBaseDir,
+          workspaceRoot: repo,
+        });
+
+        expect(importedWorktrees(outcomes)).toEqual([
+          { sessionId: "root-session", worktree: null },
+          { sessionId: "worktree-session", worktree: { path: worktree, branch: "feature" } },
+        ]);
+      }),
+    );
+
+    it.effect("imports linked worktree sessions when the project's .git is a pointer", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        const commonGitDir = yield* makeTempDir("t3code-separate-git-dir-");
+        yield* fileSystem.writeFileString(path.join(repo, ".git"), `gitdir: ${commonGitDir}\n`);
+
+        const worktree = path.join(repo, ".claude", "worktrees", "feature");
+        yield* addLinkedWorktree({ commonGitDir, directory: worktree, branch: "feature" });
+        yield* writeClaudeSession({
+          claudeHomePath,
+          sessionId: "worktree-session",
+          cwd: worktree,
+          mtimeMs: nowMs,
+        });
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: repo,
+        });
+
+        expect(importedWorktrees(outcomes)).toEqual([
+          { sessionId: "worktree-session", worktree: { path: worktree, branch: "feature" } },
+        ]);
       }),
     );
 
