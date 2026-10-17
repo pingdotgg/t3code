@@ -386,13 +386,11 @@ function reportCheckoutCommandError(error: Error) {
   });
 }
 
-function useResolvedPullRequestReference(
+function resolvePullRequestReference(
   requestedReference: PullRequestRef,
   repositoryIdentity: Parameters<typeof resolvePullRequestReferenceHost>[1],
   supportsThreadPullRequests: boolean,
 ): PullRequestRef {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
   return supportsThreadPullRequests
     ? resolvePullRequestReferenceHost(requestedReference, repositoryIdentity)
     : {
@@ -402,9 +400,7 @@ function useResolvedPullRequestReference(
       };
 }
 
-function usePullRequestDetailSummary(data: PullRequestDetail | null) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
+function pullRequestDetailSummary(data: PullRequestDetail | null) {
   return data === null ? null : { ...data, checksState: pullRequestChecksState(data.checks) };
 }
 
@@ -415,7 +411,9 @@ function useDisplayedPullRequestDetail(
   activity: PullRequestActivity | null,
   canWriteSourceControl: boolean,
 ) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
+  // Kept: hooks consume `detail` (the branch refs query keyed on `detail.workspaceRoot`, the stack
+  // query, the guide writer) and plain calls read it afterwards (`isStackedPullRequestBase`), so a
+  // body-level derivation gets no cache scope. A hook's return value is frozen and stays cached.
   "use memo";
   const listSummary = listEntry === null ? null : pullRequestListEntryToSummary(listEntry);
   // The list row is also published to the shared cache, but only after this commit's layout
@@ -485,13 +483,11 @@ function useDisplayedPullRequestDetail(
   return { sharedSummary, coreDetail, detail };
 }
 
-function useMarkdownContext(
+function pullRequestMarkdownContext(
   hostClient: ReturnType<typeof sourceControlClients.get>,
   repositoryUrl: string | null,
   threadRef: ScopedThreadRef | null,
 ) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
   return {
     repositoryUrl:
       repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
@@ -499,13 +495,11 @@ function useMarkdownContext(
   };
 }
 
-function useStackReference(
+function pullRequestStackReference(
   detail: Pick<PullRequestDetail, "url" | "capabilities"> | null,
   reference: PullRequestRef,
   supportsThreadPullRequests: boolean,
 ) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
   return detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
     ? null
     : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host };
@@ -551,10 +545,16 @@ export function PullRequestDetailPanel({
   const repositoryIdentity = project?.repositoryIdentity;
   const supportsThreadPullRequests =
     environmentConfigs.get(environmentId)?.environment.capabilities.threadPullRequests === true;
-  const reference = useResolvedPullRequestReference(
+  const reference = resolvePullRequestReference(
     requestedReference,
     repositoryIdentity,
     supportsThreadPullRequests,
+  );
+  const loadingCheckoutCommand = loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
+  const unavailableGitHubUrl = gitHubPullRequestBrowserUrl(
+    repositoryIdentity,
+    reference.repository,
+    reference.number,
   );
   const pullRequestKey = `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
   const matchingListEntry =
@@ -711,7 +711,7 @@ export function PullRequestDetailPanel({
     cached: cachedDetail,
     reference,
   });
-  const detailSummary = usePullRequestDetailSummary(detailQuery.data);
+  const detailSummary = pullRequestDetailSummary(detailQuery.data);
   const observedSummary = useSharedPullRequestSummary(
     environmentId,
     reference,
@@ -761,7 +761,8 @@ export function PullRequestDetailPanel({
   }
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
   const hostClient = sourceControlClients.get(detail?.provider);
-  const markdownContext = useMarkdownContext(hostClient, repositoryUrl, threadRef);
+  const openOnHostText = openOnHostLabel(hostClient);
+  const markdownContext = pullRequestMarkdownContext(hostClient, repositoryUrl, threadRef);
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null
       ? hostClient.authorProfileUrl(detail.author.login, repositoryUrl)
@@ -774,7 +775,7 @@ export function PullRequestDetailPanel({
         detail?.headRepositoryNameWithOwner,
         changeRequestRepositoryUrl(handoffSummary.url),
       )
-    : loadingPullRequestCheckoutCommand(reference, repositoryIdentity);
+    : loadingCheckoutCommand;
   const branchRefsQuery = useEnvironmentQuery(
     detail === null
       ? null
@@ -790,7 +791,7 @@ export function PullRequestDetailPanel({
   const isStackedPullRequest =
     detail !== null &&
     isStackedPullRequestBase(detail.baseBranch, branchRefsQuery.data?.refs ?? []);
-  const stackReference = useStackReference(detail, reference, supportsThreadPullRequests);
+  const stackReference = pullRequestStackReference(detail, reference, supportsThreadPullRequests);
   const nativeStackQuery = usePullRequestStack(environmentId, stackReference);
   const nativeStack = nativeStackQuery.data;
   const supportsStackActions =
@@ -880,11 +881,6 @@ export function PullRequestDetailPanel({
   const [titleSaving, setTitleSaving] = useState(false);
   const newThread = useNewThreadHandler();
   const { environments } = useEnvironments();
-  const unavailableGitHubUrl = gitHubPullRequestBrowserUrl(
-    repositoryIdentity,
-    reference.repository,
-    reference.number,
-  );
   const pickableEnvironments =
     context === "page"
       ? resolvePickableEnvironments(
@@ -1722,7 +1718,7 @@ export function PullRequestDetailPanel({
                       </button>
                     }
                   />
-                  <TooltipPopup side="top">{openOnHostLabel(hostClient)}</TooltipPopup>
+                  <TooltipPopup side="top">{openOnHostText}</TooltipPopup>
                 </Tooltip>
               </>
             ) : null}
@@ -1781,7 +1777,7 @@ export function PullRequestDetailPanel({
                       </button>
                     }
                   />
-                  <TooltipPopup side="top">{openOnHostLabel(hostClient)}</TooltipPopup>
+                  <TooltipPopup side="top">{openOnHostText}</TooltipPopup>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger
@@ -2206,7 +2202,7 @@ export function PullRequestDetailPanel({
                   ) : null}
                   <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
                     <ArrowUpRightIcon className="size-3.5" />
-                    {openOnHostLabel(hostClient)}
+                    {openOnHostText}
                   </MenuItem>
                   <MenuItem onClick={() => copyReference(detail.url, "PR link")}>
                     <LinkIcon className="size-3.5" />
