@@ -49,4 +49,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/pullRequest/PullRequestCodeTab.tsx",
   "apps/web/src/hooks/useLocalStorage.ts",
   "apps/web/src/hooks/useTheme.ts",
+  "apps/web/src/hooks/useSettings.ts",
 ] as const;
