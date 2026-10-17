@@ -80,6 +80,103 @@ const makeSuccessfulHandle = (stdout: string) =>
     getOutputFd: () => Stream.empty,
   });
 
+describe("Git output collection", () => {
+  it.effect.each([false, true])(
+    "preserves chunked UTF-8 and NUL output with callbacks=%s",
+    (callbacks) =>
+      Effect.gen(function* () {
+        const stdout = "a\\b\0雪\nlast ";
+        const stderr = "Receiving é\r\nUpdating 雪\rdone";
+        const chunks = (text: string) =>
+          Stream.fromIterable(
+            Array.from(new TextEncoder().encode(text), (byte) => Uint8Array.of(byte)),
+          );
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              stdout: chunks(stdout),
+              stderr: chunks(stderr),
+            }),
+          ),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const stdoutLines: string[] = [];
+        const stderrLines: string[] = [];
+        const result = yield* driver.execute({
+          operation: "test.chunkedGitOutput",
+          cwd: "/repo",
+          args: ["status"],
+          ...(callbacks
+            ? {
+                progress: {
+                  onStdoutLine: (line: string) => Effect.sync(() => void stdoutLines.push(line)),
+                  onStderrLine: (line: string) => Effect.sync(() => void stderrLines.push(line)),
+                },
+              }
+            : {}),
+        });
+        assert.deepEqual(result, {
+          exitCode: 0,
+          stdout,
+          stderr,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        });
+        assert.deepEqual(stdoutLines, callbacks ? ["a\\b\0雪", "last "] : []);
+        assert.deepEqual(stderrLines, callbacks ? ["Receiving é", "Updating 雪", "done"] : []);
+      }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+
+  it.effect.each([
+    { callbacks: false, keep: false },
+    { callbacks: false, keep: true },
+    { callbacks: true, keep: false },
+    { callbacks: true, keep: true },
+  ])(
+    "preserves byte caps with callbacks=$callbacks and continued callbacks=$keep",
+    ({ callbacks, keep }) =>
+      Effect.gen(function* () {
+        const bytes = new TextEncoder().encode("é雪\rdone");
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              stderr: Stream.fromIterable(Array.from(bytes, (byte) => Uint8Array.of(byte))),
+            }),
+          ),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const lines: string[] = [];
+        const input = {
+          operation: "test.cappedGitOutput",
+          cwd: "/repo",
+          args: ["status"],
+          maxOutputBytes: 3,
+          keepLineCallbacksAfterTruncation: keep,
+          ...(callbacks
+            ? {
+                progress: {
+                  onStderrLine: (line: string) => Effect.sync(() => void lines.push(line)),
+                },
+              }
+            : {}),
+        };
+        const result = yield* driver.execute({ ...input, appendTruncationMarker: true });
+        assert.equal(result.stderr, "é\uFFFD");
+        assert.isTrue(result.stderrTruncated);
+        assert.deepEqual(lines, callbacks ? (keep ? ["é雪", "done"] : ["é\uFFFD"]) : []);
+        const error = yield* driver.execute(input).pipe(Effect.flip);
+        assert.equal(error.outputLength, 4);
+        assert.include(error.detail, "exceeded 3 bytes");
+      }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  );
+});
+
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
