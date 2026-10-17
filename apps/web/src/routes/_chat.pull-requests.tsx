@@ -1,3 +1,7 @@
+import {
+  applyPullRequestDraftFilterChange,
+  parsePullRequestQuery,
+} from "@t3tools/client-runtime/pull-request-query";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { useShortcutModifierState } from "~/shortcutModifierState";
@@ -58,7 +62,6 @@ import {
   groupPullRequestsByInvolvement,
   matchesPullRequestFilters,
   matchesPullRequestQuery,
-  parsePullRequestQuery,
   narrowPullRequestsToFilters,
   mergePullRequestDiffStats,
   partitionPullRequestsWithPriority,
@@ -1631,7 +1634,9 @@ function PullRequestsRouteView() {
     </div>
   );
   const carriedToNothing =
-    showingCarried && listQuery.isPending && shownCount === 0 && typedQuery.length === 0;
+    shownCount === 0 &&
+    typedQuery.length === 0 &&
+    (!querySettled || (showingCarried && listQuery.isPending));
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -1788,16 +1793,26 @@ function PullRequestsRouteView() {
       involvement={search.involvement}
       involvementOptions={INVOLVEMENT_TABS}
       onInvolvement={(involvement) => updateListScope({ involvement })}
-      filters={menuFilters}
-      onFilters={(next) =>
+      filters={
+        typedParsed.filters.draft
+          ? { ...menuFilters, draft: typedParsed.filters.draft }
+          : menuFilters
+      }
+      onFilters={(value) => {
+        const { query, filters: next } = applyPullRequestDraftFilterChange(
+          typedQuery,
+          menuFilters,
+          value,
+        );
         updateListScope({
+          ...(query === typedQuery ? {} : { q: query || undefined }),
           draft: next.draft,
           review: next.review,
           checks: next.checks,
           author: next.author,
           labels: next.labels?.flatMap((group) => group),
-        })
-      }
+        });
+      }}
       authorOptions={facets.authors}
       labelOptions={facets.labels}
       host={search.host}

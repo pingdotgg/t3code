@@ -1,8 +1,11 @@
-import type {
-  EnvironmentId,
-  PullRequestListEntry,
-  PullRequestListInput,
-  PullRequestListResult,
+import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import {
+  ProjectId,
+  resolvePullRequestAuthorFilter,
+  type EnvironmentId,
+  type PullRequestListEntry,
+  type PullRequestListInput,
+  type PullRequestListResult,
 } from "@t3tools/contracts";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
 
@@ -138,6 +141,21 @@ export function pullRequestListHead(
       };
 }
 
+export function pullRequestListInput(
+  controls: PullRequestListControls,
+  query: string,
+): PullRequestListInput {
+  const parsed = parsePullRequestQuery(query);
+  return {
+    state: controls.state,
+    involvement: controls.involvement,
+    filters: { ...controls.filters, ...parsed.filters },
+    limit: PR_LIST_PAGE_SIZE,
+    ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
+    ...(parsed.text ? { query: parsed.text } : {}),
+  };
+}
+
 export function nextPullRequestListInput(
   pages: PullRequestListPages,
   input: PullRequestListInput,
@@ -186,8 +204,9 @@ export function filterPullRequestList<
   connectedEnvironmentIds?: ReadonlySet<string>,
 ) {
   const normalize = (value: string) => value.toLowerCase();
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const { filters } = controls;
+  const parsed = parsePullRequestQuery(query);
+  const words = parsed.text.toLowerCase().split(/\s+/).filter(Boolean);
+  const filters = { ...controls.filters, ...parsed.filters };
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
     if (controls.projectId && entry.projectId !== controls.projectId) return false;
@@ -204,8 +223,8 @@ export function filterPullRequestList<
     if ((filters.draft === "only" && !entry.isDraft) || (filters.draft === "hide" && entry.isDraft))
       return false;
     if (filters.author) {
-      const author = filters.author === "me" ? viewer : filters.author;
-      if (!author || normalize(entry.author?.login ?? "") !== normalize(author)) return false;
+      const author = resolvePullRequestAuthorFilter(filters.author, viewer);
+      if (normalize(entry.author?.login ?? "") !== normalize(author)) return false;
     }
     if (filters.review && entry.reviewDecision && entry.reviewDecision !== filters.review)
       return false;
