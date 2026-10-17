@@ -12,7 +12,7 @@ import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -132,64 +132,69 @@ function withoutProviders(
   );
 }
 
+function deriveSelection(
+  environments: readonly EnvironmentUsageStatus[],
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null,
+  hiddenProviders: ReadonlySet<UsageProviderKind>,
+) {
+  const selectedEnvironments =
+    selectedEnvironmentIds === null
+      ? environments
+      : environments.filter((environment) => selectedEnvironmentIds.has(environment.environmentId));
+  return {
+    environments,
+    selectedEnvironmentIds,
+    hiddenProviders,
+    selectedEnvironments,
+    merged: mergeAnsweredUsage(withoutProviders(selectedEnvironments, hiddenProviders)),
+  };
+}
+
 export function useUsage(
   input: UsageSummaryInput,
   selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
   hiddenProviders: ReadonlySet<UsageProviderKind> = NO_HIDDEN_PROVIDERS,
 ): UsageView {
-  const windowKey = useMemo(
-    () =>
-      JSON.stringify({
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        timeZone: input.timeZone,
-        resolution: input.resolution,
-        sinceTime: input.sinceTime,
-        untilTime: input.untilTime,
-      }),
-    [
-      input.sinceDay,
-      input.untilDay,
-      input.timeZone,
-      input.resolution,
-      input.sinceTime,
-      input.untilTime,
-    ],
-  );
+  const windowKey = JSON.stringify({
+    sinceDay: input.sinceDay,
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    resolution: input.resolution,
+    sinceTime: input.sinceTime,
+    untilTime: input.untilTime,
+  });
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
-  const selectedEnvironments = useMemo(
-    () =>
-      selectedEnvironmentIds === null
-        ? environments
-        : environments.filter((environment) =>
-            selectedEnvironmentIds.has(environment.environmentId),
-          ),
-    [environments, selectedEnvironmentIds],
+  // The render-time sync below compares merged by identity, so the derivation is
+  // held in state keyed on its inputs rather than rebuilt every render.
+  const [derived, setDerived] = useState(() =>
+    deriveSelection(environments, selectedEnvironmentIds, hiddenProviders),
   );
+  let current = derived;
+  if (
+    derived.environments !== environments ||
+    derived.selectedEnvironmentIds !== selectedEnvironmentIds ||
+    derived.hiddenProviders !== hiddenProviders
+  ) {
+    current = deriveSelection(environments, selectedEnvironmentIds, hiddenProviders);
+    setDerived(current);
+  }
+  const { selectedEnvironments, merged } = current;
 
-  const refresh = useCallback(
-    (nextInput?: UsageSummaryInput) =>
-      refreshUsage({
-        registry: appAtomRegistry,
-        server: serverEnvironment,
-        presentations: environmentPresentations,
-        environmentIds: selectedEnvironments
-          .filter(
-            (environment) =>
-              environment.canReadDiagnostics &&
-              readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
-          )
-          .map(({ environmentId }) => environmentId),
-        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
-      }),
-    [selectedEnvironments, windowKey],
-  );
-
-  const merged = useMemo(
-    () => mergeAnsweredUsage(withoutProviders(selectedEnvironments, hiddenProviders)),
-    [selectedEnvironments, hiddenProviders],
-  );
+  const refresh = (nextInput?: UsageSummaryInput) =>
+    refreshUsage({
+      registry: appAtomRegistry,
+      server: serverEnvironment,
+      presentations: environmentPresentations,
+      environmentIds: selectedEnvironments
+        .filter(
+          (environment) =>
+            environment.canReadDiagnostics &&
+            readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
+        )
+        .map(({ environmentId }) => environmentId),
+      input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+    });
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,
