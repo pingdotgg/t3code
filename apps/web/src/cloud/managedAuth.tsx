@@ -71,7 +71,9 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
 
     if (!isSignedIn || !userId) {
       deactivateManagedRelayAuthentication();
-      if (previousAccount !== null) {
+      // Clerk can load signed out while offline, so only a signed-in account
+      // observed in this session is cleaned up.
+      if (previousAccount !== undefined && previousAccount !== null) {
         void queueAccountCleanup();
       }
     } else {
