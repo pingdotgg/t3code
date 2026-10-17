@@ -57,6 +57,8 @@ interface MutableBucket {
   costUsd: number;
   cacheSavingsUsd: number;
   categoryCostUsd: UsageCategoryCost | null;
+  /** Retracting the last split contribution must leave no breakdown, not a zero one. */
+  categorizedRecords: number;
   fastCostUsd: number;
   ultrafastCostUsd: number;
   speedPremiumUsd: number;
@@ -101,13 +103,60 @@ export interface AggregateResult {
 }
 
 /**
+ * Copies sharing a `dedupeKey` are one billed message, but an early copy can
+ * carry partial counts on any channel, so each channel's maximum is the
+ * complete count whichever copy is read first. Every other field (time,
+ * model, session, speed) stays with the held copy, so merging never moves
+ * usage to another bucket. Returns `held` itself when `copy` adds nothing.
+ */
+export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.max(held.reportedCostUsd, copy.reportedCostUsd);
+  if (
+    b.uncachedInputTokens <= a.uncachedInputTokens &&
+    b.cachedInputTokens <= a.cachedInputTokens &&
+    b.cacheCreationTokens <= a.cacheCreationTokens &&
+    b.outputTokens <= a.outputTokens &&
+    b.reasoningTokens <= a.reasoningTokens &&
+    reportedCostUsd === held.reportedCostUsd
+  ) {
+    return held;
+  }
+  return {
+    ...held,
+    totals: {
+      uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.max(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+const ZERO_CATEGORY_COST: UsageCategoryCost = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+
+interface Contribution {
+  record: UsageRecord;
+  /** Null when the first copy fell outside the window. */
+  readonly bucket: MutableBucket | null;
+}
+
+/**
  * De-duplication is global across the whole scan, not per file: Claude Code
  * copies a message's records forward when a session is resumed or forked, so
- * the same `dedupeKey` legitimately appears in several transcripts.
+ * the same `dedupeKey` legitimately appears in several transcripts. A replayed
+ * copy can be partial or zeroed, so a richer copy read later replaces the held
+ * copy's contribution instead of being dropped.
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #seen = new Map<string, Contribution>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -141,20 +190,39 @@ export class UsageAggregator {
   add(input: UsageRecord, sourcePath?: string): boolean {
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
+      const held = this.#seen.get(record.dedupeKey);
+      if (held !== undefined) {
         this.#duplicatesDropped += 1;
+        const merged = mergeUsageCopies(held.record, record);
+        if (merged !== held.record) {
+          if (held.bucket !== null) {
+            this.#accumulate(held.bucket, held.record, -1);
+            this.#accumulate(held.bucket, merged, 1);
+          }
+          held.record = merged;
+        }
         return false;
       }
-      this.#seen.add(record.dedupeKey);
     }
 
+    const bucket = this.#placeInWindow(record, sourcePath ?? "");
+    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket });
+    if (bucket === null) {
+      this.#outOfWindow += 1;
+      return false;
+    }
+    this.#accumulate(bucket, record, 1);
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    return true;
+  }
+
+  #placeInWindow(record: UsageRecord, source: string): MutableBucket | null {
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const day = this.#toDay(record.timestampMs);
@@ -162,51 +230,48 @@ export class UsageAggregator {
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const hourIndex =
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
+    return this.#bucketFor(day, hourIndex, record.provider, record.model, source);
+  }
 
+  #accumulate(bucket: MutableBucket, record: UsageRecord, sign: 1 | -1): void {
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;
-    totals.uncachedInputTokens += record.totals.uncachedInputTokens;
-    totals.cachedInputTokens += record.totals.cachedInputTokens;
-    totals.cacheCreationTokens += record.totals.cacheCreationTokens;
-    totals.outputTokens += record.totals.outputTokens;
-    totals.reasoningTokens += record.totals.reasoningTokens;
-    bucket.costUsd += priced.costUsd;
+    totals.uncachedInputTokens += sign * record.totals.uncachedInputTokens;
+    totals.cachedInputTokens += sign * record.totals.cachedInputTokens;
+    totals.cacheCreationTokens += sign * record.totals.cacheCreationTokens;
+    totals.outputTokens += sign * record.totals.outputTokens;
+    totals.reasoningTokens += sign * record.totals.reasoningTokens;
+    bucket.costUsd += sign * priced.costUsd;
     if (priced.categoryCostUsd !== null) {
-      const sum = bucket.categoryCostUsd;
+      bucket.categorizedRecords += sign;
+      const sum = bucket.categoryCostUsd ?? ZERO_CATEGORY_COST;
       const add = priced.categoryCostUsd;
       bucket.categoryCostUsd =
-        sum === null
-          ? add
+        bucket.categorizedRecords === 0
+          ? null
           : {
-              input: sum.input + add.input,
-              cacheRead: sum.cacheRead + add.cacheRead,
-              cacheWrite: sum.cacheWrite + add.cacheWrite,
-              output: sum.output + add.output,
+              input: sum.input + sign * add.input,
+              cacheRead: sum.cacheRead + sign * add.cacheRead,
+              cacheWrite: sum.cacheWrite + sign * add.cacheWrite,
+              output: sum.output + sign * add.output,
             };
     }
-    if (record.speed === "fast") bucket.fastCostUsd += priced.costUsd;
-    if (record.speed === "ultrafast") bucket.ultrafastCostUsd += priced.costUsd;
-    bucket.speedPremiumUsd += priced.speedPremiumUsd;
-    bucket.cacheSavingsUsd += cacheSavingsUsd(
-      this.#options.rates,
-      record,
-      this.#options.priceOverrides,
-    );
-    bucket.records += 1;
-    if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
-    if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
-    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
-    return true;
+    if (record.speed === "fast") bucket.fastCostUsd += sign * priced.costUsd;
+    if (record.speed === "ultrafast") bucket.ultrafastCostUsd += sign * priced.costUsd;
+    bucket.speedPremiumUsd += sign * priced.speedPremiumUsd;
+    bucket.cacheSavingsUsd +=
+      sign * cacheSavingsUsd(this.#options.rates, record, this.#options.priceOverrides);
+    bucket.records += sign;
+    if (priced.costSource === "unpriced") bucket.unpricedRecords += sign;
+    if (priced.costSource === "providerReported") bucket.providerReportedRecords += sign;
   }
 
   /** The target's own rate applies, so a provider-specific `rateModel` is dropped. */
@@ -251,6 +316,7 @@ export class UsageAggregator {
         costUsd: 0,
         cacheSavingsUsd: 0,
         categoryCostUsd: null,
+        categorizedRecords: 0,
         fastCostUsd: 0,
         ultrafastCostUsd: 0,
         speedPremiumUsd: 0,

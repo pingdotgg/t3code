@@ -98,17 +98,108 @@ describe("UsageAggregator", () => {
     expect(bucket).not.toHaveProperty("ultrafastCostUsd");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
-    const result = aggregate([
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-    ]);
+  it("counts identical copies of a dedupe key once", () => {
+    const copy = record({ dedupeKey: "msg_1:" });
+    const result = aggregate([copy, copy, copy]);
 
     expect(result.duplicatesDropped).toBe(2);
-    expect(result.buckets).toHaveLength(1);
-    expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+    expect(result.buckets).toEqual(aggregate([copy]).buckets);
+  });
+
+  it("keeps each channel's maximum when copies of a key peak on different channels", () => {
+    const totals = record().totals;
+    const result = aggregate([
+      record({
+        dedupeKey: "msg_1:",
+        totals: { ...totals, cachedInputTokens: 1200, outputTokens: 3 },
+      }),
+      record({ dedupeKey: "msg_1:", totals: { ...totals, cacheCreationTokens: 40 } }),
+    ]);
+
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets).toEqual(
+      aggregate([
+        record({
+          dedupeKey: "msg_1:",
+          totals: { ...totals, cachedInputTokens: 1200, cacheCreationTokens: 40 },
+        }),
+      ]).buckets,
+    );
+  });
+
+  it("counts the full copy of a message whichever file replays it zeroed first", () => {
+    const original = record({ dedupeKey: "msg_1:" });
+    const replay = record({
+      dedupeKey: "msg_1:",
+      sessionId: "session-fork",
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+    });
+    const other = record({ dedupeKey: "msg_2:", totals: { ...record().totals, outputTokens: 7 } });
+
+    const replayFirst = aggregate([other, replay, original]);
+    const originalFirst = aggregate([other, original, replay]);
+
+    expect(replayFirst.duplicatesDropped).toBe(1);
+    expect(replayFirst.buckets[0]).toMatchObject({
+      totals: originalFirst.buckets[0]?.totals,
+      costUsd: expect.closeTo(originalFirst.buckets[0]?.costUsd ?? Number.NaN, 12),
+      cacheSavingsUsd: expect.closeTo(originalFirst.buckets[0]?.cacheSavingsUsd ?? Number.NaN, 12),
+      categoryCostUsd: originalFirst.buckets[0]?.categoryCostUsd,
+      records: 2,
+      unpricedRecords: 0,
+      costSource: "modelPriced",
+    });
+  });
+
+  it("retracts the held copy's cost source when a later copy reports a cost", () => {
+    const result = aggregate([
+      record({ dedupeKey: "msg_1:" }),
+      record({ dedupeKey: "msg_1:", reportedCostUsd: 1.25 }),
+      record(),
+    ]);
+
+    expect(result.buckets[0]).toMatchObject({
+      costUsd: expect.closeTo(1.25 + 0.004625, 12),
+      records: 2,
+    });
+    expect(
+      aggregate([
+        record({ dedupeKey: "msg_1:" }),
+        record({ dedupeKey: "msg_1:", reportedCostUsd: 1.25 }),
+      ]).buckets[0]?.costSource,
+    ).toBe("providerReported");
+  });
+
+  it("leaves no cost breakdown once the only split contribution is retracted", () => {
+    const zero = {
+      uncachedInputTokens: 0,
+      cachedInputTokens: 0,
+      cacheCreationTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+    };
+    const merged = record({ dedupeKey: "msg_1:", totals: zero, reportedCostUsd: 1 });
+
+    expect(aggregate([record({ dedupeKey: "msg_1:", totals: zero }), merged]).buckets).toEqual(
+      aggregate([merged]).buckets,
+    );
+  });
+
+  it("keeps a key whose first copy fell outside the window out, as before", () => {
+    const result = aggregate([
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-31T23:59:59Z") }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 500 } }),
+    ]);
+
+    expect(result.outOfWindow).toBe(1);
+    expect(result.duplicatesDropped).toBe(1);
+    expect(result.buckets).toHaveLength(0);
   });
 
   it("still sums records that carry no dedupe key", () => {

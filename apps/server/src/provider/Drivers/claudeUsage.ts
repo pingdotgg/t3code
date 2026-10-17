@@ -13,9 +13,10 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
- * T3 Code writes one record per assistant *content block*, and every one of those records repeats
- * the same complete `usage` object for the parent message. Summing them overcounts by roughly
- * 2.4x on a real workload, so the caller must drop repeats by `dedupeKey` and keep the first.
+ * Claude Code writes one record per assistant *content block*, all sharing the message's
+ * `dedupeKey`, so summing them overcounts. The copies do not always agree: subagent transcripts
+ * put the stream-start snapshot, a few output tokens, on the first block and the final usage on
+ * the last. The caller keeps each channel's maximum per key (`mergeUsageCopies`).
  */
 export function parseClaudeLine(line: string): UsageRecord | null {
   let parsed: unknown;

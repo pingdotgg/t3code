@@ -50,8 +50,8 @@ import {
 import {
   decodeScanCache,
   dedupeWithinFile,
-  LEGACY_SCAN_CACHE_FILE_NAME,
   makeScanCacheWriter,
+  PREVIOUS_SCAN_CACHE_FILE_NAMES,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
   type CachedFile,
@@ -202,7 +202,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const previousScanCachePaths = PREVIOUS_SCAN_CACHE_FILE_NAMES.map((name) =>
+    path.join(config.stateDir, name),
+  );
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -378,8 +380,9 @@ export const make = Effect.gen(function* () {
           Effect.catchCause(() => Effect.succeed(null)),
         );
       let document = yield* readDocument(scanCachePath);
-      if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
+      for (const previousPath of previousScanCachePaths) {
+        if (document !== null) break;
+        document = yield* readDocument(previousPath);
         cacheDirty = document !== null;
       }
       if (document === null) return;
@@ -435,7 +438,7 @@ export const make = Effect.gen(function* () {
   /**
    * Reads run concurrently, and the caller stores updates in walk order rather
    * than completion order: saved records of deleted transcripts aggregate in
-   * cache order, where the first copy of a duplicate wins.
+   * cache order, where the first copy of a duplicate decides its bucket.
    */
   const readFileRecords = (
     filePath: string,
@@ -485,9 +488,8 @@ export const make = Effect.gen(function* () {
         };
 
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.records]);
+      const tailRecords = parsed.tailRecords;
 
       return {
         records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
@@ -604,7 +606,7 @@ export const make = Effect.gen(function* () {
 
     // Independent sources scan together. Transcript directories go one at a
     // time, so open files stay at `TRANSCRIPT_READ_CONCURRENCY`. The result
-    // keeps this order, since aggregation keeps the first copy of a duplicate.
+    // keeps this order, since the first copy decides a duplicate's bucket.
     const [transcripts, scanDirs] = yield* Effect.all(
       [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs)), scans],
       { concurrency: "unbounded" },

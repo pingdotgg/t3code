@@ -150,6 +150,18 @@ describe("scan cache round trip", () => {
     ).toBe(false);
   });
 
+  it("keeps a v5 entry's saved records but makes its live file re-parse whole", () => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const previous = { ...encoded, version: 5 };
+
+    const entry = decodeScanCache(JSON.parse(JSON.stringify(previous)), TEST_FORMAT_MAP).get(
+      "/a.jsonl",
+    );
+    expect(entry?.records).toEqual([record()]);
+    expect(entry?.size).toBe(-1);
+    expect(entry?.position.resumeOffset).toBe(0);
+  });
+
   it("rejects a document from before records carried a speed", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
     const previous = { ...encoded, version: 3 };
@@ -253,15 +265,24 @@ describe("pruneScanCache", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps each channel's maximum for a repeated key in the first record's place", () => {
     const kept = dedupeWithinFile([
-      record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
+      record({ totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 1 } }),
       record({ dedupeKey: "msg_2:" }),
+      record({ timestampMs: 1_786_000_009_000, totals: { ...record().totals, outputTokens: 999 } }),
     ]);
 
-    expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept).toEqual([
+      record({ totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 999 } }),
+      record({ dedupeKey: "msg_2:" }),
+    ]);
+  });
+
+  it("keeps the first record itself when every copy is identical", () => {
+    const first = record();
+
+    expect(dedupeWithinFile([first, record(), record()])).toEqual([first]);
+    expect(dedupeWithinFile([first, record()])[0]).toBe(first);
   });
 
   it("keeps every record that has no dedupe key", () => {

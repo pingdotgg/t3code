@@ -61,6 +61,42 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
   })}\n`;
 }
 
+/** One content-block line of message `msg_1`; Claude Code writes several per message. */
+function claudeCopy(usage: Readonly<Record<string, number>>, sessionId = "session-1"): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-08-01T10:00:00Z",
+    requestId: "req_1",
+    sessionId,
+    message: { id: "msg_1", model: "claude-fable-5", usage },
+  })}\n`;
+}
+
+/** The two lines of one subagent message from #20246: its stream-start copy, then its final copy. */
+const PARTIAL_USAGE = {
+  input_tokens: 2,
+  cache_creation_input_tokens: 1097,
+  cache_read_input_tokens: 67934,
+  output_tokens: 3,
+};
+const COMPLETE_USAGE = { ...PARTIAL_USAGE, output_tokens: 264 };
+const COPY_RATES = {
+  "claude-fable-5": {
+    input_cost_per_token: 1e-5,
+    output_cost_per_token: 5e-5,
+    cache_read_input_token_cost: 1e-6,
+    cache_creation_input_token_cost: 1.25e-5,
+  },
+};
+const COMPLETE_COST_USD = 2 * 1e-5 + 67934 * 1e-6 + 1097 * 1.25e-5 + 264 * 5e-5;
+const COMPLETE_TOTALS = {
+  uncachedInputTokens: 2,
+  cachedInputTokens: 67934,
+  cacheCreationTokens: 1097,
+  outputTokens: 264,
+  reasoningTokens: 0,
+};
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
@@ -1363,6 +1399,125 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("counts a message's complete copy while it is still the unterminated tail", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeCopy(PARTIAL_USAGE) + claudeCopy(COMPLETE_USAGE).trimEnd(),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const tail = yield* service.readSummary(WINDOW);
+        assert.deepStrictEqual(tail.buckets[0]?.totals, COMPLETE_TOTALS);
+        assert.strictEqual(tail.buckets[0]?.records, 1);
+        assert.closeTo(tail.buckets[0]?.costUsd ?? 0, COMPLETE_COST_USD, 1e-12);
+
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, "\n"));
+        assert.deepStrictEqual((yield* service.readSummary(WINDOW)).buckets, tail.buckets);
+        yield* service.awaitPersisted;
+        const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, tail.buckets);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-copy-tail-test",
+            home,
+            settings,
+            ratesDocument: COPY_RATES,
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("drops a tail copy's counts when the writer replaces that tail", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const partial = claudeCopy(PARTIAL_USAGE);
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, partial + claudeCopy(COMPLETE_USAGE).trimEnd()),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 264);
+
+        // Same settled prefix, longer file: the scan resumes and re-reads the old tail's bytes.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(transcript, partial + claudeLine(2, 7) + claudeLine(3, 5)),
+        );
+        const replaced = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(replaced), 3 + 7 + 5);
+        yield* service.awaitPersisted;
+        const restored = yield* (yield* UsageService.make).readSummary(WINDOW);
+        assert.deepStrictEqual(restored.buckets, replaced.buckets);
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-replaced-tail-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("completes a cached partial copy from bytes appended later", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeCopy(PARTIAL_USAGE)));
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 3);
+        yield* service.awaitPersisted;
+
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeCopy(COMPLETE_USAGE)));
+        const grown = yield* (yield* UsageService.make).readSummary(WINDOW);
+        assert.deepStrictEqual(grown.buckets[0]?.totals, COMPLETE_TOTALS);
+        assert.strictEqual(grown.buckets[0]?.records, 1);
+        assert.closeTo(grown.buckets[0]?.costUsd ?? 0, COMPLETE_COST_USD, 1e-12);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-copy-resume-test",
+            home,
+            settings,
+            ratesDocument: COPY_RATES,
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not let a zeroed replay read first hide the original copy's usage", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const dir = NodePath.dirname(transcript);
+      const [first = "", second = ""] = yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(dir, "a.jsonl"), "");
+        await NodeFSP.writeFile(NodePath.join(dir, "b.jsonl"), "");
+        return (await NodeFSP.readdir(dir)).map((name) => NodePath.join(dir, name));
+      });
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(first, claudeCopy({ input_tokens: 0, output_tokens: 0 }, "fork"));
+        await NodeFSP.writeFile(second, claudeCopy(PARTIAL_USAGE) + claudeCopy(COMPLETE_USAGE));
+      });
+      const summary = yield* UsageService.make.pipe(
+        Effect.flatMap((service) => service.readSummary(WINDOW)),
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-zeroed-replay-test",
+            home,
+            settings,
+            ratesDocument: COPY_RATES,
+          }),
+        ),
+      );
+      assert.deepStrictEqual(summary.buckets[0]?.totals, COMPLETE_TOTALS);
+      assert.strictEqual(summary.buckets[0]?.records, 1);
+      assert.closeTo(summary.buckets[0]?.costUsd ?? 0, COMPLETE_COST_USD, 1e-12);
+    }).pipe(Effect.scoped),
+  );
+
   it.live(
     "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
     () =>
@@ -1456,7 +1611,7 @@ describe("UsageService", () => {
 
         yield* Effect.gen(function* () {
           const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
           const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
@@ -1503,6 +1658,51 @@ describe("UsageService", () => {
               },
             }),
           ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "upgrades a v5 cache: re-parses live partial copies, keeps deleted transcripts, leaves v5 intact",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const deleted = NodePath.join(NodePath.dirname(transcript), "deleted.jsonl");
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(
+            transcript,
+            claudeCopy(PARTIAL_USAGE) + claudeCopy(COMPLETE_USAGE),
+          );
+          await NodeFSP.writeFile(deleted, claudeLine(2, 7));
+        });
+
+        yield* Effect.gen(function* () {
+          const { stateDir } = yield* ServerConfig.ServerConfig;
+          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
+          const v5Path = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+          const first = yield* UsageService.make;
+          yield* first.readSummary(WINDOW);
+          yield* first.awaitPersisted;
+
+          // A v5 server kept the first copy, so its row for msg_1 holds the partial count.
+          const v5 = yield* Effect.promise(async () => {
+            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+              files: Record<string, { r: unknown[][] }>;
+            };
+            const entry = document.files[transcript]!;
+            entry.r = entry.r.map((row) => [...row.slice(0, 6), 3, ...row.slice(7)]);
+            const text = encodeUnknownJsonString({ ...document, version: 5 });
+            await NodeFSP.writeFile(v5Path, text);
+            await NodeFSP.rm(cachePath);
+            await NodeFSP.rm(deleted);
+            return text;
+          });
+
+          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(summary), 264 + 7);
+          assert.strictEqual(yield* Effect.promise(() => NodeFSP.readFile(v5Path, "utf8")), v5);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-v5-upgrade-test", home, settings })),
         );
       }).pipe(Effect.scoped),
   );
