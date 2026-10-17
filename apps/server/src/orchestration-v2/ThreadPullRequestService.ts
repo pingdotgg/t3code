@@ -223,7 +223,10 @@ export const make = Effect.gen(function* () {
                 const previous = yield* pullRequests.summary(thread.branchPullRequest, {
                   recoverTransientFailure: false,
                 });
-                if (previous.state === "merged" || previous.state === "closed") {
+                if (
+                  previous.headBranch === thread.branch &&
+                  (previous.state === "merged" || previous.state === "closed")
+                ) {
                   branchPullRequest = thread.branchPullRequest;
                 }
               }
