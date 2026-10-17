@@ -24,7 +24,7 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
+import * as DelegatedTaskRequestReactor from "./DelegatedTaskRequestReactor.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -625,7 +625,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+    const reactor = yield* DelegatedTaskRequestReactor.DelegatedTaskRequestReactor;
     const parentThreadId = ThreadId.make("thread:question-parent");
     yield* orchestrator.dispatch({
       type: "thread.create",
@@ -701,10 +701,9 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     const question = requestEvent("event:question", "request:question", "live");
     const asyncQuestion = requestEvent("event:async-question", "request:async-question");
     const answered = requestEvent("event:answered", "request:answered", "live");
-    const approval = requestEvent("event:approval", "request:approval", "message", "command");
     const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
-      events: [question, asyncQuestion, answered, approval],
+      events: [question, asyncQuestion, answered],
     });
 
     yield* reactor.handle(question);
@@ -732,7 +731,6 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       ],
     });
     yield* reactor.handle(answered);
-    yield* reactor.handle(approval);
 
     const wakes = (yield* projections.getThreadProjection(parentThreadId)).messages.filter(
       (message) => message.notification !== undefined,
@@ -951,5 +949,227 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       taskIds: [followup.delegatedTaskId],
       childThreadId: task.childThreadId!,
     });
-  }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+  }).pipe(Effect.provide(DelegatedTaskRequestReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
+it.effect.each(["active", "idle", "waiting"] as const)(
+  "reports a delegated child's human requests with an %s parent",
+  (parentState) =>
+    Effect.gen(function* () {
+      const engine = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const reactor = yield* DelegatedTaskRequestReactor.DelegatedTaskRequestReactor;
+      const sink = yield* EventSink.EventSinkV2;
+      const parentThreadId = ThreadId.make(`thread:human-parent:${parentState}`);
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`human:create:${parentState}`),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("project:human-requests"),
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* engine.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`human:start:${parentState}`),
+        threadId: parentThreadId,
+        messageId: MessageId.make(`human:message:${parentState}`),
+        text: "Delegate a task",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parentRun = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs[0]!;
+      yield* engine.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make(`human:delegate:${parentState}`),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Run the checks",
+        completionWake: parentState === "waiting" ? "settled_only" : "always",
+        modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* projections.getThreadRecords(parentThreadId, ["subagents"]))
+        .subagents[0]!;
+      const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"]))
+        .runs[0]!;
+      const now = yield* DateTime.now;
+      const parentEnded = {
+        id: EventId.make(`human:parent-ended:${parentState}`),
+        type: "run.updated",
+        threadId: parentThreadId,
+        runId: parentRun.id,
+        occurredAt: now,
+        payload: { ...parentRun, status: "completed", completedAt: now },
+      } satisfies OrchestrationV2DomainEvent;
+      if (parentState === "idle") yield* sink.write({ events: [parentEnded] });
+      const requests = (
+        [
+          "command",
+          "file-read",
+          "file-change",
+          "mcp-elicitation",
+          "permission",
+          "auth_refresh",
+          "dynamic_tool_call",
+        ] as const
+      ).map((kind, index) => ({
+        id: EventId.make(`human:request:${parentState}:${index}`),
+        type: "runtime-request.updated" as const,
+        threadId: task.childThreadId!,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make(`human:request:${parentState}:${index}`),
+          nodeId: childRun.rootNodeId!,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending" as const,
+          responseCapability: {
+            type: "live" as const,
+            providerSessionId: ProviderSessionId.make("human:session"),
+          },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      }));
+      yield* sink.write({ events: requests });
+      for (const event of requests) {
+        yield* reactor.handle(event);
+        yield* reactor.handle(event);
+      }
+      const notices = (yield* projections.getThreadRecords(parentThreadId, [
+        "messages",
+      ])).messages.filter((m) => m.notification !== undefined);
+      assert.equal(notices.length, parentState === "waiting" ? 0 : 5);
+      if (parentState === "waiting") {
+        yield* sink.write({ events: [parentEnded] });
+        yield* reactor.handle(parentEnded);
+        yield* reactor.handle(parentEnded);
+      }
+      const parent = yield* projections.getThreadRecords(parentThreadId, [
+        "messages",
+        "runs",
+        "subagents",
+      ]);
+      const delivered = parent.messages.filter((m) => m.notification !== undefined);
+      assert.equal(delivered.length, 5);
+      for (const notice of delivered) {
+        assert.include(notice.text, `t3-thread://v1/${task.childThreadId}`);
+        assert.include(notice.text, "Only the user can approve");
+        assert.include(notice.text, "do not answer this request with t3_pending_request_respond");
+        assert.deepEqual(notice.notification?.source, {
+          kind: "delegated_task",
+          taskIds: [task.id],
+          childThreadId: task.childThreadId!,
+        });
+      }
+      assert.equal(
+        delivered.filter((m) => m.notification?.summary.endsWith("needs approval")).length,
+        5,
+      );
+      assert.equal(
+        delivered.filter((m) => m.notification?.summary.endsWith("needs sign-in")).length,
+        0,
+      );
+      assert.equal(parent.subagents[0]?.status, "running");
+      assert.isNull(parent.subagents[0]?.result);
+      if (parentState !== "active") {
+        assert.isTrue(
+          parent.runs.some(
+            (run) => delivered.some((m) => m.id === run.userMessageId) && run.status !== "queued",
+          ),
+        );
+      }
+      // Resolving a request before its queued notice starts withdraws that notice.
+      const resolved = {
+        ...requests[4]!,
+        id: EventId.make(`human:resolved:${parentState}`),
+        payload: { ...requests[4]!.payload, status: "resolved" as const, resolvedAt: now },
+      };
+      yield* sink.write({ events: [resolved] });
+      yield* reactor.handle(resolved);
+      const resolvedNotice = delivered.find((m) =>
+        m.text.includes(`request ${requests[4]!.payload.id} `),
+      )!;
+      assert.equal(
+        (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.find(
+          (run) => run.userMessageId === resolvedNotice.id,
+        )?.status,
+        "cancelled",
+      );
+      // Dropping the task cancels the other queued notices before the parent can start them.
+      yield* engine.dispatch(
+        parentState === "active"
+          ? {
+              type: "thread.stop",
+              commandId: CommandId.make(`human:stop:${parentState}`),
+              threadId: parentThreadId,
+            }
+          : {
+              type: "delegated_task.completion-delivery.dispose",
+              commandId: CommandId.make(`human:dispose:${parentState}`),
+              parentThreadId,
+              taskId: task.id,
+            },
+      );
+      const afterDispose = yield* projections.getThreadRecords(parentThreadId, ["runs"]);
+      assert.isFalse(
+        afterDispose.runs.some(
+          (run) => run.status === "queued" && delivered.some((m) => m.id === run.userMessageId),
+        ),
+      );
+      const late = {
+        ...requests[0]!,
+        id: EventId.make(`human:late:${parentState}`),
+        payload: {
+          ...requests[0]!.payload,
+          id: RuntimeRequestId.make(`human:late:${parentState}`),
+        },
+      };
+      yield* sink.write({ events: [late] });
+      yield* reactor.handle(late);
+      assert.equal(
+        (yield* projections.getThreadRecords(parentThreadId, ["messages"])).messages.filter(
+          (m) => m.notification !== undefined,
+        ).length,
+        5,
+      );
+      const refused = yield* Effect.exit(
+        engine.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`human:late-dispatch:${parentState}`),
+          threadId: parentThreadId,
+          messageId: MessageId.make(`human:late-dispatch:${parentState}`),
+          text: "A stale reactor tried to report approval",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "server",
+          notification: {
+            source: {
+              kind: "delegated_task",
+              taskIds: [task.id],
+              childThreadId: task.childThreadId!,
+            },
+            outcome: "updated",
+            summary: "Stale approval notice",
+          },
+        }),
+      );
+      assert.equal(refused._tag, "Failure");
+    }).pipe(Effect.provide(DelegatedTaskRequestReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
