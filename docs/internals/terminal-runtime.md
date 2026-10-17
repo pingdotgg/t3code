@@ -22,6 +22,13 @@ discarded chunk references immediately, even if array compaction happens later.
 Client buffers have a separate 512 KiB cap. Measure throughput with full scrollback
 when changing this path.
 
+A terminal stream may queue 8 MiB of output, beyond its oldest queued event, for a
+client that has stopped acknowledging it. Past that, the [server](../../apps/server/src/terminal/OutputProtocol.ts)
+drops that client's backlog and resumes it from a fresh snapshot, so clients must
+accept a snapshot at any point in the stream. Keep this budget at least as large as
+the history cap: if a snapshot outgrows the backlog it replaces, a client that could
+keep up may resync forever.
+
 Restoration must read only the bounded tail of current or legacy history files,
 skip any incomplete UTF-8 prefix, and apply the line limit. Close the read handle
 before rewriting the capped file. Reading whole old logs would defeat the memory

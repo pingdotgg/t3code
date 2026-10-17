@@ -156,6 +156,11 @@ export class TerminalManager extends Context.Service<
       listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
     ) => Effect.Effect<() => void, TerminalError>;
 
+    readonly resyncStream: (
+      input: TerminalObserveInput,
+      listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+    ) => Effect.Effect<() => void, TerminalError>;
+
     readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
 
     readonly resize: (input: TerminalResizeInput) => Effect.Effect<void, TerminalError>;
@@ -2761,7 +2766,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const streamSession = (
     input: TerminalObserveInput,
-    initial: Effect.Effect<TerminalSessionSnapshot, TerminalError>,
+    initial: Effect.Effect<TerminalSessionSnapshot | null, TerminalError>,
     listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
   ) => {
     let unsubscribe: (() => void) | null = null;
@@ -2769,6 +2774,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return Effect.gen(function* () {
       const bufferedEvents: TerminalEvent[] = [];
       let deliverLive = false;
+      // Only the sequence: keeping the snapshot would retain its history.
+      let snapshotFloor: number | null = null;
 
       unsubscribe = yield* subscribe((event) => {
         if (event.threadId !== input.threadId || event.terminalId !== input.terminalId) {
@@ -2780,19 +2787,36 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return Effect.void;
         }
 
+        // A publication already in flight when this stream subscribed can
+        // still arrive after the snapshot that contains it. Sequences restart
+        // with each session, so the floor holds until a session starts or ends.
+        if (snapshotFloor !== null) {
+          if (
+            event.type === "started" ||
+            event.type === "restarted" ||
+            event.type === "error" ||
+            event.type === "closed"
+          ) {
+            snapshotFloor = null;
+          } else if (typeof event.sequence === "number" && event.sequence <= snapshotFloor) {
+            return Effect.void;
+          }
+        }
+
         const attachEvent = terminalEventToAttachEvent(event);
         return attachEvent ? listener(attachEvent) : Effect.void;
       });
 
       const initialSnapshot = yield* initial;
 
-      yield* listener({
-        type: "snapshot",
-        snapshot: initialSnapshot,
-      });
+      yield* listener(
+        initialSnapshot
+          ? { type: "snapshot", snapshot: initialSnapshot }
+          : { type: "closed", threadId: input.threadId, terminalId: input.terminalId },
+      );
 
       for (const event of bufferedEvents) {
-        if (isDuplicateAttachSnapshotEvent(event, initialSnapshot)) {
+        if (initialSnapshot && isDuplicateAttachSnapshotEvent(event, initialSnapshot)) {
           continue;
         }
 
@@ -2801,7 +2825,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           yield* listener(attachEvent);
         }
       }
+      // The live listener keeps this closure, so release replayed output.
+      bufferedEvents.length = 0;
 
+      snapshotFloor = initialSnapshot?.sequence ?? null;
       deliverLive = true;
       return () => {
         unsubscribe?.();
@@ -2831,6 +2858,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
       ),
       listener,
+    );
+
+  // Lifecycle events publish under the thread lock, so subscribing inside it
+  // buffers no output while waiting and no event from an older session.
+  const resyncStream: TerminalManager["Service"]["resyncStream"] = (input, listener) =>
+    withThreadLock(
+      input.threadId,
+      streamSession(
+        input,
+        getSession(input.threadId, input.terminalId).pipe(
+          Effect.map((session) => (Option.isSome(session) ? snapshot(session.value) : null)),
+        ),
+        listener,
+      ),
     );
 
   const metadataEventFromTerminalEvent = (
@@ -3138,6 +3179,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     open,
     attachStream,
     observeStream,
+    resyncStream,
     write,
     resize,
     clear,
