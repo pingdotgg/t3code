@@ -225,7 +225,18 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(png)) return;
       // The AppImage mount is temporary; the chooser needs the icon after exit.
       yield* fileSystem.makeDirectory(iconsDir, { recursive: true });
-      yield* fileSystem.copyFile(png.value, iconPath);
+      // Read rather than copy: copying out of the ASAR extracts the icon to a
+      // temporary file that is never removed.
+      const icon = yield* fileSystem.readFile(png.value);
+      const current = yield* fileSystem.readFile(iconPath).pipe(Effect.orElseSucceed(() => null));
+      if (
+        current !== null &&
+        current.length === icon.length &&
+        current.every((byte, index) => byte === icon[index])
+      ) {
+        return;
+      }
+      yield* fileSystem.writeFile(iconPath, icon, { mode: 0o600 });
     }).pipe(
       Effect.catch((error) =>
         logWarning("URL handler icon copy failed", { iconPath, category: error.reason._tag }),

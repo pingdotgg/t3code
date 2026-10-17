@@ -82,13 +82,21 @@ export const make = Effect.gen(function* () {
         if (iconPath !== undefined) {
           try {
             NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            NodeFS.copyFileSync(
+            // Copying out of the ASAR makes Electron extract the icon to a
+            // temporary file that is never removed; reading does not.
+            const icon = NodeFS.readFileSync(
               NodePath.posix.join(
                 Electron.app.getAppPath(),
                 "apps/desktop/prod-resources/icon.png",
               ),
-              iconPath,
             );
+            let current: Buffer | null = null;
+            try {
+              current = NodeFS.readFileSync(iconPath);
+            } catch {}
+            if (current === null || !current.equals(icon)) {
+              NodeFS.writeFileSync(iconPath, icon, { mode: 0o600 });
+            }
           } catch {}
         }
         NodeFS.writeFileSync(

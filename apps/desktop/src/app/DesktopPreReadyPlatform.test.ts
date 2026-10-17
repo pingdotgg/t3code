@@ -12,9 +12,11 @@ const {
   registerSchemesMock,
   setDesktopNameMock,
   mkdirSyncMock,
+  readFileSyncMock,
   writeFileSyncMock,
   copyFileSyncMock,
   execFileSyncMock,
+  electronState,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -22,16 +24,20 @@ const {
   registerSchemesMock: vi.fn(),
   setDesktopNameMock: vi.fn(),
   mkdirSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
+  electronState: { isPackaged: true },
 }));
 
 vi.mock("electron", () => ({
   app: {
     setDesktopName: setDesktopNameMock,
     getVersion: () => "0.0.37",
-    isPackaged: true,
+    get isPackaged() {
+      return electronState.isPackaged;
+    },
     getAppPath: () => "/tmp/.mount_T3/resources/app.asar",
     commandLine: {
       appendSwitch: appendSwitchMock,
@@ -45,7 +51,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
-  readFileSync: () => "{}",
+  readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
@@ -57,6 +63,11 @@ vi.mock("node:child_process", () => ({
 
 import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 
+const iconSource = "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png";
+const iconPath = "/xdg/icons/com.t3tools.T3Code.desktop.png";
+const desktopEntryPath = "/xdg/applications/com.t3tools.T3Code.desktop";
+const iconBytes = Buffer.from([0x89, 0x50, 0x00, 0xff, 0x80, 0x0a]);
+
 describe("DesktopPreReadyPlatform", () => {
   beforeEach(() => {
     appendSwitchMock.mockReset();
@@ -65,9 +76,16 @@ describe("DesktopPreReadyPlatform", () => {
     registerSchemesMock.mockReset();
     setDesktopNameMock.mockReset();
     mkdirSyncMock.mockReset();
+    readFileSyncMock.mockReset();
     writeFileSyncMock.mockReset();
     copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
+    electronState.isPackaged = true;
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path.endsWith("/desktop-settings.json")) return "{}";
+      if (path === iconSource) return Buffer.from(iconBytes);
+      throw new Error(`missing file: ${path}`);
+    });
   });
 
   it.effect("preserves an explicit Linux password-store switch", () => {
@@ -150,14 +168,13 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopName = "t3code.desktop";
     let desktopEntry = previousEntry;
     let iconInstalled = false;
-    copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-      iconInstalled = destination === "/xdg/icons/com.t3tools.T3Code.desktop.png";
-    });
     setDesktopNameMock.mockImplementation((name: string) => {
       desktopName = name;
     });
-    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-      if (path === "/xdg/applications/com.t3tools.T3Code.desktop") desktopEntry = contents;
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      if (path === iconPath)
+        iconInstalled = Buffer.isBuffer(contents) && contents.equals(iconBytes);
+      if (path === desktopEntryPath && typeof contents === "string") desktopEntry = contents;
     });
 
     return Effect.scoped(
@@ -182,6 +199,15 @@ describe("DesktopPreReadyPlatform", () => {
           "Icon=/xdg/icons/com.t3tools.T3Code.desktop.png",
         );
         assert.isTrue(identity.iconInstalled);
+        assert.deepEqual(
+          readFileSyncMock.mock.calls.filter(([path]) => path === iconSource),
+          [[iconSource]],
+        );
+        assert.deepEqual(
+          writeFileSyncMock.mock.calls.filter(([path]) => path === iconPath),
+          [[iconPath, iconBytes, { mode: 0o600 }]],
+        );
+        assert.equal(copyFileSyncMock.mock.calls.length, 0);
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
@@ -198,18 +224,121 @@ describe("DesktopPreReadyPlatform", () => {
     );
   });
 
-  it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
+  it.effect.each([
+    { label: "missing", current: undefined },
+    { label: "equal", current: Buffer.from(iconBytes) },
+    { label: "changed", current: Buffer.from([0x89, 0x50, 0x00, 0xfe, 0x80, 0x0a]) },
+    { label: "shorter", current: iconBytes.subarray(0, -1) },
+  ])("installs binary icon bytes only for a $label destination", ({ current }) => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
     getSwitchValueMock.mockReturnValue("");
-    copyFileSyncMock.mockImplementation(() => {
-      throw new Error("missing bundled icon");
+    const readFile = readFileSyncMock.getMockImplementation()!;
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === iconPath && current !== undefined) return current;
+      return readFile(path);
     });
+
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;
-      const contents = writeFileSyncMock.mock.calls[0]?.[1];
-      assert.include(contents, "MimeType=x-scheme-handler/t3code;");
-      assert.include(contents, "Icon=");
-      assert.equal(setDesktopNameMock.mock.calls.length, 1);
-    }).pipe(Effect.provideService(HostProcess.Platform, "linux"));
+      assert.equal(copyFileSyncMock.mock.calls.length, 0);
+      assert.deepEqual(
+        readFileSyncMock.mock.calls.filter(([path]) => path === iconSource),
+        [[iconSource]],
+      );
+      assert.deepEqual(
+        readFileSyncMock.mock.calls.filter(([path]) => path === iconPath),
+        [[iconPath]],
+      );
+      assert.deepEqual(
+        writeFileSyncMock.mock.calls.filter(([path]) => path === iconPath),
+        current?.equals(iconBytes) ? [] : [[iconPath, iconBytes, { mode: 0o600 }]],
+      );
+      assert.equal(
+        writeFileSyncMock.mock.calls.filter(([path]) => path === desktopEntryPath).length,
+        1,
+      );
+      assert.deepEqual(setDesktopNameMock.mock.calls, [["com.t3tools.T3Code.desktop"]]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+
+  it.effect.each(["readFileSync", "writeFileSync"] as const)(
+    "still prepares the portal entry when the icon %s fails",
+    (method) => {
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      vi.stubEnv("XDG_DATA_HOME", "/xdg");
+      getSwitchValueMock.mockReturnValue("");
+      const readFile = readFileSyncMock.getMockImplementation()!;
+      let installedIcon = Buffer.from([0xff, 0x00]);
+      let failures = 0;
+      readFileSyncMock.mockImplementation((path: string) => {
+        if (path === iconSource && method === "readFileSync") {
+          failures++;
+          throw new Error("unreadable bundled icon");
+        }
+        if (path === iconPath) return installedIcon;
+        return readFile(path);
+      });
+      writeFileSyncMock.mockImplementation((path: string, contents: Buffer) => {
+        if (path !== iconPath) return;
+        if (method === "writeFileSync") {
+          failures++;
+          throw new Error("read-only icon directory");
+        }
+        installedIcon = Buffer.from(contents);
+      });
+
+      return Effect.gen(function* () {
+        yield* DesktopPreReadyPlatform.make;
+        assert.equal(failures, 1, "the failing filesystem operation must be reached");
+        assert.deepEqual(installedIcon, Buffer.from([0xff, 0x00]));
+        assert.equal(
+          writeFileSyncMock.mock.calls.filter(([path]) => path === iconPath).length,
+          method === "readFileSync" ? 0 : 1,
+        );
+        assert.equal(copyFileSyncMock.mock.calls.length, 0);
+        const contents = writeFileSyncMock.mock.calls.find(
+          ([path]) => path === desktopEntryPath,
+        )?.[1];
+        assert.include(contents, "MimeType=x-scheme-handler/t3code;");
+        assert.include(contents, "Icon=");
+        assert.deepEqual(setDesktopNameMock.mock.calls, [["com.t3tools.T3Code.desktop"]]);
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      );
+    },
+  );
+
+  it.effect("keeps unpackaged development setup free of icon reads and writes", () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
+    vi.stubEnv("XDG_DATA_HOME", "/xdg");
+    electronState.isPackaged = false;
+    getSwitchValueMock.mockReturnValue("");
+
+    return DesktopPreReadyPlatform.make.pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.map(() => {
+        assert.deepEqual(
+          readFileSyncMock.mock.calls.filter(([path]) => path === iconSource),
+          [],
+        );
+        assert.equal(copyFileSyncMock.mock.calls.length, 0);
+        assert.equal(writeFileSyncMock.mock.calls.length, 1);
+        assert.equal(
+          writeFileSyncMock.mock.calls[0]?.[0],
+          "/xdg/applications/com.t3tools.T3Code.Development.desktop",
+        );
+        assert.notInclude(writeFileSyncMock.mock.calls[0]?.[1], "Icon=");
+        assert.deepEqual(setDesktopNameMock.mock.calls, [
+          ["com.t3tools.T3Code.Development.desktop"],
+        ]);
+      }),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
   });
 
   it.effect(
@@ -260,6 +389,9 @@ describe("DesktopPreReadyPlatform", () => {
         assert.equal(registerSchemesMock.mock.calls.length, 1);
         assert.equal(appendSwitchMock.mock.calls.length, 0);
         assert.equal(setDesktopNameMock.mock.calls.length, 0);
+        assert.equal(readFileSyncMock.mock.calls.length, 0);
+        assert.equal(writeFileSyncMock.mock.calls.length, 0);
+        assert.equal(copyFileSyncMock.mock.calls.length, 0);
       }),
   );
 });
