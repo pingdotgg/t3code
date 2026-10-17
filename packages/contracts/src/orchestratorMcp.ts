@@ -11,6 +11,7 @@ import {
   PositiveInt,
   ProjectId,
   RunId,
+  RuntimeRequestId,
   ScheduledTaskId,
   SecretRef,
   ThreadId,
@@ -22,7 +23,7 @@ import {
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
-import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
@@ -170,7 +171,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   mode: Schema.optional(
     Schema.Literals(["async", "wait"]).annotate({
       description:
-        "Defaults to async. Use wait only when this turn needs the child's result before you can continue.",
+        "Defaults to async. Use wait only when this turn needs the child's result before you can continue. A blocking question or a pending approval in the child ends the wait early with the task still running.",
     }),
   ),
   timeoutMs: Schema.optional(Schema.Number).annotate({
@@ -187,6 +188,19 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
+
+/**
+ * An approval the child's records still show pending for a delegated task's own
+ * run, without its command or input. The record can outlive the provider's
+ * request, so it is a reason to look in the child thread, not proof of one.
+ */
+export const OrchestratorMcpPendingApproval = Schema.Struct({
+  requestId: RuntimeRequestId,
+  kind: ProviderRequestKind,
+  /** The task's run the request was recorded on. */
+  runId: RunId,
+});
+export type OrchestratorMcpPendingApproval = typeof OrchestratorMcpPendingApproval.Type;
 
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
@@ -207,6 +221,10 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   hasPendingQuestion: Schema.Boolean.annotate({
     description:
       "Blocking question ends mode=wait. Pass threadId=childThreadId to t3_pending_request_list, t3_pending_request_read (with requestId) and t3_pending_request_respond, or ask the user; the task's completion still wakes this thread.",
+  }),
+  pendingApproval: Schema.NullOr(OrchestratorMcpPendingApproval).annotate({
+    description:
+      "An approval the child's records still show pending for this task's own unfinished run ends mode=wait; the task keeps running and its completion still wakes this thread. This thread cannot approve or deny it, and the pending request tools answer questions only. The record can outlive the provider's request, so ask whoever holds approval for the child to open requestId in childThreadId and check the full request there before deciding. Null when no such approval is recorded.",
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description:

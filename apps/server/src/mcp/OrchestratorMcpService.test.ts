@@ -10,7 +10,9 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
@@ -2169,5 +2171,159 @@ describe("OrchestratorMcpService provider resolution", () => {
         );
       }),
     );
+  });
+
+  describe("pendingTaskApproval", () => {
+    type ApprovalRequest =
+      OrchestratorMcpService.ApprovalOwnershipRecords["runtimeRequests"][number];
+    const taskId = NodeId.make("node:approval-task");
+    const followupTaskId = NodeId.make("node:approval-followup-task");
+    const taskRun = {
+      id: RunId.make("run:approval-task"),
+      delegatedTaskId: taskId,
+      status: "running" as const,
+    };
+    const followupRun = {
+      id: RunId.make("run:approval-followup"),
+      delegatedTaskId: followupTaskId,
+      status: "running" as const,
+    };
+    const taskNode = { id: NodeId.make("node:approval-task-turn"), runId: taskRun.id };
+    const followupNode = { id: NodeId.make("node:approval-followup-turn"), runId: followupRun.id };
+    const unboundNode = { id: NodeId.make("node:approval-unbound"), runId: null };
+    const askedAt = DateTime.makeUnsafe("2026-10-15T10:00:00Z");
+    const request = (
+      id: string,
+      nodeId: NodeId,
+      overrides: Partial<ApprovalRequest> = {},
+    ): ApprovalRequest => ({
+      id: RuntimeRequestId.make(id),
+      nodeId,
+      kind: "command",
+      status: "pending",
+      responseCapability: {
+        type: "live",
+        providerSessionId: ProviderSessionId.make("session:approval"),
+      },
+      createdAt: askedAt,
+      ...overrides,
+    });
+    const records = (
+      runtimeRequests: ReadonlyArray<ApprovalRequest>,
+      runs: OrchestratorMcpService.ApprovalOwnershipRecords["runs"] = [taskRun, followupRun],
+    ): OrchestratorMcpService.ApprovalOwnershipRecords => ({
+      runs,
+      nodes: [taskNode, followupNode, unboundNode],
+      runtimeRequests,
+    });
+    const taskRunIds = OrchestratorMcpService.delegatedTaskRunIds(
+      [taskRun, followupRun],
+      taskId,
+      taskRun,
+    );
+
+    it("names only the request, its kind, and the task's run that asked", () => {
+      assert.deepEqual(
+        OrchestratorMcpService.pendingTaskApproval(
+          records([request("request:approval-own", taskNode.id)]),
+          taskRunIds,
+        ),
+        {
+          requestId: RuntimeRequestId.make("request:approval-own"),
+          kind: "command",
+          runId: taskRun.id,
+        },
+      );
+    });
+
+    it("leaves a follow-up's approval to the follow-up task", () => {
+      const followupApproval = records([request("request:approval-followup", followupNode.id)]);
+      assert.isNull(OrchestratorMcpService.pendingTaskApproval(followupApproval, taskRunIds));
+      assert.deepEqual(
+        OrchestratorMcpService.pendingTaskApproval(
+          followupApproval,
+          OrchestratorMcpService.delegatedTaskRunIds(
+            [taskRun, followupRun],
+            followupTaskId,
+            followupRun,
+          ),
+        )?.runId,
+        followupRun.id,
+      );
+    });
+
+    it("keeps a legacy task to its original run and fails closed on another task's run", () => {
+      const legacyRun = { id: RunId.make("run:approval-legacy") };
+      assert.deepEqual(
+        [
+          ...OrchestratorMcpService.delegatedTaskRunIds(
+            [legacyRun, followupRun],
+            taskId,
+            legacyRun,
+          ),
+        ],
+        [legacyRun.id],
+      );
+      assert.strictEqual(
+        OrchestratorMcpService.delegatedTaskRunIds([followupRun], taskId, followupRun).size,
+        0,
+      );
+      assert.strictEqual(
+        OrchestratorMcpService.delegatedTaskRunIds([followupRun], taskId, undefined).size,
+        0,
+      );
+    });
+
+    it("ignores requests that no longer block, are not approvals, or have no known run", () => {
+      const ignored: ReadonlyArray<ApprovalRequest> = [
+        request("request:approval-resolved", taskNode.id, { status: "resolved" }),
+        request("request:approval-expired", taskNode.id, { status: "expired" }),
+        request("request:approval-cancelled", taskNode.id, { status: "cancelled" }),
+        request("request:approval-message", taskNode.id, {
+          responseCapability: { type: "message" },
+        }),
+        request("request:approval-not-resumable", taskNode.id, {
+          responseCapability: { type: "not_resumable", reason: "Provider session ended." },
+        }),
+        request("request:approval-question", taskNode.id, { kind: "user_input" }),
+        request("request:approval-auth", taskNode.id, { kind: "auth_refresh" }),
+        request("request:approval-tool", taskNode.id, { kind: "dynamic_tool_call" }),
+        request("request:approval-unknown-node", NodeId.make("node:approval-missing")),
+        request("request:approval-unbound-node", unboundNode.id),
+      ];
+      for (const ignoredRequest of ignored) {
+        assert.isNull(
+          OrchestratorMcpService.pendingTaskApproval(records([ignoredRequest]), taskRunIds),
+          ignoredRequest.id,
+        );
+      }
+    });
+
+    it("stops reporting once the task's run is finished", () => {
+      assert.isNull(
+        OrchestratorMcpService.pendingTaskApproval(
+          records(
+            [request("request:approval-after-stop", taskNode.id)],
+            [{ id: taskRun.id, status: "interrupted" }, followupRun],
+          ),
+          taskRunIds,
+        ),
+      );
+    });
+
+    it("reports the oldest of several approvals", () => {
+      assert.strictEqual(
+        OrchestratorMcpService.pendingTaskApproval(
+          records([
+            request("request:approval-later", taskNode.id),
+            request("request:approval-earlier", taskNode.id, {
+              createdAt: DateTime.makeUnsafe("2026-10-15T09:59:00Z"),
+            }),
+          ]),
+          taskRunIds,
+        )?.requestId,
+        RuntimeRequestId.make("request:approval-earlier"),
+      );
+    });
   });
 });

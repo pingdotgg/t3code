@@ -59,12 +59,55 @@ describe("orchestrator MCP contracts", () => {
       latestTerminalSummary: "Workspace inspected.",
       latestTerminalResultContextTransferId: "context-transfer-result-1",
       hasPendingQuestion: false,
+      pendingApproval: null,
       waitTimedOut: false,
     });
 
     expect(request.target?.providerInstanceId).toBe("claudeAgent");
     expect(result.status).toBe("completed");
     expect(result.summary).toBe("Workspace inspected.");
+  });
+
+  it("carries a blocking approval's identity only, and refuses non-approval kinds", () => {
+    const running = {
+      taskId: "node-task-2",
+      childThreadId: "thread-child-2",
+      childRunId: "run-child-2",
+      childNodeId: "node-task-2",
+      status: "running",
+      workState: "working",
+      hasPendingChildRuns: false,
+      providerInstanceId: "codex",
+      model: "gpt-5.6-luna",
+      summary: null,
+      resultContextTransferId: null,
+      latestTerminalRunId: null,
+      latestTerminalStatus: null,
+      latestTerminalSummary: null,
+      latestTerminalResultContextTransferId: null,
+      hasPendingQuestion: false,
+      waitTimedOut: false,
+    };
+    const blocked = decodeDelegateTaskResult({
+      ...running,
+      pendingApproval: { requestId: "request-approval-2", kind: "command", runId: "run-child-2" },
+    });
+    expect(blocked.pendingApproval).toEqual({
+      requestId: "request-approval-2",
+      kind: "command",
+      runId: "run-child-2",
+    });
+    expect(blocked.waitTimedOut).toBe(false);
+    for (const kind of ["user_input", "auth_refresh", "dynamic_tool_call"]) {
+      expect(() =>
+        decodeDelegateTaskResult({
+          ...running,
+          pendingApproval: { requestId: "request-2", kind, runId: "run-child-2" },
+        }),
+      ).toThrow();
+    }
+    // The field is required, so an omitted approval is never read as "none".
+    expect(() => decodeDelegateTaskResult(running)).toThrow();
   });
 
   it("decodes target model options in canonical and shorthand shapes", () => {

@@ -20,6 +20,7 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpDelegateTaskResult,
   type OrchestratorMcpInteractionMode,
+  type OrchestratorMcpPendingApproval,
   type OrchestratorMcpDeleteScheduledTaskInput,
   type OrchestratorMcpRequestSecretInput,
   type OrchestratorMcpRequestSecretResult,
@@ -53,6 +54,7 @@ import {
   type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  ProviderRequestKind,
   type RuntimeMode,
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
@@ -403,6 +405,94 @@ function isTerminalTaskStatus(
     status === "cancelled" ||
     status === "interrupted"
   );
+}
+
+/**
+ * A blocking delegate_task wait returns at a terminal state, or early when the
+ * child records a pending question or approval for the task.
+ */
+function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
+  return (
+    result.hasPendingQuestion ||
+    result.pendingApproval !== null ||
+    isTerminalTaskStatus(result.status)
+  );
+}
+
+/** Approval kinds a provider asks a person to decide; questions and tool calls are not among them. */
+const isApprovalRequestKind = Schema.is(ProviderRequestKind);
+
+/**
+ * The runs that do a delegated task's own work: those that name the task, or
+ * for a task recorded before runs named theirs, its original run alone. A
+ * follow-up in the same child thread is another task's run.
+ */
+export function delegatedTaskRunIds(
+  runs: ReadonlyArray<TaskRunRecord>,
+  taskId: NodeId,
+  delegatedRun: TaskRunRecord | undefined,
+): ReadonlySet<RunId> {
+  if (delegatedRun?.delegatedTaskId === taskId) {
+    return new Set(runs.filter((run) => run.delegatedTaskId === taskId).map((run) => run.id));
+  }
+  return delegatedRun === undefined || delegatedRun.delegatedTaskId !== undefined
+    ? new Set()
+    : new Set([delegatedRun.id]);
+}
+
+type TaskRunRecord = Pick<OrchestrationV2Run, "id" | "delegatedTaskId">;
+
+/** Only the records that tie a child's runtime request to the run that asked. */
+export interface ApprovalOwnershipRecords {
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>;
+  readonly nodes: ReadonlyArray<
+    Pick<OrchestrationV2ThreadProjection["nodes"][number], "id" | "runId">
+  >;
+  readonly runtimeRequests: ReadonlyArray<
+    Pick<
+      OrchestrationV2ThreadProjection["runtimeRequests"][number],
+      "id" | "nodeId" | "kind" | "status" | "responseCapability" | "createdAt"
+    >
+  >;
+}
+
+/**
+ * The oldest approval the child's records show pending and live for one of
+ * `taskRunIds`, or null. A request is tied to a run only through its execution
+ * node; one whose node is not in this read or names no run is not counted,
+ * rather than guessed at. This reads records only: a live record can outlive
+ * the provider's request, so the result is a reason to look in the child
+ * thread, not proof that the provider still waits.
+ */
+export function pendingTaskApproval(
+  childProjection: ApprovalOwnershipRecords,
+  taskRunIds: ReadonlySet<RunId>,
+): OrchestratorMcpPendingApproval | null {
+  let oldest: PendingApprovalCandidate | undefined;
+  for (const request of childProjection.runtimeRequests) {
+    const kind = request.kind;
+    if (
+      request.status !== "pending" ||
+      request.responseCapability.type !== "live" ||
+      !isApprovalRequestKind(kind)
+    ) {
+      continue;
+    }
+    const runId = childProjection.nodes.find((node) => node.id === request.nodeId)?.runId;
+    if (runId === undefined || runId === null || !taskRunIds.has(runId)) continue;
+    const run = childProjection.runs.find((candidate) => candidate.id === runId);
+    if (run === undefined || ThreadManagementService.isTerminalRunStatus(run.status)) continue;
+    const createdAtMs = DateTime.toEpochMillis(request.createdAt);
+    if (oldest === undefined || createdAtMs < oldest.createdAtMs) {
+      oldest = { createdAtMs, approval: { requestId: request.id, kind, runId } };
+    }
+  }
+  return oldest?.approval ?? null;
+}
+
+interface PendingApprovalCandidate {
+  readonly createdAtMs: number;
+  readonly approval: OrchestratorMcpPendingApproval;
 }
 
 function directAppOwnedChildTasks(
@@ -1344,8 +1434,10 @@ const make = Effect.gen(function* () {
             "subagents",
             "providerThreads",
             "runtimeRequests",
+            // Ties a pending approval to the run that asked; finished leaves are not needed.
+            "nodes",
           ],
-          { messageRoles: ["user"] },
+          { messageRoles: ["user"], omitSettledLeafNodes: true },
         )
         .pipe(Effect.mapError(threadManagementFailure));
       const childRun = delegatedTaskRun(childControls, task);
@@ -1455,6 +1547,14 @@ const make = Effect.gen(function* () {
               request.status === "pending" &&
               request.responseCapability.type === "live",
           ),
+        // Only this task's own unfinished runs, and only while the task can still deliver.
+        pendingApproval:
+          isTerminalTaskStatus(status) || task.completionDelivery?.state === "disposed"
+            ? null
+            : pendingTaskApproval(
+                childControls,
+                delegatedTaskRunIds(childControls.runs, task.id, childRun),
+              ),
         waitTimedOut,
       } satisfies OrchestratorMcpDelegateTaskResult;
       if (
@@ -1505,7 +1605,7 @@ const make = Effect.gen(function* () {
         .getThreadEventSequence(scope.thread.threadId)
         .pipe(Effect.mapError(streamError));
       const initial = yield* readTask(scope, taskId, false, true);
-      if (initial.hasPendingQuestion || isTerminalTaskStatus(initial.status)) {
+      if (endsTaskWait(initial)) {
         return Option.some(initial);
       }
       // One stream per event type, so transcript events never fill a buffer.
@@ -1521,7 +1621,7 @@ const make = Effect.gen(function* () {
       ).pipe(
         Stream.mapError(streamError),
         Stream.mapEffect(() => readTask(scope, taskId, false, true)),
-        Stream.filter((result) => result.hasPendingQuestion || isTerminalTaskStatus(result.status)),
+        Stream.filter(endsTaskWait),
         Stream.runHead,
       );
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));
