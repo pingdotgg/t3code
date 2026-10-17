@@ -12,6 +12,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import {
   AuthOrchestrationOperateScope,
@@ -917,10 +918,20 @@ function ThreadRouteContent(
     setupMessage,
     startLocalThread,
   ]);
+  const preparingRun = selectedThreadDetail?.runs.findLast((run) => run.status === "preparing");
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
       return awaitingBootstrapTurn
-        ? { kind: "preparing", preparingWorktree: true, serverOwned: true }
+        ? {
+            kind: "preparing",
+            // Older servers record no strategy; their bootstrap runs only prepare worktrees.
+            preparingWorktree:
+              preparingRun?.workspacePreparation === undefined ||
+              preparingRun.workspacePreparation.type === "worktree",
+            serverOwned: true,
+            sent: true,
+            startedAt: preparingRun ? DateTime.formatIso(preparingRun.requestedAt) : null,
+          }
         : null;
     }
     if (selectedThreadCreation.outcome?.kind === "failed") {
@@ -934,6 +945,11 @@ function ThreadRouteContent(
       kind: "preparing",
       preparingWorktree: selectedThreadCreation.message.creation?.workspaceMode === "worktree",
       serverOwned: false,
+      // A lost delivery reply leaves no outcome, but a run proves the server has it.
+      sent:
+        selectedThreadCreation.outcome?.kind === "delivered" ||
+        (selectedThreadDetail?.runs.length ?? 0) > 0,
+      startedAt: selectedThreadCreation.message.createdAt,
     };
   })();
   if (!environmentId || !threadId) {
