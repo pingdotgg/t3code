@@ -266,7 +266,9 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               ),
             },
             exit: yield* Deferred.make<EffectAcpSchema.WaitForTerminalExitResponse>(),
-            kill: child.kill().pipe(Effect.ignore),
+            kill: child
+              .kill({ forceKillAfter: options.forceKillAfter ?? "5 seconds" })
+              .pipe(Effect.ignore),
             dispose: Scope.close(terminalScope, Exit.void).pipe(Effect.ignore),
             exitStatus: undefined,
             released: false,

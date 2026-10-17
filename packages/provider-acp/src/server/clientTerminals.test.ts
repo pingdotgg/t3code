@@ -1,7 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
@@ -142,6 +145,60 @@ describe("AcpClientTerminals", () => {
         expect(terminals.readOutputSnapshot("session", created.terminalId)).toBeDefined();
       }),
     ),
+  );
+
+  it.live("force-kills commands that ignore SIGTERM and resolves wait_for_exit", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const ready = yield* Deferred.make<void>();
+      const spawned = yield* Deferred.make<ChildProcessSpawner.ChildProcessHandle>();
+      let stdout = "";
+      const terminals = yield* makeAcpClientTerminals({
+        defaultCwd: process.cwd(),
+        forceKillAfter: "50 millis",
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, {
+          ...spawner,
+          spawn: (command) =>
+            spawner.spawn(command).pipe(
+              Effect.tap((child) => Deferred.succeed(spawned, child)),
+              Effect.map((child) => ({
+                ...child,
+                stdout: child.stdout.pipe(
+                  Stream.tap((chunk) => {
+                    stdout += Buffer.from(chunk).toString("utf8");
+                    return stdout.includes("ready")
+                      ? Deferred.succeed(ready, undefined)
+                      : Effect.void;
+                  }),
+                ),
+              })),
+            ),
+        }),
+      );
+      yield* Effect.addFinalizer(() => terminals.disposeAll);
+      const terminal = yield* terminals.create({
+        sessionId: "session",
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000);",
+        ],
+      });
+      const child = yield* Deferred.await(spawned);
+      // Reap only this test's captured child, including when the regression fails.
+      yield* Effect.addFinalizer(() => child.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore));
+      yield* Deferred.await(ready).pipe(Effect.timeout("5 seconds"));
+
+      const request = { sessionId: "session", ...terminal };
+      yield* terminals.kill(request).pipe(Effect.timeout("1500 millis"));
+      const exit = yield* terminals.waitForExit(request).pipe(Effect.timeout("1500 millis"));
+      // Windows has no signals: the command is terminated without a signal name.
+      if (!(yield* HostProcess.isWindows)) {
+        expect(exit).toEqual({ exitCode: null, signal: "SIGKILL" });
+      }
+      expect(yield* child.isRunning).toBe(false);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("reserves terminal capacity across concurrent creates", () =>
