@@ -528,7 +528,7 @@ describe("ChatMarkdown streaming", () => {
           currentTarget: {
             checked: true,
             closest: () => ({
-              dataset: { taskMarkerOffset: String(listItem.props["data-task-marker-offset"]) },
+              dataset: { listItemOffset: String(listItem.props["data-list-item-offset"]) },
             }),
           },
         } as unknown as Parameters<typeof onChange>[0]);

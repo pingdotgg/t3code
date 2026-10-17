@@ -82,24 +82,28 @@ export function resolveRemoteOpenState(input: {
 
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  // The presentation changes with every server config push. Memoize on the
+  // pieces read here so callers keep a stable result across provider updates.
+  const entry = presentation?.entry ?? null;
+  const remoteOpenTargets = presentation?.serverConfig?.remoteOpenTargets;
 
   return useMemo(() => {
-    if (presentation === null) {
+    if (entry === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
-    const profile = Option.getOrNull(presentation.entry.profile);
+    const profile = Option.getOrNull(entry.profile);
     const sshAlias =
       profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
     return {
       state: resolveRemoteOpenState({
-        target: presentation.entry.target,
+        target: entry.target,
         sshAlias,
-        remoteOpenTargets: presentation.serverConfig?.remoteOpenTargets,
+        remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
       isResolved: true,
     };
-  }, [presentation]);
+  }, [entry, remoteOpenTargets]);
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {

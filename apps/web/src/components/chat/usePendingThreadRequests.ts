@@ -48,6 +48,9 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { ChatComposerHandle } from "./ChatComposer";
 
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const NO_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
+const NO_PENDING_APPROVALS: ReturnType<typeof derivePendingApprovals> = [];
+const NO_PENDING_USER_INPUTS: ReturnType<typeof derivePendingUserInputs> = [];
 
 /** Writes the custom answer for a question of the pending user input the making render saw. */
 function makePendingCustomAnswerSetter(input: {
@@ -133,11 +136,17 @@ export function usePendingThreadRequests(input: {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const pendingRequests =
-    serverProjection === null
-      ? { approvals: [], userInputs: [] }
-      : derivePendingThreadRequests(serverProjection);
-  const pendingApprovals = derivePendingApprovals(pendingRequests.approvals);
-  const pendingUserInputs = derivePendingUserInputs(pendingRequests.userInputs);
+    serverProjection === null ? NO_PENDING_REQUESTS : derivePendingThreadRequests(serverProjection);
+  // The projection changes on every streamed event, so shared empties keep the
+  // composer and approval panel from re-rendering while nothing is pending.
+  const pendingApprovals =
+    pendingRequests.approvals.length === 0
+      ? NO_PENDING_APPROVALS
+      : derivePendingApprovals(pendingRequests.approvals);
+  const pendingUserInputs =
+    pendingRequests.userInputs.length === 0
+      ? NO_PENDING_USER_INPUTS
+      : derivePendingUserInputs(pendingRequests.userInputs);
   const activePendingUserInput = pendingUserInputs[0] ?? null;
   const activePendingRequestKey = JSON.stringify([
     environmentId,
