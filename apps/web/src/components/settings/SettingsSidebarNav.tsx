@@ -118,12 +118,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const [storedActiveResultIndex, setActiveResultIndex] = useState(0);
+  const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
   const results = searchSettings(query, searchableItems);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
-  const activeResultIndex = Math.min(storedActiveResultIndex, Math.max(results.length - 1, 0));
+  const maxResultIndex = Math.max(results.length - 1, 0);
+  // Persist the clamp so a shrink-then-recover of results keeps the clamped highlight.
+  if (activeResultIndex > maxResultIndex) {
+    setActiveResultIndex(maxResultIndex);
+  }
 
   useEffect(() => {
     const result = results[activeResultIndex];
