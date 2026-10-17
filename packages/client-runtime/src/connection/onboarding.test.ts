@@ -640,6 +640,8 @@ describe("connection onboarding", () => {
           connectionId: 'ssh:environment-ssh:["devbox","devbox.example.test","developer",22]',
           target,
         },
+        // Saved so the first connect reuses this pairing instead of adding another.
+        credential: { token: "bearer-token" },
       });
     }),
   );

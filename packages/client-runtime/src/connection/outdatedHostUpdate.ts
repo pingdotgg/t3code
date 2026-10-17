@@ -26,7 +26,13 @@ import { isLegacyUpdateHandoffLoss, resolveServerUpdateProgressResult } from "..
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
-import { connectionRoutes, hasRelayRoute, routeEntry, routeHttpBaseUrl } from "./routes.ts";
+import {
+  connectionRoutes,
+  hasRelayRoute,
+  routeEntry,
+  routeHttpBaseUrl,
+  usableRoutes,
+} from "./routes.ts";
 
 // A v1 host restarting into v2 runs migrations before its descriptor answers again.
 const OUTDATED_HOST_RESTART_TIMEOUT = Duration.minutes(4);
@@ -62,7 +68,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
       return yield* new EnvironmentRegistry.EnvironmentNotRegisteredError({ environmentId });
     }
     const { prepared, descriptor } = yield* Effect.firstSuccessOf(
-      connectionRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
+      usableRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
     );
     const capabilities = descriptor.capabilities;
     if (

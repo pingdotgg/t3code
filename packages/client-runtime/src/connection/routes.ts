@@ -218,7 +218,6 @@ export function mergeLearnedRoutes(input: {
     authorization === undefined && active._tag === "BearerConnectionTarget"
       ? credentialConnectionId(active.connectionId)
       : undefined;
-
   const reported = new Map<string, URL>();
   const tailscaleOrigins = new Set<string>();
   for (const endpoint of input.reported) {
@@ -252,12 +251,21 @@ export function mergeLearnedRoutes(input: {
       ];
     }
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
+    if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
     known.add(normalized(url));
     return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
   });
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
     if (known.has(url.origin)) continue;
+    if (
+      url.protocol === "http:" &&
+      sharedCredential !== undefined &&
+      !tailscaleOrigins.has(url.origin) &&
+      !tokenAllowsPlainHttp(saved, sharedCredential)
+    ) {
+      continue;
+    }
     const httpBaseUrl = `${url.origin}/`;
     const connectionId = learnedConnectionId(
       entry.target.environmentId,
@@ -292,6 +300,51 @@ export function mergeLearnedRoutes(input: {
       )
       .join("\n");
   return signature(saved) === signature(next) ? null : next;
+}
+
+// A paired token goes to a plain HTTP address outside the tailnet only when
+// it was paired that way, so a token paired over HTTPS, loopback, or the
+// tailnet keeps to the transports it was issued for.
+function tokenAllowsPlainHttp(
+  routes: ReadonlyArray<ConnectionRoute>,
+  credentialId: string,
+): boolean {
+  const credentialRoute = routes.find((route) => connectionRouteId(route.target) === credentialId);
+  return (
+    credentialRoute !== undefined &&
+    routeHttpBaseUrl(credentialRoute)?.startsWith("http:") === true &&
+    (connectionRouteKind(credentialRoute) === "lan" ||
+      connectionRouteKind(credentialRoute) === "public")
+  );
+}
+
+/**
+ * Whether connecting over `route` would send a paired token over plain HTTP
+ * that it wasn't paired over. Checked against the token the route borrows,
+ * so a route learned before this rule existed is refused too.
+ */
+export function sendsTokenInClear(
+  routes: ReadonlyArray<ConnectionRoute>,
+  route: ConnectionRoute,
+  tailscale?: boolean,
+): boolean {
+  const profile = Option.getOrNull(route.profile);
+  if (profile?._tag !== "BearerConnectionProfile" || profile.authorization === "t3-connect") {
+    return false;
+  }
+  if ((tailscale ?? profile.network === "tailscale") || !profile.httpBaseUrl.startsWith("http:")) {
+    return false;
+  }
+  const credentialId = credentialConnectionId(connectionRouteId(route.target));
+  return (
+    credentialId !== connectionRouteId(route.target) && !tokenAllowsPlainHttp(routes, credentialId)
+  );
+}
+
+/** Routes a connect may use: none sends a paired token over plain HTTP it wasn't paired over. */
+export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
+  const routes = connectionRoutes(entry);
+  return routes.filter((route) => !sendsTokenInClear(routes, route));
 }
 
 export interface ReportedEndpoint {

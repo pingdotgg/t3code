@@ -387,7 +387,7 @@ describe("ConnectionCatalogDocument", () => {
     );
   });
 
-  it("persists the normalized SSH profile beside its target", () => {
+  it("persists the normalized SSH profile and its paired token beside its target", () => {
     const target = new SshConnectionTarget({
       environmentId: ENVIRONMENT_ID,
       label: "SSH",
@@ -406,12 +406,16 @@ describe("ConnectionCatalogDocument", () => {
     });
     const document = registerConnectionInCatalog(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
-      new SshConnectionRegistration({ target, profile }),
+      new SshConnectionRegistration({ target, profile, credential: BEARER_CREDENTIAL }),
     );
 
     expect(document.targets).toEqual([target]);
     expect(document.profiles).toEqual([profile]);
-    expect(document.credentials).toEqual([]);
+    expect(document.credentials).toEqual([
+      { connectionId: target.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
+    // Removing the route forgets its token too.
+    expect(removeConnectionFromCatalog(document, ENVIRONMENT_ID).credentials).toEqual([]);
   });
 
   it("keeps every route of an environment and drops only a removed route's records", () => {

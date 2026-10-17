@@ -14,7 +14,13 @@ import type {
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
-import { connectionRoutes, routeEntry, routeHttpBaseUrl } from "./routes.ts";
+import {
+  connectionRoutes,
+  routeEntry,
+  routeHttpBaseUrl,
+  sendsTokenInClear,
+  usableRoutes,
+} from "./routes.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 
@@ -61,7 +67,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     route: ConnectionRoute,
   ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, R | Scope.Scope>,
 ) {
-  const routes = connectionRoutes(entry);
+  const routes = usableRoutes(entry);
   const checks =
     routes.length === 1
       ? []
@@ -162,7 +168,10 @@ export const make = Effect.gen(function* () {
   });
 
   const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    checkRoute(entry, route).pipe(
+    (sendsTokenInClear(connectionRoutes(entry), route)
+      ? Effect.succeed("silent" as const)
+      : checkRoute(entry, route)
+    ).pipe(
       Effect.flatMap((check) =>
         check === "answered"
           ? resolver.prepare(routeEntry(entry, route)).pipe(

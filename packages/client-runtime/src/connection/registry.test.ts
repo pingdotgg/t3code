@@ -216,6 +216,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           case "RelayConnectionRegistration":
             return;
           case "BearerConnectionRegistration":
+          case "SshConnectionRegistration":
             yield* Ref.update(storedProfiles, (current) => {
               const next = new Map(current);
               next.set(registration.profile.connectionId, registration.profile);
@@ -227,12 +228,6 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               return next;
             });
             return;
-          case "SshConnectionRegistration":
-            yield* Ref.update(storedProfiles, (current) => {
-              const next = new Map(current);
-              next.set(registration.profile.connectionId, registration.profile);
-              return next;
-            });
         }
       }),
     setRoutes: (environmentId, routes) =>
@@ -1941,6 +1936,7 @@ describe("EnvironmentRegistry routes", () => {
               connectionId: other.connectionId,
               target: { ...SSH_TARGET, alias: "other", hostname: "other.example.test" },
             }),
+            credential: BEARER_CREDENTIAL,
           }),
         );
 
@@ -1969,6 +1965,7 @@ describe("EnvironmentRegistry routes", () => {
                 ...SSH_PROFILE,
                 connectionId: again.connectionId,
               }),
+              credential: BEARER_CREDENTIAL,
             }),
           );
 
