@@ -206,7 +206,7 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
-  resolveSidebarRowAccessibility,
+  resolveSidebarRowAccessibleName,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
@@ -1158,6 +1158,47 @@ function SortableThreadRow(
 const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
 const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
 
+// The row's one control for opening it, named "title, status, project" so
+// tabbing between rows tells same-titled threads apart. The visible title and
+// project text are aria-hidden so browse mode does not read them twice; visible
+// status labels stay exposed because they are live regions. It fills the row
+// behind the visible content, which gives screen reader cursors and voice
+// control a row-sized target, and its activation bubbles to the row surface's
+// click handler like any other click on the row. Secondary actions
+// must stay its siblings, never its children: WebKit drops everything inside a
+// button from the accessibility tree, and NVDA's browse mode hides the
+// contents of a named button. The row surface needs `isolate` so the negative
+// z-index keeps this above the surface's background.
+const SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR = "button:not([data-sidebar-row-primary]), a, input";
+
+// Row surface mousedown handler. A press on the row's content lands on
+// elements that cannot take focus, so hand focus to the primary action, the
+// way pressing a button focuses it. The keyboard and the context menu key then
+// pick up from this row.
+function focusSidebarRowPrimaryAction(event: ReactMouseEvent<HTMLElement>) {
+  if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
+  const primaryAction = event.currentTarget.querySelector<HTMLElement>(
+    "[data-sidebar-row-primary]",
+  );
+  if (!primaryAction) return;
+  event.preventDefault();
+  primaryAction.focus({ preventScroll: true });
+}
+
+function SidebarRowPrimaryAction(props: { name: string; isActive: boolean; isBusy?: boolean }) {
+  return (
+    <button
+      type="button"
+      data-sidebar-row-primary
+      aria-current={props.isActive ? "page" : undefined}
+      aria-busy={props.isBusy || undefined}
+      className="absolute inset-0 -z-1 cursor-pointer rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+    >
+      <span className="sr-only">{props.name}</span>
+    </button>
+  );
+}
+
 function SortableSidebarMarker(props: {
   marker: SidebarListMarker;
   className?: string;
@@ -1315,27 +1356,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     promptPreview.length > 0
       ? promptPreview
       : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
-  const accessibility = resolveSidebarRowAccessibility({
-    title: preview,
-    statusLabel: "Unsent draft",
-    projectDisplayName: props.projectDisplayName,
-    isActive: props.isActive,
-  });
   const handleActivate = () => onNavigate(draftId);
-  const handleKeyDown = (event: ReactKeyboardEvent) => {
-    // Keys targeting the nested discard button belong to the button:
-    // preventDefault here would swallow Space's synthesized click and
-    // navigate instead of discarding.
-    if ((event.target as HTMLElement).closest("button")) return;
-    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-      event.preventDefault();
-      const rect = event.currentTarget.getBoundingClientRect();
-      onContextMenu(draftId, { x: rect.left, y: rect.bottom });
-    } else if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onNavigate(draftId);
-    }
-  };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
     onContextMenu(draftId, { x: event.clientX, y: event.clientY });
@@ -1348,27 +1369,33 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   return (
     <li className="list-none py-0.5">
       <div
-        role="button"
-        tabIndex={0}
-        aria-label={accessibility.label}
-        aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "group/sidebar-row relative isolate w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground select-none",
           props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
         )}
+        onMouseDown={focusSidebarRowPrimaryAction}
         onClick={handleActivate}
         onContextMenu={handleContextMenu}
-        onKeyDown={handleKeyDown}
       >
-        <span className="sr-only">{preview}</span>
+        <SidebarRowPrimaryAction
+          name={resolveSidebarRowAccessibleName({
+            title: preview,
+            statusLabel: "Unsent draft",
+            projectDisplayName: props.projectDisplayName,
+          })}
+          isActive={props.isActive}
+        />
         <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
           <div className="flex h-5 min-w-0 items-center gap-1.5">
             <SquarePenIcon aria-hidden className={draftPenClassName} />
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+            <span
+              aria-hidden
+              className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label"
+            >
               {props.projectDisplayName}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
@@ -1765,12 +1792,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.preventDefault();
     onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
   };
-  const handleKeyDown = (event: ReactKeyboardEvent) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    onThreadActivate(threadRef);
-  };
   const handleDoubleClick = (event: ReactMouseEvent) => {
     if (
       !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) ||
@@ -1782,7 +1803,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) {
       return;
     }
-    if ((event.target as HTMLElement).closest("button, a, input")) return;
+    if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
     event.preventDefault();
     onStartRename(threadRef, thread.title);
   };
@@ -1871,7 +1892,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
 
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    "group/sidebar-row relative isolate w-full cursor-pointer overflow-hidden rounded-md text-left select-none",
     variantAction === "unsettle" && "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
@@ -1922,13 +1943,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     ) : null;
 
-  const accessibility = resolveSidebarRowAccessibility({
-    title: thread.title,
-    statusLabel: topStatus?.label ?? null,
-    projectDisplayName: props.projectDisplayName,
-    isActive: props.isActive,
-  });
-
   const title =
     isRenaming && canOperateThread ? (
       <input
@@ -1976,7 +1990,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {thread.title}
       </span>
     );
-  const accessibleTitle = isRenaming ? null : <span className="sr-only">{thread.title}</span>;
+  const primaryAction = (
+    <SidebarRowPrimaryAction
+      name={resolveSidebarRowAccessibleName({
+        title: thread.title,
+        statusLabel: topStatus?.label ?? null,
+        projectDisplayName: props.projectDisplayName,
+      })}
+      isActive={props.isActive}
+      isBusy={isRegeneratingTitle}
+    />
+  );
 
   const prBadgeShape = supportsMultiplePullRequests
     ? resolveThreadPullRequestBadge(thread.pullRequests)
@@ -2073,21 +2097,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             render={
               <div
                 ref={rowRef}
-                role="button"
-                tabIndex={0}
-                aria-label={accessibility.label}
-                aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
-                aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                onMouseDown={focusSidebarRowPrimaryAction}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
-                onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
               />
             }
           >
-            {accessibleTitle}
+            {primaryAction}
             <span
               className={cn(
                 "flex shrink-0 items-center transition-opacity",
@@ -2232,21 +2251,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <div
               ref={rowRef}
-              role="button"
-              tabIndex={0}
-              aria-label={accessibility.label}
-              aria-current={accessibility.current}
               data-testid="sidebar-row-card"
-              aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              onMouseDown={focusSidebarRowPrimaryAction}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
-              onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
             />
           }
         >
-          {accessibleTitle}
+          {primaryAction}
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
@@ -2255,6 +2269,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {props.projectDisplayName ? (
                 <span
+                  aria-hidden
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
@@ -2501,12 +2516,6 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
 }) {
   const { thread } = props;
-  const accessibility = resolveSidebarRowAccessibility({
-    title: thread.title,
-    statusLabel: null,
-    projectDisplayName: props.projectDisplayName,
-    isActive: props.isRouteActive,
-  });
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(
     props.isHighlighted || props.isRouteActive,
@@ -2574,9 +2583,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               role="option"
               tabIndex={-1}
               aria-selected={props.isHighlighted}
-              aria-current={accessibility.current}
+              aria-current={props.isRouteActive ? "page" : undefined}
               aria-describedby={`${props.resultId}-pr`}
-              aria-label={accessibility.label}
+              aria-label={resolveSidebarRowAccessibleName({
+                title: thread.title,
+                statusLabel: null,
+                projectDisplayName: props.projectDisplayName,
+              })}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(
@@ -4744,11 +4757,9 @@ export default function Sidebar() {
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     ref={attachListMotionRef}
-                    // VoiceOver treats an exposed list as an interaction boundary,
-                    // which hides its rows from ordinary linear navigation. A
-                    // presentational list also makes its implicit listitems
-                    // presentational while preserving every descendant control.
-                    role="presentation"
+                    // Explicit because Safari drops list semantics from a list
+                    // styled without markers.
+                    role="list"
                     className={cn(
                       "relative flex flex-col gap-px",
                       sidebarListItems.length > 0 && "flex-1",
