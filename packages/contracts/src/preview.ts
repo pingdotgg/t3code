@@ -122,6 +122,11 @@ export type PreviewAppearancePreference = typeof PreviewAppearancePreference.Typ
 
 export const DEFAULT_PREVIEW_APPEARANCE: PreviewAppearancePreference = "system";
 
+export const BROWSER_RECORDING_FRAME_RATES = [30, 60] as const;
+export const BrowserRecordingFrameRate = Schema.Literals(BROWSER_RECORDING_FRAME_RATES);
+export type BrowserRecordingFrameRate = typeof BrowserRecordingFrameRate.Type;
+export const DEFAULT_BROWSER_RECORDING_FRAME_RATE: BrowserRecordingFrameRate = 30;
+
 const PreviewFileDownload = Schema.Struct({ id: Schema.String, fileName: Schema.String });
 
 export const PreviewNavStatus = Schema.Union([
@@ -244,6 +249,8 @@ export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 export const PreviewReportProfilesInput = Schema.Struct({
   profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
   defaultProfileId: BrowserProfileId,
+  /** Latest explicit client preference wins; older clients may omit it. */
+  recordingFrameRate: Schema.optional(BrowserRecordingFrameRate),
 });
 export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;
 

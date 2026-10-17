@@ -1,6 +1,7 @@
 import { AuthPreviewOperateScope, type BrowserProfile } from "@t3tools/contracts";
 import { useEffect } from "react";
 
+import { isElectron } from "~/env";
 import { useClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
 import { useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
@@ -17,6 +18,7 @@ export function BrowserProfileReporter() {
   const hydrated = useClientSettingsHydrated();
   const profiles = useClientSettings(selectProfiles);
   const defaultProfileId = useClientSettings(selectDefaultProfileId);
+  const recordingFrameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
   const { environments } = useEnvironments();
   const serverConfigs = useServerConfigs();
   const operable = useEnvironmentsWithScope(environments, AuthPreviewOperateScope);
@@ -26,9 +28,17 @@ export function BrowserProfileReporter() {
     if (!hydrated) return;
     for (const [environmentId, config] of serverConfigs) {
       if (!config.environment.capabilities.serverBrowser || !operable.has(environmentId)) continue;
-      void report({ environmentId, input: { profiles, defaultProfileId } });
+      void report({
+        environmentId,
+        input: {
+          profiles,
+          defaultProfileId,
+          // Web clients cannot edit this preference; their default must not replace it.
+          ...(isElectron ? { recordingFrameRate } : {}),
+        },
+      });
     }
-  }, [defaultProfileId, hydrated, operable, profiles, report, serverConfigs]);
+  }, [defaultProfileId, hydrated, operable, profiles, recordingFrameRate, report, serverConfigs]);
 
   return null;
 }

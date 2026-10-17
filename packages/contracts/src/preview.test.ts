@@ -8,6 +8,7 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   PreviewEvent,
   PreviewNavStatus,
+  PreviewReportProfilesInput,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
 } from "./preview.ts";
@@ -32,6 +33,26 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodeProfileReport = Schema.decodeUnknownSync(PreviewReportProfilesInput);
+
+describe("PreviewReportProfilesInput recording rate", () => {
+  it("accepts both supported rates and reports from older clients", () => {
+    const profiles = { profiles: [], defaultProfileId: "default" };
+    expect(decodeProfileReport(profiles).recordingFrameRate).toBeUndefined();
+    expect(decodeProfileReport({ ...profiles, recordingFrameRate: 30 }).recordingFrameRate).toBe(
+      30,
+    );
+    expect(decodeProfileReport({ ...profiles, recordingFrameRate: 60 }).recordingFrameRate).toBe(
+      60,
+    );
+  });
+
+  it.each([0, 24, 120, "60", null])("rejects an unsupported recording rate %s", (rate) => {
+    expect(() =>
+      decodeProfileReport({ profiles: [], defaultProfileId: "default", recordingFrameRate: rate }),
+    ).toThrow();
+  });
+});
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
