@@ -195,6 +195,9 @@ export interface ThreadDetailScreenProps {
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   readonly historyControls?: ThreadFeedHistoryControls;
+  /** A message link's target. See ThreadFeed. */
+  readonly linkedMessageId?: string | null;
+  readonly onLinkedMessageHandled?: () => void;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
   readonly queuedRunEdit: QueuedRunEdit | null;
@@ -1096,6 +1099,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
+              linkedMessageId={props.linkedMessageId}
+              onLinkedMessageHandled={props.onLinkedMessageHandled}
+              threadSynced={props.threadSyncStatus === "live"}
               contentSideInsets={nativeMetrics?.safeArea}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}

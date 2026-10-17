@@ -54,3 +54,10 @@ before it replaces it.
 T3 Code removes characters you cannot see, such as zero-width and hidden tag characters, because
 they can hide instructions for the agent. When a prompt had them, T3 Code warns you that it may be
 malicious.
+
+## Link to a message
+
+Click the time under any message to copy a link to it. On mobile, long-press a message's copy
+button and choose **Copy message link**. The link opens that thread scrolled to the
+message, on desktop, mobile, or app.t3.codes, the same way prompt links open. It only works on a
+device that is connected to the machine the thread runs on.

@@ -29,6 +29,7 @@ import {
   isContextHandoffActivityGroup,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  threadFeedFoldRunIdHiding,
   threadFeedActivityIsVisible,
   threadFeedRunIsUnsettled,
   type ThreadFeedActivity,
@@ -1164,6 +1165,14 @@ describe("buildThreadFeed", () => {
     ]);
     const launchFold = settled.find((entry) => entry.type === "run-fold");
     if (launchFold?.type !== "run-fold") throw new Error("Expected the launch fold");
+    // A link to a hidden entry opens the fold by its synthetic key, not the entry's run id.
+    const presentedIds = new Set(settled.map((entry) => entry.id));
+    const hidden = feed(false).find((entry) => !presentedIds.has(entry.id));
+    if (!hidden) throw new Error("Expected a hidden entry");
+    expect(threadFeedFoldRunIdHiding(feed(false), null, null, false, hidden.id)).toBe(
+      launchFold.runId,
+    );
+    expect(threadFeedFoldRunIdHiding(feed(false), null, null, false, "launch-answer")).toBeNull();
     expect(
       shape(deriveThreadFeedPresentation(feed(false), null, new Set([launchFold.runId]))),
     ).toEqual([

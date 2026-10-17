@@ -62,7 +62,7 @@ import {
   DEFAULT_MODEL,
   isProviderNativeSubagentThread,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
@@ -1193,6 +1193,13 @@ export default function ChatView(props: ChatViewProps) {
   const citationKey = useLocation({
     select: (location) => location.state.assistantCitationActivation ?? location.state.__TSR_key,
   });
+  const linkedMessageState = useLocation({ select: (location) => location.state.linkedMessage });
+  const linkedMessageRequest = linkedMessageState
+    ? {
+        messageId: MessageId.make(linkedMessageState.messageId),
+        key: linkedMessageState.activation,
+      }
+    : null;
   const citationLocation = { href: citationHref, key: citationKey };
   const citationRequest = (() => {
     const citation = assistantCitationFromLocation(citationLocation.href);
@@ -8076,6 +8083,7 @@ export default function ChatView(props: ChatViewProps) {
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
+                linkedMessage={paintOnlyDisplayedTimeline ? null : linkedMessageRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
                   ? {

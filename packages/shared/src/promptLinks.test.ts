@@ -2,11 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildNewThreadLink,
+  buildThreadMessageLink,
   parseNewThreadLink,
   parseThreadLinkPrompt,
   promptLinkAppPath,
   promptLinkDeepLink,
   sanitizeLinkedPrompt,
+  threadLinkMessageId,
   withoutPromptLinkParams,
 } from "./promptLinks.ts";
 
@@ -88,6 +90,13 @@ describe("thread links", () => {
     expect(parseThreadLinkPrompt("?panel=diff")).toEqual({ ok: true, value: null });
     expect(withoutPromptLinkParams("?prompt=x&panel=diff")).toBe("?panel=diff");
   });
+
+  it("reads the message a link opens at", () => {
+    expect(threadLinkMessageId("?message=msg-1&panel=diff")).toBe("msg-1");
+    expect(threadLinkMessageId("?message=")).toBeNull();
+    expect(threadLinkMessageId("?panel=diff")).toBeNull();
+    expect(withoutPromptLinkParams("?message=msg-1&panel=diff")).toBe("?panel=diff");
+  });
 });
 
 describe("link round trips", () => {
@@ -115,6 +124,20 @@ describe("link round trips", () => {
     expect(promptLinkAppPath("https://app.t3.codes/settings/general")).toBeNull();
     expect(promptLinkAppPath("https://evil.test/new?prompt=hi")).toBeNull();
     expect(promptLinkAppPath("t3code://app/index.html")).toBeNull();
+  });
+
+  it("builds a message link that opens in the app", () => {
+    const link = buildThreadMessageLink({
+      environmentId: "env-1",
+      threadId: "thread 1",
+      messageId: "msg/1",
+    });
+    expect(link).toBe("https://app.t3.codes/env-1/thread%201?message=msg%2F1");
+    const path = promptLinkAppPath(link);
+    expect(path).toBe("/env-1/thread%201?message=msg%2F1");
+    expect(promptLinkDeepLink(path!)).toBe("t3code://threads/env-1/thread%201?message=msg%2F1");
+    expect(threadLinkMessageId(new URL(link).search)).toBe("msg/1");
+    expect(promptLinkAppPath("https://app.t3.codes/env-1/thread-1")).toBeNull();
   });
 
   it("hands an in-app path to the installed app", () => {
