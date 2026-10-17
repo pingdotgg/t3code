@@ -68,6 +68,7 @@ import { useComposerMenuProps } from "./chat/composerEventScope";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
 import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
 import { cn } from "~/lib/utils";
+import { contentInlineWidth } from "~/lib/contentInlineWidth";
 import { observeResize } from "~/lib/observeResize";
 
 export interface BranchToolbarHandle {
@@ -426,8 +427,11 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     const current = element;
     const compact = overflows;
     if (!current) return;
-    const available = current.clientWidth;
-    if (available === 0) return;
+    if (current.clientWidth === 0) return;
+    // Same free-space read the composer applies to the controls host, so the
+    // labels never expand into room the docked controls already gave up.
+    const stripStyle = getComputedStyle(current);
+    const available = contentInlineWidth(current, stripStyle);
     const contentWidth = (parent: Element): number => {
       const gap = Number.parseFloat(getComputedStyle(parent).columnGap) || 0;
       let width = 0;
@@ -446,7 +450,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
       }
       return width + gap * Math.max(0, counted - 1);
     };
-    const stripGap = Number.parseFloat(getComputedStyle(current).columnGap) || 0;
+    const stripGap = Number.parseFloat(stripStyle.columnGap) || 0;
     let needed = 0;
     let groups = 0;
     for (const child of current.children) {

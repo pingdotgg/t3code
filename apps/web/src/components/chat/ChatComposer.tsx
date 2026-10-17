@@ -210,6 +210,7 @@ import {
   shouldUseRestingComposerLayout,
 } from "../composerFooterLayout";
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
+import { contentInlineWidth } from "~/lib/contentInlineWidth";
 import {
   type ComposerCitationCommentRequest,
   type ComposerPromptEditorHandle,
@@ -1151,11 +1152,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
 
     const measurement = measureRestingComposerControls(controls);
     if (!measurement) return;
-    const style = getComputedStyle(currentHost);
-    const hostWidth =
-      currentHost.clientWidth -
-      (Number.parseFloat(style.paddingInlineStart) || 0) -
-      (Number.parseFloat(style.paddingInlineEnd) || 0);
+    const hostWidth = contentInlineWidth(currentHost);
 
     setLayout((current) => {
       const next = resolveRestingComposerControlsLayout({
