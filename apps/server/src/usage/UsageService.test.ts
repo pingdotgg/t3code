@@ -67,6 +67,40 @@ const WINDOW: UsageSummaryInput = {
   untilDay: UsageDay.make("2026-08-02"),
 };
 
+function protoVarint(value: number): number[] {
+  const bytes: number[] = [];
+  do {
+    const byte = value % 128;
+    value = Math.floor(value / 128);
+    bytes.push(byte + (value > 0 ? 128 : 0));
+  } while (value > 0);
+  return bytes;
+}
+
+const protoNumber = (field: number, value: number) => [
+  ...protoVarint(field * 8),
+  ...protoVarint(value),
+];
+
+const protoBytes = (field: number, bytes: readonly number[]) => [
+  ...protoVarint(field * 8 + 2),
+  ...protoVarint(bytes.length),
+  ...bytes,
+];
+
+function seedAntigravityHistory(dir: string, sessionId: string, outputTokens: number) {
+  const usage = [...protoNumber(2, 100), ...protoNumber(3, outputTokens)];
+  const stamp = protoNumber(1, Date.parse("2026-08-01T10:00:00Z") / 1000);
+  const step = [...protoBytes(9, usage), ...protoBytes(8, stamp)];
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, `${sessionId}.db`));
+  try {
+    db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+    db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, new Uint8Array(step));
+  } finally {
+    db.close();
+  }
+}
+
 const setup = Effect.gen(function* () {
   const home = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-test-")),
@@ -1023,6 +1057,56 @@ describe("UsageService", () => {
         sourcesFor("antigravity")[0]?.fingerprint.resolvedHomePath,
         yield* Effect.promise(() => NodeFSP.realpath(conversations)),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reads Antigravity history from each instance's data directory", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const first = NodePath.join(home, "antigravity-first");
+      const second = NodePath.join(home, "antigravity-second");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(first);
+        await NodeFSP.mkdir(second);
+        seedAntigravityHistory(first, "first-session", 7);
+        seedAntigravityHistory(second, "second-session", 11);
+      });
+      const instance = (dataDir: string) => ({
+        driver: ProviderDriverKind.make("antigravity"),
+        environment: [{ name: "ANTIGRAVITY_DATA_DIR", value: dataDir, sensitive: false }],
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-antigravity-instances-test",
+            home,
+            settings: {
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("antigravity-first")]: instance(first),
+                [ProviderInstanceId.make("antigravity-second")]: instance(` ${second}, `),
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const roots = summary.sources
+        .filter((source) => source.fingerprint.provider === "antigravity")
+        .map((source) => source.fingerprint.resolvedHomePath);
+      for (const [dir, outputTokens] of [
+        [first, 7],
+        [second, 11],
+      ] as const) {
+        const root = yield* Effect.promise(() => NodeFSP.realpath(dir));
+        assert.include(roots, root);
+        assert.strictEqual(
+          summary.buckets
+            .filter((bucket) => bucket.provider === "antigravity" && bucket.sourcePath === root)
+            .reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+          outputTokens,
+        );
+      }
     }).pipe(Effect.scoped),
   );
 
