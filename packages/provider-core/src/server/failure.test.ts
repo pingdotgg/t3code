@@ -148,6 +148,7 @@ it("explains a native thread another client is writing to", () => {
     driver: ProviderDriverKind.make("codex"),
     providerThreadId: ProviderThreadId.make("provider-thread:in-use"),
     detail: "This conversation is open in another Codex client.",
+    cause: new Error("thread provider-thread:in-use already has an active writer"),
   });
   const cause = new ProviderAdapter.ProviderAdapterTurnStartError({
     driver: ProviderDriverKind.make("codex"),

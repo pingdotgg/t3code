@@ -3030,6 +3030,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(error._tag, "ProviderAdapterThreadInUseError");
         assert.nestedPropertyVal(error, "providerThreadId", harness.providerThread.id);
         assert.include(error.message, "open in another Codex client");
+        assert.nestedPropertyVal(
+          error,
+          "cause.errorMessage",
+          `thread ${nativeThreadId} already has an active writer`,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

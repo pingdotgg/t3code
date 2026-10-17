@@ -7058,6 +7058,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         driver: CODEX_PROVIDER,
                         providerThreadId: threadInput.providerThread.id,
                         detail: CODEX_THREAD_IN_USE_MESSAGE,
+                        cause,
                       })
                     : new ProviderAdapter.ProviderAdapterResumeThreadError({
                         driver: CODEX_PROVIDER,

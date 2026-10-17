@@ -1687,6 +1687,7 @@ effectIt.effect("fails the run instead of replacing a native thread another clie
         driver: ProviderDriverKind.make("codex"),
         providerThreadId: ProviderThreadId.make("new-provider-thread"),
         detail,
+        cause: new Error("thread native-resume-thread already has an active writer"),
       }),
     });
 
