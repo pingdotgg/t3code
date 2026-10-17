@@ -67,6 +67,7 @@ import {
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
   getProviderVersionLabel,
+  isAntigravitySignInUnchecked,
   type ProviderStatusKey,
 } from "./providerStatus";
 
@@ -649,9 +650,11 @@ export function ProviderInstanceCard({
 }: ProviderInstanceCardProps) {
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
-  const statusKey: ProviderStatusKey = enabled
-    ? ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning")
-    : "disabled";
+  const statusKey: ProviderStatusKey = !enabled
+    ? "disabled"
+    : liveProvider && isAntigravitySignInUnchecked(liveProvider)
+      ? "ready"
+      : ((liveProvider?.status as ProviderStatusKey | undefined) ?? "warning");
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = enabled
     ? getProviderSummary(liveProvider && { ...liveProvider, enabled: true })

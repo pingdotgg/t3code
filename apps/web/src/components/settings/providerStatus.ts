@@ -21,6 +21,23 @@ export const PROVIDER_STATUS_STYLES = {
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
+/**
+ * Antigravity's local health check proves the install, not the Google account,
+ * so a healthy install reports `warning` with auth still unknown. API-key and
+ * Agent Platform methods never sign in with Google, so their warnings are real.
+ */
+export function isAntigravitySignInUnchecked(provider: ServerProvider): boolean {
+  return (
+    provider.driver === "antigravity" &&
+    provider.installed &&
+    provider.status === "warning" &&
+    provider.auth.status === "unknown" &&
+    (provider.auth.type === undefined ||
+      provider.auth.type === "oauth-personal" ||
+      provider.auth.type === "oauth-business")
+  );
+}
+
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
     return {
@@ -45,6 +62,12 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
       headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      detail: provider.message ?? null,
+    };
+  }
+  if (isAntigravitySignInUnchecked(provider)) {
+    return {
+      headline: "Installed · Sign-in required",
       detail: provider.message ?? null,
     };
   }
