@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
 import {
@@ -94,10 +94,7 @@ function BreadcrumbMenuContent(props: {
   const { resolvedTheme } = useTheme();
   const entries = entriesQuery.data?.entries ?? [];
   const entriesTruncated = entriesQuery.data?.truncated ?? false;
-  const children = useMemo(
-    () => fileBreadcrumbChildren(entries, props.directoryPath),
-    [entries, props.directoryPath],
-  );
+  const children = fileBreadcrumbChildren(entries, props.directoryPath);
   const directoryAvailable = entriesQuery.data !== null;
   const parentPath = fileBreadcrumbParent(props.directoryPath);
   const canGoBack =
@@ -222,11 +219,16 @@ function BreadcrumbMenuContent(props: {
 function FolderContentsMenu(props: FileBreadcrumbsProps & { readonly crumb: FileBreadcrumb }) {
   const [open, setOpen] = useState(false);
   const [directoryPath, setDirectoryPath] = useState(props.crumb.path);
-
-  useEffect(() => {
+  // Opening another file or moving the crumb closes the menu and returns it to the crumb's folder.
+  const [shownFor, setShownFor] = useState({
+    crumbPath: props.crumb.path,
+    relativePath: props.relativePath,
+  });
+  if (shownFor.crumbPath !== props.crumb.path || shownFor.relativePath !== props.relativePath) {
+    setShownFor({ crumbPath: props.crumb.path, relativePath: props.relativePath });
     setOpen(false);
     setDirectoryPath(props.crumb.path);
-  }, [props.crumb.path, props.relativePath]);
+  }
 
   const handleOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -299,10 +301,7 @@ function FolderBreadcrumb(props: {
  */
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
   const hostPath = isAbsolutePath(props.relativePath);
-  const breadcrumbs = useMemo(
-    () => fileBreadcrumbs(props.projectName, props.trail),
-    [props.projectName, props.trail],
-  );
+  const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 
