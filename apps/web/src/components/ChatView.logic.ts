@@ -915,6 +915,20 @@ export function shouldShowPlanFollowUpPrompt(input: {
   );
 }
 
+const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
+
+export function shouldCompactBeforeSend(input: {
+  resumeCompactionTokens: number | null;
+  keepFullHistory: boolean;
+  messageText: string;
+}): boolean {
+  return (
+    input.resumeCompactionTokens !== null &&
+    !input.keepFullHistory &&
+    !COMPACT_COMMAND_PATTERN.test(input.messageText)
+  );
+}
+
 const sessionDismissedBranchMismatchKeys = new Set<string>();
 
 export function dismissBranchMismatchForSession(key: string): void {
