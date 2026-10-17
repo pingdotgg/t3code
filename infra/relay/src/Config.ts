@@ -15,10 +15,10 @@ const decodeManagedEndpointCleanupMode = Schema.decodeUnknownEffect(ManagedEndpo
 const RELAY_TUNNEL_CLEANUP_MODE = "RELAY_TUNNEL_CLEANUP_MODE";
 const RELAY_LEGACY_TUNNEL_CLEANUP_MODE = "RELAY_LEGACY_TUNNEL_CLEANUP_MODE";
 
-const cleanupModeConfig = (name: string) =>
+const cleanupModeConfig = (name: string, defaultMode: ManagedEndpointCleanupMode) =>
   Config.String(name).pipe(
-    Config.withDefault("off"),
-    Config.map((value) => value.trim() || "off"),
+    Config.withDefault(defaultMode),
+    Config.map((value) => value.trim() || defaultMode),
     Config.mapEffect((value) =>
       decodeManagedEndpointCleanupMode(value).pipe(
         Effect.mapError((error) => new Config.ConfigError(error)),
@@ -26,9 +26,13 @@ const cleanupModeConfig = (name: string) =>
     ),
   );
 
-export const managedEndpointCleanupModeConfig = cleanupModeConfig(RELAY_TUNNEL_CLEANUP_MODE);
+export const managedEndpointCleanupModeConfig = cleanupModeConfig(
+  RELAY_TUNNEL_CLEANUP_MODE,
+  "enabled",
+);
 export const legacyManagedEndpointCleanupModeConfig = cleanupModeConfig(
   RELAY_LEGACY_TUNNEL_CLEANUP_MODE,
+  "off",
 );
 
 const RELAY_LEGACY_TUNNEL_GRACE_MINUTES = "RELAY_LEGACY_TUNNEL_GRACE_MINUTES";

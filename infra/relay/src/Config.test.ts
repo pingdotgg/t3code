@@ -10,9 +10,9 @@ import {
 } from "./Config.ts";
 
 it.effect.each([
-  { name: "missing", env: {}, expected: "off" },
-  { name: "empty", env: { RELAY_TUNNEL_CLEANUP_MODE: "" }, expected: "off" },
-  { name: "whitespace", env: { RELAY_TUNNEL_CLEANUP_MODE: "  \t" }, expected: "off" },
+  { name: "missing", env: {}, expected: "enabled" },
+  { name: "empty", env: { RELAY_TUNNEL_CLEANUP_MODE: "" }, expected: "enabled" },
+  { name: "whitespace", env: { RELAY_TUNNEL_CLEANUP_MODE: "  \t" }, expected: "enabled" },
   { name: "off", env: { RELAY_TUNNEL_CLEANUP_MODE: "off" }, expected: "off" },
   {
     name: "dry-run",

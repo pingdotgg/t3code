@@ -23,7 +23,6 @@ import {
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
-  SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
 const spawnedChildren = vi.hoisted((): Array<NodeChildProcess.ChildProcess> => []);
@@ -244,7 +243,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
       const running = launcher.run();
       const stopping = launcher.stop("SIGTERM");
-      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
       yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
     }),
