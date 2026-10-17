@@ -1,10 +1,12 @@
 import { RequestActionButton } from "./RequestActionButton";
+import { approvalRequestLabel } from "@t3tools/client-runtime/state/thread-requests";
+import { approvalCommandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
 import type {
   ProviderApprovalDecision,
   ProviderApprovalOption,
   RuntimeRequestId,
 } from "@t3tools/contracts";
-import { View } from "react-native";
+import { ScrollView, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
@@ -37,12 +39,26 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         Approval needed
       </Text>
       <Text className="font-t3-bold text-lg text-foreground">
-        {props.approval.appName ?? props.approval.requestKind}
+        {props.approval.appName ?? approvalRequestLabel(props.approval.requestKind)}
       </Text>
-      {props.approval.detail ? (
+      {props.approval.title && !props.approval.appName ? (
         <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-          {props.approval.detail}
+          {props.approval.title}
         </Text>
+      ) : null}
+      {props.approval.detail ? (
+        props.approval.requestKind === "command" ? (
+          // Long commands scroll inside the card so its buttons stay on screen.
+          <ScrollView className="max-h-40" nestedScrollEnabled showsVerticalScrollIndicator>
+            <Text className="font-mono text-sm leading-normal text-foreground" selectable>
+              {approvalCommandDisplayText(props.approval.detail)}
+            </Text>
+          </ScrollView>
+        ) : (
+          <Text className="font-sans text-sm leading-normal text-foreground-secondary">
+            {props.approval.detail}
+          </Text>
+        )
       ) : null}
       {!canRespond ? (
         <Text className="font-sans text-sm leading-5 text-foreground-muted">

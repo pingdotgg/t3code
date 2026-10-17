@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  approvalCommandDisplayText,
   commandDisplayText,
   commandHighlightLanguage,
   commandProgramName,
@@ -495,6 +496,32 @@ describe("commandDisplayText", () => {
     ["zsh -lc 'unterminated", "zsh -lc 'unterminated"],
   ])("shows the script without hiding meaningful outer commands: %s", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
+describe("approvalCommandDisplayText", () => {
+  it.each([
+    [
+      "/bin/bash -lc 'curl -sI https://example.com | head -n 1'",
+      "curl -sI https://example.com | head -n 1",
+    ],
+    ["bash --rcfile /tmp/init.sh -ic 'git status'", "bash --rcfile /tmp/init.sh -ic 'git status'"],
+    ["zsh -lc 'echo $1' name value", "zsh -lc 'echo $1' name value"],
+    ["zsh -lc 'pwd'; rm -rf build", "zsh -lc 'pwd'; rm -rf build"],
+    ["/bin/bash>/tmp/bash -c 'pwd'", "/bin/bash>/tmp/bash -c 'pwd'"],
+    [`bash -c 'printf hi'>"/tmp/output file"`, `bash -c 'printf hi'>"/tmp/output file"`],
+    [`/bin/bash -lc "rg -g '*.ts' TODO"`, "rg -g '*.ts' TODO"],
+    [`bash -lc "echo $HOME"`, `bash -lc "echo $HOME"`],
+    ["/bin/bash -lc pwd", "pwd"],
+    ["/tmp/delete.sh -c 'pwd'", "/tmp/delete.sh -c 'pwd'"],
+    ["/tmp/bash -c 'echo safe'", "/tmp/bash -c 'echo safe'"],
+    ["/usr/local/bin/zsh -lc 'git status'", "git status"],
+    ["bash -c {echo,MARKER}", "bash -c {echo,MARKER}"],
+    ["bash -c *.sh", "bash -c *.sh"],
+    ["bash -c ~", "bash -c ~"],
+    ["git status", "git status"],
+  ])("unwraps only a bare shell wrapper: %s", (input, expected) => {
+    expect(approvalCommandDisplayText(input)).toBe(expected);
   });
 });
 

@@ -153,6 +153,11 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
+// Legacy approvals send argv; quoting keeps argument boundaries visible.
+function codexShellWord(word: string): string {
+  return /^[\w./:@=-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
 export function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
   readonly grantRoot?: string | null;
@@ -4025,6 +4030,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly nativeRequestId: string;
           readonly requestKind: ProviderRequestKind;
           readonly prompt?: string | null;
+          /** Provider's explanation, kept apart so it cannot replace the prompt. */
+          readonly title?: string | null | undefined;
           readonly appName?: string;
           readonly options?: ReadonlyArray<ProviderApprovalOption>;
         }) =>
@@ -4099,7 +4106,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               parentItemId: null,
               ordinal,
               status: "waiting",
-              title: null,
+              title: input.title?.trim() || null,
               startedAt: createdAt,
               completedAt: null,
               updatedAt: createdAt,
@@ -5051,9 +5058,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.itemId,
               nativeRequestId,
               requestKind: "command",
-              ...((payload.reason ?? payload.command) === undefined
-                ? {}
-                : { prompt: payload.reason ?? payload.command }),
+              // A network approval names its host; with neither, the reason is all there is.
+              ...(payload.command
+                ? { prompt: payload.command, title: payload.reason }
+                : payload.networkApprovalContext
+                  ? {
+                      prompt: `${payload.networkApprovalContext.protocol} ${payload.networkApprovalContext.host}`,
+                      title: payload.reason,
+                    }
+                  : { prompt: payload.reason ?? null }),
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -5334,7 +5347,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.callId,
               nativeRequestId,
               requestKind: "command",
-              prompt: payload.reason ?? payload.command.join(" "),
+              prompt: payload.command.map(codexShellWord).join(" "),
+              title: payload.reason,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {

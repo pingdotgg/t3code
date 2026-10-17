@@ -1324,6 +1324,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           method === "confirm"
             ? {
                 ...itemBase,
+                // The bash gate's prompt is the command itself; other tools need their name.
+                title: title === "Allow bash?" ? null : title,
                 type: "approval_request",
                 requestId,
                 requestKind: piApprovalRequestKind(title),

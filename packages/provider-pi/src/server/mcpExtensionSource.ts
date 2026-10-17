@@ -65,7 +65,12 @@ function runtimeMode(): RuntimeMode {
     : "full-access";
 }
 
-function toolInputSummary(input: unknown): string {
+function toolInputSummary(toolName: string, input: unknown): string {
+  // The bash tool's approval shows the whole command, never a truncated one.
+  const command = (input as { command?: unknown } | null)?.command;
+  if (toolName === "bash" && typeof command === "string" && command.trim().length > 0) {
+    return command;
+  }
   try {
     return JSON.stringify(input, null, 2).slice(0, 4_000);
   } catch {
@@ -325,7 +330,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
     const approved = await ctx.ui.confirm(
       \`Allow \${event.toolName}?\`,
-      toolInputSummary(event.input),
+      toolInputSummary(event.toolName, event.input),
       { signal: ctx.signal },
     );
     if (!approved) {

@@ -8,11 +8,25 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+const APPROVAL_REQUEST_LABELS: Record<ProviderRequestKind, string> = {
+  command: "Command approval",
+  "file-read": "File read approval",
+  "file-change": "File change approval",
+  "mcp-elicitation": "App access approval",
+  permission: "App permission approval",
+};
+
+/** Names an approval card by what it asks for; web and mobile show the same words. */
+export function approvalRequestLabel(requestKind: ProviderRequestKind): string {
+  return APPROVAL_REQUEST_LABELS[requestKind];
+}
+
 export interface ThreadPendingApproval {
   readonly requestId: RuntimeRequestId;
   readonly requestKind: ProviderRequestKind;
   readonly createdAt: string;
   readonly detail?: string;
+  readonly title?: string;
   readonly appName?: string;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
@@ -99,6 +113,7 @@ export function derivePendingThreadRequests(
       requestKind: request.kind,
       createdAt: DateTime.formatIso(request.createdAt),
       ...(item?.type === "approval_request" && item.prompt ? { detail: item.prompt } : {}),
+      ...(item?.type === "approval_request" && item.title ? { title: item.title } : {}),
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }

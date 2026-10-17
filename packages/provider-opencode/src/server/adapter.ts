@@ -1782,16 +1782,24 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (permission === undefined) {
             throw protocolError(`OpenCode request ${pending.requestId} has no native payload`);
           }
+          // Patterns split a pipeline into its commands; the command keeps it whole.
+          const command =
+            typeof permission.metadata.command === "string" &&
+            permission.metadata.command.trim().length > 0
+              ? permission.metadata.command
+              : undefined;
           return {
             ...base,
-            title: permission.permission,
+            // A title explains a request; "bash" beside its own command explains nothing.
+            title: command === undefined ? permission.permission : null,
             type: "approval_request",
             requestId: pending.requestId,
             requestKind: pending.requestKind === "user_input" ? "command" : pending.requestKind,
             prompt:
-              permission.patterns.length === 0
+              command ??
+              (permission.patterns.length === 0
                 ? permission.permission
-                : permission.patterns.join("\n"),
+                : permission.patterns.join("\n")),
           };
         };
 

@@ -2777,6 +2777,94 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("shows the command being approved, not only Codex's reason", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const nativeThreadId = "command-reason-thread";
+        const nativeTurnId = "command-reason-turn";
+        const command = "/bin/bash -lc 'ls ~/.t3'";
+        const transcript = makeCodexReplayTranscript({
+          scenario: "command-approval-with-reason",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Inspect." }),
+            {
+              type: "emit_inbound",
+              label: "approval",
+              frame: {
+                id: 100,
+                method: "item/commandExecution/requestApproval",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: "reason-command",
+                  startedAtMs: 1782622441000,
+                  command,
+                  reason: "Inspect T3 Code install files",
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "decision",
+              frame: { id: 100, result: { decision: "decline" } },
+            },
+            {
+              type: "emit_inbound",
+              label: "complete",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("command-reason-attempt"),
+            text: "Inspect.",
+          }),
+        );
+        const approvalItem = () =>
+          harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          );
+        yield* awaitUntil(() => approvalItem() !== undefined, "approval request");
+        const item = approvalItem();
+        assert.equal(
+          item?.type === "turn_item.updated" && item.turnItem.title,
+          "Inspect T3 Code install files",
+        );
+        assert.equal(
+          item?.type === "turn_item.updated" &&
+            item.turnItem.type === "approval_request" &&
+            item.turnItem.prompt,
+          command,
+        );
+        const request = harness.events.findLast(
+          (event) => event.type === "runtime_request.updated",
+        );
+        if (request?.type !== "runtime_request.updated") return assert.fail("missing request");
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.runtimeRequest.id,
+          decision: "decline",
+        });
+        yield* harness.firstTerminal;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("stops asking for commands the user allowed for the session", () =>
     Effect.scoped(
       Effect.gen(function* () {
