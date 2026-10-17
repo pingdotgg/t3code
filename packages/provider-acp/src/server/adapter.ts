@@ -92,6 +92,7 @@ import {
 import { ACP_EMPTY_OPTION_VALUE, ACP_SESSION_MODE_OPTION_ID } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 import {
+  isAcpNativeCommandPrompt,
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -6316,6 +6317,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
+          const nativeCommand = isAcpNativeCommandPrompt(messageText);
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
@@ -6365,14 +6367,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               detail: "ACP turn requires non-empty text or attachments",
             });
           }
-          prompt.push({
-            type: "text",
-            text: buildRuntimeInstructions({
-              harness: flavor.runtimeHarness ?? driver,
-              model: turnInput.modelSelection.model,
-            }),
-          });
-          return { prompt, instructionState: text === messageText ? undefined : instructionState };
+          if (!nativeCommand) {
+            prompt.push({
+              type: "text",
+              text: buildRuntimeInstructions({
+                harness: flavor.runtimeHarness ?? driver,
+                model: turnInput.modelSelection.model,
+              }),
+            });
+          }
+          // Native commands are sent without T3 instructions even when trimmed.
+          const instructionsSent = !nativeCommand && text !== messageText;
+          return { prompt, instructionState: instructionsSent ? instructionState : undefined };
         });
 
         const restartRuntimeAfterTeardownIfRequired = Effect.fnUntraced(function* (

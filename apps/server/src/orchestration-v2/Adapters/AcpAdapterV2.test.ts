@@ -841,15 +841,22 @@ describe("AcpAdapterV2", () => {
           if (method === undefined) continue;
           methods.push(method);
           if (method === "session/prompt") {
-            return { methods, prompt: rawProtocolPromptText(event) };
+            return {
+              methods,
+              prompt: rawProtocolPromptText(event),
+              blocks: rawProtocolRequestParam(event, "prompt"),
+            };
           }
         }
       });
 
-      const command = yield* runTurn(0, defaultPolicy, "/compact");
-      assert.isTrue(command.prompt.startsWith("/compact"));
-      assert.notInclude(command.prompt, "<t3_code_instructions>");
+      // Agents such as Copilot only expand a native slash command when it is
+      // the prompt's only text block and starts with `/`, so no T3 context may
+      // ride along and leading whitespace is dropped.
+      const command = yield* runTurn(0, defaultPolicy, "  /compact now");
+      assert.deepStrictEqual(command.blocks, [{ type: "text", text: "/compact now" }]);
       const firstDefault = yield* runTurn(1, defaultPolicy, "First default request.");
+      assert.include(firstDefault.prompt, "<runtime_info>");
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
       assert.include(firstDefault.prompt, "T3 Code collaborative browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");

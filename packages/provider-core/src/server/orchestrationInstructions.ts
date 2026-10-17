@@ -66,6 +66,14 @@ export interface T3AcpInstructionState {
 }
 
 /**
+ * ACP agents expand native slash commands only when the command starts the
+ * prompt and is its only text block, so these turns carry no T3 context.
+ */
+export function isAcpNativeCommandPrompt(prompt: string): boolean {
+  return prompt.trimStart().startsWith("/");
+}
+
+/**
  * ACP has no system/developer prompt field, so send T3-owned context in the
  * first user prompt and whenever the available tools or interaction mode change.
  */
@@ -74,8 +82,7 @@ export function t3AcpPromptWithInstructions(input: {
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
 }): string {
-  // Native slash commands must remain at the start of the prompt.
-  if (input.prompt.trimStart().startsWith("/")) return input.prompt;
+  if (isAcpNativeCommandPrompt(input.prompt)) return input.prompt.trimStart();
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp
