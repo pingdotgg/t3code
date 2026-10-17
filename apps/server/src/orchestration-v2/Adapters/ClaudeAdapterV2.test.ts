@@ -1938,10 +1938,12 @@ function makeFakeClaudeCli(answerSetServers = true) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
   const stdins: Array<NodeStream.PassThrough> = [];
+  const stdouts: Array<NodeStream.PassThrough> = [];
   const spawn = (options: SpawnOptions): SpawnedProcess => {
     spawns.push(options);
     const stdin = new NodeStream.PassThrough();
     const stdout = new NodeStream.PassThrough();
+    stdouts.push(stdout);
     stdins.push(stdin);
     const child = Object.assign(new NodeEvents.EventEmitter(), {
       stdin,
@@ -1980,7 +1982,13 @@ function makeFakeClaudeCli(answerSetServers = true) {
   };
   // The SDK closes the CLI by ending its stdin.
   const closed = () => stdins.length > 0 && stdins.every((stdin) => stdin.writableEnded);
-  return { spawn, spawns, controlRequests, closed };
+  return {
+    spawn,
+    spawns,
+    controlRequests,
+    closed,
+    write: (frame: object) => stdouts[0]!.write(`${JSON.stringify(frame)}\n`),
+  };
 }
 
 describe("ClaudeAdapterV2 MCP credential channel", () => {
@@ -1989,7 +1997,10 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
     url: "http://127.0.0.1:43123/mcp",
     headers: { Authorization: "Bearer dummy-mcp-credential" },
   };
-  const openWith = (cli: ReturnType<typeof makeFakeClaudeCli>) =>
+  const openWith = (
+    cli: ReturnType<typeof makeFakeClaudeCli>,
+    environment = { PATH: "/usr/bin" } as NodeJS.ProcessEnv,
+  ) =>
     Effect.gen(function* () {
       const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
       return yield* runner.open({
@@ -2001,7 +2012,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
             nativeThreadId: "native-thread-claude-mcp-channel",
             resume: false,
             cwd: null,
-            environment: { PATH: "/usr/bin" },
+            environment,
             mcpServers: { "t3-code": t3McpServer },
           }),
           pathToClaudeCodeExecutable: "/opt/claude/cli.js",
@@ -2031,6 +2042,59 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       assert.notInclude(spawned, "--mcp-config");
       assert.notInclude(spawned, "dummy-mcp-credential");
     }),
+  );
+
+  it.effect(
+    "translates signed proxy metadata after SDK decoding and before terminal delivery",
+    () =>
+      Effect.gen(function* () {
+        const cli = makeFakeClaudeCli();
+        const session = yield* openWith(cli, {
+          PATH: "/usr/bin",
+          ANTHROPIC_AUTH_TOKEN: "synthetic-downstream-key",
+          ANTHROPIC_CUSTOM_HEADERS: "X-Unrelated: keep",
+        });
+        assert.equal(
+          cli.spawns[0]?.env?.ANTHROPIC_CUSTOM_HEADERS,
+          "X-Unrelated: keep\nX-CLIProxyAPI-Cooldown-Metadata: signed-v1",
+        );
+        const text =
+          "API Error: Request rejected (429) · [[CPA_PROXY_COOLDOWN_V1:1800000060:f80e36a6ed8a13164e5126bb944f82d86102f807c4f01d98e3a353f7d0167fc2]] synthetic cooldown";
+        cli.write({
+          type: "assistant",
+          error: "rate_limit",
+          session_id: "proxy-root",
+          parent_tool_use_id: null,
+          uuid: "00000000-0000-4000-8000-000000000701",
+          message: { content: [{ type: "text", text }] },
+        });
+        cli.write({
+          type: "result",
+          subtype: "success",
+          is_error: true,
+          session_id: "proxy-root",
+          result: text,
+          uuid: "00000000-0000-4000-8000-000000000702",
+        });
+        const received = yield* session.messages.pipe(Stream.take(3), Stream.runCollect);
+        assert.equal(received[0]?.type, "assistant");
+        assert.deepInclude(received[1] as object, {
+          type: "rate_limit_event",
+          session_id: "proxy-root",
+          rate_limit_info: {
+            status: "rejected",
+            resetsAt: 1800000060,
+            rateLimitType: "proxy_cooldown",
+          },
+        });
+        assert.deepInclude(received[2], {
+          type: "result",
+          result: "API Error: Request rejected (429) · synthetic cooldown",
+        });
+        assert.notInclude(JSON.stringify(received), "CPA_PROXY_COOLDOWN_V1");
+        yield* session.close;
+        assert.isTrue(cli.closed());
+      }),
   );
 
   it.effect("closes the CLI when it never answers the MCP registration", () =>
@@ -3110,6 +3174,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "keeps proxy resets subject to unknown native windows (%s)",
+    (unknownNativeWindow) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-proxy-cooldown"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "00000000-0000-4000-8000-000000000703",
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "proxy_cooldown",
+              resetsAt: 1800000060,
+            },
+          }),
+        );
+        if (unknownNativeWindow) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "rate_limit_event",
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: "00000000-0000-4000-8000-000000000704",
+              rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000705",
+            isError: true,
+            result: "API Error: Request rejected (429) · synthetic cooldown",
+            terminalReason: "api_error",
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(
+          terminal.failure.resetAt,
+          unknownNativeWindow ? undefined : "2027-01-15T08:01:00.000Z",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect("announces usage-limit pauses once per window and again on a new turn", () =>

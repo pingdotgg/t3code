@@ -1,3 +1,7 @@
+import {
+  claudeProxyCooldownEnvironment,
+  makeClaudeProxyCooldownBridge,
+} from "./claudeProxyCooldown.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
@@ -737,7 +741,13 @@ export const layerQueryRunner: Layer.Layer<
         // which every local user can read. They go over the CLI's stdin control
         // channel instead, so header credentials stay out of its argv and out
         // of the environment every command the agent runs inherits.
-        const { mcpServers, ...queryOptions } = input.options;
+        const { mcpServers, ...baseQueryOptions } = input.options;
+        const queryOptions = {
+          ...baseQueryOptions,
+          ...(baseQueryOptions.env === undefined
+            ? {}
+            : { env: claudeProxyCooldownEnvironment(baseQueryOptions.env)! }),
+        };
         // The SDK spawns a native binary as `path ...executableArgs ...sdkArgs`,
         // which lets the agent scope wrapper go in front of the CLI. The SDK
         // runs a script entry through node instead, so those launch unwrapped.
@@ -827,10 +837,15 @@ export const layerQueryRunner: Layer.Layer<
           ),
         );
 
+        const bridgeCooldown = makeClaudeProxyCooldownBridge(
+          input.options.env?.ANTHROPIC_AUTH_TOKEN ?? "",
+          () => DateTime.toEpochMillis(DateTime.nowUnsafe()),
+        );
         return {
           messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
             queryRunnerError(cause, "fromAsyncIterable"),
           ).pipe(
+            Stream.flatMap((message) => Stream.fromIterable(bridgeCooldown(message))),
             Stream.tap((message) =>
               logProtocolEvent({
                 direction: "incoming",
