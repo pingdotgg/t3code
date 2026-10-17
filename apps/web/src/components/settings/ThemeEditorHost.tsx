@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useSyncExternalStore } from "react";
+import { lazy, Suspense, useSyncExternalStore } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import {
@@ -29,50 +29,11 @@ export function ThemeEditorHost() {
   const editingTheme = useThemeDefinition(session?.editingThemeId);
   const seedTheme = useThemeDefinition(session?.seedThemeId);
 
-  const handleSaved = useCallback(
-    (
-      savedTheme: ThemeDefinition,
-      { created, mergedAppearance }: { created: boolean; mergedAppearance?: ThemeAppearance },
-    ) => {
-      if (mergedAppearance) {
-        if (!setTheme(savedTheme.id)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not save your theme",
-              description: "Browser storage is unavailable, so the change was not kept.",
-            }),
-          );
-          return false;
-        }
-        toastManager.add(
-          stackedThreadToast({
-            type: "success",
-            title: `${savedTheme.label} updated`,
-            description: `Its ${mergedAppearance} palette was added.`,
-          }),
-        );
-        return true;
-      }
-      if (!created) {
-        // The edited theme may be showing through the base preference or either
-        // half of the mix; the preference itself is untouched (a setTheme here
-        // would clear the mix), the palette just needs re-applying.
-        const wasActive =
-          getThemeDefinition(theme)?.id === savedTheme.id ||
-          themeHalves?.light === savedTheme.id ||
-          themeHalves?.dark === savedTheme.id;
-        if (wasActive) refreshTheme();
-        toastManager.add(
-          stackedThreadToast({
-            type: "success",
-            title: `${savedTheme.label} saved`,
-            description: wasActive ? "Your changes are now active." : "Your changes are saved.",
-          }),
-        );
-        return true;
-      }
-
+  const handleSaved = (
+    savedTheme: ThemeDefinition,
+    { created, mergedAppearance }: { created: boolean; mergedAppearance?: ThemeAppearance },
+  ) => {
+    if (mergedAppearance) {
       if (!setTheme(savedTheme.id)) {
         toastManager.add(
           stackedThreadToast({
@@ -86,14 +47,50 @@ export function ThemeEditorHost() {
       toastManager.add(
         stackedThreadToast({
           type: "success",
-          title: `${savedTheme.label} created`,
-          description: "It’s now active.",
+          title: `${savedTheme.label} updated`,
+          description: `Its ${mergedAppearance} palette was added.`,
         }),
       );
       return true;
-    },
-    [refreshTheme, setTheme, theme, themeHalves],
-  );
+    }
+    if (!created) {
+      // The edited theme may be showing through the base preference or either
+      // half of the mix; the preference itself is untouched (a setTheme here
+      // would clear the mix), the palette just needs re-applying.
+      const wasActive =
+        getThemeDefinition(theme)?.id === savedTheme.id ||
+        themeHalves?.light === savedTheme.id ||
+        themeHalves?.dark === savedTheme.id;
+      if (wasActive) refreshTheme();
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: `${savedTheme.label} saved`,
+          description: wasActive ? "Your changes are now active." : "Your changes are saved.",
+        }),
+      );
+      return true;
+    }
+
+    if (!setTheme(savedTheme.id)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not save your theme",
+          description: "Browser storage is unavailable, so the change was not kept.",
+        }),
+      );
+      return false;
+    }
+    toastManager.add(
+      stackedThreadToast({
+        type: "success",
+        title: `${savedTheme.label} created`,
+        description: "It’s now active.",
+      }),
+    );
+    return true;
+  };
 
   if (!session) return null;
 
