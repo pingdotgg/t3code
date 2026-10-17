@@ -32,15 +32,12 @@ export function SourceControlHostSettings({
 
   const save = async (fields: Record<string, unknown>) => {
     setSaving(true);
-    try {
-      const result = await updateSettings({
-        environmentId,
-        input: { patch: { sourceControlHosts: { [definition.kind]: fields } } },
-      });
-      if (result._tag === "Success") onSaved();
-    } finally {
-      setSaving(false);
-    }
+    const result = await updateSettings({
+      environmentId,
+      input: { patch: { sourceControlHosts: { [definition.kind]: fields } } },
+    });
+    setSaving(false);
+    if (result._tag === "Success") onSaved();
   };
 
   return (
