@@ -64,6 +64,8 @@ export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTRO
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
   readonly status: FloatingWorkingStatus | null;
+  /** Stop for background work that outlived its turn, beside the label naming it. */
+  readonly backgroundStop: { readonly stopping: boolean; readonly onPress: () => void } | null;
   readonly devicePreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly browserPreview: { readonly count: number; readonly onPress: () => void } | null;
   readonly showScrollToEnd: boolean;
@@ -78,6 +80,9 @@ export function FloatingWorkingControl(props: {
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
   const [agentsWidth, setAgentsWidth] = useState(0);
+  const [stopWidth, setStopWidth] = useState(0);
+  const backgroundStop = props.status?.kind === "background" ? props.backgroundStop : null;
+  const hasStop = backgroundStop !== null;
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
@@ -88,6 +93,7 @@ export function FloatingWorkingControl(props: {
     Math.min(overlayWidth, windowWidth) -
       CONTROL_HEIGHT -
       32 -
+      (hasStop ? stopWidth : 0) -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
       (hasPreview ? previewWidth : 0),
@@ -150,7 +156,7 @@ export function FloatingWorkingControl(props: {
     (props.devicePreview !== null && props.browserPreview !== null);
   const statusInteractive =
     props.status?.kind === "connection" || props.status?.kind === "child-input";
-  const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasPreview;
+  const capsuleInteractive = statusInteractive || hasStop || hasQueue || hasAgents || hasPreview;
   const statusContent =
     props.status !== null ? (
       <View
@@ -179,6 +185,21 @@ export function FloatingWorkingControl(props: {
   const capsuleContent = (
     <View className="flex-row items-center">
       {statusContent}
+      {backgroundStop !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={backgroundStop.stopping ? "Stopping" : "Stop background work"}
+          disabled={backgroundStop.stopping}
+          onPress={backgroundStop.onPress}
+          onLayout={(event) => setStopWidth(event.nativeEvent.layout.width)}
+          className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
+        >
+          <View className="mr-1 h-4 w-px bg-border" />
+          <Text className="font-t3-medium text-xs text-danger-foreground" numberOfLines={1}>
+            {backgroundStop.stopping ? "Stopping…" : "Stop"}
+          </Text>
+        </Pressable>
+      ) : null}
       {hasPreview ? (
         <View
           className="h-11 flex-row items-center"

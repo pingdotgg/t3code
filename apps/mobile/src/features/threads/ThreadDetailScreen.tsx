@@ -222,6 +222,8 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  readonly stoppingBackgroundWork: boolean;
+  readonly onStopBackgroundWork: () => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
@@ -1160,6 +1162,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 <FloatingWorkingControl
                   colorScheme={isDarkMode ? "dark" : "light"}
                   status={floatingStatus}
+                  backgroundStop={
+                    props.canOperateThread
+                      ? {
+                          stopping: props.stoppingBackgroundWork,
+                          onPress: props.onStopBackgroundWork,
+                        }
+                      : null
+                  }
                   lift={floatingControlLift}
                   devicePreview={
                     devicePreviews.length > 0
