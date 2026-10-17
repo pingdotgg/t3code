@@ -3276,6 +3276,15 @@ export default function ChatView(props: ChatViewProps) {
   useLayoutEffect(() => {
     environmentChangeScopeRef.current = environmentChangeScope;
   });
+  // Leaving the scope, or unmounting, abandons a change still in flight.
+  useLayoutEffect(
+    () => () => {
+      if (environmentChangeRef.current?.scope === environmentChangeScope) {
+        environmentChangeRef.current = null;
+      }
+    },
+    [environmentChangeScope],
+  );
   const readPendingEnvironmentChange = () => {
     const pending = environmentChangeRef.current;
     return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
