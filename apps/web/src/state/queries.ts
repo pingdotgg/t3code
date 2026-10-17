@@ -22,7 +22,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useFilesystemReadAccess } from "./filesystem";
@@ -84,10 +84,8 @@ export function useThreadSearch(
   const debouncedQuery = useDebouncedValue(normalizedQuery, THREAD_SEARCH_DEBOUNCE_MS);
   const canSearch = environmentIds.length > 0 && normalizedQuery.length >= 2;
   const settledQuery = canSearch && normalizedQuery === debouncedQuery ? debouncedQuery : null;
-  const searchKey = useMemo(
-    () => (settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery)),
-    [environmentIds, settledQuery],
-  );
+  const searchKey =
+    settledQuery === null ? null : makeThreadSearchKey(environmentIds, settledQuery);
   const result = useAtomValue(
     searchKey === null ? EMPTY_THREAD_SEARCH_ATOM : threadSearchResultsAtom(searchKey),
   );
@@ -97,6 +95,38 @@ export function useThreadSearch(
     query: settledQuery ?? "",
     isPending: canSearch && (isDebouncing || result.isLoading),
   };
+}
+
+// A hook so its result is frozen: `refresh` hands a page atom to the registry,
+// which the compiler would treat as a mutation and leave pagesAtom uncached,
+// resubscribing every render.
+function useBranchPageAtoms(
+  environmentId: EnvironmentId | null,
+  cwd: string | null,
+  query: string,
+  cursors: ReadonlyArray<number | undefined>,
+  targetKey: string | null,
+) {
+  // Calls no hooks, so the compiler needs the directive to memoize it.
+  "use memo";
+  const pageAtoms =
+    environmentId !== null && cwd !== null
+      ? cursors.map((cursor) =>
+          vcsEnvironment.listRefs({
+            environmentId,
+            input: {
+              cwd,
+              ...(query.length > 0 ? { query } : {}),
+              ...(cursor === undefined ? {} : { cursor }),
+              limit: VCS_REF_LIST_LIMIT,
+            },
+          }),
+        )
+      : [];
+  const pagesAtom = Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
+    Atom.withLabel(`web:vcs-ref-pages:${targetKey ?? "empty"}`),
+  );
+  return { pageAtoms, pagesAtom };
 }
 
 export function usePaginatedBranches(target: VcsRefTarget) {
@@ -113,29 +143,12 @@ export function usePaginatedBranches(target: VcsRefTarget) {
     cursors: INITIAL_BRANCH_CURSORS,
   });
   const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
-  const pageAtoms = useMemo(
-    () =>
-      target.environmentId !== null && target.cwd !== null
-        ? cursors.map((cursor) =>
-            vcsEnvironment.listRefs({
-              environmentId: target.environmentId!,
-              input: {
-                cwd: target.cwd!,
-                ...(query.length > 0 ? { query } : {}),
-                ...(cursor === undefined ? {} : { cursor }),
-                limit: VCS_REF_LIST_LIMIT,
-              },
-            }),
-          )
-        : [],
-    [cursors, query, target.cwd, target.environmentId],
-  );
-  const pagesAtom = useMemo(
-    () =>
-      Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
-        Atom.withLabel(`web:vcs-ref-pages:${targetKey ?? "empty"}`),
-      ),
-    [pageAtoms, targetKey],
+  const { pageAtoms, pagesAtom } = useBranchPageAtoms(
+    target.environmentId,
+    target.cwd,
+    query,
+    cursors,
+    targetKey,
   );
   const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
@@ -171,25 +184,26 @@ export function usePaginatedBranches(target: VcsRefTarget) {
             : "Failed to load refs.";
         })()
       : null;
-  const refresh = useCallback(() => {
+  const refresh = () => {
     const firstPage = pageAtoms[0];
     setPagination({ targetKey, cursors: INITIAL_BRANCH_CURSORS });
     if (firstPage !== undefined) {
       appAtomRegistry.refresh(firstPage);
     }
-  }, [pageAtoms, targetKey]);
-  const loadNext = useCallback(() => {
-    if (targetKey === null || data?.nextCursor === null || data?.nextCursor === undefined) {
+  };
+  const nextCursor = data?.nextCursor;
+  const loadNext = () => {
+    if (targetKey === null || nextCursor === null || nextCursor === undefined) {
       return;
     }
     setPagination((current) => {
       const currentCursors =
         current.targetKey === targetKey ? current.cursors : INITIAL_BRANCH_CURSORS;
-      return currentCursors.includes(data.nextCursor!)
+      return currentCursors.includes(nextCursor)
         ? { targetKey, cursors: currentCursors }
-        : { targetKey, cursors: [...currentCursors, data.nextCursor!] };
+        : { targetKey, cursors: [...currentCursors, nextCursor] };
     });
-  }, [data?.nextCursor, targetKey]);
+  };
 
   return {
     data,
@@ -226,16 +240,13 @@ export function useProjectPathSearch(
   options?: { readonly allowEmptyQuery?: boolean },
 ) {
   const allowEmptyQuery = options?.allowEmptyQuery === true;
-  const normalizedTarget = useMemo(
-    () => ({
-      environmentId: target.environmentId,
-      cwd: target.cwd,
-      query: target.query == null ? null : target.query.trim(),
-      kind: target.kind,
-      imageOnly: target.imageOnly,
-    }),
-    [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
-  );
+  const normalizedTarget = {
+    environmentId: target.environmentId,
+    cwd: target.cwd,
+    query: target.query == null ? null : target.query.trim(),
+    kind: target.kind,
+    imageOnly: target.imageOnly,
+  };
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
   const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId);
   const { canReadFiles } = fileAccess;
