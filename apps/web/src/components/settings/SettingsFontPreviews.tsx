@@ -1,5 +1,5 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
@@ -22,10 +22,10 @@ export function PromptFontPreview() {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);
   const [cursor, setCursor] = useState(PROMPT_PREVIEW_TEXT.length);
-  const onChange = useCallback((nextValue: string, nextCursor: number) => {
+  const onChange = (nextValue: string, nextCursor: number) => {
     setPrompt(nextValue);
     setCursor(nextCursor);
-  }, []);
+  };
   return (
     <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
       <ComposerPromptEditor
@@ -173,6 +173,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
     const surface = surfaceRef.current;
     if (!mount || !surface) return;
     surface.setTheme(terminalThemeFromApp(mount));
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The tokens come from the DOM's computed styles, which a theme change rewrites.
   }, [theme, resolvedTheme]);
 
   useEffect(() => {
