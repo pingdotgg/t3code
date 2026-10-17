@@ -2458,6 +2458,65 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     expect(GitManager.pullRequestRepositoryKey(url)).toBe(expected);
   });
 
+  const holdsPullRequest = (remoteUrl: string | null, url: string) =>
+    GitManager.pullRequestCheckoutMismatch(remoteUrl, {
+      number: 7,
+      title: "PR",
+      url,
+      baseBranch: "main",
+      headBranch: "fix/toggle",
+      state: "open",
+      isCrossRepository: true,
+      headRepositoryNameWithOwner: "contributor/app",
+    }) === null;
+  const onGitHub = "https://github.com/acme/app/pull/7";
+  const onForgejo = "https://code.example/acme/app/pulls/7";
+  const belowMount = "https://code.example/forgejo/acme/app/pulls/7";
+  const onPort = "http://code.example:3000/acme/app/pulls/7";
+
+  it.each([
+    ["https://github.com/acme/app.git", onGitHub],
+    ["git@github.com:Acme/App.git", onGitHub],
+    // An SSH port says nothing about the web one, and an explicit default port is no port.
+    ["ssh://git@github.com:2222/acme/app.git", onGitHub],
+    ["https://github.com:443/acme/app.git", onGitHub],
+    ["https://github.com/acme/app.git/", onGitHub],
+    // A dotless SSH host is an ~/.ssh/config alias, so only its path is compared.
+    ["git@github-work:acme/app.git", onGitHub],
+    ["git@github.com:contributor/app.git", onGitHub],
+    // GitHub's SSH endpoint, on port 443 or in SCP form.
+    ["ssh://git@ssh.github.com:443/acme/app.git", onGitHub],
+    ["git@ssh.github.com:acme/app.git", onGitHub],
+    [
+      "git@ssh.dev.azure.com:v3/org/project/app",
+      "https://dev.azure.com/org/project/_git/app/pullrequest/7",
+    ],
+    ["https://code.example/acme/app.git", onForgejo],
+    ["http://code.example:3000/acme/app.git", onPort],
+    ["https://code.example/forgejo/acme/app.git", belowMount],
+    ["https://code.example/forgejo/contributor/app.git", belowMount],
+    // No evidence of a mismatch: a local or relative path, no remote, or an unreadable PR URL.
+    ["/tmp/bare-remote", onGitHub],
+    ["../mirror/acme/app", onGitHub],
+    [null, onGitHub],
+    ["https://github.com/someone/unrelated.git", "https://example.com/acme"],
+  ] as const)("lets a checkout whose remote is %s hold the PR at %s", (remoteUrl, url) => {
+    expect(holdsPullRequest(remoteUrl, url)).toBe(true);
+  });
+
+  it.each([
+    ["https://gitlab.com/acme/app.git", onGitHub],
+    ["http://gitserver/acme/app.git", onGitHub],
+    ["https://github.com/someone/unrelated.git", onGitHub],
+    ["ssh://git@ssh.github.com:443/someone/unrelated.git", onGitHub],
+    ["git@code.example:someone/unrelated.git", onForgejo],
+    ["http://code.example:4000/acme/app.git", onPort],
+    ["http://code.example:4000/contributor/app.git", onPort],
+    ["https://code.example/contributor/app.git", belowMount],
+  ] as const)("refuses a checkout whose remote is %s for the PR at %s", (remoteUrl, url) => {
+    expect(holdsPullRequest(remoteUrl, url)).toBe(false);
+  });
+
   it.effect("distinguishes Enterprise forks with the same head branch", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -5321,6 +5380,251 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         state: "open",
       });
       expect(ghCalls.some((call) => call.startsWith("pr view 42 "))).toBe(true);
+    }),
+  );
+
+  /**
+   * Prepares a pull request of pingdotgg/Codething-MVP, from a fork unless `crossRepository` is
+   * false, in a checkout with `remotes`, each a name and URL; a name given twice gets a second URL.
+   * Hosted URLs are rewritten to local bare repositories holding the head, so nothing reaches the
+   * network.
+   */
+  const prepareInCheckout = (
+    remotes: ReadonlyArray<readonly [string, string]>,
+    mode: "local" | "worktree" = "worktree",
+    crossRepository = true,
+  ) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/elsewhere"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "elsewhere.txt"), "elsewhere\n");
+      yield* runGit(repoDir, ["add", "elsewhere.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Pull request head"]);
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+      const bareWithHead = Effect.gen(function* () {
+        const bareDir = yield* createBareRemote();
+        const heads = [`${head}:refs/heads/feature/elsewhere`, `${head}:refs/pull/64/head`];
+        yield* runGit(repoDir, ["push", bareDir, "main", ...heads]);
+        return bareDir;
+      });
+      const forkDir = yield* bareWithHead;
+      yield* runGit(repoDir, ["branch", "-D", "feature/elsewhere"]);
+      for (const [name, url] of remotes) {
+        const added = (yield* runGit(repoDir, ["remote"])).stdout.split("\n").includes(name);
+        if (added) {
+          yield* runGit(repoDir, ["config", "--add", `remote.${name}.url`, url]);
+        } else if (url.startsWith("https://")) {
+          const localDir = url.includes("/contributor/") ? forkDir : yield* bareWithHead;
+          yield* runGit(repoDir, ["remote", "add", "--", name, localDir]);
+          yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, name, url, localDir);
+        } else {
+          yield* runGit(repoDir, ["remote", "add", "--", name, url]);
+        }
+      }
+      const setupCalls: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          pullRequest: {
+            number: 64,
+            title: "Fork PR",
+            url: "https://github.com/pingdotgg/Codething-MVP/pull/64",
+            baseRefName: "main",
+            headRefName: "feature/elsewhere",
+            state: "open",
+            isCrossRepository: crossRepository,
+            ...(crossRepository
+              ? {
+                  headRepositoryNameWithOwner: "contributor/codething-mvp",
+                  headRepositoryOwnerLogin: "contributor",
+                }
+              : {}),
+          },
+          repositoryCloneUrls: { "contributor/codething-mvp": { url: forkDir, sshUrl: forkDir } },
+        },
+        setupScriptRunner: {
+          runForThread: (setupInput) =>
+            Effect.sync(() => {
+              setupCalls.push(setupInput);
+              return { status: "no-script" as const };
+            }),
+        },
+      });
+      const listed = (args: ReadonlyArray<string>) =>
+        runGit(repoDir, [...args]).pipe(Effect.map(({ stdout }) => stdout.trim().split("\n")));
+      const remoteConfig = listed(["config", "--get-regexp", "^remote\\."]);
+      const remoteConfigBefore = yield* remoteConfig;
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "https://github.com/pingdotgg/Codething-MVP/pull/64",
+        mode,
+        threadId: asThreadId("thread-pr-elsewhere"),
+      }).pipe(Effect.result);
+      return {
+        repoDir,
+        result,
+        head,
+        remoteConfigBefore,
+        remoteConfigAfter: yield* remoteConfig,
+        ghCalls,
+        setupCalls,
+        remotes: yield* listed(["remote"]),
+        branches: yield* listed(["branch", "--format=%(refname:short)"]),
+        worktrees: yield* listed(["worktree", "list"]),
+      };
+    });
+
+  const unrelated = "https://github.com/someone/unrelated.git";
+  const base = "https://github.com/pingdotgg/codething-mvp.git";
+  const someonesFork = "https://github.com/someone/codething-mvp.git";
+  const elsewhere =
+    "Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.";
+
+  it.effect.each([
+    {
+      layout: "an unrelated origin in local mode",
+      mode: "local",
+      remotes: [["origin", unrelated]],
+    },
+    { layout: "an unrelated origin", remotes: [["origin", unrelated]] },
+    // Fetch only ever contacts a remote's first URL, so a later one vouches for nothing.
+    {
+      layout: "the base in a later URL",
+      remotes: [
+        ["origin", unrelated],
+        ["origin", base],
+      ],
+    },
+    // The identity remote is a fork of the base; the base's remote is not named upstream.
+    {
+      layout: "a fork clone's base remote under another name",
+      remotes: [
+        ["origin", someonesFork],
+        ["acme", base],
+      ],
+      remedy:
+        "Its remote acme names pingdotgg/Codething-MVP; run `git remote rename acme upstream` to open the pull request here.",
+    },
+    // Git accepts shell metacharacters in a remote name, so the advice quotes it.
+    {
+      layout: "a fork clone's base remote named with shell metacharacters",
+      remotes: [
+        ["origin", someonesFork],
+        ["base;printf$IFS'pwned'\"$PPID\"", base],
+      ],
+      remedy:
+        "Its remote base;printf$IFS'pwned'\"$PPID\" names pingdotgg/Codething-MVP; run `git remote rename 'base;printf$IFS'\\''pwned'\\''\"$PPID\"' upstream` to open the pull request here.",
+    },
+    // Git would read a name that starts with `-` as an option, so the advice ends options first.
+    ...(["-lead", "--progress"] as const).map((name) => ({
+      layout: `a fork clone's base remote named ${name}`,
+      remotes: [
+        ["origin", someonesFork],
+        [name, base],
+      ] as const,
+      remedy: `Its remote ${name} names pingdotgg/Codething-MVP; run \`git remote rename -- ${name} upstream\` to open the pull request here.`,
+      rename: ["--", name] as const,
+    })),
+    // A monorepo that pulls the base in as a subtree is no fork of it.
+    {
+      layout: "a subtree remote of the base",
+      remotes: [
+        ["origin", unrelated],
+        ["libfoo", base],
+      ],
+    },
+    // A relative path reads like the base's key but names a directory.
+    {
+      layout: "a local path remote",
+      remotes: [
+        ["origin", someonesFork],
+        ["mirror", "github.com/pingdotgg/codething-mvp.git"],
+      ],
+    },
+    // Renaming the base onto the identity remote's upstream would fail.
+    {
+      layout: "an identity remote already named upstream",
+      remotes: [
+        ["upstream", someonesFork],
+        ["origin", base],
+      ],
+    },
+  ] as const)("refuses a checkout with $layout before any write", (row) =>
+    Effect.gen(function* () {
+      const prepared = yield* prepareInCheckout(row.remotes, "mode" in row ? row.mode : undefined);
+      expect(prepared.result).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "GitManagerError",
+          detail: `This project is not a checkout of pingdotgg/Codething-MVP. ${"remedy" in row ? row.remedy : elsewhere}`,
+        },
+      });
+      if ("remedy" in row) {
+        // A POSIX shell reads the advice as one git command, and run for real it renames exactly
+        // that remote.
+        const command = /`(git remote rename .+ upstream)`/u.exec(row.remedy)?.[1] ?? "";
+        const script = `git() { printf '%s\\0' "$@"; }; ${command}`;
+        const argv = NodeChildProcess.spawnSync("sh", ["-c", script], { encoding: "utf8" }).stdout;
+        const name = "rename" in row ? row.rename : [row.remotes.at(-1)?.[0]];
+        expect(argv.split("\0")).toEqual(["remote", "rename", ...name, "upstream", ""]);
+        NodeChildProcess.spawnSync("sh", ["-c", command], { cwd: prepared.repoDir });
+        expect((yield* runGit(prepared.repoDir, ["remote"])).stdout.trim().split("\n")).toEqual([
+          "origin",
+          "upstream",
+        ]);
+      }
+      expect(prepared.ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
+      expect(prepared.remotes).toEqual([...new Set(row.remotes.map(([name]) => name))].toSorted());
+      expect(prepared.remoteConfigAfter).toEqual(prepared.remoteConfigBefore);
+      expect(prepared.branches).toEqual(["main"]);
+      expect(prepared.worktrees).toHaveLength(1);
+      expect(prepared.setupCalls).toHaveLength(0);
+    }),
+  );
+
+  const forkBranch = "t3code/pr-64/feature/elsewhere";
+  it.effect.each([
+    {
+      layout: "the base as origin, for a same-repository PR",
+      remotes: [["origin", base]],
+      after: ["origin"],
+      branch: "feature/elsewhere",
+    },
+    {
+      layout: "the base as origin",
+      remotes: [["origin", base]],
+      after: ["contributor", "origin"],
+      branch: forkBranch,
+    },
+    // The head's fork is already origin, so no remote is added for it.
+    {
+      layout: "the head's fork as origin",
+      remotes: [["origin", "https://github.com/contributor/codething-mvp.git"]],
+      after: ["origin"],
+      branch: forkBranch,
+    },
+    {
+      layout: "a fork clone with the base as upstream",
+      remotes: [
+        ["origin", "https://github.com/me/codething-mvp.git"],
+        ["upstream", base],
+      ],
+      after: ["contributor", "origin", "upstream"],
+      branch: forkBranch,
+    },
+  ] as const)("prepares a worktree in a checkout with $layout", ({ remotes, after, branch }) =>
+    Effect.gen(function* () {
+      const prepared = yield* prepareInCheckout(remotes, "worktree", branch === forkBranch);
+      expect(prepared.result).toMatchObject({ _tag: "Success", success: { branch } });
+      const worktreePath = Result.getOrThrow(prepared.result).worktreePath as string;
+      const inWorktree = (args: ReadonlyArray<string>) =>
+        runGit(worktreePath, [...args]).pipe(Effect.map(({ stdout }) => stdout.trim()));
+      expect(yield* inWorktree(["branch", "--show-current"])).toBe(branch);
+      expect(yield* inWorktree(["rev-parse", "HEAD"])).toBe(prepared.head);
+      expect(prepared.remotes).toEqual(after);
+      expect(prepared.worktrees).toHaveLength(2);
+      expect(prepared.setupCalls).toHaveLength(1);
     }),
   );
 

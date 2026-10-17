@@ -77,6 +77,7 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { pickPrimaryRemote } from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
@@ -313,6 +314,132 @@ export function parseRepositoryNameWithOwnerFromRemoteUrl(
     provider?.repositoryNameFromRemoteUrl?.(trimmed) ??
     SourceControlProvider.repositoryPathFromRemoteUrl(trimmed)
   );
+}
+
+/** The key of the repository a pull request URL belongs to, or null for a shape this cannot read. */
+function pullRequestBaseRepositoryKey(url: string): string | null {
+  // `pullRequestRepositoryKey` does not read Forgejo's and GitCafe's `/pulls/`.
+  const link = parseChangeRequestUrl(url);
+  const key =
+    pullRequestRepositoryKey(url) ??
+    (link === null ? null : normalizeGitRemoteUrl(`https://${link.host}/${link.repository}`));
+  return key === null ? null : canonicalRepositoryKey(key);
+}
+
+/** The pull request's repository in the case its URL writes it, else the path of its `key`. */
+function pullRequestRepositoryName(url: string, key: string): string {
+  // The link's repository is lower-cased, but it spells the start of the URL's own path.
+  const link = parseChangeRequestUrl(url);
+  return link === null
+    ? splitRepositoryKey(key).path
+    : new URL(url).pathname.slice(1, link.repository.length + 1);
+}
+
+/** A repository key's host and the path below it. */
+function splitRepositoryKey(key: string): { readonly host: string; readonly path: string } {
+  const slash = key.indexOf("/");
+  return { host: key.slice(0, slash), path: key.slice(slash + 1) };
+}
+
+/** An HTTP or HTTPS URL's port, empty for its scheme's default, or null for any other URL. */
+function httpPort(url: string): string | null {
+  try {
+    const { protocol, port } = new URL(url);
+    return protocol === "http:" || protocol === "https:" ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a remote names the repository at `repositoryKey`, on the host of the pull request at
+ * `pullRequestUrl`. Keys leave the port out, but over HTTP it can tell two installs on one host
+ * apart. An SSH port says nothing about the web one, and GitHub also serves SSH from
+ * `ssh.github.com`, its endpoint on port 443. A dotless SSH host is an `~/.ssh/config` alias such
+ * as `git@github-work:`, which stands for a host it does not name, so only its path is compared.
+ * Any other host must match.
+ */
+function namesRepository(
+  remoteUrl: string,
+  pullRequestUrl: string,
+  repositoryKey: string,
+): boolean {
+  const remotePort = httpPort(remoteUrl);
+  if (remotePort !== null && remotePort !== httpPort(pullRequestUrl)) return false;
+  const ssh = isSshRemoteUrl(remoteUrl);
+  const key = canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl));
+  const remoteKey = ssh ? key.replace(/^ssh\.github\.com\//u, "github.com/") : key;
+  if (remoteKey === repositoryKey) return true;
+  const remote = splitRepositoryKey(remoteKey);
+  return (
+    ssh && !remote.host.includes(".") && remote.path === splitRepositoryKey(repositoryKey).path
+  );
+}
+
+/** A word as a POSIX shell reads it literally: bare when plain, else single-quoted. */
+function shellQuote(word: string): string {
+  return /^[\w./:@=-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The remote a fork clone names its base by, when renaming it `upstream` would let the clone open
+ * the pull request: the identity remote is a repository of the base's name on the base's host, and
+ * the remote's first URL is hosted and names the base. A subtree or vendoring remote beside an
+ * unrelated identity is no fork's base, and a rename onto a taken `upstream` would fail.
+ */
+function forkBaseRemote(
+  remotes: ReadonlyMap<string, string>,
+  identity: { readonly remoteName: string; readonly remoteUrl: string } | null,
+  pullRequestUrl: string,
+  baseKey: string,
+): string | undefined {
+  if (identity === null || identity.remoteName === "upstream") return undefined;
+  const base = splitRepositoryKey(baseKey);
+  const fork = splitRepositoryKey(
+    canonicalRepositoryKey(normalizeGitRemoteUrl(identity.remoteUrl)),
+  );
+  const name = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  if (name(fork.path) !== name(base.path)) return undefined;
+  if (!namesRepository(identity.remoteUrl, pullRequestUrl, `${base.host}/${fork.path}`))
+    return undefined;
+  return [...remotes].find(
+    ([, url]) =>
+      parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null &&
+      namesRepository(url, pullRequestUrl, baseKey),
+  )?.[0];
+}
+
+/**
+ * The key of the pull request's repository when a checkout whose identity remote is at
+ * `remoteUrl` holds neither it nor the fork its head comes from, or null when it holds one. Only
+ * a definite mismatch answers with a key: no remote, a local or relative path, or a pull request
+ * URL this cannot read is no evidence either way.
+ */
+export function pullRequestCheckoutMismatch(
+  remoteUrl: string | null,
+  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+): string | null {
+  const baseKey = pullRequestBaseRepositoryKey(pullRequest.url);
+  if (
+    baseKey === null ||
+    remoteUrl === null ||
+    parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl) === null
+  ) {
+    return null;
+  }
+  // Forks live on their base's host. A Forgejo install mounted below its host's root serves them
+  // over HTTP below that mount too, which the head's `owner/name` leaves out.
+  const base = splitRepositoryKey(baseKey);
+  const mount =
+    httpPort(remoteUrl) !== null && parseChangeRequestUrl(pullRequest.url)?.authority !== undefined
+      ? base.path.replace(/[^/]+\/[^/]+$/u, "")
+      : "";
+  const head = resolveHeadRepositoryNameWithOwner(pullRequest);
+  const holds =
+    namesRepository(remoteUrl, pullRequest.url, baseKey) ||
+    (head !== null &&
+      namesRepository(remoteUrl, pullRequest.url, `${base.host}/${mount}${head.toLowerCase()}`));
+  return holds ? null : baseKey;
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -2574,6 +2701,24 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  // Each of a checkout's remotes by name, at its URL as configured: the first of the remote's
+  // URLs, the one fetch uses, before `insteadOf` rewrites it.
+  const readCheckoutRemoteUrls = Effect.fn("readCheckoutRemoteUrls")(function* (cwd: string) {
+    const { stdout } = yield* gitCore.execute({
+      operation: "GitManager.readCheckoutRemoteUrls",
+      cwd,
+      args: ["config", "--get-regexp", "^remote\\..+\\.url$"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    const urls = new Map<string, string>();
+    for (const line of stdout.split("\n")) {
+      const [, name = "", url = ""] = /^remote\.(.+)\.url\s+(.+)$/.exec(line.trim()) ?? [];
+      if (name.length > 0 && url.length > 0 && !urls.has(name)) urls.set(name, url);
+    }
+    return urls;
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2605,6 +2750,34 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      const pullRequestWithRemoteInfo = {
+        ...pullRequest,
+        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+      } as const;
+      // A pull request can be read through any project on its host, so the checkout asked to
+      // hold it is not necessarily a checkout of its repository. Fetching into it anyway pulls
+      // an unrelated history in, runs its setup and hands the task to the wrong project.
+      const remotes = yield* readCheckoutRemoteUrls(input.cwd);
+      const identity = pickPrimaryRemote(remotes);
+      const mismatch = pullRequestCheckoutMismatch(
+        identity?.remoteUrl ?? null,
+        pullRequestWithRemoteInfo,
+      );
+      if (mismatch !== null) {
+        const repository = pullRequestRepositoryName(pullRequest.url, mismatch);
+        const baseRemote = forkBaseRemote(remotes, identity, pullRequest.url, mismatch);
+        // A fork clone needs the rename, not a project elsewhere, so each message gives one remedy.
+        // `--` stops git reading a remote named like `-x` as an option.
+        const remedy =
+          baseRemote === undefined
+            ? "Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name."
+            : `Its remote ${baseRemote} names ${repository}; run \`git remote rename ${baseRemote.startsWith("-") ? "-- " : ""}${shellQuote(baseRemote)} upstream\` to open the pull request here.`;
+        return yield* new GitManagerError({
+          operation: "preparePullRequestThread",
+          cwd: input.cwd,
+          detail: `This project is not a checkout of ${repository}. ${remedy}`,
+        });
+      }
 
       if (input.mode === "local") {
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
@@ -2643,10 +2816,6 @@ export const make = Effect.gen(function* () {
         );
       });
 
-      const pullRequestWithRemoteInfo = {
-        ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-      } as const;
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 

@@ -56,7 +56,7 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   return remotes;
 }
 
-function pickPrimaryRemote(
+export function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
   for (const preferredRemoteName of ["upstream", "origin"] as const) {
