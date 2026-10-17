@@ -1817,12 +1817,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   // Verified hrefs live with the index they were checked against. A chip's menu
   // remembers the href it showed, so its actions use the file it named.
-  const { threadFilePathIndex, boundFileHrefs, menuFileHrefs } = useMemo(
+  const { threadFilePathIndex, boundFileHrefs, pendingFileHrefs, menuFileHrefs } = useMemo(
     () => ({
       threadFilePathIndex: buildThreadFilePathIndex(
         threadFilePathsKey === "" ? [] : threadFilePathsKey.split("\n"),
       ),
       boundFileHrefs: new Map<string, string>(),
+      pendingFileHrefs: new Map<string, Promise<string>>(),
       menuFileHrefs: new Map<string, string>(),
     }),
     [threadFilePathsKey],
@@ -1840,21 +1841,26 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
   }, [props.environmentId, props.threadId]);
   // The joined path stands unless it is missing and the named file exists.
-  const bindThreadFileHref = useCallback(
+  // Without a workspace root nothing is joined, so the named file is the only
+  // reading, as on web.
+  const checkThreadFileHref = useCallback(
     async (href: string) => {
-      const known = boundFileHrefs.get(href);
-      if (known !== undefined) return known;
       const candidate = resolveMarkdownFileLinkThreadTarget(
         href,
         props.workspaceRoot,
         threadFilePathIndex,
       );
+      if (candidate === null) return href;
       const joined = resolveMarkdownFileLinkTarget(
         href,
         props.workspaceRoot ?? undefined,
         props.workspaceRoot ?? undefined,
       );
-      if (candidate === null || joined === null) return href;
+      if (joined === null) {
+        const bound = fileLinkHref(candidate);
+        boundFileHrefs.set(href, bound);
+        return bound;
+      }
       const exists = async (path: string) => {
         const metadata = await readFileMetadata({
           environmentId: props.environmentId,
@@ -1879,6 +1885,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       readFileMetadata,
       threadFilePathIndex,
     ],
+  );
+  // iOS asks for every link's menu while it builds them, so concurrent asks
+  // share one check. A failed check is dropped, so the next ask retries it.
+  const bindThreadFileHref = useCallback(
+    (href: string) => {
+      const known = boundFileHrefs.get(href);
+      if (known !== undefined) return Promise.resolve(known);
+      const pending = pendingFileHrefs.get(href);
+      if (pending !== undefined) return pending;
+      const check = checkThreadFileHref(href).finally(() => pendingFileHrefs.delete(href));
+      pendingFileHrefs.set(href, check);
+      return check;
+    },
+    [boundFileHrefs, checkThreadFileHref, pendingFileHrefs],
   );
   // A slow check must not reopen a file after a later press opened another.
   const withBoundFileHref = useCallback(
