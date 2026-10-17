@@ -6,6 +6,25 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+// Invalidates in-flight `show` calls when a newer show begins or `close`
+// runs first. The styled preference read is asynchronous, so without this a
+// menu could open after it was already dismissed.
+let contextMenuShowGeneration = 0;
+
+// Whether the user opted into T3 Code styling for right-click menus on
+// desktop. Reads the client-settings snapshot lazily so this module stays
+// free of a static import cycle with the settings hooks. Falls back to the
+// native menu when the preference can't be read.
+async function shouldUseStyledContextMenu(): Promise<boolean> {
+  try {
+    const { ensureClientSettingsHydrated, getClientSettings } = await import("~/hooks/useSettings");
+    await ensureClientSettingsHydrated();
+    return getClientSettings().styledContextMenuEnabled === true;
+  } catch {
+    return false;
+  }
+}
+
 function createBrowserLocalApi(): LocalApi {
   return {
     dialogs: {
@@ -45,17 +64,24 @@ function createBrowserLocalApi(): LocalApi {
         position?: { x: number; y: number },
       ): Promise<T | null> => {
         if (window.desktopBridge) {
+          const generation = ++contextMenuShowGeneration;
+          const useStyled = await shouldUseStyledContextMenu();
+          if (generation !== contextMenuShowGeneration) return null;
+          if (useStyled) {
+            return showContextMenuFallback(items, position);
+          }
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },
-      // A native desktop menu blocks keyboard input and closes on outside
-      // interaction, so nothing to do there; the DOM fallback needs an explicit
-      // dismiss when the state behind it goes away.
+      // The DOM fallback needs an explicit dismiss when the state behind it
+      // goes away. A native desktop menu closes itself; dismissing is a
+      // no-op when no fallback menu is open, so this is safe to call always
+      // (including when the styled menu is used on desktop). Bumping the
+      // generation abandons any show still awaiting the preference read.
       close: async () => {
-        if (!window.desktopBridge) {
-          dismissContextMenu();
-        }
+        contextMenuShowGeneration += 1;
+        dismissContextMenu();
       },
     },
     persistence: {
