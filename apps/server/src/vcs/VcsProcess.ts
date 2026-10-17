@@ -62,6 +62,7 @@ const VCS_PROCESS_CONCURRENCY = 8;
 const GITHUB_PROCESS_CONCURRENCY = 4;
 
 export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
+export const JJ_CHECKPOINT_CAPTURE_OPERATION = "JjVcsDriver.checkpoints.captureCheckpoint";
 
 /**
  * Appends `key=value` to the `GIT_CONFIG_*` entries git reads as command-line
@@ -111,7 +112,7 @@ export const gitConfigEnv = (
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
-const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
+export const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
 
   if (
@@ -149,7 +150,11 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
         normalized.includes("404"))) ||
     (command === "az" &&
       normalized.includes("pull request") &&
-      (normalized.includes("not found") || normalized.includes("does not exist")))
+      (normalized.includes("not found") || normalized.includes("does not exist"))) ||
+    (command === "jj" &&
+      (normalized.includes("there is no jj repo in") ||
+        normalized.includes("doesn't exist") ||
+        normalized.includes("no such bookmark")))
   ) {
     return "not-found";
   }
@@ -259,7 +264,8 @@ export const make = Effect.gen(function* () {
     const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
     if (
       input.command === "git" &&
-      input.operation === CHECKPOINT_CAPTURE_OPERATION &&
+      (input.operation === CHECKPOINT_CAPTURE_OPERATION ||
+        input.operation === JJ_CHECKPOINT_CAPTURE_OPERATION) &&
       input.onStdoutChunk === undefined
     ) {
       return yield* bounded.pipe(

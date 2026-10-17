@@ -9,6 +9,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ServerConfig from "../config.ts";
+import * as JjAvailability from "../vcs/JjAvailability.ts";
+import { JJ_REPOSITORY_DETECTION_ENABLED } from "../vcs/JjRepo.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { detailFromCause, firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -52,7 +54,7 @@ const VCS_PROBES: ReadonlyArray<VcsProbe> = [
     label: "Jujutsu",
     executable: "jj",
     versionArgs: ["--version"],
-    implemented: false,
+    implemented: JJ_REPOSITORY_DETECTION_ENABLED,
     installHint: "Install Jujutsu with `brew install jj` or from https://github.com/jj-vcs/jj.",
   },
 ];
@@ -125,6 +127,11 @@ export const make = Effect.gen(function* () {
             installHint: input.installHint,
             detail: detailFromCause(cause),
           } satisfies DiscoveryProbeResult<Kind>),
+        ),
+        Effect.onExit(() =>
+          input.kind === "jj"
+            ? Effect.sync(() => JjAvailability.invalidateJjAvailability(process))
+            : Effect.void,
         ),
       );
   };
