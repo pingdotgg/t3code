@@ -1,5 +1,7 @@
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
@@ -42,11 +44,13 @@ export function MediaVideoPlayer({
   onRetry,
   actionsSource,
 }: MediaVideoPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  // State, not a ref: the element remounts on retry and failure, and effects must rebind to it.
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;
     revision: string | null;
   } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<HTMLVideoElement | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -54,25 +58,19 @@ export function MediaVideoPlayer({
   const src = playbackSource?.src ?? latestSrc;
   const sourceRevision = playbackSource === null ? revision : playbackSource.revision;
   const failed = src !== null ? failedSrc === src : sourceFailed;
+  const preloaded = preloadedSrc === src || typeof IntersectionObserver === "undefined";
 
   // Re-signing must not reset the playhead. Changed files refresh once playback pauses.
-  const refreshPausedRevision = useCallback(() => {
-    const video = videoRef.current;
-    if (video === null || video.paused || video.ended) {
-      setPlaybackSource((current) =>
-        current !== null && current.revision !== revision ? null : current,
-      );
-    }
-  }, [revision]);
-  useEffect(refreshPausedRevision, [refreshPausedRevision]);
+  if (
+    playbackSource !== null &&
+    playbackSource.revision !== revision &&
+    (video === null || playingVideo !== video)
+  ) {
+    setPlaybackSource(null);
+  }
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || preload === "metadata" || preloadedSrc === src) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setPreloadedSrc(src);
-      return;
-    }
+    if (!video || preload === "metadata" || preloaded) return;
     let active = true;
     const observer = new IntersectionObserver(
       (entries) => {
@@ -87,10 +85,9 @@ export function MediaVideoPlayer({
       active = false;
       observer.disconnect();
     };
-  }, [src, preload, preloadedSrc, failed, loadAttempt]);
+  }, [video, src, preload, preloaded]);
 
   useEffect(() => {
-    const video = videoRef.current;
     if (!video) return;
     const pauseWhenHidden = () => {
       // Native fullscreen can hide the inline page while this video is still visible.
@@ -108,21 +105,22 @@ export function MediaVideoPlayer({
       video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
     };
-  }, [src, failed, loadAttempt]);
+  }, [video]);
 
   const retry = async () => {
     if (retrying) return;
     setRetrying(true);
-    try {
+    const result = await settlePromise(async () => {
       await onRetry?.();
+    });
+    if (AsyncResult.isSuccess(result)) {
       setPlaybackSource(null);
       setFailedSrc(null);
       setLoadAttempt((current) => current + 1);
-    } catch {
+    } else {
       setFailedSrc(src);
-    } finally {
-      setRetrying(false);
     }
+    setRetrying(false);
   };
 
   const player = (
@@ -161,7 +159,7 @@ export function MediaVideoPlayer({
       ) : src !== null && !failed ? (
         <video
           key={loadAttempt}
-          ref={videoRef}
+          ref={setVideo}
           src={src}
           aria-label={label || "Video preview"}
           aria-hidden={onOpen ? true : undefined}
@@ -169,7 +167,7 @@ export function MediaVideoPlayer({
           controls={!onOpen}
           muted={onOpen ? true : undefined}
           playsInline
-          preload={preload === "metadata" || preloadedSrc === src ? "metadata" : "none"}
+          preload={preload === "metadata" || preloaded ? "metadata" : "none"}
           className={cn(
             "aspect-video max-h-full w-full bg-black object-contain",
             onOpen && "pointer-events-none",
@@ -177,10 +175,14 @@ export function MediaVideoPlayer({
           )}
           style={style}
           onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
-          onPlay={() => setPlaybackSource({ src, revision: sourceRevision })}
-          onPause={refreshPausedRevision}
-          onEnded={refreshPausedRevision}
+          onPlay={(event) => {
+            setPlayingVideo(event.currentTarget);
+            setPlaybackSource({ src, revision: sourceRevision });
+          }}
+          onPause={() => setPlayingVideo(null)}
+          onEnded={() => setPlayingVideo(null)}
           onError={() => {
+            setPlayingVideo(null);
             if (latestSrc !== null && src !== latestSrc) setPlaybackSource(null);
             else setFailedSrc(src);
           }}
