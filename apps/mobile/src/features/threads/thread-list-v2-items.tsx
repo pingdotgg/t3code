@@ -1198,7 +1198,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
-  if (!canOperateThread) return rowContent(() => {});
+  // Without the swipeable, the row still takes its container inset so it lines
+  // up with rows that have one.
+  if (!canOperateThread) {
+    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+  }
 
   return (
     <View collapsable={false}>
