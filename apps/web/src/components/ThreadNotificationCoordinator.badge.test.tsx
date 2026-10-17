@@ -14,14 +14,25 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
+  noRequests: new Map(),
+  noDelegated: new Set(),
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: (id: string) => state.shells.get(id) }));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: (id: string) =>
+    id.startsWith("subagent-requests:") ? state.noRequests : state.shells.get(id),
+}));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
   useParams: () => ({}),
 }));
 vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: {
+    pendingSubagentRequestsAtom: (id: string) => `subagent-requests:${id}`,
+  },
+}));
+vi.mock("../state/entities", () => ({ useDelegatedUnderParent: () => state.noDelegated }));
 vi.mock("../state/environments", () => ({
   useEnvironmentIds: () => state.environmentIds,
 }));

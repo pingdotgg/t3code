@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { pendingSubagentRequestsByThread } from "@t3tools/client-runtime/state/threads";
 
 const state = vi.hoisted(() => ({
   mode: "off" as ClientSettings["notificationMode"],
@@ -22,6 +23,7 @@ const state = vi.hoisted(() => ({
   subagent: false,
   background: [] as Array<{ taskId: string; kind: "command" | "monitor" }>,
   delegatedChild: null as "running" | "approval" | null,
+  noDelegated: new Set<string>(),
   add: vi.fn(
     (_toast: { title: string; description: string; actionProps: { onClick: () => void } }) =>
       "toast-1",
@@ -111,10 +113,13 @@ function mockThreads() {
 }
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({
-    status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({ threads: mockThreads() }),
-  }),
+  useAtomValue: (atom: unknown) =>
+    atom === "subagent-requests:env-1"
+      ? pendingSubagentRequestsByThread(mockThreads() as never)
+      : {
+          status: state.live ? "live" : "disconnected",
+          snapshot: Option.some({ threads: mockThreads() }),
+        },
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
@@ -134,6 +139,12 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/shell", () => ({
   environmentShell: { stateValueAtom: vi.fn() },
 }));
+vi.mock("../state/threads", () => ({
+  environmentThreadShells: {
+    pendingSubagentRequestsAtom: (environmentId: string) => `subagent-requests:${environmentId}`,
+  },
+}));
+vi.mock("../state/entities", () => ({ useDelegatedUnderParent: () => state.noDelegated }));
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
   playNotificationSound: state.sound,
