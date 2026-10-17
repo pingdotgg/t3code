@@ -308,6 +308,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.gen(function* () {
         const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const checks = yield* cli.listBuildChecks({ cwd: input.cwd, number: input.number });
         const location = pullRequest.location;
         const changedFiles =
           location === null
@@ -331,7 +332,7 @@ export const make = Effect.gen(function* () {
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           reviewers: pullRequest.reviewers,
-          checks: [],
+          checks,
           mergeCapabilities: { merge: true, squash: true, rebase: false },
           viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
           autoMergeEnabled: pullRequest.autoMergeEnabled,
