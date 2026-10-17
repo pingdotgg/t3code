@@ -16,6 +16,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
@@ -105,6 +107,8 @@ it.effect.each([
       Layer.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          Layer.mock(ServerConfig.ServerConfig)({ worktreesDir: "/synthetic-worktrees" } as never),
+          ServerSettings.layerTest(),
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),

@@ -16,20 +16,35 @@ const [Effect, Layer, FileSystem, Path] = await Promise.all([
 const app = (file) => import(NodeURL.pathToFileURL(root + "/apps/server/src/" + file + ".ts"));
 const providerCore = (file) =>
   import(NodeURL.pathToFileURL(root + "/packages/provider-core/src/server/" + file + ".ts"));
-const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth] =
-  await Promise.all([
-    app("orchestration-v2/ProviderTurnStartService"),
-    app("orchestration-v2/ProjectionStore"),
-    app("orchestration-v2/RunExecutionService"),
-    app("orchestration-v2/ProviderSessionManager"),
-    app("orchestration-v2/RuntimePolicy"),
-    providerCore("IdAllocator"),
-    app("orchestration-v2/EventSink"),
-    app("orchestration-v2/ContextHandoffService"),
-    app("git/GitWorkflowService"),
-    app("project/ProjectService"),
-    app("provider/ProviderAuthService"),
-  ]);
+const [
+  Start,
+  Projection,
+  Run,
+  Sessions,
+  Policy,
+  Id,
+  Sink,
+  Handoff,
+  Git,
+  Project,
+  Auth,
+  Config,
+  Settings,
+] = await Promise.all([
+  app("orchestration-v2/ProviderTurnStartService"),
+  app("orchestration-v2/ProjectionStore"),
+  app("orchestration-v2/RunExecutionService"),
+  app("orchestration-v2/ProviderSessionManager"),
+  app("orchestration-v2/RuntimePolicy"),
+  providerCore("IdAllocator"),
+  app("orchestration-v2/EventSink"),
+  app("orchestration-v2/ContextHandoffService"),
+  app("git/GitWorkflowService"),
+  app("project/ProjectService"),
+  app("provider/ProviderAuthService"),
+  app("config"),
+  app("serverSettings"),
+]);
 let current;
 let fullReads = 0;
 let threadReads = 0;
@@ -54,6 +69,8 @@ const dependencies = Layer.mergeAll(
   Layer.mock(Git.GitWorkflowService)({}),
   Layer.mock(Project.ProjectService)({}),
   Layer.mock(Auth.ProviderAuthService)({}),
+  Layer.mock(Config.ServerConfig)({ worktreesDir: "/synthetic-worktrees" }),
+  Settings.layerTest(),
   Layer.mock(Projection.ProjectionStoreV2)({
     getThreadProjection: () =>
       Effect.sync(() => {

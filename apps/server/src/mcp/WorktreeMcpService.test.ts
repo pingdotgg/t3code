@@ -17,7 +17,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
@@ -104,7 +103,6 @@ interface HarnessOptions {
   readonly projectMissing?: boolean;
   readonly projectReadFails?: boolean;
   readonly existingBranchWorktreePath?: string | null;
-  readonly pathSemantics?: "win32" | "posix";
   readonly createWorktreeFails?: boolean;
   readonly fetchRemoteFails?: boolean;
   readonly resolveRemoteFails?: boolean;
@@ -287,22 +285,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     }
   });
 
-  // Optional deterministic Path semantics: providing this BEFORE the general
-  // mocks means the service resolves Path here rather than from NodeServices,
-  // so absolute-path validation is testable independently of the host OS.
-  const win32IsAbsolute = (value: string) => /^(?:[a-zA-Z]:[\\/]|[\\/])/.test(value);
-  const posixIsAbsolute = (value: string) => value.startsWith("/");
-  const layerService =
-    options.pathSemantics === undefined
-      ? WorktreeMcpService.layer
-      : WorktreeMcpService.layer.pipe(
-          Layer.provide(
-            Layer.succeed(Path.Path, {
-              isAbsolute: options.pathSemantics === "win32" ? win32IsAbsolute : posixIsAbsolute,
-            } as unknown as Path.Path),
-          ),
-        );
-  const layer = layerService.pipe(
+  const layer = WorktreeMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -385,6 +368,9 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
     const service = yield* WorktreeMcpService.WorktreeMcpService;
     return yield* service.status(harness.scope);
   }).pipe(Effect.provide(harness.layer));
+
+// Decodes tool arguments the way the MCP tool does before calling the service.
+const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
   it.effect("creates a worktree from the current branch and re-points the thread", () => {
@@ -501,14 +487,13 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
-  it.effect("starts from origin and honors explicit baseRef and path", () => {
+  it.effect("starts from origin and honors an explicit baseRef", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const result = yield* runHandoff(harness, {
         branch: "feature/from-origin",
         baseRef: "dev",
         startFromOrigin: true,
-        path: "/custom/worktree/location",
         runSetupScript: false,
       });
 
@@ -526,11 +511,11 @@ describe("t3_worktree_handoff", () => {
         refName: "abc123",
         newRefName: "feature/from-origin",
         baseRefName: "dev",
-        path: "/custom/worktree/location",
+        path: null,
       });
       expect(harness.localStatus).toHaveBeenCalled();
       expect(harness.runForThread).not.toHaveBeenCalled();
-      expect(result.worktreePath).toBe("/custom/worktree/location");
+      expect(result.worktreePath).toBe("/worktrees/project/feature/from-origin");
       expect(result.startedFromOrigin).toBe(true);
       expect(result.setupScript).toEqual({ status: "skipped" });
     });
@@ -825,28 +810,16 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
-  it.effect("accepts a Windows drive path under win32 path semantics", () => {
-    const harness = makeHarness({ pathSemantics: "win32" });
+  it.effect("creates the worktree in the managed directory even when a call names a path", () => {
+    const harness = makeHarness();
     return Effect.gen(function* () {
-      const result = yield* runHandoff(harness, {
-        branch: "feature/windows-path",
-        path: "C:\\worktrees\\custom",
+      const input = yield* decodeHandoffInput({
+        branch: "feature/elsewhere",
+        path: "/home/user/.ssh/checkout",
       });
-      expect(result.worktreePath).toBe("C:\\worktrees\\custom");
-      expect(harness.createWorktree).toHaveBeenCalledWith(
-        expect.objectContaining({ path: "C:\\worktrees\\custom" }),
-      );
-    });
-  });
-
-  it.effect("rejects a Windows drive path under posix path semantics", () => {
-    const harness = makeHarness({ pathSemantics: "posix" });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        runHandoff(harness, { branch: "feature/windows-path", path: "C:\\worktrees\\custom" }),
-      );
-      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "invalid_request" });
-      expect(harness.createWorktree).not.toHaveBeenCalled();
+      const result = yield* runHandoff(harness, input);
+      expect(harness.createWorktree).toHaveBeenCalledWith(expect.objectContaining({ path: null }));
+      expect(result.worktreePath).toBe("/worktrees/project/feature/elsewhere");
     });
   });
 
@@ -911,17 +884,6 @@ describe("t3_worktree_handoff", () => {
         path: "/worktrees/project/feature/dispatch-fails",
         force: true,
       });
-    });
-  });
-
-  it.effect("rejects a relative path", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        runHandoff(harness, { branch: "feature/relative-path", path: "worktrees/nested" }),
-      );
-      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "invalid_request" });
-      expect(harness.createWorktree).not.toHaveBeenCalled();
     });
   });
 
@@ -1012,24 +974,6 @@ describe("t3_worktree_status", () => {
 
 describe("WorktreeMcpHandoffInput schema", () => {
   const decode = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
-
-  it.effect("accepts POSIX, Windows drive, and UNC absolute paths", () =>
-    Effect.gen(function* () {
-      for (const path of ["/abs/posix", "C:\\abs\\drive", "C:/abs/drive", "\\\\host\\share"]) {
-        const decoded = yield* decode({ branch: "feature/x", path });
-        expect(decoded.path).toBe(path);
-      }
-    }),
-  );
-
-  it.effect("rejects relative paths", () =>
-    Effect.gen(function* () {
-      for (const path of ["worktrees/nested", "./nested", "../sibling"]) {
-        const exit = yield* Effect.exit(decode({ branch: "feature/x", path }));
-        expect(Exit.isFailure(exit), `path '${path}' should be rejected`).toBe(true);
-      }
-    }),
-  );
 
   it.effect("rejects a missing or blank branch", () =>
     Effect.gen(function* () {

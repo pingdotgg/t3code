@@ -16,6 +16,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import type * as ServerConfig from "../config.ts";
+import type * as ServerSettings from "../serverSettings.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   isCheckpointRestoreIsolated,
@@ -96,6 +99,8 @@ export const layer: Layer.Layer<
   | FileSystem.FileSystem
   | Path.Path
   | ProjectStore.ProjectStoreV2
+  | ServerConfig.ServerConfig
+  | ServerSettings.ServerSettingsService
   | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   CheckpointRollbackServiceV2,
@@ -111,6 +116,7 @@ export const layer: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const path = yield* Path.Path;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -196,7 +202,13 @@ export const layer: Layer.Layer<
             });
 
       const { worktreePath, branch } = projection.thread;
-      if (worktreePath != null && branch != null && !(yield* fileSystem.exists(worktreePath))) {
+      // Recreated only where the server would have made it, as turn start does.
+      if (
+        worktreePath != null &&
+        branch != null &&
+        !(yield* fileSystem.exists(worktreePath)) &&
+        (yield* isManagedWorktreePath(worktreePath))
+      ) {
         const project = yield* projects.get(projection.thread.projectId);
         if (Option.isSome(project)) {
           yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });

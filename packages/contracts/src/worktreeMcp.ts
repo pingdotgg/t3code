@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
+ * The server picks the location in its managed worktrees folder.
  * Changing the thread's workspace detaches the live provider session, so the
  * current turn ends shortly after the handoff is recorded; the conversation
  * continues inside the worktree on the thread's next run.
@@ -21,12 +22,6 @@ export const WorktreeMcpHandoffInput = Schema.Struct({
     Schema.Boolean.annotate({
       description:
         "Fetch origin and start the worktree branch from the remote-tracking commit of baseRef instead of the local ref. Defaults to the server's 'new worktrees start from origin' setting.",
-    }),
-  ),
-  path: Schema.optional(
-    TrimmedNonEmptyString.check(Schema.isPattern(/^(?:[A-Za-z]:[\\/]|[\\/])/)).annotate({
-      description:
-        "Absolute filesystem path for the new worktree. Relative paths are rejected. Defaults to the server-managed worktrees directory.",
     }),
   ),
   runSetupScript: Schema.optional(
