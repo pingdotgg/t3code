@@ -8,9 +8,12 @@ import {
   type AuthEnvironmentScope,
   type AuthSessionState,
 } from "@t3tools/contracts";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+import "~/index.css";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 type Project = { id: ProjectId; environmentId: EnvironmentId; workspaceRoot: string };
@@ -20,11 +23,10 @@ type CreateProjectInput = {
 };
 const state = vi.hoisted(() => ({
   selectedEnvironment: "primary",
-  registry: null as AtomRegistry.AtomRegistry | null,
-  sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
-  projects: null as Atom.Writable<ReadonlyArray<Project>> | null,
-  providers: null as Atom.Atom<ReadonlyArray<never>> | null,
-  config: null as Atom.Atom<null> | null,
+  sessions: new Map<string, unknown>(),
+  projects: null as unknown,
+  providers: null as unknown,
+  config: null as unknown,
   candidates: [] as AgentSessionProjectCandidate[],
   createProject: vi.fn(),
   importThreads: vi.fn(),
@@ -36,30 +38,28 @@ const state = vi.hoisted(() => ({
   refreshScan: vi.fn(),
 }));
 
-vi.mock("../../connection/runtime", () => ({ connectionAtomRuntime: undefined }));
-vi.mock("@t3tools/client-runtime/state/session", () => ({
-  createEnvironmentSessionAtoms: () => ({
-    sessionStateAtom: (id: EnvironmentId) => state.sessions.get(id)!,
-  }),
+// Session grants come from per-test atoms so a test can revoke or regrant mid-flow; the
+// real scope checks in ~/state/session read them through the app registry, which the
+// wizard is also rendered with.
+vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    createEnvironmentSessionAtoms: ((runtime: never) => ({
+      ...actual.createEnvironmentSessionAtoms(runtime),
+      sessionStateAtom: (id: EnvironmentId) => state.sessions.get(id),
+    })) as never,
+  };
+});
+vi.mock(import("../../cloud/publicConfig"), async (original) => ({
+  ...(await original()),
+  hasCloudPublicConfig: () => false,
 }));
-vi.mock("../../rpc/atomRegistry", () => ({
-  get appAtomRegistry() {
-    return state.registry;
-  },
-}));
-vi.mock("@clerk/react", () => ({ useAuth: () => ({ isLoaded: true, isSignedIn: false }) }));
-vi.mock("../../hooks/useTheme", () => ({ mountOnboardingTheme: () => () => {} }));
-vi.mock("../../hooks/useLocalStorage", () => ({ useLocalStorage: () => [false, () => {}] }));
-vi.mock("../../hooks/useCopyToClipboard", () => ({
-  useCopyToClipboard: () => ({ copyToClipboard: vi.fn(), copied: false }),
-}));
-vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => false }));
-vi.mock("../clerk/useT3ConnectAuthPrompt", () => ({ useT3ConnectAuthPrompt: vi.fn() }));
-vi.mock("../../onboarding/firstRun", () => ({
+vi.mock(import("../../onboarding/firstRun"), async (original) => ({
+  ...(await original()),
   useCompleteOnboarding: () => state.completeOnboarding,
 }));
-vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("../../state/environments", () => {
+vi.mock(import("../../state/environments"), async (original) => {
   const environment = (environmentId: string) => ({
     environmentId,
     label: environmentId,
@@ -68,92 +68,75 @@ vi.mock("../../state/environments", () => {
   });
   const primary = environment("primary");
   return {
-    usePrimaryEnvironment: () => primary,
-    useEnvironments: () => ({ environments: [environment(state.selectedEnvironment)] }),
+    ...(await original()),
+    usePrimaryEnvironment: (() => primary) as never,
+    useEnvironments: (() => ({ environments: [environment(state.selectedEnvironment)] })) as never,
   };
 });
-vi.mock("../../state/server", () => ({
-  serverEnvironment: {
-    providersValueAtom: () => state.providers,
-    configValueAtom: () => state.config,
-    refreshProviders: "refreshProviders",
-  },
-}));
-vi.mock("../../state/entities", async () => {
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      providersValueAtom: (() => state.providers) as never,
+      configValueAtom: (() => state.config) as never,
+      refreshProviders: "refreshProviders" as never,
+    },
+  };
+});
+vi.mock(import("../../state/entities"), async (original) => {
   const { useAtomValue } = await import("@effect/atom-react");
   return {
-    useProjects: () => useAtomValue(state.projects!),
-    readProjects: () => state.registry!.get(state.projects!),
+    ...(await original()),
+    useProjects: (() => useAtomValue(state.projects as Atom.Atom<Project[]>)) as never,
+    readProjects: (() => appAtomRegistry.get(state.projects as Atom.Atom<Project[]>)) as never,
   };
 });
-vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "createProject" } }));
-vi.mock("../../state/agentSessions", () => ({
-  agentSessionScan: (query: { environmentId: EnvironmentId }) => query,
-  agentSessionImport: "importThreads",
+vi.mock(import("../../state/projects"), async (original) => ({
+  ...(await original()),
+  projectEnvironment: { create: "createProject" } as never,
 }));
-vi.mock("../../onboarding/useProjectScans", () => ({
-  useProjectScans: (ids: EnvironmentId[]) =>
+vi.mock(import("../../state/agentSessions"), async (original) => ({
+  ...(await original()),
+  agentSessionImport: "importThreads" as never,
+}));
+vi.mock(import("../../onboarding/useProjectScans"), async (original) => ({
+  ...(await original()),
+  useProjectScans: (ids: readonly EnvironmentId[]) =>
     ids.map((environmentId) => {
       state.scan({ environmentId });
       return {
         environmentId,
-        data: { candidates: state.candidates, truncated: false },
+        data: { candidates: state.candidates, truncated: false } as never,
         isPending: false,
         error: null,
         refresh: state.refreshScan,
       };
     }),
 }));
-vi.mock("../ui/dialog", () => ({
-  Dialog: "div",
-  DialogPopup: "div",
-  DialogTitle: "div",
-  DialogHeader: "div",
+vi.mock(import("../../connection/onboarding"), async (original) => ({
+  ...(await original()),
+  connectPairing: "connectPairing" as never,
 }));
-vi.mock("../ui/wizard", () => ({
-  WizardPanel: "div",
-  WizardSteps: "div",
-  WizardPopup: "div",
-  WizardHeader: "div",
-}));
-vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
-vi.mock("../ui/tooltip", () => ({ Tooltip: "div", TooltipTrigger: "span", TooltipPopup: "span" }));
-vi.mock("../../connection/onboarding", () => ({ connectPairing: "connectPairing" }));
-vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: ((
     command: "createProject" | "importThreads" | "refreshProviders" | "connectPairing",
-  ) => state[command],
+  ) => state[command]) as never,
 }));
-vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
-vi.mock("../ThreadTerminalDrawer", () => ({ TerminalViewport: "div" }));
-vi.mock("../cloud/CloudEnvironmentConnectList", () => ({ CloudEnvironmentConnectRows: "div" }));
-vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
-vi.mock("../settings/CodexSetupSection", () => ({
-  CodexSetupSection: () => null,
-  AddManagedCodexAccountDialog: () => null,
+vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
+  ...(await original()),
+  ChatGptWelcomeCoordinator: () => <></>,
 }));
-vi.mock("../settings/providerDriverMeta", () => ({
-  providerClients: { get: () => ({ label: "Agent" }) },
-}));
-vi.mock("../settings/providerStatus", () => ({
-  getProviderSummary: () => ({ headline: "Checking", detail: null }),
-}));
-vi.mock("../ui/button", () => ({ Button: "button" }));
-vi.mock("../ui/input", () => ({ Input: "input" }));
-vi.mock("../ui/checkbox", () => ({ Checkbox: "input" }));
-vi.mock("../ui/collapsible", () => ({
-  Collapsible: "div",
-  CollapsiblePanel: "div",
-  CollapsibleTrigger: "button",
-}));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(), close: vi.fn(), update: vi.fn() } }));
 
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { WelcomeWizard } from "./WelcomeWizard";
 
 const primaryId = EnvironmentId.make("primary");
 const remoteId = EnvironmentId.make("remote");
 const permissionMessage = "This connection cannot import projects or thread history.";
-let renderer: ReactTestRenderer | undefined;
+const roots: Root[] = [];
 
 function session(scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState {
   return {
@@ -168,9 +151,17 @@ function session(scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState 
   };
 }
 
+function sessionAtom(environmentId: EnvironmentId) {
+  return state.sessions.get(environmentId) as Atom.Writable<SessionResult>;
+}
+
+function projectsAtom() {
+  return state.projects as Atom.Writable<ReadonlyArray<Project>>;
+}
+
 function setGrant(environmentId: EnvironmentId, allowed: boolean) {
-  state.registry!.set(
-    state.sessions.get(environmentId)!,
+  appAtomRegistry.set(
+    sessionAtom(environmentId),
     AsyncResult.success(session(allowed ? [AuthOrchestrationOperateScope] : [])),
   );
 }
@@ -187,8 +178,8 @@ function candidate(path: string): AgentSessionProjectCandidate {
 }
 
 function recordProject({ environmentId, input }: CreateProjectInput) {
-  state.registry!.set(state.projects!, [
-    ...state.registry!.get(state.projects!),
+  appAtomRegistry.set(projectsAtom(), [
+    ...appAtomRegistry.get(projectsAtom()),
     { id: input.projectId, environmentId, workspaceRoot: input.workspaceRoot },
   ]);
   return AsyncResult.success(undefined);
@@ -202,40 +193,47 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function text(node: ReactTestInstance | string): string {
-  return typeof node === "string" ? node : node.children.map(text).join("");
+function pageText() {
+  return document.body.textContent ?? "";
 }
 
 function button(label: string) {
-  const found = renderer!.root.findAllByType("button").find((node) => text(node) === label);
+  const found = [...document.querySelectorAll("button")].find(
+    (element) => element.textContent?.trim() === label,
+  );
   if (!found) throw new Error(`Missing button: ${label}`);
   return found;
 }
 
 async function click(label: string) {
   const target = button(label);
-  expect(target.props.disabled).not.toBe(true);
-  await act(async () => target.props.onClick());
+  expect(target.disabled).toBe(false);
+  await act(async () => target.click());
+}
+
+function projectCheckboxes() {
+  return [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')];
 }
 
 async function mountImport(remote = false) {
   state.selectedEnvironment = remote ? "remote" : "primary";
-  await act(async () => {
-    renderer = create(
-      <RegistryContext.Provider value={state.registry!}>
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  await act(async () =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>
         <WelcomeWizard localAvailable={!remote} onDone={state.onDone} />
       </RegistryContext.Provider>,
-    );
-  });
+    ),
+  );
   await click("Continue");
   await click("Continue");
-  expect(text(renderer!.root)).toContain("Import your projects");
+  expect(pageText()).toContain("Import your projects");
 }
 
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("document", { activeElement: null, body: {}, getElementById: () => null });
-  state.registry = AtomRegistry.make();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
       id,
@@ -263,20 +261,18 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
-  state.registry?.dispose();
+  for (const root of roots.splice(0)) await act(async () => root.unmount());
+  document.body.replaceChildren();
   state.sessions.clear();
-  vi.unstubAllGlobals();
 });
 
 it("keeps scanning, choosing and skipping available to a paired read-only environment", async () => {
   setGrant(remoteId, false);
   await mountImport(true);
   expect(state.scan).toHaveBeenCalledWith(expect.objectContaining({ environmentId: remoteId }));
-  expect(text(renderer!.root)).toContain("/projects/first");
-  expect(button("Import 2 projects").props.disabled).toBe(true);
-  expect(text(renderer!.root)).toContain(permissionMessage);
+  expect(pageText()).toContain("/projects/first");
+  expect(button("Import 2 projects").disabled).toBe(true);
+  expect(pageText()).toContain(permissionMessage);
   await click("Do not import projects");
   expect(state.createProject).not.toHaveBeenCalled();
   expect(state.importThreads).not.toHaveBeenCalled();
@@ -285,9 +281,9 @@ it("keeps scanning, choosing and skipping available to a paired read-only enviro
 });
 
 it("waits for the selected grant and enables import when it arrives", async () => {
-  state.registry!.set(state.sessions.get(primaryId)!, AsyncResult.initial());
+  appAtomRegistry.set(sessionAtom(primaryId), AsyncResult.initial());
   await mountImport();
-  expect(button("Import 2 projects").props.disabled).toBe(true);
+  expect(button("Import 2 projects").disabled).toBe(true);
   await act(async () => setGrant(primaryId, true));
   await click("Import 2 projects");
   expect(state.createProject).toHaveBeenCalledTimes(2);
@@ -295,25 +291,25 @@ it("waits for the selected grant and enables import when it arrives", async () =
   expect(state.onDone).toHaveBeenCalledWith(expect.objectContaining({ environmentId: primaryId }));
 });
 
-it("preserves selections and denies a retained action using the paired environment's fresh grant", async () => {
+it("preserves selections and denies a click that lands as the paired environment's grant is revoked", async () => {
   await mountImport(true);
-  await act(async () => {
-    renderer!.root.findAllByType("input")[1]!.props.onCheckedChange(false);
-  });
-  const retainedImport = button("Import 1 project").props.onClick;
+  await act(async () => projectCheckboxes()[1]!.click());
+  expect(projectCheckboxes()[1]!.getAttribute("aria-checked")).toBe("false");
+  const importButton = button("Import 1 project");
+  // The click reaches the still-enabled button before React re-renders the revocation.
   await act(async () => {
     setGrant(remoteId, false);
-    retainedImport();
+    importButton.click();
   });
-  expect(button("Import 1 project").props.disabled).toBe(true);
-  expect(renderer!.root.findAllByType("input")[1]!.props.checked).toBe(false);
-  expect(text(renderer!.root)).toContain(permissionMessage);
+  expect(button("Import 1 project").disabled).toBe(true);
+  expect(projectCheckboxes()[1]!.getAttribute("aria-checked")).toBe("false");
+  expect(pageText()).toContain(permissionMessage);
   expect(state.createProject).not.toHaveBeenCalled();
   expect(state.importThreads).not.toHaveBeenCalled();
   expect(state.onDone).not.toHaveBeenCalled();
 
   await act(async () => setGrant(remoteId, true));
-  expect(text(renderer!.root)).not.toContain(permissionMessage);
+  expect(pageText()).not.toContain(permissionMessage);
   await click("Import 1 project");
   expect(state.createProject).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ environmentId: remoteId }),
@@ -340,7 +336,7 @@ it("rechecks after project creation and can retry its history without recreating
   expect(state.importThreads).not.toHaveBeenCalled();
   expect(state.createProject).toHaveBeenCalledOnce();
   expect(state.onDone).not.toHaveBeenCalled();
-  expect(text(renderer!.root)).toContain(permissionMessage);
+  expect(pageText()).toContain(permissionMessage);
 
   await act(async () => setGrant(primaryId, true));
   await click("Import 2 projects");
@@ -355,7 +351,7 @@ it.each([false, true])(
     if (existing) {
       const projectId = ProjectId.make("second-existing");
       state.candidates[1] = { ...state.candidates[1]!, projectId };
-      state.registry!.set(state.projects!, [
+      appAtomRegistry.set(projectsAtom(), [
         { id: projectId, environmentId: primaryId, workspaceRoot: "/projects/second" },
       ]);
     }
@@ -375,7 +371,7 @@ it.each([false, true])(
     expect(state.createProject).toHaveBeenCalledOnce();
     expect(state.importThreads).toHaveBeenCalledOnce();
     expect(state.onDone).not.toHaveBeenCalled();
-    expect(text(renderer!.root)).toContain(permissionMessage);
+    expect(pageText()).toContain(permissionMessage);
 
     await act(async () => setGrant(primaryId, true));
     await click("Import 2 projects");

@@ -3,6 +3,9 @@ import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
@@ -10,43 +13,15 @@ const testState = vi.hoisted(() => ({
   canGoBack: true,
 }));
 
-vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => testState.navigate,
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useNavigate: (() => testState.navigate) as never,
   useCanGoBack: () => testState.canGoBack,
 }));
-vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
-vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
-vi.mock("../ui/select", () => ({
-  Select: "div",
-  SelectItem: "div",
-  SelectPopup: "div",
-  SelectTrigger: "div",
-  SelectValue: "div",
+vi.mock(import("../../state/usage"), async (original) => ({
+  ...(await original()),
+  useUsage: testState.useUsage,
 }));
-vi.mock("../ui/sidebar", () => ({ SidebarInset: "div" }));
-vi.mock("../ui/toggle-group", () => ({ Toggle: "button", ToggleGroup: "div" }));
-vi.mock("../WorkspaceBreadcrumb", () => ({
-  WorkspaceBreadcrumb: "div",
-  WorkspaceBreadcrumbItem: "div",
-  WorkspaceBreadcrumbSeparator: "span",
-  WorkspaceBreadcrumbText: "span",
-}));
-vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }));
-vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
-vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
-vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
-vi.mock("./usageProviders", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./usageProviders")>();
-  return {
-    ...actual,
-    PROVIDER_ORDER: ["codex", "claude"],
-    PROVIDER_PRESENTATION: {
-      codex: { color: "white", label: "Codex", mark: "span" },
-      claude: { color: "orange", label: "Claude Code", mark: "span" },
-    },
-  };
-});
 
 import { UsagePage } from "./UsagePage";
 const environments = [
@@ -91,7 +66,6 @@ describe("UsagePage Escape navigation", () => {
     back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     testState.navigate.mockClear();
     testState.canGoBack = true;
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     container = document.createElement("div");
     document.body.append(container);
     renderer = createRoot(container);
@@ -104,9 +78,9 @@ describe("UsagePage Escape navigation", () => {
     await act(() => renderer.unmount());
     container.remove();
     back.mockRestore();
-    vi.unstubAllGlobals();
   });
 
+  // Playwright cannot press a repeating or composing key, so those cases dispatch the event.
   function escape(properties: { repeat?: boolean; isComposing?: boolean } = {}) {
     return new KeyboardEvent("keydown", {
       bubbles: true,
@@ -116,8 +90,8 @@ describe("UsagePage Escape navigation", () => {
     });
   }
 
-  it("returns to the previous page on Escape", () => {
-    document.body.dispatchEvent(escape());
+  it("returns to the previous page on Escape", async () => {
+    await userEvent.keyboard("{Escape}");
     expect(back).toHaveBeenCalledOnce();
     expect(testState.navigate).not.toHaveBeenCalled();
   });
@@ -126,23 +100,22 @@ describe("UsagePage Escape navigation", () => {
     testState.canGoBack = false;
     await act(() => renderer.render(<UsagePage />));
 
-    document.body.dispatchEvent(escape());
+    await userEvent.keyboard("{Escape}");
     expect(testState.navigate).toHaveBeenCalledWith({ to: "/" });
     expect(back).not.toHaveBeenCalled();
   });
 
   it("closes the environment menu before Escape navigates back", async () => {
     const trigger = container.querySelector<HTMLButtonElement>('[data-slot="menu-trigger"]')!;
-    await act(() => trigger.click());
-    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    await userEvent.click(trigger);
+    await expect.element(page.getByRole("menu")).toBeVisible();
 
-    await act(() => {
-      document.activeElement!.dispatchEvent(escape());
-    });
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect(document.querySelector('[role="menu"]')).toBeNull());
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(back).not.toHaveBeenCalled();
 
-    document.body.dispatchEvent(escape());
+    await userEvent.keyboard("{Escape}");
     expect(back).toHaveBeenCalledOnce();
   });
 
@@ -152,5 +125,3 @@ describe("UsagePage Escape navigation", () => {
     expect(testState.navigate).not.toHaveBeenCalled();
   });
 });
-
-// @vitest-environment jsdom
