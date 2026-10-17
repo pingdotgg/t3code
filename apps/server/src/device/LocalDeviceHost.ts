@@ -115,8 +115,13 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
     return null;
   }
   const sdk = yield* androidSdk;
-  if (!sdk.root)
-    return "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.";
+  if (!sdk.root) {
+    return [
+      "Android SDK was not found.",
+      `Checked SDK directories: ${sdk.checkedRoots.join(", ") || "none"}.`,
+      "Install it with Android Studio or set ANDROID_HOME or ANDROID_SDK_ROOT to your SDK directory.",
+    ].join(" ");
+  }
   if (!sdk.adb)
     return `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
   if (!sdk.emulator)
@@ -128,6 +133,23 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   }
   return null;
 });
+
+interface AndroidSdkCandidate {
+  readonly root: string;
+  readonly adb: boolean;
+  readonly emulator: boolean;
+  readonly avdmanager: boolean;
+  readonly legacyAvdmanager: boolean;
+}
+
+interface AndroidSdkResolution {
+  readonly root: string | null;
+  readonly adb: boolean;
+  readonly emulator: boolean;
+  readonly avdmanager: boolean;
+  readonly legacyAvdmanager: boolean;
+  readonly checkedRoots: ReadonlyArray<string>;
+}
 
 const androidSdk = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -145,30 +167,49 @@ const androidSdk = Effect.gen(function* () {
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    if (!explicit && !adb && !emulator) return null;
     const avdmanager = yield* exists(
       path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
     );
     const legacyAvdmanager =
       !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
+    if (!explicit && !adb && !emulator && !avdmanager && !legacyAvdmanager) return null;
     return { root, adb, emulator, avdmanager, legacyAvdmanager };
   });
+  const isComplete = (sdk: AndroidSdkCandidate) => sdk.adb && sdk.emulator && sdk.avdmanager;
+  const completeness = (sdk: AndroidSdkCandidate) =>
+    Number(sdk.adb) + Number(sdk.emulator) + Number(sdk.avdmanager) + Number(sdk.legacyAvdmanager);
   const candidates = explicit
     ? [explicit]
     : [
         path.join(home, "Library", "Android", "sdk"),
         path.join(home, "Android", "Sdk"),
-        path.join(
-          environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Android",
-          "Sdk",
-        ),
+        ...(windows
+          ? [
+              path.join(
+                environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
+                "Android",
+                "Sdk",
+              ),
+            ]
+          : []),
+        ...(platform === "darwin"
+          ? [
+              "/opt/homebrew/share/android-commandlinetools",
+              "/usr/local/share/android-commandlinetools",
+            ]
+          : []),
       ];
+  const checkedRoots: string[] = [];
+  let bestIncomplete: AndroidSdkCandidate | null = null;
   for (const root of candidates) {
+    checkedRoots.push(root);
     const sdk = yield* inspect(root);
-    if (sdk) return sdk;
+    if (!sdk) continue;
+    if (isComplete(sdk)) return { ...sdk, checkedRoots } satisfies AndroidSdkResolution;
+    if (!bestIncomplete || completeness(sdk) > completeness(bestIncomplete)) bestIncomplete = sdk;
   }
-  // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
+  // PATH entries can be slow to stat (network shares), so only check them after the standard roots
+  // have been inspected. They may still contain a complete SDK when a conventional root is partial.
   if (!explicit) {
     const searchPath = environment.PATH ?? environment.Path ?? "";
     for (const directory of searchPath.split(windows ? ";" : ":")) {
@@ -176,11 +217,25 @@ const androidSdk = Effect.gen(function* () {
       const adb = path.join(directory, adbBinary);
       if (!(yield* exists(adb))) continue;
       const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
-      const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
-      if (sdk) return sdk;
+      const root = path.dirname(path.dirname(resolved));
+      if (checkedRoots.includes(root)) continue;
+      checkedRoots.push(root);
+      const sdk = yield* inspect(root);
+      if (!sdk) continue;
+      if (isComplete(sdk)) return { ...sdk, checkedRoots } satisfies AndroidSdkResolution;
+      if (!bestIncomplete || completeness(sdk) > completeness(bestIncomplete)) bestIncomplete = sdk;
     }
   }
-  return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
+  return bestIncomplete
+    ? { ...bestIncomplete, checkedRoots }
+    : ({
+        root: null,
+        adb: false,
+        emulator: false,
+        avdmanager: false,
+        legacyAvdmanager: false,
+        checkedRoots,
+      } satisfies AndroidSdkResolution);
 });
 
 const deviceHostEnvironment = (
@@ -193,6 +248,7 @@ const deviceHostEnvironment = (
     ? {
         ...environment,
         ANDROID_HOME: sdkRoot,
+        ANDROID_SDK_ROOT: sdkRoot,
         PATH: [
           path.join(sdkRoot, "platform-tools"),
           path.join(sdkRoot, "emulator"),
