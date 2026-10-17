@@ -6,7 +6,7 @@ import {
 import { FileDiff } from "@pierre/diffs/react";
 import { useMemo } from "react";
 
-import { useTheme } from "~/hooks/useTheme";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 
@@ -19,7 +19,7 @@ export function GuideFileDiff({
   file: FileDiffMetadata;
   loadDiffFiles: FileDiffContentsLoader;
 }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   // Loading the unchanged lines rewrites the diff it is given; the excerpts read the same file
   // as a patch, so this view expands a copy of its own.
   const expandable = useMemo(() => cloneFileDiffMetadata(file), [file]);

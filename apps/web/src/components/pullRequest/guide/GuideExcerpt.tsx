@@ -9,7 +9,7 @@ import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@
 import { ArrowUpRightIcon } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { useTheme } from "~/hooks/useTheme";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
@@ -93,7 +93,7 @@ export function GuideExcerpt({
   onOpenFile: (path: string) => void;
 }) {
   const [draft, setDraft] = useState<ExcerptDraft | null>(null);
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const slice = useMemo(() => {
     if (file === null) return null;
     const rows = fileDiffRows(file);

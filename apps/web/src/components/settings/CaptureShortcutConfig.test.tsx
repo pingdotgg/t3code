@@ -29,7 +29,7 @@ const bridge = vi.hoisted(() => ({
   setSnapShotShortcutSuppressed: vi.fn(),
 }));
 vi.mock("../../lib/desktopSnapShot", () => ({ getDesktopSnapShotBridge: () => bridge }));
-vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("../../hooks/useTheme", () => ({ useRenderedAppearance: () => "light" }));
 vi.mock("../../hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn(), isCopied: false }),
 }));
