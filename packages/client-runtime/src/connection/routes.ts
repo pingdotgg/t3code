@@ -186,6 +186,10 @@ export function connectionRouteAddress(route: ConnectionRoute): string | null {
   return routeHttpBaseUrl(route);
 }
 
+/** Learned routes alone must not make relay environments manually retryable. */
+export const hasSavedBearerRoute = (entry: ConnectionCatalogEntry) =>
+  connectionRoutes(entry).some((r) => !isLearned(r) && r.target._tag === "BearerConnectionTarget");
+
 export function hasRelayRoute(
   entry: Pick<ConnectionCatalogEntry, "target" | "alternateRoutes">,
 ): boolean {
