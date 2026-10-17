@@ -38,7 +38,6 @@ import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
 import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
 import { readThreadPreviewState } from "./previewStateStore";
 import { resolveAppModelSelection, resolveAppModelSelectionForInstance } from "./modelSelection";
@@ -81,6 +80,8 @@ import {
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
+
+const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -1781,7 +1782,7 @@ function normalizePersistedDraftsByThreadId(
         : [];
     for (const element of legacyElements) {
       if (
-        !Schema.is(ElementContextDetails)(element) ||
+        !isElementContextDetails(element) ||
         !("id" in element) ||
         typeof element.id !== "string" ||
         !("pickedAt" in element) ||
@@ -4267,27 +4268,15 @@ export function useEffectiveComposerModelState(input: {
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
 
-  return useMemo(
-    () =>
-      deriveEffectiveComposerModelState({
-        draft,
-        providers: input.providers,
-        selectedProvider: input.selectedProvider,
-        selectedInstanceId: input.selectedInstanceId,
-        threadModelSelection: input.threadModelSelection,
-        projectModelSelection: input.projectModelSelection,
-        settings: input.settings,
-      }),
-    [
-      draft,
-      input.providers,
-      input.settings,
-      input.projectModelSelection,
-      input.selectedInstanceId,
-      input.selectedProvider,
-      input.threadModelSelection,
-    ],
-  );
+  return deriveEffectiveComposerModelState({
+    draft,
+    providers: input.providers,
+    selectedProvider: input.selectedProvider,
+    selectedInstanceId: input.selectedInstanceId,
+    threadModelSelection: input.threadModelSelection,
+    projectModelSelection: input.projectModelSelection,
+    settings: input.settings,
+  });
 }
 
 export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
