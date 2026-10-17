@@ -2,6 +2,7 @@ export {
   ACP_REGISTRY_DEFAULT_INSTANCE_ID,
   ACP_REGISTRY_PROVIDER,
   acpRegistryPromptFailure,
+  acpRegistryPromptUsageSemantics,
   makeAcpRegistryAdapterV2,
   registerMistralVibeAcpExtensions,
 } from "./server/adapter.ts";

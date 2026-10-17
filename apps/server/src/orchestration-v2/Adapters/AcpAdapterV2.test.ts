@@ -76,6 +76,9 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   AcpProviderCapabilitiesV2,
+  acpPerTurnPromptUsage,
+  acpPromptResponseTurnTokenUsage,
+  acpPromptUsageBaselineAfterResponse,
   acpProviderItemNativeId,
   acpScopedNativeId,
   acpCarryoverTerminalShouldClearContinuation,
@@ -112,6 +115,315 @@ const layerTest = Layer.mergeAll(
 );
 const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+
+describe("acpPromptResponseTurnTokenUsage", () => {
+  it("projects ACP prompt usage into complete main-agent turn usage", () => {
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        {
+          inputTokens: 60,
+          outputTokens: 15,
+          totalTokens: 75,
+          cachedReadTokens: 40,
+          cachedWriteTokens: 1,
+          thoughtTokens: 4,
+        },
+        {
+          inputTokens: 20,
+          outputTokens: 5,
+          totalTokens: 25,
+          cachedReadTokens: 10,
+          cachedWriteTokens: 0,
+          thoughtTokens: 1,
+        },
+        true,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: true,
+        inputTokens: 40,
+        outputTokens: 10,
+        cachedInputTokens: 30,
+        cacheCreationTokens: 1,
+        reasoningTokens: 3,
+      },
+    );
+  });
+
+  it("returns unavailable usage when ACP omits prompt usage", () => {
+    assert.deepEqual(acpPromptResponseTurnTokenUsage(undefined, null, false, "failed"), {
+      usageScope: "main_agent",
+      usageStatus: "unavailable",
+      hasSubagents: false,
+    });
+  });
+
+  it("marks observed usage partial when the turn does not complete", () => {
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+        { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+        false,
+        "interrupted",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        hasSubagents: false,
+        inputTokens: 20,
+        outputTokens: 5,
+      },
+    );
+  });
+
+  it("does not attribute resumed session totals or counter resets to one turn", () => {
+    const current = { inputTokens: 60, outputTokens: 15, totalTokens: 75 };
+    const unavailable = {
+      usageScope: "main_agent",
+      usageStatus: "unavailable",
+      hasSubagents: false,
+    };
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(current, null, false, "completed"),
+      unavailable,
+    );
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        current,
+        {
+          inputTokens: 90,
+          outputTokens: 15,
+          totalTokens: 105,
+        },
+        false,
+        "completed",
+      ),
+      unavailable,
+    );
+  });
+
+  it("counts an optional counter first appearing mid-session at its full value", () => {
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        {
+          inputTokens: 60,
+          outputTokens: 15,
+          totalTokens: 75,
+          cachedReadTokens: 25,
+          thoughtTokens: 5,
+        },
+        { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 20,
+        outputTokens: 5,
+        cachedInputTokens: 25,
+        reasoningTokens: 5,
+      },
+    );
+  });
+
+  it("omits optional counters absent on both samples and clamps their dips to zero", () => {
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        {
+          inputTokens: 60,
+          outputTokens: 15,
+          totalTokens: 75,
+          cachedWriteTokens: 3,
+        },
+        {
+          inputTokens: 40,
+          outputTokens: 10,
+          totalTokens: 50,
+          cachedWriteTokens: 7,
+        },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 20,
+        outputTokens: 5,
+        cacheCreationTokens: 0,
+      },
+    );
+  });
+});
+
+describe("acpPromptUsageBaselineAfterResponse", () => {
+  it("stores null after a one-counter regression so the next turn reports unavailable", () => {
+    const previous = { inputTokens: 60, outputTokens: 15, totalTokens: 75 };
+    assert.equal(
+      acpPromptUsageBaselineAfterResponse(
+        { inputTokens: 50, outputTokens: 20, totalTokens: 70 },
+        previous,
+      ),
+      null,
+    );
+    assert.equal(
+      acpPromptUsageBaselineAfterResponse(
+        { inputTokens: 70, outputTokens: 10, totalTokens: 80 },
+        previous,
+      ),
+      null,
+    );
+    const baseline = acpPromptUsageBaselineAfterResponse(
+      { inputTokens: 50, outputTokens: 20, totalTokens: 70 },
+      previous,
+    );
+    assert.deepEqual(
+      acpPromptResponseTurnTokenUsage(
+        { inputTokens: 70, outputTokens: 25, totalTokens: 95 },
+        baseline,
+        false,
+        "completed",
+      ),
+      { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false },
+    );
+  });
+
+  it("keeps a monotonic sample as the next baseline and drops usage-less responses", () => {
+    const sample = { inputTokens: 70, outputTokens: 25, totalTokens: 95 };
+    assert.equal(
+      acpPromptUsageBaselineAfterResponse(sample, {
+        inputTokens: 60,
+        outputTokens: 15,
+        totalTokens: 75,
+      }),
+      sample,
+    );
+    assert.equal(acpPromptUsageBaselineAfterResponse(null, sample), null);
+    assert.equal(acpPromptUsageBaselineAfterResponse(sample, null), sample);
+  });
+});
+
+describe("acpPerTurnPromptUsage", () => {
+  it("maps a per-turn sample straight through without any baseline", () => {
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        {
+          inputTokens: 2453,
+          outputTokens: 4,
+          totalTokens: 2457,
+          cachedReadTokens: 512,
+          cachedWriteTokens: 32,
+          thoughtTokens: 3,
+        },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 2453,
+        outputTokens: 4,
+        cachedInputTokens: 512,
+        cacheCreationTokens: 32,
+        reasoningTokens: 3,
+      },
+    );
+  });
+
+  it("clamps subsets that exceed their parents and drops unset counters", () => {
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          cachedReadTokens: 150,
+          cachedWriteTokens: 120,
+          thoughtTokens: 30,
+        },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedInputTokens: 100,
+        cacheCreationTokens: 0,
+        reasoningTokens: 10,
+      },
+    );
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 100,
+        outputTokens: 10,
+      },
+    );
+  });
+
+  it("caps cache writes at the input left over after cache reads", () => {
+    // PR review case: each counter fits under input alone, but together they exceed it.
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          cachedReadTokens: 80,
+          cachedWriteTokens: 80,
+        },
+        false,
+        "completed",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 100,
+        outputTokens: 10,
+        cachedInputTokens: 80,
+        cacheCreationTokens: 20,
+      },
+    );
+  });
+
+  it("marks present usage partial on a non-completed terminal and missing usage unavailable", () => {
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+        true,
+        "interrupted",
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "partial",
+        hasSubagents: true,
+        inputTokens: 100,
+        outputTokens: 10,
+      },
+    );
+    assert.deepEqual(acpPerTurnPromptUsage(undefined, false, "completed"), {
+      usageScope: "main_agent",
+      usageStatus: "unavailable",
+      hasSubagents: false,
+    });
+  });
+});
 
 describe("acpProjectedCommandExitCode", () => {
   const successOutput = { type: "Bash", exit_code: 0 };
@@ -604,6 +916,825 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
+  it.live(
+    "projects session usage deltas without attributing missing responses to later turns",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make("acp-test-prompt-usage");
+        const threadId = ThreadId.make("thread-acp-prompt-usage");
+        let promptOrdinal = 0;
+        const promptUsages = [
+          { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+          { inputTokens: 90, outputTokens: 22, totalTokens: 112 },
+          undefined,
+          { inputTokens: 130, outputTokens: 30, totalTokens: 160 },
+          { inputTokens: 150, outputTokens: 40, totalTokens: 190 },
+        ];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            promptUsageSemantics: "cumulative",
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                prompt: () => {
+                  promptOrdinal += 1;
+                  return Effect.succeed({
+                    stopReason: "end_turn" as const,
+                    usage: promptUsages[promptOrdinal - 1] ?? null,
+                  });
+                },
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-usage"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const expected = [
+          // The fresh-session zero baseline seeds optional counters at 0, so
+          // FIX 4's present-on-either-side rule emits them on the first turn.
+          {
+            inputTokens: 60,
+            outputTokens: 15,
+            cachedInputTokens: 0,
+            cacheCreationTokens: 0,
+            reasoningTokens: 0,
+          },
+          { inputTokens: 30, outputTokens: 7 },
+          null,
+          null,
+          { inputTokens: 20, outputTokens: 10 },
+        ];
+        for (const ordinal of [1, 2, 3, 4, 5]) {
+          const expectedUsage = expected[ordinal - 1];
+          if (expectedUsage === undefined) return yield* Effect.die("Missing usage expectation");
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          const events = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          const completed = events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          assert.deepEqual(
+            completed?.type === "provider_turn.updated"
+              ? completed.providerTurn.turnTokenUsage
+              : null,
+            expectedUsage === null
+              ? { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false }
+              : {
+                  usageScope: "main_agent",
+                  usageStatus: "complete",
+                  hasSubagents: false,
+                  ...expectedUsage,
+                },
+          );
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps the usage baseline intact across a continuation turn that never prompts", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-usage-continuation");
+      const threadId = ThreadId.make("thread-acp-usage-continuation");
+      let promptOrdinal = 0;
+      const promptUsages = [
+        { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+        { inputTokens: 130, outputTokens: 30, totalTokens: 160 },
+      ];
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        continuationRequests: { offer: () => Effect.void },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageSemantics: "cumulative",
+          enablePostSettleContinuation: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () => {
+                promptOrdinal += 1;
+                const usage = promptUsages[promptOrdinal - 1];
+                if (usage === undefined) return Effect.die("Unexpected prompt");
+                return Effect.succeed({ stopReason: "end_turn" as const, usage });
+              },
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-usage-continuation"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const completedUsage = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          const events = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          const completed = events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          return completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.turnTokenUsage
+            : null;
+        });
+      assert.deepEqual(yield* completedUsage(1), {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 60,
+        outputTokens: 15,
+        // The fresh-session zero baseline seeds optional counters at 0, so
+        // FIX 4's present-on-either-side rule emits them on the first turn.
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        reasoningTokens: 0,
+      });
+      // Continuation attach: drains wake traffic and finalizes without ever
+      // dispatching session/prompt, so it must report unavailable usage.
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now,
+          ordinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+          messageText: "Background task completed.",
+        }),
+      );
+      const continuationEvents = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const continuation = continuationEvents.find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepEqual(
+        continuation?.type === "provider_turn.updated"
+          ? continuation.providerTurn.turnTokenUsage
+          : null,
+        { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false },
+      );
+      // The continuation must not have poisoned the session baseline: the next
+      // real prompt deltas from the first prompt's cumulative sample.
+      assert.deepEqual(yield* completedUsage(3), {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 70,
+        outputTokens: 15,
+      });
+      assert.equal(promptOrdinal, 2, "continuation turn must not dispatch session/prompt");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("does not subtract pre-restart usage from a resumed runtime's counters", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-usage-restart");
+      const threadId = ThreadId.make("thread-acp-usage-restart");
+      const wireSettled = yield* Deferred.make<void>();
+      const releaseCompletion = yield* Deferred.make<void>();
+      let promptOrdinal = 0;
+      const usages = [
+        { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+        { inputTokens: 90, outputTokens: 20, totalTokens: 110 },
+        { inputTokens: 110, outputTokens: 25, totalTokens: 135 },
+      ];
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          afterPromptWireSettled: () =>
+            promptOrdinal === 1
+              ? Deferred.succeed(wireSettled, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseCompletion)),
+                )
+              : Effect.void,
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageSemantics: "cumulative",
+          restartRuntimeAfterInterrupt: true,
+          terminateRuntimeProcessGroupOnInterrupt: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            ownDetachedProcessGroup: true,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () => {
+                const usage = usages[promptOrdinal++];
+                if (usage === undefined) return Effect.die("Unexpected prompt");
+                return Effect.succeed({ stopReason: "end_turn" as const, usage });
+              },
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-usage-restart"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
+      );
+      yield* Deferred.await(wireSettled);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      yield* runtime.interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true });
+      const interrupted = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
+      );
+      assert.deepEqual(
+        interrupted?.type === "provider_turn.updated"
+          ? interrupted.providerTurn.turnTokenUsage
+          : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "partial",
+          hasSubagents: false,
+          inputTokens: 60,
+          outputTokens: 15,
+          // Fresh-session zero baseline seeds optional counters at 0 (FIX 4).
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          reasoningTokens: 0,
+        },
+      );
+      yield* Deferred.succeed(releaseCompletion, undefined);
+      for (const [ordinal, expected] of [
+        [2, { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false }],
+        [
+          3,
+          {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 20,
+            outputTokens: 5,
+          },
+        ],
+      ] as const) {
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+        );
+        const completed = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        ).find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        assert.deepEqual(
+          completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.turnTokenUsage
+            : null,
+          expected,
+        );
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");
+      const threadId = ThreadId.make("thread-acp-prompt-usage-stop");
+      const wireSettled = yield* Deferred.make<void>();
+      const releaseCompletion = yield* Deferred.make<void>();
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        testHooks: {
+          afterPromptWireSettled: () =>
+            Deferred.succeed(wireSettled, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCompletion)),
+            ),
+        },
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageSemantics: "cumulative",
+          preserveRuntimeOnSettledInterrupt: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.succeed({
+                  stopReason: "end_turn" as const,
+                  usage: { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-usage-stop"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Deferred.await(wireSettled);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      yield* runtime.interruptTurn({ providerThread, providerTurnId });
+      const completed = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "interrupted",
+      );
+      assert.deepEqual(
+        completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "partial",
+          hasSubagents: false,
+          inputTokens: 60,
+          outputTokens: 15,
+          // Fresh-session zero baseline seeds optional counters at 0 (FIX 4).
+          cachedInputTokens: 0,
+          cacheCreationTokens: 0,
+          reasoningTokens: 0,
+        },
+      );
+      yield* Deferred.succeed(releaseCompletion, undefined);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("passes per-turn usage samples through without baseline deltas", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-per-turn-usage");
+      const threadId = ThreadId.make("thread-acp-per-turn-usage");
+      let promptOrdinal = 0;
+      // Fixture shaped after a live wire probe: glm-acp-agent 1.14.0 (Z.ai GLM)
+      // over ACP stdio, 2026-10-15 — three sequential prompts in one session,
+      // inputTokens 2432 → 2453 → 2475 as observed (per-turn context size; a
+      // session-cumulative counter would add a full context's worth each turn).
+      // GLM never sends cachedWriteTokens; those values are added here to
+      // exercise the clamp path.
+      const promptUsages = [
+        {
+          inputTokens: 2432,
+          outputTokens: 3,
+          totalTokens: 2435,
+          cachedReadTokens: 1024,
+          cachedWriteTokens: 64,
+          thoughtTokens: 2,
+        },
+        {
+          inputTokens: 2453,
+          outputTokens: 4,
+          totalTokens: 2457,
+          cachedReadTokens: 1045,
+          cachedWriteTokens: 85,
+          thoughtTokens: 3,
+        },
+        {
+          inputTokens: 2475,
+          outputTokens: 25,
+          totalTokens: 2500,
+          cachedReadTokens: 1067,
+          cachedWriteTokens: 107,
+          thoughtTokens: 20,
+        },
+      ];
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageSemantics: "per_turn",
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () => {
+                const usage = promptUsages[promptOrdinal++];
+                if (usage === undefined) return Effect.die("Unexpected prompt");
+                return Effect.succeed({ stopReason: "end_turn" as const, usage });
+              },
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-per-turn-usage"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      for (const [index, sample] of promptUsages.entries()) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: index + 1,
+          }),
+        );
+        const events = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const completed = events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        // Per-turn semantics map each response's own sample onto its turn:
+        // turn 2 reports 2453 input tokens, not the 21-token delta.
+        assert.deepEqual(
+          completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.turnTokenUsage
+            : null,
+          {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: sample.inputTokens,
+            outputTokens: sample.outputTokens,
+            cachedInputTokens: sample.cachedReadTokens,
+            cacheCreationTokens: sample.cachedWriteTokens,
+            reasoningTokens: sample.thoughtTokens,
+          },
+        );
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("clamps per-turn subsets that exceed their parent counters", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-per-turn-clamp");
+      const threadId = ThreadId.make("thread-acp-per-turn-clamp");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageSemantics: "per_turn",
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.succeed({
+                  stopReason: "end_turn" as const,
+                  usage: {
+                    inputTokens: 100,
+                    outputTokens: 10,
+                    totalTokens: 110,
+                    cachedReadTokens: 150,
+                    cachedWriteTokens: 120,
+                    thoughtTokens: 30,
+                  },
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-per-turn-clamp"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const completed = events.find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      // TurnTokenUsage contract: input includes cache read + write and
+      // reasoning is a subset of output. Reads clamp to input, writes clamp
+      // to what reads leave of it (100 - 100 = 0 here).
+      assert.deepEqual(
+        completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: false,
+          inputTokens: 100,
+          outputTokens: 10,
+          cachedInputTokens: 100,
+          cacheCreationTokens: 0,
+          reasoningTokens: 10,
+        },
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("reports per-turn usage unavailable when the agent omits usage", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-per-turn-missing");
+      const threadId = ThreadId.make("thread-acp-per-turn-missing");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          promptUsageSemantics: "per_turn",
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-per-turn-missing"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const completed = events.find(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepEqual(
+        completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
+        { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false },
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live(
+    "keeps usage unavailable for undeclared semantics even when the agent reports usage",
+    () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make("acp-test-usage-undeclared");
+        const threadId = ThreadId.make("thread-acp-usage-undeclared");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                prompt: () =>
+                  Effect.succeed({
+                    stopReason: "end_turn" as const,
+                    usage: { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+                  }),
+              }),
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-usage-undeclared"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        for (const ordinal of [1, 2]) {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          const events = Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          );
+          const completed = events.find(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          );
+          // The ACP spec leaves per-turn vs cumulative open, so an undeclared
+          // agent's counters are never trusted, on any turn.
+          assert.deepEqual(
+            completed?.type === "provider_turn.updated"
+              ? completed.providerTurn.turnTokenUsage
+              : null,
+            { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false },
+          );
+        }
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
     (outcome) =>

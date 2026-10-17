@@ -50,6 +50,7 @@ import {
   type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
+  type AcpPromptUsageSemantics,
 } from "@t3tools/provider-acp/server/adapter";
 
 export const ACP_REGISTRY_PROVIDER = ProviderDriverKind.make("acpRegistry");
@@ -121,6 +122,25 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   });
 }
 
+/**
+ * PromptResponse.usage semantics per registry agent, declared only where a
+ * live probe proved them (the ACP spec leaves per-turn vs session-cumulative
+ * open, so semantics are never assumed). glm-acp-agent (Z.ai GLM) 1.14.0,
+ * probed live 2026-10-15 over ACP stdio — 3 sequential prompts in one session,
+ * usage present every turn with inputTokens 2432 → 2453 → 2475 (per-turn
+ * context size; session-cumulative counters would roughly double each turn),
+ * totalTokens === inputTokens + outputTokens, cachedReadTokens <= inputTokens
+ * and thoughtTokens <= outputTokens on every sample — reads per-turn. Kimi CLI
+ * 1.52.0 returns no usage at all. Every other agent (Grok, Antigravity, Kimi,
+ * …) stays undeclared, so turn usage stays unavailable until probed.
+ */
+export function acpRegistryPromptUsageSemantics(
+  registryAgentId: string,
+): AcpPromptUsageSemantics | undefined {
+  // Per-agent exception: see the note above registerMistralVibeAcpExtensions.
+  return registryAgentId === "glm-acp-agent" ? "per_turn" : undefined;
+}
+
 function makeAcpRegistryRuntime(
   options: AcpRegistryAdapterV2Options,
   catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
@@ -175,6 +195,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator),
   );
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
+  const promptUsageSemantics = acpRegistryPromptUsageSemantics(registryAgentId);
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
@@ -188,6 +209,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
+    ...(promptUsageSemantics === undefined ? {} : { promptUsageSemantics }),
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),

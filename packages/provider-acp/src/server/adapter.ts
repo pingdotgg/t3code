@@ -30,6 +30,7 @@ import {
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -191,6 +192,112 @@ export interface AcpAdapterV2ExtensionContext {
   readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
 }
 
+/**
+ * How an ACP agent's PromptResponse.usage counters read. The ACP schema says
+ * "Token usage for this turn", but the upstream spec lists per-turn vs
+ * session-cumulative as an open question and real agents differ, so every
+ * flavor must declare the semantics it verified live. Undeclared flavors keep
+ * usage unavailable rather than guessing.
+ */
+export type AcpPromptUsageSemantics = "per_turn" | "cumulative";
+
+/**
+ * Maps one per-turn usage sample (flavors with promptUsageSemantics
+ * "per_turn") directly onto TurnTokenUsage: the response's counters already
+ * cover exactly this prompt, so no session baseline applies.
+ */
+export function acpPerTurnPromptUsage(
+  usage: EffectAcpSchema.Usage | null | undefined,
+  hasSubagents: boolean,
+  terminalStatus: OrchestrationV2ProviderTurn["status"],
+): TurnTokenUsage {
+  if (usage == null) {
+    return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
+  }
+  // TurnTokenUsage contract: input includes cache read + write and reasoning
+  // is a subset of output, so clamp counters that exceed their parent and
+  // drop the ones the agent left unset. Cache writes are capped at whatever
+  // cache reads leave of input, so the pair cannot exceed it.
+  const clampSubset = (value: number | null | undefined, parent: number) =>
+    value == null ? undefined : Math.min(value, parent);
+  const cachedInputTokens = clampSubset(usage.cachedReadTokens, usage.inputTokens);
+  const cacheCreationTokens = clampSubset(
+    usage.cachedWriteTokens,
+    usage.inputTokens - (cachedInputTokens ?? 0),
+  );
+  const reasoningTokens = clampSubset(usage.thoughtTokens, usage.outputTokens);
+  return {
+    usageScope: "main_agent",
+    usageStatus: terminalStatus === "completed" ? "complete" : "partial",
+    hasSubagents,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  };
+}
+
+export function acpPromptResponseTurnTokenUsage(
+  usage: EffectAcpSchema.Usage | null | undefined,
+  previous: EffectAcpSchema.Usage | null,
+  hasSubagents: boolean,
+  terminalStatus: OrchestrationV2ProviderTurn["status"],
+): TurnTokenUsage {
+  // Session-cumulative counters (flavors with promptUsageSemantics
+  // "cumulative"). A resumed session, missing response, or
+  // counter reset leaves no trustworthy baseline for this individual turn.
+  // Tokens spent by injected/background work between T3 turns — continuation
+  // turns never prompt — accrue into the next real prompt's delta by design.
+  if (
+    usage == null ||
+    previous === null ||
+    usage.inputTokens < previous.inputTokens ||
+    usage.outputTokens < previous.outputTokens
+  ) {
+    return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
+  }
+  // Optional counters (cache/reasoning) may first appear mid-session or drop
+  // out; a missing value on either side counts as zero, so a counter's first
+  // report contributes its full value. Undefined only when absent on both
+  // sides. Dips clamp to zero rather than going negative.
+  const optionalDelta = (current: number | null | undefined, before: number | null | undefined) =>
+    current == null && before == null ? undefined : Math.max((current ?? 0) - (before ?? 0), 0);
+  const cachedInputTokens = optionalDelta(usage.cachedReadTokens, previous.cachedReadTokens);
+  const cacheCreationTokens = optionalDelta(usage.cachedWriteTokens, previous.cachedWriteTokens);
+  const reasoningTokens = optionalDelta(usage.thoughtTokens, previous.thoughtTokens);
+  return {
+    usageScope: "main_agent",
+    usageStatus: terminalStatus === "completed" ? "complete" : "partial",
+    hasSubagents,
+    inputTokens: usage.inputTokens - previous.inputTokens,
+    outputTokens: usage.outputTokens - previous.outputTokens,
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  };
+}
+
+/**
+ * Session baseline to store after a prompt resolved. A dip on either required
+ * counter means the agent reset its session counters: storing the dipped
+ * sample would make the next turn pay the difference back as extra tokens, so
+ * null (one unavailable turn) is stored instead.
+ */
+export function acpPromptUsageBaselineAfterResponse(
+  usage: EffectAcpSchema.Usage | null | undefined,
+  previous: EffectAcpSchema.Usage | null,
+): EffectAcpSchema.Usage | null {
+  if (usage == null) return null;
+  if (
+    previous !== null &&
+    (usage.inputTokens < previous.inputTokens || usage.outputTokens < previous.outputTokens)
+  ) {
+    return null;
+  }
+  return usage;
+}
+
 export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   readonly driver: ProviderDriverKind;
@@ -304,6 +411,15 @@ export interface AcpAdapterV2Flavor {
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
   /**
+   * Declares how this agent's PromptResponse.usage counters read; see
+   * {@link AcpPromptUsageSemantics}. "per_turn" maps each response's sample
+   * straight onto its turn; "cumulative" keeps per-session baselines and
+   * attributes deltas. Undeclared (or absent): turn usage stays unavailable —
+   * the spec leaves the semantics open, so they must be proven per agent
+   * (live probe) and never assumed.
+   */
+  readonly promptUsageSemantics?: AcpPromptUsageSemantics;
+  /**
    * Grok can keep `task_already_running` state until the process exits.
    */
   readonly restartRuntimeAfterInterrupt?: boolean;
@@ -374,6 +490,7 @@ export interface AcpAdapterV2Options {
   };
   readonly testHooks?: {
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
@@ -1020,6 +1137,10 @@ interface ActiveAcpTurn {
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
+  promptUsage: EffectAcpSchema.Usage | undefined;
+  promptUsageBaseline: EffectAcpSchema.Usage | null;
+  /** True once this turn dispatched session/prompt on the wire. */
+  promptDispatched: boolean;
   backgroundFinalizeGeneration: number;
 }
 
@@ -1291,6 +1412,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =
     flavor.enablePostSettleContinuation === true && continuationRequests !== undefined;
+  // Baselines only exist for agents whose counters read session-cumulative;
+  // per-turn and undeclared flavors never touch the baseline map.
+  const promptUsageBaselinesEnabled = flavor.promptUsageSemantics === "cumulative";
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
@@ -1476,6 +1600,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
+        );
+        const promptUsageBySessionId = yield* Ref.make(
+          new Map<string, EffectAcpSchema.Usage | null>(),
         );
         const nativeMetadataBySessionId = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThreadNativeMetadata>(),
@@ -5787,6 +5914,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(activeSessionSetup, started);
+        if (promptUsageBaselinesEnabled && started.sessionId !== input.initialNativeThreadId) {
+          // A new ACP session starts at zero; a loaded one has unknown history.
+          // The lookup key assumes started.sessionId is the sessionId later used
+          // at prompt time (AcpSessionRuntime.setupSession guarantees this today).
+          yield* Ref.update(promptUsageBySessionId, (current) =>
+            new Map(current).set(started.sessionId, {
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              cachedReadTokens: 0,
+              cachedWriteTokens: 0,
+              thoughtTokens: 0,
+            }),
+          );
+        }
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
         const capabilities = negotiatedCapabilities(flavor.capabilities, started);
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
@@ -5819,6 +5961,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   driver,
                   detail: `ACP driver cannot load or resume session ${sessionId}`,
                 });
+          // Loading a session does not establish continuity with its last prompt here.
+          if (promptUsageBaselinesEnabled) {
+            yield* Ref.update(promptUsageBySessionId, (current) =>
+              new Map(current).set(activated.sessionId, null),
+            );
+          }
           rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
           return activated;
         });
@@ -6054,6 +6202,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status,
           startedAt: context.startedAt,
           completedAt,
+          ...(status === "running" || status === "pending"
+            ? {}
+            : {
+                turnTokenUsage:
+                  flavor.promptUsageSemantics === "per_turn"
+                    ? acpPerTurnPromptUsage(context.promptUsage, context.subagents.size > 0, status)
+                    : flavor.promptUsageSemantics === "cumulative"
+                      ? acpPromptResponseTurnTokenUsage(
+                          context.promptUsage,
+                          context.promptUsageBaseline,
+                          context.subagents.size > 0,
+                          status,
+                        )
+                      : {
+                          // Undeclared semantics: the agent's usage reading is
+                          // unverified, so turns stay unavailable by default.
+                          usageScope: "main_agent",
+                          usageStatus: "unavailable",
+                          hasSubagents: context.subagents.size > 0,
+                        },
+              }),
         });
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
@@ -6118,6 +6287,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          if (flavor.promptUsageSemantics === "cumulative") {
+            // Only a turn that actually dispatched session/prompt may poison the
+            // baseline: a cancelled/failed prompt with no response may have spent
+            // tokens. Continuation turns never prompt, so they must leave the
+            // baseline untouched — tokens spent by injected/background work
+            // between T3 turns accrue into the next real prompt's delta. The
+            // check runs inside the Ref.modify so it cannot interleave with the
+            // wire-settlement tap's baseline write (per-turn turns have no
+            // baseline to poison and skip this entirely).
+            yield* Ref.modify(promptUsageBySessionId, (current) => {
+              if (context.promptUsage !== undefined || !context.promptDispatched) {
+                return [undefined, current];
+              }
+              return [undefined, new Map(current).set(context.nativeThreadId, null)] as const;
+            });
+          }
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
@@ -6381,6 +6566,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
           yield* restartAcpRuntime(threadId);
+          if (promptUsageBaselinesEnabled) {
+            yield* Ref.set(promptUsageBySessionId, new Map());
+          }
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
@@ -6537,6 +6725,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSettled: false,
               promptSettledStatus: null,
               promptWireSettled,
+              promptUsage: undefined,
+              promptUsageBaseline: null,
+              promptDispatched: false,
               backgroundFinalizeGeneration: 0,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
@@ -6654,6 +6845,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
+            // From here on, a usage-less finalize means a dispatched prompt
+            // failed, was cancelled, or was Stopped before its response.
+            context.promptDispatched = true;
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
               Effect.tap(() =>
                 Ref.update(promptInstructionStates, (current) => {
@@ -6666,9 +6860,59 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // Wire settlement precedes the completion callback's permit request so
               // settled-soft classification can observe the native return even when
               // the completion fiber has not yet set promptSettled under the permit.
-              Effect.tap(() =>
-                Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
+              Effect.tap((result) =>
+                (flavor.promptUsageSemantics === "per_turn"
+                  ? // Per-turn semantics: the sample already covers exactly this
+                    // prompt, so it maps straight onto the turn. There is no
+                    // baseline to read, write, or poison.
+                    Effect.sync(() => {
+                      if (!context.finalized) {
+                        context.promptUsage = result.usage ?? undefined;
+                      }
+                    })
+                  : flavor.promptUsageSemantics === "cumulative"
+                    ? Effect.gen(function* () {
+                        // Generation guard: a runtime restart between dispatch and
+                        // this tap clears the baseline map and bumps
+                        // runtimeCallbackGeneration; the replaced runtime's late
+                        // sample must not seed the fresh map.
+                        const staleGeneration =
+                          (yield* Ref.get(runtimeCallbackGeneration)) !== promptGeneration;
+                        yield* Ref.modify(promptUsageBySessionId, (current) => {
+                          const previous = current.get(requestedSessionId) ?? null;
+                          if (!context.finalized) {
+                            context.promptUsage = result.usage ?? undefined;
+                            context.promptUsageBaseline = previous;
+                          }
+                          if (staleGeneration) return [undefined, current] as const;
+                          // "Prompt resolved without a usage field" and "prompt never
+                          // resolved" are intentionally conflated: both leave the next
+                          // turn with no trustworthy baseline.
+                          const next = acpPromptUsageBaselineAfterResponse(
+                            result.usage ?? null,
+                            previous,
+                          );
+                          // Hard-Stop window: with terminateRuntimeProcessGroupOnInterrupt,
+                          // the interrupt path advances the generation before the local
+                          // finalize, so staleGeneration drops this late sample above.
+                          // The finalized turn stays unavailable and the next turn starts
+                          // from a cleared map — conservative, never overcounting.
+                          return [
+                            undefined,
+                            new Map(current).set(requestedSessionId, next),
+                          ] as const;
+                        });
+                      })
+                    : // Undeclared semantics: usage reading is unverified, so the
+                      // response's counters are not captured at all.
+                      Effect.void
+                ).pipe(
+                  Effect.andThen(
+                    Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
+                  ),
+                ),
               ),
+              Effect.tap(() => options.testHooks?.afterPromptWireSettled?.() ?? Effect.void),
               Effect.flatMap((result) =>
                 runRuntimeCallbackAtGeneration(
                   promptGeneration,
@@ -7299,6 +7543,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sessionId,
                       acpMcpActivation(mcpContext),
                     );
+                    if (promptUsageBaselinesEnabled) {
+                      yield* Ref.update(promptUsageBySessionId, (current) =>
+                        new Map(current).set(activated.sessionId, null),
+                      );
+                    }
                     rememberTerminalEnvironment(
                       activated.sessionId,
                       yield* readMcpContext(snapshotInput.providerThread.appThreadId),
@@ -7369,6 +7618,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* Ref.set(activeSessionSetup, candidate);
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
+                        if (promptUsageBaselinesEnabled) {
+                          yield* Ref.set(
+                            promptUsageBySessionId,
+                            new Map([
+                              [
+                                candidate.sessionId,
+                                {
+                                  inputTokens: 0,
+                                  outputTokens: 0,
+                                  totalTokens: 0,
+                                  cachedReadTokens: 0,
+                                  cachedWriteTokens: 0,
+                                  thoughtTokens: 0,
+                                },
+                              ],
+                            ]),
+                          );
+                        }
                         yield* Ref.set(promptInstructionStates, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {
@@ -7461,6 +7728,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     sourceSessionId,
                     acpMcpActivation(mcpContext),
                   );
+                  if (promptUsageBaselinesEnabled) {
+                    yield* Ref.update(promptUsageBySessionId, (current) =>
+                      new Map(current).set(forked.sessionId, null),
+                    );
+                  }
                   rememberTerminalEnvironment(
                     forked.sessionId,
                     yield* readMcpContext(forkInput.targetThreadId),
