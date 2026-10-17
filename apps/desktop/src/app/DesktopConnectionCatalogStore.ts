@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopWindowsCatalogKey from "./DesktopWindowsCatalogKey.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -161,7 +162,11 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       catalog: string,
     ) => Effect.Effect<
       boolean,
-      DesktopConnectionCatalogStoreWriteError | DesktopConnectionCatalogStoreProtectionError
+      | DesktopConnectionCatalogStoreWriteError
+      | DesktopConnectionCatalogStoreProtectionError
+      | DesktopConnectionCatalogStoreReadError
+      | DesktopConnectionCatalogStoreDocumentDecodeError
+      | DesktopConnectionCatalogStoreDecodeError
     >;
     readonly clear: Effect.Effect<void>;
   }
@@ -385,6 +390,50 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const recoverWindowsKey =
+    environment.platform === "win32" && !environment.isDevelopment
+      ? yield* DesktopWindowsCatalogKey.make(environment.appDataDirectory)
+      : undefined;
+  const decryptCatalog = Effect.fn("desktop.connectionCatalogStore.decryptCatalog")(function* (
+    encrypted: Uint8Array,
+  ) {
+    // Windows safeStorage can abort the process on a truncated v10 payload.
+    const nativeDecryption =
+      recoverWindowsKey !== undefined && encrypted.length < 31
+        ? Effect.fail(
+            new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+              cause: new Error("Truncated Windows catalog ciphertext."),
+            }),
+          )
+        : safeStorage.decryptString(encrypted);
+    return yield* nativeDecryption.pipe(
+      Effect.map((catalog) => ({ catalog, encrypt: safeStorage.encryptString })),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          const recovered =
+            recoverWindowsKey === undefined ? undefined : yield* recoverWindowsKey(encrypted);
+          if (recovered === undefined) return yield* error;
+          return {
+            catalog: recovered.catalog,
+            encrypt: (value: string) =>
+              Effect.try({
+                try: () => recovered.encrypt(value),
+                catch: (cause) =>
+                  new ElectronSafeStorage.ElectronSafeStorageEncryptError({ cause }),
+              }),
+          };
+        }),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new DesktopConnectionCatalogStoreProtectionError({
+            operation: "decrypt-catalog",
+            catalogPath,
+            cause,
+          }),
+      ),
+    );
+  });
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -399,8 +448,19 @@ export const make = Effect.gen(function* () {
   const writeCatalog = Effect.fn("desktop.connectionCatalogStore.writeCatalog")(function* (
     catalog: string,
   ) {
+    // Inspect the current document on every write, including writes before the first read.
+    // Re-encrypting a recovered shared catalog with V2's key would lock V1 out.
+    const existing =
+      recoverWindowsKey === undefined
+        ? Option.none<EncryptedConnectionCatalogDocument>()
+        : yield* readDocument(fileSystem, catalogPath);
+    const encrypt = Option.isSome(existing)
+      ? (yield* decryptCatalog(
+          yield* decodeSecretBytes(catalogPath, existing.value.encryptedCatalog),
+        )).encrypt
+      : safeStorage.encryptString;
     const encryptedCatalog = Base64.encode(
-      yield* safeStorage.encryptString(catalog).pipe(
+      yield* encrypt(catalog).pipe(
         Effect.mapError(
           (cause) =>
             new DesktopConnectionCatalogStoreProtectionError({
@@ -481,20 +541,9 @@ export const make = Effect.gen(function* () {
         return Option.none<string>();
       }
       const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
-        Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
-        ),
+        Effect.flatMap(decryptCatalog),
       );
-      return Option.some(decrypted);
+      return Option.some(decrypted.catalog);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
       if (!(yield* encryptionAvailable)) {

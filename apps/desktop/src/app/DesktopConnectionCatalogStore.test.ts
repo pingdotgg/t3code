@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off - native-format fixtures exercise Chromium AES-GCM interoperability.
+import * as NodeCrypto from "node:crypto";
+import { vi } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
@@ -17,7 +20,22 @@ import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { resolveUserDataPath } from "./DesktopUserData.ts";
 
+const { legacyKeys } = vi.hoisted(() => ({ legacyKeys: new Map<string, Buffer>() }));
+vi.mock("../preview/BrowserImport/ChromiumKeys.ts", async (original) => ({
+  ...(await original<typeof import("../preview/BrowserImport/ChromiumKeys.ts")>()),
+  readWindowsKey: (path: string) => {
+    const key = legacyKeys.get(path);
+    return key
+      ? Effect.succeed(key)
+      : Effect.fail(
+          new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+            cause: new Error("No legacy profile key"),
+          }),
+        );
+  },
+}));
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 const decodeConnectionCatalog = Schema.decodeEffect(
@@ -55,11 +73,13 @@ function layerFor(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  platform: NodeJS.Platform = "darwin",
+  storage = layerSafeStorageFor(encryptionAvailable, failDecrypt),
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
-    platform: "darwin",
+    platform,
     processArch: "arm64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -71,7 +91,7 @@ function layerFor(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
+  const layerSafeStorage = storage;
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
@@ -441,3 +461,171 @@ describe("DesktopConnectionCatalogStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });
+
+const seal = (value: string, key: Buffer) => {
+  const nonce = NodeCrypto.randomBytes(12);
+  const cipher = NodeCrypto.createCipheriv("aes-256-gcm", key, nonce);
+  return Buffer.concat([
+    Buffer.from("v10"),
+    nonce,
+    cipher.update(value, "utf8"),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]);
+};
+const open = (bytes: Uint8Array, key: Buffer) => {
+  const data = Buffer.from(bytes);
+  const decipher = NodeCrypto.createDecipheriv("aes-256-gcm", key, data.subarray(3, 15));
+  decipher.setAuthTag(data.subarray(-16));
+  return Buffer.concat([decipher.update(data.subarray(15, -16)), decipher.final()]).toString(
+    "utf8",
+  );
+};
+
+it.effect.each([
+  { owner: "t3code", writeFirst: false, freshProfile: false },
+  { owner: "t3code", writeFirst: false, freshProfile: true },
+  { owner: "T3 Code (Alpha)", writeFirst: false, freshProfile: false },
+  { owner: "T3 Code (Alpha)", writeFirst: false, freshProfile: true },
+  { owner: "t3code", writeFirst: true, freshProfile: false },
+  { owner: "T3 Code (Alpha)", writeFirst: true, freshProfile: false },
+])(
+  "recovers $owner catalog (write first: $writeFirst, new V2: $freshProfile) and preserves both profiles",
+  ({ owner, writeFirst, freshProfile }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-catalog-key-" });
+      const original = Buffer.alloc(32, 1);
+      const other = Buffer.alloc(32, 2);
+      const v2 = freshProfile
+        ? owner === "T3 Code (Alpha)"
+          ? original
+          : other
+        : Buffer.alloc(32, 3);
+      for (const profile of ["t3code", "T3 Code (Alpha)"]) {
+        const statePath = path.join(root, "AppData", "Roaming", profile, "Local State");
+        yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
+        yield* fs.writeFileString(statePath, JSON.stringify({ profile }));
+        legacyKeys.set(statePath, profile === owner ? original : other);
+      }
+      const v2State = path.join(root, "AppData", "Roaming", "t3code-v2", "Local State");
+      yield* fs.makeDirectory(path.dirname(v2State), { recursive: true });
+      if (freshProfile) {
+        yield* resolveUserDataPath({
+          appDataDirectory: path.join(root, "AppData", "Roaming"),
+          isDevelopment: false,
+          platform: "win32",
+        });
+      } else {
+        yield* fs.writeFileString(v2State, "existing V2 key and preferences");
+      }
+      const v2Preferences = yield* fs.readFileString(v2State);
+      const tokenPath = path.join(path.dirname(v2State), "clerk-tokens.json");
+      const token = seal("existing V2 token", v2);
+      yield* fs.writeFile(tokenPath, token);
+      const native = {
+        isEncryptionAvailable: Effect.succeed(true),
+        encryptString: (value: string) => Effect.succeed(seal(value, v2)),
+        decryptString: (value: Uint8Array) =>
+          value.length < 31
+            ? Effect.die(new Error("Windows safeStorage aborts on truncated ciphertext"))
+            : Effect.try({
+                try: () => open(value, v2),
+                catch: (cause) =>
+                  new ElectronSafeStorage.ElectronSafeStorageDecryptError({ cause }),
+              }),
+        selectedStorageBackend: Effect.succeedNone,
+      };
+      yield* Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+        yield* fs.makeDirectory(environment.stateDir, { recursive: true });
+        const initial = JSON.stringify({
+          version: 1,
+          encryptedCatalog: seal("saved connections", original).toString("base64"),
+        });
+        yield* fs.writeFileString(catalogPath, initial);
+        if (writeFirst) {
+          assert.isTrue(yield* store.set("updated first"));
+          assert.equal(
+            open(
+              Buffer.from(
+                JSON.parse(yield* fs.readFileString(catalogPath)).encryptedCatalog,
+                "base64",
+              ),
+              original,
+            ),
+            "updated first",
+          );
+          yield* fs.writeFileString(catalogPath, initial);
+        }
+        assert.deepStrictEqual(yield* store.get, Option.some("saved connections"));
+        assert.equal(yield* fs.readFileString(catalogPath), initial);
+        assert.isTrue(yield* store.set("updated connections"));
+        const persisted = JSON.parse(yield* fs.readFileString(catalogPath));
+        assert.equal(
+          open(Buffer.from(persisted.encryptedCatalog, "base64"), original),
+          "updated connections",
+        );
+        assert.deepStrictEqual(yield* store.get, Option.some("updated connections"));
+        assert.equal(yield* fs.readFileString(v2State), v2Preferences);
+        for (const profile of ["t3code", "T3 Code (Alpha)"]) {
+          assert.equal(
+            yield* fs.readFileString(path.join(root, "AppData", "Roaming", profile, "Local State")),
+            JSON.stringify({ profile }),
+          );
+        }
+        assert.deepStrictEqual(yield* fs.readFile(tokenPath), new Uint8Array(token));
+        assert.equal(open(yield* fs.readFile(tokenPath), v2), "existing V2 token");
+        // Even a write before the next read must authenticate the current catalog's key.
+        yield* fs.writeFileString(
+          catalogPath,
+          JSON.stringify({
+            version: 1,
+            encryptedCatalog: seal("V1 update", original).toString("base64"),
+          }),
+        );
+        assert.isTrue(yield* store.set("write before read"));
+        assert.equal(
+          open(
+            Buffer.from(
+              JSON.parse(yield* fs.readFileString(catalogPath)).encryptedCatalog,
+              "base64",
+            ),
+            original,
+          ),
+          "write before read",
+        );
+        for (const encryptedCatalog of [
+          "",
+          Buffer.from("v10short").toString("base64"),
+          seal("unrecoverable", Buffer.alloc(32, 9)).toString("base64"),
+        ]) {
+          const corrupt = JSON.stringify({ version: 1, encryptedCatalog });
+          yield* fs.writeFileString(catalogPath, corrupt);
+          assert.equal(
+            (yield* store.get.pipe(Effect.flip))._tag,
+            "DesktopConnectionCatalogStoreProtectionError",
+          );
+          assert.equal(
+            (yield* store.set("must not overwrite").pipe(Effect.flip))._tag,
+            "DesktopConnectionCatalogStoreProtectionError",
+          );
+          assert.equal(yield* fs.readFileString(catalogPath), corrupt);
+        }
+      }).pipe(
+        Effect.provide(
+          layerFor(
+            root,
+            true,
+            null,
+            NodeServices.layer,
+            "win32",
+            Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, native),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
