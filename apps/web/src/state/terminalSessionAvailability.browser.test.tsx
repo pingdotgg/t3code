@@ -1,5 +1,5 @@
 import { EnvironmentId, ThreadId, type TerminalSummary } from "@t3tools/contracts";
-import { act, createElement, useEffect } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -11,11 +11,16 @@ const state = vi.hoisted(() => ({
   error: null as string | null,
 }));
 
-vi.mock("./session", () => ({ useEnvironmentScope: () => state.canRead }));
-vi.mock("./terminal", () => ({ terminalEnvironment: { metadata: () => ({}) } }));
-vi.mock("./query", () => ({
-  useEnvironmentQuery: (atom: unknown) =>
-    atom === null ? { data: null, error: null } : { data: state.data, error: state.error },
+vi.mock(import("./session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentScope: () => state.canRead,
+}));
+vi.mock(import("./query"), async (original) => ({
+  ...(await original()),
+  useEnvironmentQuery: ((atom: unknown) =>
+    atom === null
+      ? { data: null, error: null }
+      : { data: state.data, error: state.error }) as never,
 }));
 
 let root: Root;
@@ -47,26 +52,15 @@ function Probe() {
 }
 
 function render() {
-  return act(() => root.render(createElement(Probe)));
+  return act(() => root.render(<Probe />));
 }
 
 beforeEach(() => {
   state.canRead = true;
   state.data = null;
   state.error = null;
-  const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
-  const container = {
-    nodeType: 1,
-    tagName: "DIV",
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    ownerDocument: document,
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(container as unknown as HTMLElement);
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {

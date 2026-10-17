@@ -7,7 +7,8 @@ import {
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { nextTerminalAttachSeedState } from "@t3tools/client-runtime/state/terminal";
 import { AsyncResult } from "effect/reactivity";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type {
   GhosttyTerminalSurface,
@@ -28,34 +29,47 @@ const state = vi.hoisted(() => ({
     >(),
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
-vi.mock("../hooks/useSettings", () => ({
+vi.mock(import("@effect/atom-react"), async (original) => ({
+  ...(await original()),
+  useAtomValue: (() => null) as never,
+}));
+vi.mock(import("../hooks/useSettings"), async (original) => ({
+  ...(await original()),
   getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
-  useClientSettings: (select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    select(DEFAULT_CLIENT_SETTINGS),
+  useClientSettings: ((select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
+    select(DEFAULT_CLIENT_SETTINGS)) as never,
 }));
-vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => state.otherCommand }));
-vi.mock("../localApi", () => ({ readLocalApi: () => null }));
-vi.mock("../state/server", () => ({
-  serverEnvironment: { configValueAtom: () => "config" },
+vi.mock(import("../editorPreferences"), async (original) => ({
+  ...(await original()),
+  useOpenInPreferredEditor: (() => state.otherCommand) as never,
 }));
-vi.mock("../state/preview", () => ({ previewEnvironment: { open: "open" } }));
-vi.mock("../state/terminal", () => ({ terminalEnvironment: { resize: "resize", write: "write" } }));
-vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: (command: string) => (command === "resize" ? state.resize : state.otherCommand),
+vi.mock(import("../state/terminal"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    terminalEnvironment: { ...actual.terminalEnvironment, resize: "resize" as never },
+  };
+});
+vi.mock(import("../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: ((command: unknown) =>
+    command === "resize" ? state.resize : state.otherCommand) as never,
 }));
-vi.mock("../state/terminalSessions", () => ({
-  useAttachedTerminalSession: () => session,
+vi.mock(import("../state/terminalSessions"), async (original) => ({
+  ...(await original()),
+  useAttachedTerminalSession: (() => session) as never,
 }));
-vi.mock("~/terminal/ghostty/surface", () => ({
-  GhosttyTerminalSurface: { create: state.createSurface },
+vi.mock(import("~/terminal/ghostty/surface"), async (original) => ({
+  ...(await original()),
+  GhosttyTerminalSurface: { create: state.createSurface } as never,
 }));
-vi.mock("../state/session", async () => {
+vi.mock(import("../state/session"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
     (scope !== AuthTerminalOperateScope || id !== threadRef.environmentId || state.allowed);
   return {
+    ...(await original()),
     readEnvironmentScope,
     useEnvironmentScope: (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
       useSyncExternalStore(
@@ -75,7 +89,8 @@ const threadRef = {
   threadId: ThreadId.make("thread"),
 };
 const session = { ...nextTerminalAttachSeedState(), status: "running" as const, version: 1 };
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
 beforeEach(() => {
   state.allowed = true;
@@ -86,29 +101,20 @@ beforeEach(() => {
   // pending. Keep that unrelated setup pending while exercising its callback.
   state.createSurface.mockReset().mockReturnValue(new Promise(() => undefined));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("document", {
-    body: {},
-    documentElement: { classList: { contains: () => false } },
-    querySelector: () => null,
-    createElement: () => ({ getContext: () => null }),
-  });
-  vi.stubGlobal("getComputedStyle", () => ({
-    colorScheme: "light",
-    backgroundColor: "",
-    color: "",
-    getPropertyValue: () => "",
-  }));
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
 it("rechecks the target terminal grant when a retained surface callback reports a resize", async () => {
-  await act(async () => {
-    renderer = create(
+  await act(async () =>
+    root.render(
       <TerminalViewport
         advancedTypography={false}
         threadRef={threadRef}
@@ -124,9 +130,8 @@ it("rechecks the target terminal grant when a retained surface callback reports 
         drawerHeight={200}
         keybindings={[]}
       />,
-      { createNodeMock: () => ({ closest: () => null, contains: () => false }) },
-    );
-  });
+    ),
+  );
   expect(state.createSurface).toHaveBeenCalledOnce();
   const onResize = state.createSurface.mock.calls[0]![1].onResize;
   if (!onResize) throw new Error("The terminal did not register its resize callback.");

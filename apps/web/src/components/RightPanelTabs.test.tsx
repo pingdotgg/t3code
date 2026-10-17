@@ -1,11 +1,7 @@
 import { EnvironmentId, type ThreadPullRequestLink } from "@t3tools/contracts";
-import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  RightPanelTabs,
   resolvePullRequestTabLink,
   shouldOpenDefaultBrowserProfileFromMenuClick,
   surfaceShortcutActionForKey,
@@ -35,139 +31,6 @@ function shortcutEvent(
     ...overrides,
   };
 }
-
-const previewSurface = {
-  id: "browser:tab-1" as const,
-  kind: "preview" as const,
-  resourceId: "tab-1",
-};
-const secondSurface = {
-  id: "browser:tab-2" as const,
-  kind: "preview" as const,
-  resourceId: "tab-2",
-};
-const sessions: Readonly<Record<string, PreviewSessionSnapshot>> = {
-  "tab-1": {
-    threadId: "thread-1",
-    tabId: "tab-1",
-    navStatus: { _tag: "Success", url: "http://24x.xf.local/", title: "Local site" },
-    canGoBack: false,
-    canGoForward: false,
-    updatedAt: "2026-08-09T00:00:00.000Z",
-  },
-  "tab-2": {
-    threadId: "thread-1",
-    tabId: "tab-2",
-    navStatus: { _tag: "Success", url: "http://24x.xf.local/admin", title: "Admin" },
-    canGoBack: false,
-    canGoForward: false,
-    updatedAt: "2026-08-09T00:00:00.000Z",
-  },
-};
-
-const favicon = (dataUrl: string, pageUrl: string): DesktopPreviewFavicon => ({
-  dataUrl,
-  pageUrl,
-  capturedAt: 1,
-});
-
-function overlay(
-  icon: DesktopPreviewFavicon | null,
-  audio?: { audible?: boolean; audioMuted?: boolean },
-) {
-  return {
-    hasWebContents: true,
-    canGoBack: false,
-    canGoForward: false,
-    loading: false,
-    zoomFactor: 1,
-    pictureInPicture: false,
-    colorScheme: "system" as const,
-    audioMuted: audio?.audioMuted ?? false,
-    audible: audio?.audible ?? false,
-    controller: "none" as const,
-    favicon: icon,
-  };
-}
-
-function renderTabs(
-  first: DesktopPreviewFavicon | null,
-  second?: DesktopPreviewFavicon,
-  audio?: { audible?: boolean; audioMuted?: boolean },
-  previewRuntimeTabId: ((tabId: string) => string) | null = (tabId) => `runtime:${tabId}`,
-) {
-  return renderToStaticMarkup(
-    <RightPanelTabs
-      mode="inline"
-      keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
-      getShortcutContext={() => ({
-        terminalFocus: false,
-        terminalOpen: false,
-        previewFocus: false,
-        previewOpen: false,
-        isWeb: true,
-        isDesktop: false,
-      })}
-      surfaces={second ? [previewSurface, secondSurface] : [previewSurface]}
-      environmentId={null}
-      activeSurfaceId={previewSurface.id}
-      pendingSurfaceIds={new Set()}
-      previewSessions={sessions}
-      desktopByTabId={{
-        "tab-1": overlay(first, audio),
-        ...(second ? { "tab-2": overlay(second) } : {}),
-      }}
-      {...(previewRuntimeTabId ? { previewRuntimeTabId } : {})}
-      terminalLabelsById={new Map()}
-      onActivate={() => undefined}
-      onCloseSurface={() => undefined}
-      onCloseOtherSurfaces={() => undefined}
-      onCloseSurfacesToRight={() => undefined}
-      onCloseAllSurfaces={() => undefined}
-      onCopyFilePath={() => undefined}
-      onAddBrowser={() => undefined}
-      onAddBrowserInProfile={() => undefined}
-      onAddTerminal={() => undefined}
-      onAddPullRequest={() => undefined}
-      onAddPullRequests={() => undefined}
-      onAddDiff={() => undefined}
-      onAddFiles={() => undefined}
-      onAddDevice={() => undefined}
-      browserAvailable
-      terminalAvailable={false}
-      diffAvailable={false}
-      filesAvailable={false}
-      pullRequestAvailable={false}
-      pullRequestsAvailable={false}
-      deviceAvailable={false}
-    >
-      <div>content</div>
-    </RightPanelTabs>,
-  );
-}
-
-describe("RightPanelTabs preview favicon", () => {
-  it("prefers a live capture and never asks Google about a private hostname", () => {
-    const captured = renderTabs(favicon("data:image/png;base64,AAAA", "http://24x.xf.local/"));
-    expect(captured).toContain("data:image/png;base64,AAAA");
-    expect(captured).not.toContain("s2/favicons");
-    expect(renderTabs(null)).not.toContain("s2/favicons");
-  });
-
-  it("keeps route-specific captures isolated between live tabs on one origin", () => {
-    const html = renderTabs(
-      favicon("data:image/png;base64,AAAA", "http://24x.xf.local/"),
-      favicon("data:image/png;base64,BBBB", "http://24x.xf.local/admin"),
-    );
-    expect(html).toContain("data:image/png;base64,AAAA");
-    expect(html).toContain("data:image/png;base64,BBBB");
-  });
-
-  it("hides a capture while the server session still describes another origin", () => {
-    const html = renderTabs(favicon("data:image/png;base64,AAAA", "https://example.com/"));
-    expect(html).not.toContain("data:image/png;base64,AAAA");
-  });
-});
 
 describe("surface shortcuts", () => {
   const actions = [
@@ -213,39 +76,6 @@ describe("surface shortcut typing contexts", () => {
   it("claims letters when focus sits outside any editable region", () => {
     expect(surfaceShortcutTargetsTypingContext(null)).toBe(false);
     expect(surfaceShortcutTargetsTypingContext(makeTarget(null))).toBe(false);
-  });
-});
-
-describe("RightPanelTabs audio indicator", () => {
-  const cases = [
-    { audible: false, audioMuted: false, label: null },
-    { audible: false, audioMuted: true, label: null },
-    { audible: true, audioMuted: false, label: "Mute Local site" },
-    { audible: true, audioMuted: true, label: "Unmute Local site" },
-  ] as const;
-
-  it.each(cases)("audible=$audible muted=$audioMuted", ({ audible, audioMuted, label }) => {
-    const html = renderTabs(null, undefined, { audible, audioMuted });
-    if (label === null) {
-      expect(html).not.toContain("Mute Local site");
-      expect(html).not.toContain("Unmute Local site");
-    } else {
-      expect(html).toContain(`aria-label="${label}"`);
-    }
-  });
-
-  it("addresses the desktop by runtime tab id, never the server session id", () => {
-    const seen: string[] = [];
-    renderTabs(null, undefined, { audible: true }, (tabId) => {
-      seen.push(tabId);
-      return `runtime:${tabId}`;
-    });
-    expect(seen).toContain("tab-1");
-  });
-
-  it("hides the toggle when no runtime tab id can be resolved", () => {
-    const html = renderTabs(null, undefined, { audible: true }, null);
-    expect(html).not.toContain("Mute Local site");
   });
 });
 

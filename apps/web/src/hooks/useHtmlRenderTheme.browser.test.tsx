@@ -1,7 +1,7 @@
 import { HTML_RENDER_DEFAULT_FONTS, type HtmlRenderTheme } from "@t3tools/shared/htmlRender";
 import { BUILT_IN_THEME_IDS } from "@t3tools/shared/themePalettes";
-import { act, createElement, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, useEffect } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -19,14 +19,12 @@ const selection = vi.hoisted(() => ({
   themeHalves: null as ThemeHalves | null,
 }));
 
-vi.mock("./useTheme", () => ({ useTheme: () => selection }));
-vi.mock("./useSettings", () => ({
-  useClientSettings: (
-    select: (settings: { fontFamilySans: string; fontFamilyCode: string }) => string,
-  ) => select({ fontFamilySans: "", fontFamilyCode: "" }),
+vi.mock(import("./useTheme"), async (original) => ({
+  ...(await original()),
+  useTheme: (() => selection) as never,
 }));
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root | undefined;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -34,8 +32,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
+  act(() => root?.unmount());
+  root = undefined;
   setEnvironmentThemes([]);
   vi.unstubAllGlobals();
 });
@@ -49,9 +47,9 @@ function readRenderTheme(): HtmlRenderTheme {
     }, [resolved]);
     return null;
   }
-  act(() => {
-    renderer = create(createElement(Probe));
-  });
+  act(() => root?.unmount());
+  root = createRoot(document.createElement("div"));
+  act(() => root!.render(<Probe />));
   if (!theme) throw new Error("The HTML render theme was not resolved.");
   return theme;
 }

@@ -3,13 +3,12 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   keybindings: [] as ResolvedKeybindingsConfig,
   params: {} as Record<string, string>,
-  paletteOpen: false,
   workspaceAvailable: true,
   navigate: vi.fn(),
   openPreview: vi.fn(),
@@ -17,48 +16,61 @@ const state = vi.hoisted(() => ({
   toast: vi.fn(),
 }));
 
-vi.mock("./preview/openPreviewSession", () => ({ openPreviewSession: state.openPreview }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.keybindings }));
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => state.navigate,
-  useParams: () => state.params,
+vi.mock(import("./preview/openPreviewSession"), async (original) => ({
+  ...(await original()),
+  openPreviewSession: state.openPreview,
 }));
-vi.mock("../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
-vi.mock("../state/preview", () => ({ previewEnvironment: { open: state.openPreview } }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => ({}) } }));
-vi.mock("../connection/catalog", () => ({ environmentCatalog: { catalogValueAtom: "catalog" } }));
-vi.mock("../rpc/atomRegistry", () => ({
-  appAtomRegistry: {
-    get: (atom: unknown) =>
-      atom === "catalog"
-        ? { isReady: true, entries: new Map([["remote", {}]]) }
-        : { status: "live" },
-  },
+vi.mock(import("@effect/atom-react"), async (original) => ({
+  ...(await original()),
+  useAtomValue: (() => state.keybindings) as never,
 }));
-vi.mock("../state/entities", () => ({
-  readThreadShell: () => ({ projectId: "project-1", worktreePath: null }),
-  readProject: () => (state.workspaceAvailable ? { workspaceRoot: "/work/project" } : null),
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useNavigate: (() => state.navigate) as never,
+  useParams: (() => state.params) as never,
 }));
-vi.mock("../composerDraftStore", () => {
-  const store = {
-    getDraftSession: () => null,
-    getDraftThreadByRef: () => null,
-    getDraftIdByRef: () => null,
-  };
+vi.mock(import("../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: ((command: unknown) => command) as never,
+}));
+vi.mock(import("../state/preview"), async (original) => {
+  const actual = await original();
   return {
-    useComposerDraftStore: Object.assign(
-      (select: (value: typeof store) => unknown) => select(store),
-      { getState: () => store },
-    ),
+    ...actual,
+    previewEnvironment: { ...actual.previewEnvironment, open: state.openPreview as never },
   };
 });
-vi.mock("../commandPaletteBus", () => ({ isCommandPaletteOpen: () => state.paletteOpen }));
-vi.mock("../lib/editableFocus", () => ({ isEditableFocused: () => false }));
-vi.mock("../lib/previewFocus", () => ({ isPreviewFocused: () => false }));
-vi.mock("../lib/terminalFocus", () => ({ isTerminalFocused: () => false }));
-vi.mock("../modelPickerVisibility", () => ({ isModelPickerOpen: () => false }));
-vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
+// The remote environment is catalogued and its shell is live.
+vi.mock(import("../connection/catalog"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...actual,
+    environmentCatalog: {
+      ...actual.environmentCatalog,
+      catalogValueAtom: Atom.make({ isReady: true, entries: new Map([["remote", {}]]) }) as never,
+    },
+  };
+});
+vi.mock(import("../state/shell"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const live = Atom.make({ status: "live" });
+  return {
+    ...actual,
+    environmentShell: { ...actual.environmentShell, stateValueAtom: (() => live) as never },
+  };
+});
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  readThreadShell: (() => ({ projectId: "project-1", worktreePath: null })) as never,
+  readProject: (() =>
+    state.workspaceAvailable ? { workspaceRoot: "/work/project" } : null) as never,
+}));
+vi.mock(import("./ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: state.toast } };
+});
 
 import { useClosedViewStore } from "../closedViewStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
@@ -74,32 +86,30 @@ const snapshot = {
   canGoForward: false,
   updatedAt: "2026-09-22T12:00:00.000Z",
 } as const;
-class TestElement extends EventTarget {
-  closest(selector: string) {
-    return selector === "[data-keybinding-capture]" ? this : null;
-  }
-}
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
 let menuAction: ((action: string) => void) | undefined;
 
 async function render() {
-  await act(() => {
-    renderer = create(<ReopenClosedViewShortcut />);
-  });
+  await act(() => root.render(<ReopenClosedViewShortcut />));
 }
 
-function press(overrides: Record<string, unknown> = {}) {
-  const event = Object.assign(new Event("keydown", { cancelable: true }), {
+function press(target: Element = document.body) {
+  const event = new KeyboardEvent("keydown", {
     key: "T",
     ctrlKey: true,
-    metaKey: false,
     shiftKey: true,
-    altKey: false,
-    repeat: false,
-    ...overrides,
+    bubbles: true,
+    cancelable: true,
   });
-  window.dispatchEvent(event);
+  target.dispatchEvent(event);
   return event;
+}
+
+function openCommandPalette() {
+  const palette = document.createElement("div");
+  palette.dataset.commandPalette = "";
+  document.body.append(palette);
+  return palette;
 }
 
 beforeEach(() => {
@@ -107,7 +117,6 @@ beforeEach(() => {
   Object.assign(state, {
     keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
     params: {},
-    paletteOpen: false,
     workspaceAvailable: true,
   });
   state.navigate.mockResolvedValue(undefined);
@@ -119,27 +128,24 @@ beforeEach(() => {
     suppressedTerminalIdsByThreadKey: {},
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("HTMLElement", TestElement);
-  vi.stubGlobal("navigator", { platform: "Linux" });
-  vi.stubGlobal(
-    "window",
-    Object.assign(new EventTarget(), {
-      desktopBridge: {
-        preview: { setForwardedShortcuts: state.setShortcuts },
-        onMenuAction: (listener: typeof menuAction) => {
-          menuAction = listener;
-          return () => {
-            menuAction = undefined;
-          };
-        },
-      },
-    }),
-  );
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  window.desktopBridge = {
+    preview: { setForwardedShortcuts: state.setShortcuts },
+    onMenuAction: (listener: (action: string) => void) => {
+      menuAction = listener;
+      return () => {
+        menuAction = undefined;
+      };
+    },
+  } as unknown as NonNullable<typeof window.desktopBridge>;
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
+  await act(() => root.unmount());
+  delete window.desktopBridge;
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -167,7 +173,7 @@ describe("root reopen shortcut", () => {
         .getState()
         .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
     });
-    state.paletteOpen = true;
+    openCommandPalette();
     expect(press().defaultPrevented).toBe(false);
     expect(state.navigate).not.toHaveBeenCalled();
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
@@ -178,18 +184,10 @@ describe("root reopen shortcut", () => {
       .getState()
       .remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
     await render();
-    const recorder = new TestElement();
-    const event = Object.assign(new Event("keydown", { bubbles: true, cancelable: true }), {
-      key: "T",
-      ctrlKey: true,
-      metaKey: false,
-      shiftKey: true,
-      altKey: false,
-      repeat: false,
-    });
-    Object.defineProperty(event, "target", { value: recorder });
-    window.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(false);
+    const recorder = document.createElement("input");
+    recorder.dataset.keybindingCapture = "";
+    document.body.append(recorder);
+    expect(press(recorder).defaultPrevented).toBe(false);
     expect(useClosedViewStore.getState().entries).toHaveLength(1);
   });
 

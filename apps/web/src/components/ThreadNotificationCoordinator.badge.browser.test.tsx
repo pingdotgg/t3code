@@ -1,44 +1,64 @@
+import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   mode: "notifications",
   inApp: false,
   toast: vi.fn(),
-  shells: new Map(),
+  shells: null as unknown as { set: (id: string, value: unknown) => void },
   navigate: vi.fn(),
   sound: vi.fn(),
   badge: vi.fn(),
   environmentIds: ["one", "two"],
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: (id: string) => state.shells.get(id) }));
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => state.navigate,
-  useParams: () => ({}),
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useNavigate: (() => state.navigate) as never,
+  useParams: (() => ({})) as never,
 }));
-vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
-vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: (id: string) => id } }));
-vi.mock("../state/environments", () => ({
-  useEnvironmentIds: () => state.environmentIds,
+vi.mock(import("./ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: state.toast as never } };
+});
+vi.mock(import("../state/shell"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentShell: {
+      ...actual.environmentShell,
+      stateValueAtom: ((id: string) => shellAtom(id)) as never,
+    },
+  };
+});
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironmentIds: (() => state.environmentIds) as never,
 }));
-vi.mock("../hooks/useSettings", () => ({
-  useClientSettings: (
+vi.mock(import("../hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useClientSettings: ((
     select: (settings: { notificationMode: string; inAppNotificationsEnabled: boolean }) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp }),
-  getClientSettings: () => ({ notificationMode: state.mode }),
+  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
+  getClientSettings: (() => ({ notificationMode: state.mode })) as never,
 }));
-vi.mock("../threadNotifications", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../threadNotifications")>()),
+vi.mock(import("../threadNotifications"), async (original) => ({
+  ...(await original()),
   playNotificationSound: state.sound,
   unlockNotificationAudio: vi.fn(),
   setNotificationBadge: state.badge,
 }));
 
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
+
+let registry: AtomRegistry.AtomRegistry;
+const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
+state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
   static permission = "granted";
@@ -65,7 +85,7 @@ const thread = {
   session: null as { status: string } | null,
   latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
 };
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
 let focused = false;
 let visibility = "visible";
 
@@ -138,14 +158,18 @@ function complete(environment = "one", completedAt = "2026-09-13T08:00:00Z") {
   );
 }
 async function render() {
-  await act(async () => {
-    if (renderer) renderer.update(<ThreadNotificationCoordinator />);
-    else renderer = create(<ThreadNotificationCoordinator />);
-  });
+  await act(async () =>
+    root.render(
+      <RegistryContext.Provider value={registry}>
+        <ThreadNotificationCoordinator />
+      </RegistryContext.Provider>,
+    ),
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  registry = AtomRegistry.make();
   state.mode = "notifications";
   state.inApp = false;
   state.environmentIds = ["one", "two"];
@@ -157,21 +181,19 @@ beforeEach(() => {
   TestNotification.sent = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("Notification", TestNotification);
-  vi.stubGlobal("window", Object.assign(new EventTarget(), { focus: vi.fn() }));
-  vi.stubGlobal(
-    "document",
-    Object.assign(new EventTarget(), {
-      hasFocus: () => focused,
-      get visibilityState() {
-        return visibility;
-      },
-    }),
+  vi.spyOn(window, "focus").mockImplementation(() => undefined);
+  vi.spyOn(document, "hasFocus").mockImplementation(() => focused);
+  vi.spyOn(document, "visibilityState", "get").mockImplementation(
+    () => visibility as DocumentVisibilityState,
   );
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  delete window.desktopBridge;
+  registry.dispose();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -247,8 +269,8 @@ it("starts a fresh count after another native app window gains focus", async () 
   complete("two");
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
-  await act(async () => renderer!.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  root = createRoot(document.createElement("div"));
   expect(unsubscribe).toHaveBeenCalledOnce();
   expect(state.badge).toHaveBeenLastCalledWith(0);
 });

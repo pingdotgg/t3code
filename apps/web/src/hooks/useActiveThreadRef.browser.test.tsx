@@ -1,13 +1,13 @@
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useActiveThreadRef } from "./useActiveThreadRef";
 
 type ThreadLike = { environmentId: EnvironmentId; id: ThreadId; status: string } | null;
 
-let renderer: ReactTestRenderer | null = null;
+let root: Root;
 let observed: Array<ScopedThreadRef | null> = [];
 
 function Probe({ thread }: { thread: ThreadLike }) {
@@ -22,21 +22,18 @@ const thread = (id: string, status = "idle"): ThreadLike => ({
 });
 
 async function render(value: ThreadLike) {
-  await act(() => {
-    if (renderer) renderer.update(<Probe thread={value} />);
-    else renderer = create(<Probe thread={value} />);
-  });
+  await act(() => root.render(<Probe thread={value} />));
   return observed.at(-1);
 }
 
 beforeEach(() => {
   observed = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = null;
+  await act(() => root.unmount());
   vi.unstubAllGlobals();
 });
 

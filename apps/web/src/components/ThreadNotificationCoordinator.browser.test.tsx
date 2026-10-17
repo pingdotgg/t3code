@@ -2,7 +2,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -110,48 +110,50 @@ function mockThreads() {
   return [stableParent, child];
 }
 
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => ({
+vi.mock(import("@effect/atom-react"), async (original) => ({
+  ...(await original()),
+  useAtomValue: (() => ({
     status: state.live ? "live" : "disconnected",
     snapshot: Option.some({ threads: mockThreads() }),
-  }),
+  })) as never,
 }));
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => state.navigate,
-  useParams: () => state.active,
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  useNavigate: (() => state.navigate) as never,
+  useParams: (() => state.active) as never,
 }));
-vi.mock("../hooks/useSettings", () => ({
-  useClientSettings: (
+vi.mock(import("../hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useClientSettings: ((
     select: (
       settings: Pick<ClientSettings, "notificationMode" | "inAppNotificationsEnabled">,
     ) => unknown,
-  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp }),
-  getClientSettings: () => ({ notificationMode: state.mode }),
+  ) => select({ notificationMode: state.mode, inAppNotificationsEnabled: state.inApp })) as never,
+  getClientSettings: (() => ({ notificationMode: state.mode })) as never,
 }));
-vi.mock("../state/environments", () => ({
-  useEnvironmentIds: () => ["env-1"],
+vi.mock(import("../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironmentIds: (() => ["env-1"]) as never,
 }));
-vi.mock("../state/shell", () => ({
-  environmentShell: { stateValueAtom: vi.fn() },
-}));
-vi.mock("../threadNotifications", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../threadNotifications")>()),
+vi.mock(import("../threadNotifications"), async (original) => ({
+  ...(await original()),
   playNotificationSound: state.sound,
   setNotificationBadge: vi.fn(),
 }));
-vi.mock("./ui/toast", () => ({
-  toastManager: { add: state.add, close: state.close },
-}));
+vi.mock(import("./ui/toast"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    toastManager: { ...actual.toastManager, add: state.add as never, close: state.close },
+  };
+});
 
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
 
 async function render() {
-  await act(() => {
-    if (renderer) renderer.update(<ThreadNotificationCoordinator />);
-    else renderer = create(<ThreadNotificationCoordinator />);
-  });
+  await act(() => root.render(<ThreadNotificationCoordinator />));
 }
 
 async function complete() {
@@ -181,21 +183,17 @@ beforeEach(() => {
   });
   stableParent = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", new EventTarget());
-  vi.stubGlobal("document", {
-    get visibilityState() {
-      return state.visible;
-    },
-    hasFocus: () => state.focused,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  });
+  vi.spyOn(document, "visibilityState", "get").mockImplementation(
+    () => state.visible as DocumentVisibilityState,
+  );
+  vi.spyOn(document, "hasFocus").mockImplementation(() => state.focused);
   vi.stubGlobal("Notification", Object.assign(state.notification, { permission: "granted" }));
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
+  await act(() => root.unmount());
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 

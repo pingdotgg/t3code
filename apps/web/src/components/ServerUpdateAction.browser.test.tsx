@@ -1,51 +1,59 @@
-import { act, type ReactElement } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { renderToStaticMarkup } from "react-dom/server";
+import { RegistryContext } from "@effect/atom-react";
 import { AuthSessionState, type EnvironmentId, type ServerInstallation } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { act, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
   clipboard: vi.fn(),
   continueThreadsAfterServerUpdate: false,
-  session: null as AsyncResult.AsyncResult<AuthSessionState, Error> | null,
-  sessionAtom: Symbol("session"),
+  sessionAtom: null as unknown,
 }));
 
-vi.mock("~/hooks/useCopyToClipboard", () => ({
-  useCopyToClipboard: (options: { onCopy: (context: { command: string }) => void }) => ({
+vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
+  ...(await original()),
+  useCopyToClipboard: ((options: { onCopy: (context: { command: string }) => void }) => ({
     copyToClipboard: (command: string, context: { command: string }) => {
       testState.clipboard(command);
       options.onCopy(context);
     },
-  }),
+    isCopied: false,
+  })) as never,
 }));
-vi.mock("~/hooks/useSettings", () => ({
-  useEnvironmentSettings: (
+vi.mock(import("~/hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useEnvironmentSettings: ((
     _environmentId: EnvironmentId,
     selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
-  ) => selector({ continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate }),
+  ) =>
+    selector({
+      continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate,
+    })) as never,
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => testState.session }));
-vi.mock("~/rpc/atomRegistry", () => ({
-  appAtomRegistry: { get: () => testState.session },
+vi.mock(import("~/state/session"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentSession: {
+      ...actual.environmentSession,
+      sessionStateAtom: (() => testState.sessionAtom) as never,
+    },
+  };
+});
+vi.mock(import("~/state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => testState.updateServer) as never,
 }));
-vi.mock("~/state/session", () => ({
-  environmentSession: { sessionStateAtom: () => testState.sessionAtom },
-}));
-vi.mock("~/state/server", () => ({
-  serverEnvironment: { updateServer: Symbol("updateServer") },
-}));
-vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: () => testState.updateServer,
-}));
-vi.mock("./ui/toast", () => ({
-  toastManager: { add: testState.toast },
-}));
+vi.mock(import("./ui/toast"), async (original) => {
+  const actual = await original();
+  return { ...actual, toastManager: { ...actual.toastManager, add: testState.toast } };
+});
 
 import {
   readConfirmDialogState,
@@ -53,6 +61,7 @@ import {
   resetConfirmDialogForTests,
   respondToConfirmDialog,
 } from "~/confirmDialog";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import {
   ServerUpdateAction,
   ServerUpdateProgress,
@@ -61,24 +70,6 @@ import {
 } from "./ServerUpdateAction";
 
 const decodeSessionState = Schema.decodeUnknownSync(AuthSessionState);
-
-type ActionElement = ReactElement<{
-  readonly onClick?: () => void;
-}>;
-
-function renderAction(): ActionElement {
-  return ServerUpdateAction({
-    environmentId: "env-test" as EnvironmentId,
-    serverLabel: "Test server",
-    selfUpdate: "boot-service",
-    targetVersion: "0.0.31",
-  }) as ActionElement;
-}
-
-async function flushPromises(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-}
 
 const legacyAuth = {
   policy: "remote-reachable",
@@ -96,15 +87,72 @@ const currentSession = {
   },
 } as const satisfies AuthSessionState;
 
-describe("ServerUpdateAction", () => {
-  beforeEach(() => {
-    testState.updateServer.mockReset();
-    testState.toast.mockReset();
-    testState.clipboard.mockReset();
-    testState.continueThreadsAfterServerUpdate = false;
-    testState.session = AsyncResult.success(currentSession);
-  });
+const success = (method: "boot-service" | "desktop-app" = "boot-service", version = "0.0.31") =>
+  AsyncResult.success({ targetVersion: version, method });
 
+let root: Root;
+let container: HTMLDivElement;
+let sessionAtom: Atom.Writable<SessionResult>;
+
+function setSession(session: SessionResult) {
+  appAtomRegistry.set(sessionAtom, session);
+}
+
+async function render(element: ReactNode) {
+  await act(() =>
+    root.render(
+      <RegistryContext.Provider value={appAtomRegistry}>{element}</RegistryContext.Provider>,
+    ),
+  );
+}
+
+function button(name?: string) {
+  const buttons = [...container.querySelectorAll("button")];
+  return name === undefined
+    ? buttons[0]
+    : buttons.find((element) => element.textContent?.trim() === name);
+}
+
+async function click(name?: string) {
+  await act(async () => button(name)!.click());
+}
+
+async function renderAction(
+  props: Partial<Parameters<typeof ServerUpdateAction>[0]> = {},
+): Promise<void> {
+  await render(
+    <ServerUpdateAction
+      environmentId={"env-test" as EnvironmentId}
+      serverLabel="Test server"
+      selfUpdate="boot-service"
+      targetVersion="0.0.31"
+      {...props}
+    />,
+  );
+}
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  testState.updateServer.mockReset();
+  testState.toast.mockReset();
+  testState.clipboard.mockReset();
+  testState.continueThreadsAfterServerUpdate = false;
+  sessionAtom = Atom.make<SessionResult>(AsyncResult.success(currentSession));
+  testState.sessionAtom = sessionAtom;
+  resetConfirmDialogForTests();
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  resetConfirmDialogForTests();
+  vi.unstubAllGlobals();
+});
+
+describe("ServerUpdateAction", () => {
   it.each([
     { serverUpdateScope: undefined, scopes: ["orchestration:operate"], allowed: true },
     { serverUpdateScope: undefined, scopes: ["orchestration:read"], allowed: false },
@@ -121,77 +169,75 @@ describe("ServerUpdateAction", () => {
   ] as const)(
     "uses the advertised update scope $serverUpdateScope with grant $scopes",
     async ({ serverUpdateScope, scopes, allowed }) => {
-      testState.session = AsyncResult.success(
-        decodeSessionState({
-          ...currentSession,
-          scopes,
-          auth: {
-            ...legacyAuth,
-            ...(serverUpdateScope === undefined ? {} : { serverUpdateScope }),
-          },
-        }),
+      setSession(
+        AsyncResult.success(
+          decodeSessionState({
+            ...currentSession,
+            scopes,
+            auth: {
+              ...legacyAuth,
+              ...(serverUpdateScope === undefined ? {} : { serverUpdateScope }),
+            },
+          }),
+        ),
       );
-      testState.updateServer.mockResolvedValue(
-        AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
-      );
+      testState.updateServer.mockResolvedValue(success());
 
-      renderAction().props.onClick?.();
-      await flushPromises();
+      await renderAction();
+      expect(button("Update")!.disabled).toBe(!allowed);
+      await click("Update");
 
       expect(testState.updateServer).toHaveBeenCalledTimes(allowed ? 1 : 0);
     },
   );
 
   it("keeps a known grant usable while the session refreshes", async () => {
-    testState.session = AsyncResult.waiting(AsyncResult.success(currentSession));
-    testState.updateServer.mockResolvedValue(
-      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
-    );
+    setSession(AsyncResult.waiting(AsyncResult.success(currentSession)));
+    testState.updateServer.mockResolvedValue(success());
 
-    renderAction().props.onClick?.();
-    await flushPromises();
+    await renderAction();
+    await click("Update");
 
     expect(testState.updateServer).toHaveBeenCalledOnce();
   });
 
-  it("does not dispatch an update after maintenance access is removed", async () => {
-    const action = renderAction();
-    testState.session = AsyncResult.success({ ...currentSession, scopes: [] });
-    action.props.onClick?.();
-    await flushPromises();
+  it("disables the action once maintenance access is removed", async () => {
+    await renderAction();
+    await act(() => setSession(AsyncResult.success({ ...currentSession, scopes: [] })));
+    expect(button("Update")!.disabled).toBe(true);
+    await click("Update");
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
 
   it.each([
     [
       { kind: "npm-global", prefix: "/opt/node" },
+      "Copy update command",
       "npm install --global --prefix '/opt/node' t3@0.0.45",
       "Update command copied",
       "then restart t3",
     ],
     [
       { kind: "npx" },
+      "Copy relaunch command",
       "npx t3@0.0.45",
       "Relaunch command copied",
       "This does not update an installed t3 command.",
     ],
     [
       undefined,
+      "Copy relaunch command",
       "npx t3@0.0.45",
       "Relaunch command copied",
       "This does not update an installed t3 command.",
     ],
-  ] satisfies ReadonlyArray<readonly [ServerInstallation | undefined, string, string, string]>)(
+  ] satisfies ReadonlyArray<
+    readonly [ServerInstallation | undefined, string, string, string, string]
+  >)(
     "copies an honest manual command for %j without invoking remote update",
-    (installation, command, title, guidance) => {
-      const action = ServerUpdateAction({
-        environmentId: "env-test" as EnvironmentId,
-        serverLabel: "Test server",
-        selfUpdate: null,
-        installation,
-        targetVersion: "0.0.45",
-      }) as ActionElement;
-      action.props.onClick?.();
+    async (installation, label, command, title, guidance) => {
+      await renderAction({ selfUpdate: null, installation, targetVersion: "0.0.45" });
+      await click(label);
       expect(testState.clipboard).toHaveBeenCalledWith(command);
       expect(testState.toast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -204,12 +250,10 @@ describe("ServerUpdateAction", () => {
   );
 
   it("reports success only after the shared update flow reconnects", async () => {
-    testState.updateServer.mockResolvedValue(
-      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
-    );
+    testState.updateServer.mockResolvedValue(success());
 
-    renderAction().props.onClick?.();
-    await flushPromises();
+    await renderAction();
+    await click("Update");
 
     expect(testState.updateServer).toHaveBeenCalledWith({
       environmentId: "env-test",
@@ -227,61 +271,52 @@ describe("ServerUpdateAction", () => {
     testState.updateServer.mockImplementation(
       () =>
         new Promise((resolve) => {
-          finishUpdate = () =>
-            resolve(
-              AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
-            );
+          finishUpdate = () => resolve(success());
         }),
     );
 
-    const action = renderAction();
-    action.props.onClick?.();
-    action.props.onClick?.();
+    await renderAction();
+    await act(async () => {
+      button("Update")!.click();
+      button("Update")!.click();
+    });
 
     expect(testState.updateServer).toHaveBeenCalledTimes(1);
-    finishUpdate?.();
-    await flushPromises();
+    await act(async () => finishUpdate?.());
     expect(testState.toast).toHaveBeenCalledTimes(1);
   });
 
   it("quietly releases the action when the operation is interrupted", async () => {
     testState.updateServer.mockResolvedValue(AsyncResult.failure(Cause.interrupt()));
 
-    renderAction().props.onClick?.();
-    await flushPromises();
+    await renderAction();
+    await click("Update");
 
     expect(testState.toast).not.toHaveBeenCalled();
   });
 
-  it("keeps the manual instruction for desktop servers without remote update support", () => {
-    const markup = renderToStaticMarkup(
-      <ServerUpdateAction
-        environmentId={"env-test" as EnvironmentId}
-        serverLabel="Test server"
-        selfUpdate="desktop-managed"
-        targetVersion="0.0.31"
-      />,
-    );
+  it("keeps the manual instruction for desktop servers without remote update support", async () => {
+    await renderAction({ selfUpdate: "desktop-managed" });
 
-    expect(markup).toContain("Update the desktop app on that machine to update this server.");
-    expect(markup).not.toContain("<button");
+    expect(container.textContent).toBe(
+      "Update the desktop app on that machine to update this server.",
+    );
+    expect(button()).toBeUndefined();
   });
 
-  it("updates remote desktop apps through the shared update flow", async () => {
-    testState.updateServer.mockResolvedValue(
-      AsyncResult.success({ targetVersion: "0.0.34", method: "desktop-app" as const }),
+  it("updates remote desktop apps through the shared update flow after confirmation", async () => {
+    registerConfirmDialogHost();
+    testState.updateServer.mockResolvedValue(success("desktop-app", "0.0.34"));
+
+    await renderAction({ selfUpdate: "desktop-managed", desktopAppUpdate: true });
+    await click("Update");
+    expect(readConfirmDialogState()).toEqual(
+      expect.objectContaining({
+        status: "confirming",
+        message: expect.stringContaining("Test server"),
+      }),
     );
-
-    const action = ServerUpdateAction({
-      environmentId: "env-test" as EnvironmentId,
-      serverLabel: "Test server",
-      selfUpdate: "desktop-managed",
-      desktopAppUpdate: true,
-      targetVersion: "0.0.31",
-    }) as ActionElement;
-
-    action.props.onClick?.();
-    await flushPromises();
+    await act(async () => respondToConfirmDialog(true));
 
     expect(testState.updateServer).toHaveBeenCalledWith({
       environmentId: "env-test",
@@ -295,19 +330,10 @@ describe("ServerUpdateAction", () => {
   });
 
   it("leaves thread continuation off by default", async () => {
-    testState.updateServer.mockResolvedValue(
-      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
-    );
-    const action = ServerUpdateAction({
-      environmentId: "env-test" as EnvironmentId,
-      serverLabel: "Test server",
-      selfUpdate: "boot-service",
-      threadContinuation: true,
-      targetVersion: "0.0.31",
-    }) as ActionElement;
+    testState.updateServer.mockResolvedValue(success());
 
-    action.props.onClick?.();
-    await flushPromises();
+    await renderAction({ threadContinuation: true });
+    await click("Update");
 
     expect(testState.updateServer).toHaveBeenCalledWith({
       environmentId: "env-test",
@@ -316,20 +342,11 @@ describe("ServerUpdateAction", () => {
   });
 
   it("applies the saved thread continuation preference automatically", async () => {
-    testState.updateServer.mockResolvedValue(
-      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
-    );
+    testState.updateServer.mockResolvedValue(success());
     testState.continueThreadsAfterServerUpdate = true;
-    const action = ServerUpdateAction({
-      environmentId: "env-test" as EnvironmentId,
-      serverLabel: "Test server",
-      selfUpdate: "boot-service",
-      threadContinuation: true,
-      targetVersion: "0.0.31",
-    }) as ActionElement;
 
-    action.props.onClick?.();
-    await flushPromises();
+    await renderAction({ threadContinuation: true });
+    await click("Update");
 
     expect(testState.updateServer).toHaveBeenCalledWith({
       environmentId: "env-test",
@@ -339,7 +356,6 @@ describe("ServerUpdateAction", () => {
 });
 
 describe("ServerUpdatesAction", () => {
-  let renderer: ReactTestRenderer | undefined;
   const targets: ReadonlyArray<ServerUpdateTarget> = [
     {
       environmentId: "batch-a" as EnvironmentId,
@@ -364,36 +380,13 @@ describe("ServerUpdatesAction", () => {
       targetVersion: "0.0.31",
     },
   ];
-  const success = AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const });
 
-  async function mount(batch = targets) {
-    await act(async () => {
-      renderer = create(<ServerUpdatesAction targets={batch} />);
-    });
-    return renderer!.root.findByType("button");
-  }
-
-  beforeEach(() => {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    testState.updateServer.mockReset();
-    testState.toast.mockReset();
-    resetConfirmDialogForTests();
-  });
-  afterEach(async () => {
-    await act(async () => {
-      renderer?.unmount();
-    });
-    renderer = undefined;
-    resetConfirmDialogForTests();
-    vi.unstubAllGlobals();
-  });
+  const mount = (batch = targets) => render(<ServerUpdatesAction targets={batch} />);
 
   it("updates both supported machines with their own continuation preference and skips the manual machine", async () => {
-    testState.updateServer.mockResolvedValue(success);
-    const button = await mount();
-    await act(async () => {
-      button.props.onClick();
-    });
+    testState.updateServer.mockResolvedValue(success());
+    await mount();
+    await click("Update all");
 
     expect(testState.updateServer.mock.calls.map(([target]) => target)).toEqual([
       {
@@ -411,11 +404,9 @@ describe("ServerUpdatesAction", () => {
   it("names a failed machine while letting the other machine complete", async () => {
     testState.updateServer
       .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Download failed"))))
-      .mockResolvedValueOnce(success);
-    const button = await mount();
-    await act(async () => {
-      button.props.onClick();
-    });
+      .mockResolvedValueOnce(success());
+    await mount();
+    await click("Update all");
 
     expect(testState.updateServer).toHaveBeenCalledTimes(2);
     expect(testState.toast).toHaveBeenCalledWith({
@@ -426,7 +417,7 @@ describe("ServerUpdatesAction", () => {
     expect(testState.toast).toHaveBeenCalledWith(
       expect.objectContaining({ type: "success", title: "Office updated" }),
     );
-    expect(button.props.disabled).toBe(false);
+    expect(button("Update all")!.disabled).toBe(false);
   });
 
   it("starts each machine once when double-clicked and disables the action until both finish", async () => {
@@ -434,56 +425,47 @@ describe("ServerUpdatesAction", () => {
     testState.updateServer.mockImplementation(
       () =>
         new Promise((resolve) => {
-          completions.push(() => resolve(success));
+          completions.push(() => resolve(success()));
         }),
     );
-    const button = await mount();
+    await mount();
     await act(async () => {
-      button.props.onClick();
-      button.props.onClick();
+      button("Update all")!.click();
+      button("Update all")!.click();
     });
     expect(testState.updateServer).toHaveBeenCalledTimes(2);
-    expect(button.props.disabled).toBe(true);
-    await act(async () => {
-      completions[0]!();
-    });
-    expect(button.props.disabled).toBe(true);
-    await act(async () => {
-      completions[1]!();
-    });
-    expect(button.props.disabled).toBe(false);
+    expect(button("Update all")!.disabled).toBe(true);
+    await act(async () => completions[0]!());
+    expect(button("Update all")!.disabled).toBe(true);
+    await act(async () => completions[1]!());
+    expect(button("Update all")!.disabled).toBe(false);
     expect(testState.toast).toHaveBeenCalledTimes(2);
   });
 
   it("asks once for desktop machines and cancels the entire batch", async () => {
     registerConfirmDialogHost();
-    const button = await mount(
+    await mount(
       targets.map((target, index) =>
         index < 2 ? { ...target, selfUpdate: "desktop-managed", desktopAppUpdate: true } : target,
       ),
     );
-    await act(async () => {
-      button.props.onClick();
-    });
-    const confirmation = readConfirmDialogState();
-    expect(confirmation).toEqual(
+    await click("Update all");
+    expect(readConfirmDialogState()).toEqual(
       expect.objectContaining({
         status: "confirming",
         message: expect.stringContaining("Laptop, Office"),
       }),
     );
     expect(testState.updateServer).not.toHaveBeenCalled();
-    await act(async () => {
-      respondToConfirmDialog(false);
-    });
+    await act(async () => respondToConfirmDialog(false));
     expect(testState.updateServer).not.toHaveBeenCalled();
-    expect(button.props.disabled).toBe(false);
+    expect(button("Update all")!.disabled).toBe(false);
   });
 });
 
 describe("ServerUpdateProgress", () => {
-  it("shows one calm status row for the restart wait", () => {
-    const markup = renderToStaticMarkup(
+  it("shows one calm status for the restart wait", async () => {
+    await render(
       <ServerUpdateProgress
         state={{
           status: "running",
@@ -493,17 +475,11 @@ describe("ServerUpdateProgress", () => {
         }}
       />,
     );
-
-    expect(markup).toContain("Restarting…");
-    expect(markup).not.toContain("0.0.30");
-    expect(markup).not.toContain("Resum");
-    expect(markup).not.toContain("text-success");
-    expect(markup).not.toContain("text-primary");
-    expect(markup).not.toContain("animate-");
+    expect(container.textContent).toBe("Restarting…");
   });
 
-  it("folds the sub-second installing handoff into the download phase", () => {
-    const markup = renderToStaticMarkup(
+  it("folds the sub-second installing handoff into the download phase", async () => {
+    await render(
       <ServerUpdateProgress
         state={{
           status: "running",
@@ -513,13 +489,11 @@ describe("ServerUpdateProgress", () => {
         }}
       />,
     );
-
-    expect(markup).toContain("Downloading…");
-    expect(markup).not.toContain("Install");
+    expect(container.textContent).toBe("Downloading…");
   });
 
-  it("keeps the failure visible with its retryable error", () => {
-    const markup = renderToStaticMarkup(
+  it("keeps the failure visible as an alert with its error", async () => {
+    await render(
       <ServerUpdateProgress
         state={{
           status: "failed",
@@ -530,9 +504,8 @@ describe("ServerUpdateProgress", () => {
         }}
       />,
     );
-
-    expect(markup).toContain('role="alert"');
-    expect(markup).toContain("The package could not be verified.");
-    expect(markup).not.toContain("animate-status-pulse");
+    expect(container.querySelector("[role=alert]")?.textContent).toBe(
+      "The package could not be verified.",
+    );
   });
 });

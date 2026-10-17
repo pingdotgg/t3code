@@ -1,20 +1,16 @@
 import type { SensorProps } from "@dnd-kit/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { act, createElement, StrictMode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, StrictMode } from "react";
+import { createRoot } from "react-dom/client";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 
-class TestDocument extends EventTarget {
-  hidden = false;
-  getSelection = () => ({ removeAllRanges() {} });
-}
-
-let document: TestDocument;
-let window: EventTarget;
 const sensors: SidebarPointerSensor[] = [];
+let hidden = false;
 
-function pointer(type: string, values: Partial<PointerEvent> = {}) {
-  return Object.assign(new Event(type, { cancelable: true }), {
+function pointer(type: string, values: PointerEventInit = {}) {
+  return new PointerEvent(type, {
+    bubbles: true,
+    cancelable: true,
     pointerId: 1,
     clientX: 10,
     clientY: 10,
@@ -49,15 +45,16 @@ function gesture(
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  document = new TestDocument();
-  window = Object.assign(new EventTarget(), { setTimeout });
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", window);
+  hidden = false;
+  vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
 });
 afterEach(() => {
   for (const sensor of sensors.splice(0)) sensor.cancel();
+  // Cancelled sensors keep suppressing clicks on the shared document until the next press.
+  document.dispatchEvent(pointer("pointerdown"));
   vi.runAllTimers();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -89,12 +86,12 @@ describe("sidebar pointer lifecycle", () => {
   const interruptions = {
     blur: () => window.dispatchEvent(new Event("blur")),
     hidden: () => {
-      document.hidden = true;
+      hidden = true;
       document.dispatchEvent(new Event("visibilitychange"));
     },
     pagehide: () => window.dispatchEvent(new Event("pagehide")),
     resize: () => window.dispatchEvent(new Event("resize")),
-    escape: () => document.dispatchEvent(Object.assign(new Event("keydown"), { code: "Escape" })),
+    escape: () => document.dispatchEvent(new KeyboardEvent("keydown", { code: "Escape" })),
     pointercancel: () => document.dispatchEvent(pointer("pointercancel")),
     "missed release": () =>
       document.dispatchEvent(pointer("pointermove", { buttons: 0, clientY: 100 })),
@@ -113,7 +110,7 @@ describe("sidebar pointer lifecycle", () => {
       expect(drag.onStart).toHaveBeenCalledTimes(started ? 1 : 0);
       expect(drag.onAbort).toHaveBeenCalledTimes(started ? 0 : 1);
 
-      document.hidden = false;
+      hidden = false;
       const next = gesture();
       document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
       document.dispatchEvent(pointer("pointerup", { buttons: 0 }));
@@ -254,22 +251,18 @@ describe("sidebar pointer lifecycle", () => {
   });
 
   it.each([false, true])("cancels when search unmounts the list, started=%s", (started) => {
-    let renderer: ReactTestRenderer;
+    const root = createRoot(document.createElement("div"));
     let drag: ReturnType<typeof gesture> | undefined;
-    act(() => {
-      renderer = create(
-        createElement(
-          StrictMode,
-          null,
-          createElement(SidebarDragLifecycle, {
-            onUnmount: () => drag?.sensor.cancel(),
-          }),
-        ),
-      );
-    });
+    act(() =>
+      root.render(
+        <StrictMode>
+          <SidebarDragLifecycle onUnmount={() => drag?.sensor.cancel()} />
+        </StrictMode>,
+      ),
+    );
     drag = gesture();
     if (started) document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
-    act(() => renderer.unmount());
+    act(() => root.unmount());
     document.dispatchEvent(pointer("pointermove", { clientY: 100 }));
     document.dispatchEvent(pointer("pointerup", { buttons: 0 }));
     expect(drag.onStart).toHaveBeenCalledTimes(started ? 1 : 0);

@@ -10,24 +10,27 @@ import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  settings: new Map<EnvironmentId, Atom.Writable<ServerSettings | null>>(),
+  settings: new Map<string, unknown>(),
   persist: vi.fn(),
 }));
 
-vi.mock("~/state/server", () => ({
-  serverEnvironment: {
-    settingsValueAtom: (id: EnvironmentId) => state.settings.get(id)!,
-    updateSettings: Symbol("updateSettings"),
-  },
-  primaryServerSettingsAtom: undefined,
-}));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => state.persist }));
-vi.mock("~/localApi", () => ({
-  ensureLocalApi: () => ({ persistence: { getClientSettings: async () => null } }),
+vi.mock(import("~/state/server"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      settingsValueAtom: ((id: EnvironmentId) => state.settings.get(id)) as never,
+    },
+  };
+});
+vi.mock(import("~/state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => state.persist) as never,
 }));
 
 import { useToggleEnvironmentModelFavorite } from "./useSettings";
@@ -42,35 +45,40 @@ const initialSettings = {
   providerModelPreferences: {},
 } satisfies ServerSettings;
 let registry: AtomRegistry.AtomRegistry;
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 let durable: Map<EnvironmentId, ServerSettings>;
+let toggles: Array<() => Promise<void>>;
+let pendingClick: Promise<void> | undefined;
 let writes: Array<{
   environmentId: EnvironmentId;
   patch: ServerSettingsPatch;
   finish: (success?: boolean) => void;
 }>;
 
+const settingsAtom = (id: EnvironmentId) =>
+  state.settings.get(id) as Atom.Writable<ServerSettings | null>;
+
 function FavoriteEditor({ environmentId }: { environmentId: EnvironmentId }) {
   const toggle = useToggleEnvironmentModelFavorite(environmentId);
-  return <button onClick={() => toggle(provider, model)}>Toggle favorite</button>;
+  const onClick = () => toggle(provider, model);
+  toggles.push(onClick);
+  return <button onClick={() => void (pendingClick = onClick())}>Toggle favorite</button>;
 }
 
-function editor(environmentId: EnvironmentId) {
-  return (
-    <RegistryContext.Provider value={registry}>
-      <FavoriteEditor environmentId={environmentId} />
-    </RegistryContext.Provider>
+function mount(environmentId = primaryId) {
+  return act(() =>
+    root.render(
+      <RegistryContext.Provider value={registry}>
+        <FavoriteEditor environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    ),
   );
 }
 
-async function mount(environmentId = primaryId) {
-  await act(() => {
-    renderer = create(editor(environmentId));
-  });
-}
-
 function click(): Promise<void> {
-  return renderer!.root.findByType("button").props.onClick();
+  container.querySelector("button")!.click();
+  return pendingClick!;
 }
 
 beforeEach(() => {
@@ -78,6 +86,7 @@ beforeEach(() => {
   registry = AtomRegistry.make();
   state.settings.clear();
   durable = new Map();
+  toggles = [];
   writes = [];
   for (const id of [primaryId, remoteId]) {
     state.settings.set(id, Atom.make<ServerSettings | null>(initialSettings));
@@ -107,11 +116,14 @@ beforeEach(() => {
         });
       }),
   );
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
-  renderer = undefined;
+  await act(() => root.unmount());
+  container.remove();
   registry.dispose();
   vi.unstubAllGlobals();
 });
@@ -122,7 +134,7 @@ describe("environment favorite toggles", () => {
     async (initiallyFavorited) => {
       const favorites = initiallyFavorited ? [{ provider, model }] : [];
       const settings = { ...initialSettings, favorites };
-      registry.set(state.settings.get(primaryId)!, settings);
+      registry.set(settingsAtom(primaryId), settings);
       durable.set(primaryId, settings);
       await mount();
       const first = click();
@@ -180,7 +192,7 @@ describe("environment favorite toggles", () => {
     await act(async () => {});
     writes[0]!.finish();
     await first;
-    expect(registry.get(state.settings.get(primaryId)!)!.favorites).toEqual([]);
+    expect(registry.get(settingsAtom(primaryId))!.favorites).toEqual([]);
     const second = click();
     await act(async () => {});
     writes[1]!.finish();
@@ -196,7 +208,7 @@ describe("environment favorite toggles", () => {
     await first;
     const remoteSettings = { ...initialSettings, favorites: [] };
     durable.set(primaryId, remoteSettings);
-    await act(() => registry.set(state.settings.get(primaryId)!, remoteSettings));
+    await act(() => registry.set(settingsAtom(primaryId), remoteSettings));
     const second = click();
     await act(async () => {});
     writes[1]!.finish();
@@ -224,7 +236,7 @@ describe("environment favorite toggles", () => {
   it("does not reuse another environment's pending intent for the same model", async () => {
     await mount();
     const primary = click();
-    await act(() => renderer!.update(editor(remoteId)));
+    await mount(remoteId);
     const remote = click();
     await act(async () => {});
     writes[0]!.finish();
@@ -237,10 +249,10 @@ describe("environment favorite toggles", () => {
 
   it("reads the latest server state even when the click callback predates its echo", async () => {
     await mount();
-    const previousClick = renderer!.root.findByType("button").props.onClick as () => Promise<void>;
+    const previousClick = toggles.at(-1)!;
     const updated = { ...initialSettings, favorites: [{ provider, model }] };
     durable.set(primaryId, updated);
-    await act(() => registry.set(state.settings.get(primaryId)!, updated));
+    await act(() => registry.set(settingsAtom(primaryId), updated));
     const clicked = previousClick();
     await act(async () => {});
     writes[0]!.finish();

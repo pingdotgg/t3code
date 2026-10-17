@@ -1,10 +1,10 @@
 import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { usePanelNavigationSuppression } from "./panelAnimations";
 
-let renderer: ReactTestRenderer | null = null;
+let root: Root;
 let pendingFrames: FrameRequestCallback[] = [];
 let observed: boolean[] = [];
 
@@ -20,17 +20,18 @@ beforeEach(() => {
   pendingFrames = [];
   observed = [];
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", {
-    requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
-      pendingFrames.push(callback);
-      return pendingFrames.length;
-    }),
-    cancelAnimationFrame: vi.fn(),
+  // Frames are stepped by hand so each assertion lands between two paints.
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    pendingFrames.push(callback);
+    return pendingFrames.length;
   });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(() => root.unmount());
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -41,9 +42,7 @@ async function paintPendingFrame() {
 
 describe("usePanelNavigationSuppression", () => {
   it("suppresses initial and navigated panel state until each route has painted", async () => {
-    await act(() => {
-      renderer = create(<SuppressionProbe navigationKey="/thread/one" />);
-    });
+    await act(() => root.render(<SuppressionProbe navigationKey="/thread/one" />));
     expect(observed.at(-1)).toBe(true);
 
     await paintPendingFrame();
@@ -51,9 +50,7 @@ describe("usePanelNavigationSuppression", () => {
     await paintPendingFrame();
     expect(observed.at(-1)).toBe(false);
 
-    await act(() => {
-      renderer?.update(<SuppressionProbe navigationKey="/thread/two" />);
-    });
+    await act(() => root.render(<SuppressionProbe navigationKey="/thread/two" />));
     expect(observed.at(-1)).toBe(true);
 
     await paintPendingFrame();

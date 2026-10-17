@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useThreadSearch } from "./queries";
@@ -24,14 +24,14 @@ function Probe(props: { query: string; onResult: (result: ThreadSearch) => void 
 }
 
 describe("useThreadSearch", () => {
-  let renderer: ReactTestRenderer | null = null;
+  let root: Root;
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.stubGlobal("window", globalThis);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    root = createRoot(document.createElement("div"));
   });
   afterEach(() => {
-    act(() => renderer?.unmount());
-    renderer = null;
+    act(() => root.unmount());
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -40,10 +40,7 @@ describe("useThreadSearch", () => {
     const results: ThreadSearch[] = [];
     const render = (query: string) => {
       const element = <Probe query={query} onResult={(result) => results.push(result)} />;
-      act(() => {
-        if (renderer) renderer.update(element);
-        else renderer = create(element);
-      });
+      act(() => root.render(element));
       return results.at(-1)!;
     };
 
