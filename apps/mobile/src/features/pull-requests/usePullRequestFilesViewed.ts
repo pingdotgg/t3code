@@ -2,7 +2,7 @@ import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -19,6 +19,11 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
   const connected = usePullRequestConnected(params.environmentId);
   const allowed = connected && permission;
   const query = useEnvironmentQuery(supported ? composerPullRequests.filesViewed(target) : null);
+  const viewedPaths = useMemo(
+    () =>
+      new Set(query.data?.files.filter((file) => file.state === "viewed").map((file) => file.path)),
+    [query.data],
+  );
   const refresh = useAtomRefresh(composerPullRequests.filesViewed(target));
   const write = useAtomCommand(composerPullRequests.setFilesViewed, { reportFailure: false });
   const [state, setState] = useState<{
@@ -74,16 +79,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       setOverlay(next);
     }
   }, [query.data, setOverlay]);
-  const isViewed = (path: string) =>
-    overlay[path] ??
-    query.data?.files.some((file) => file.path === path && file.state === "viewed") ??
-    false;
+  const isViewed = (path: string) => overlay[path] ?? viewedPaths.has(path);
   const toggle = async (path: string) => {
     if (!supported || !allowed || !query.data) return;
-    const viewed = !(
-      pressed.current[path] ??
-      query.data.files.some((file) => file.path === path && file.state === "viewed")
-    );
+    const viewed = !(pressed.current[path] ?? viewedPaths.has(path));
     const version = (versions.current.get(path) ?? 0) + 1;
     versions.current.set(path, version);
     awaitingRead.current.delete(path);
