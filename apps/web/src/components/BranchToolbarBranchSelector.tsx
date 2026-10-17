@@ -18,11 +18,9 @@ import {
 } from "@t3tools/contracts";
 import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import {
-  useCallback,
   useDeferredValue,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useOptimistic,
   useState,
   useTransition,
@@ -97,6 +95,39 @@ function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+// The picker's list keys on these arrays, so they stay cached across the
+// queries and transitions the selector calls after computing them.
+function useBranchPickerItems({
+  refs,
+  createBranchItemValue,
+  checkoutPullRequestItemValue,
+  normalizedQuery,
+}: {
+  refs: ReadonlyArray<VcsRef>;
+  createBranchItemValue: string | null;
+  checkoutPullRequestItemValue: string | null;
+  normalizedQuery: string;
+}) {
+  "use memo";
+  const branchPickerItems = [
+    ...(checkoutPullRequestItemValue ? [checkoutPullRequestItemValue] : []),
+    ...refs.map((refName) => refName.name),
+    ...(createBranchItemValue ? [createBranchItemValue] : []),
+  ];
+  const filteredBranchPickerItems =
+    normalizedQuery.length === 0
+      ? branchPickerItems
+      : branchPickerItems.filter((itemValue) =>
+          shouldIncludeBranchPickerItem({
+            itemValue,
+            normalizedQuery,
+            createBranchItemValue,
+            checkoutPullRequestItemValue,
+          }),
+        );
+  return { branchPickerItems, filteredBranchPickerItems };
+}
+
 export function BranchToolbarBranchSelector({
   forceNewWorktree = false,
   ref,
@@ -131,10 +162,7 @@ export function BranchToolbarBranchSelector({
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
     reportFailure: false,
   });
-  const threadRef = useMemo(
-    () => scopeThreadRef(environmentId, threadId),
-    [environmentId, threadId],
-  );
+  const threadRef = scopeThreadRef(environmentId, threadId);
   const serverThread = useThreadShell(threadRef);
   const serverSession = serverThread?.runtime ?? null;
   const draftThread = useComposerDraftStore((store) =>
@@ -170,66 +198,51 @@ export function BranchToolbarBranchSelector({
       draftThreadEnvMode: draftThread?.envMode,
     });
 
-  const setThreadBranch = useCallback(
-    (branch: string | null, worktreePath: string | null, automatic = false) => {
-      if (
-        !activeThreadId ||
-        !activeProject ||
-        (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
-      )
-        return;
-      if (serverSession && worktreePath !== activeWorktreePath) {
-        void stopThreadSession({
-          environmentId,
-          input: { threadId: activeThreadId },
-        });
-      }
-      if (hasServerThread) {
-        void (automatic ? updateEmptyThreadMetadata : updateThreadMetadata)({
-          environmentId,
-          input: {
-            threadId: activeThreadId,
-            branch,
-            worktreePath,
-            ...(automatic ? { expectedEmpty: true } : {}),
-          },
-        });
-      }
-      if (hasServerThread) {
-        onActiveThreadBranchOverrideChange?.(branch);
-        return;
-      }
-      const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
-        nextWorktreePath: worktreePath,
-        currentWorktreePath: activeWorktreePath,
-        effectiveEnvMode,
+  const setThreadBranch = (
+    branch: string | null,
+    worktreePath: string | null,
+    automatic = false,
+  ) => {
+    if (
+      !activeThreadId ||
+      !activeProject ||
+      (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
+    )
+      return;
+    if (serverSession && worktreePath !== activeWorktreePath) {
+      void stopThreadSession({
+        environmentId,
+        input: { threadId: activeThreadId },
       });
-      setDraftThreadContext(draftId ?? threadRef, {
-        branch,
-        worktreePath,
-        envMode: nextDraftEnvMode,
-        environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
-        projectRef: scopeProjectRef(environmentId, activeProject.id),
+    }
+    if (hasServerThread) {
+      void (automatic ? updateEmptyThreadMetadata : updateThreadMetadata)({
+        environmentId,
+        input: {
+          threadId: activeThreadId,
+          branch,
+          worktreePath,
+          ...(automatic ? { expectedEmpty: true } : {}),
+        },
       });
-    },
-    [
-      activeThreadId,
-      activeProject,
-      serverSession,
-      activeWorktreePath,
-      hasServerThread,
-      onActiveThreadBranchOverrideChange,
-      setDraftThreadContext,
-      draftId,
-      threadRef,
-      environmentId,
+    }
+    if (hasServerThread) {
+      onActiveThreadBranchOverrideChange?.(branch);
+      return;
+    }
+    const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
+      nextWorktreePath: worktreePath,
+      currentWorktreePath: activeWorktreePath,
       effectiveEnvMode,
-      draftThread?.environmentSelection,
-      stopThreadSession,
-      updateEmptyThreadMetadata,
-      updateThreadMetadata,
-    ],
-  );
+    });
+    setDraftThreadContext(draftId ?? threadRef, {
+      branch,
+      worktreePath,
+      envMode: nextDraftEnvMode,
+      environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
+      projectRef: scopeProjectRef(environmentId, activeProject.id),
+    });
+  };
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
@@ -262,9 +275,8 @@ export function BranchToolbarBranchSelector({
   const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
-  const sourceControlPresentation = useMemo(
-    () => getSourceControlPresentation(branchStatusQuery.data?.sourceControlProvider),
-    [branchStatusQuery.data?.sourceControlProvider],
+  const sourceControlPresentation = getSourceControlPresentation(
+    branchStatusQuery.data?.sourceControlProvider,
   );
   const SourceControlIcon = sourceControlPresentation.Icon;
   const canonicalActiveBranch = resolveBranchToolbarValue({
@@ -273,11 +285,7 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
-  const branchNames = useMemo(() => refs.map((refName) => refName.name), [refs]);
-  const branchByName = useMemo(
-    () => new Map(refs.map((refName) => [refName.name, refName] as const)),
-    [refs],
-  );
+  const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
@@ -293,35 +301,12 @@ export function BranchToolbarBranchSelector({
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
-  const branchPickerItems = useMemo(() => {
-    const items = [...branchNames];
-    if (createBranchItemValue && !hasExactBranchMatch) {
-      items.push(createBranchItemValue);
-    }
-    if (checkoutPullRequestItemValue) {
-      items.unshift(checkoutPullRequestItemValue);
-    }
-    return items;
-  }, [branchNames, checkoutPullRequestItemValue, createBranchItemValue, hasExactBranchMatch]);
-  const filteredBranchPickerItems = useMemo(
-    () =>
-      normalizedDeferredBranchQuery.length === 0
-        ? branchPickerItems
-        : branchPickerItems.filter((itemValue) =>
-            shouldIncludeBranchPickerItem({
-              itemValue,
-              normalizedQuery: normalizedDeferredBranchQuery,
-              createBranchItemValue,
-              checkoutPullRequestItemValue,
-            }),
-          ),
-    [
-      branchPickerItems,
-      checkoutPullRequestItemValue,
-      createBranchItemValue,
-      normalizedDeferredBranchQuery,
-    ],
-  );
+  const { branchPickerItems, filteredBranchPickerItems } = useBranchPickerItems({
+    refs,
+    createBranchItemValue: hasExactBranchMatch ? null : createBranchItemValue,
+    checkoutPullRequestItemValue,
+    normalizedQuery: normalizedDeferredBranchQuery,
+  });
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,
     (_currentBranch: string | null, optimisticBranch: string | null) => optimisticBranch,
@@ -359,7 +344,7 @@ export function BranchToolbarBranchSelector({
         ? `Showing ${refs.length} of ${totalBranchCount} refs`
         : null;
 
-  const copyBranchName = useCallback((branchName: string) => {
+  const copyBranchName = (branchName: string) => {
     void writeTextToClipboard(branchName, "branch name").then(
       (didCopy) => {
         if (!didCopy) return;
@@ -379,24 +364,21 @@ export function BranchToolbarBranchSelector({
         );
       },
     );
-  }, []);
+  };
 
-  const handleBranchContextMenu = useCallback(
-    (event: ReactMouseEvent, branchName: string | null) => {
-      if (!branchName) return;
-      const api = readLocalApi();
-      if (!api) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const items: ContextMenuItem<"copy-branch-name">[] = [
-        { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
-      ];
-      void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
-        if (action === "copy-branch-name") copyBranchName(branchName);
-      });
-    },
-    [copyBranchName],
-  );
+  const handleBranchContextMenu = (event: ReactMouseEvent, branchName: string | null) => {
+    if (!branchName) return;
+    const api = readLocalApi();
+    if (!api) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items: ContextMenuItem<"copy-branch-name">[] = [
+      { id: "copy-branch-name", label: "Copy branch name", icon: "copy" },
+    ];
+    void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
+      if (action === "copy-branch-name") copyBranchName(branchName);
+    });
+  };
 
   const runBranchAction = (action: () => Promise<void>) => {
     if (
@@ -517,10 +499,7 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const defaultBranchName = useMemo(
-    () => refs.find((refName) => refName.isDefault)?.name ?? null,
-    [refs],
-  );
+  const defaultBranchName = refs.find((refName) => refName.isDefault)?.name ?? null;
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
     ? null
     : (defaultBranchName ?? currentGitBranch);
@@ -549,12 +528,12 @@ export function BranchToolbarBranchSelector({
     worktreeBaseBranchCandidate,
   ]);
 
-  const handleOpenChange = useCallback((open: boolean) => {
+  const handleOpenChange = (open: boolean) => {
     setIsBranchMenuOpen(open);
     if (!open) {
       setBranchQuery("");
     }
-  }, []);
+  };
 
   useImperativeHandle(
     ref,
