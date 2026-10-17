@@ -15,7 +15,7 @@ import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { InfoIcon, Trash2Icon } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
@@ -75,15 +75,12 @@ export function ProjectSettingsPanel({
   const pathname = useLocation({ select: (location) => location.pathname });
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
-  const members = useMemo(
-    () =>
-      selected?.memberProjects.filter(
-        (member) =>
-          (environmentId === null || member.environmentId === environmentId) &&
-          (checkoutKey === null || member.physicalProjectKey === checkoutKey),
-      ) ?? [],
-    [selected, environmentId, checkoutKey],
-  );
+  const members =
+    selected?.memberProjects.filter(
+      (member) =>
+        (environmentId === null || member.environmentId === environmentId) &&
+        (checkoutKey === null || member.physicalProjectKey === checkoutKey),
+    ) ?? [];
 
   // Remember the members of the last rendered group so a grouping-rule change
   // (which changes the group key) can follow the project to its new group.
@@ -169,9 +166,8 @@ function ProjectDetail({
   const navigate = useNavigate({ from: "/settings" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  const environmentById = useMemo(
-    () => new Map(environments.map((environment) => [environment.environmentId, environment])),
-    [environments],
+  const environmentById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
   );
   const editableIds = useEnvironmentsWithScope(group.memberProjects, AuthOrchestrationOperateScope);
   const canEditGroup = group.memberProjects.every((member) =>
@@ -202,7 +198,7 @@ function ProjectDetail({
       ? window.desktopBridge?.pickProjectFavicon
       : undefined;
 
-  const reportFailure = useCallback((title: string, result: AtomCommandResult<void, unknown>) => {
+  const reportFailure = (title: string, result: AtomCommandResult<void, unknown>) => {
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
     toastManager.add(
@@ -212,210 +208,188 @@ function ProjectDetail({
         description: error instanceof Error ? error.message : "An error occurred.",
       }),
     );
-  }, []);
+  };
 
-  const checkProjectAccess = useCallback(
-    (members: ReadonlyArray<SidebarProjectGroupMember>, failureTitle: string) => {
-      const denied = members.find(
-        (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
-      );
-      if (!denied) return null;
-      const result = AsyncResult.failure<void, Error>(
-        Cause.fail(
-          new Error(
-            `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
-          ),
+  const checkProjectAccess = (
+    members: ReadonlyArray<SidebarProjectGroupMember>,
+    failureTitle: string,
+  ) => {
+    const denied = members.find(
+      (member) => !readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+    );
+    if (!denied) return null;
+    const result = AsyncResult.failure<void, Error>(
+      Cause.fail(
+        new Error(
+          `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
         ),
+      ),
+    );
+    reportFailure(failureTitle, result);
+    return result;
+  };
+
+  const updateAllMembers = async (
+    input: Partial<{
+      title: string;
+      faviconPath: string | null;
+      projectIcon: ProjectIconOverride | null;
+    }>,
+    failureTitle: string,
+  ): Promise<AtomCommandResult<void, unknown>> => {
+    const denied = checkProjectAccess(group.memberProjects, failureTitle);
+    if (denied) return denied;
+    const unavailable = group.memberProjects.find((member) => {
+      const environment = environmentById.get(member.environmentId);
+      return environment?.connection.phase !== "connected" || !environment.serverConfig;
+    });
+    if (unavailable) {
+      const error = new Error(
+        `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
       );
+      const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
       reportFailure(failureTitle, result);
       return result;
-    },
-    [reportFailure],
-  );
-
-  const updateAllMembers = useCallback(
-    async (
-      input: Partial<{
-        title: string;
-        faviconPath: string | null;
-        projectIcon: ProjectIconOverride | null;
-      }>,
-      failureTitle: string,
-    ): Promise<AtomCommandResult<void, unknown>> => {
-      const denied = checkProjectAccess(group.memberProjects, failureTitle);
-      if (denied) return denied;
-      const unavailable = group.memberProjects.find((member) => {
-        const environment = environmentById.get(member.environmentId);
-        return environment?.connection.phase !== "connected" || !environment.serverConfig;
-      });
-      if (unavailable) {
-        const error = new Error(
-          `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
+    }
+    for (const member of group.memberProjects) {
+      const revoked = checkProjectAccess([member], failureTitle);
+      if (revoked) return revoked;
+      const result = mapAtomCommandResult(
+        await updateProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, ...input },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        reportFailure(
+          group.memberProjects.length > 1
+            ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
+            : failureTitle,
+          result,
         );
-        const result: AtomCommandResult<void, unknown> = AsyncResult.failure(Cause.fail(error));
-        reportFailure(failureTitle, result);
         return result;
       }
-      for (const member of group.memberProjects) {
-        const revoked = checkProjectAccess([member], failureTitle);
-        if (revoked) return revoked;
-        const result = mapAtomCommandResult(
-          await updateProject({
-            environmentId: member.environmentId,
-            input: { projectId: member.id, ...input },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          reportFailure(
-            group.memberProjects.length > 1
-              ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
-              : failureTitle,
-            result,
-          );
-          return result;
-        }
-      }
-      return AsyncResult.success(undefined);
-    },
-    [checkProjectAccess, environmentById, group.memberProjects, reportFailure, updateProject],
-  );
+    }
+    return AsyncResult.success(undefined);
+  };
 
-  const renameGroup = useCallback(
-    async (nextTitle: string, wasEdited: boolean) => {
-      const title = nextTitle.trim();
-      if (!title) {
-        toastManager.add({ type: "warning", title: "Project title cannot be empty" });
-        return;
-      }
-      if (
-        !projectGroupTitleNeedsUpdate(
-          group.memberProjects.map((member) => member.title),
-          title,
-          wasEdited,
-        )
-      ) {
-        return;
-      }
-      await updateAllMembers({ title }, "Failed to rename project");
-    },
-    [group.memberProjects, updateAllMembers],
-  );
+  const renameGroup = async (nextTitle: string, wasEdited: boolean) => {
+    const title = nextTitle.trim();
+    if (!title) {
+      toastManager.add({ type: "warning", title: "Project title cannot be empty" });
+      return;
+    }
+    if (
+      !projectGroupTitleNeedsUpdate(
+        group.memberProjects.map((member) => member.title),
+        title,
+        wasEdited,
+      )
+    ) {
+      return;
+    }
+    await updateAllMembers({ title }, "Failed to rename project");
+  };
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
-  const setProjectIcon = useCallback(
-    async (input: { faviconPath: string | null; projectIcon: ProjectIconOverride | null }) => {
-      if (savingFaviconRef.current) return;
-      savingFaviconRef.current = true;
-      setIsSavingFavicon(true);
-      try {
-        await updateAllMembers(input, "Failed to update project icon");
-      } finally {
-        savingFaviconRef.current = false;
-        setIsSavingFavicon(false);
-      }
-    },
-    [updateAllMembers],
-  );
+  const setProjectIcon = async (input: {
+    faviconPath: string | null;
+    projectIcon: ProjectIconOverride | null;
+  }) => {
+    if (savingFaviconRef.current) return;
+    savingFaviconRef.current = true;
+    setIsSavingFavicon(true);
+    await updateAllMembers(input, "Failed to update project icon");
+    savingFaviconRef.current = false;
+    setIsSavingFavicon(false);
+  };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
 
-  const removeMembers = useCallback(
-    async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
-      if (checkProjectAccess(members, "Failed to remove project")) return;
-      const api = readLocalApi();
-      if (!api) return;
+  const removeMembers = async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
+    if (checkProjectAccess(members, "Failed to remove project")) return;
+    const api = readLocalApi();
+    if (!api) return;
 
-      const memberKeys = new Set(members.map(memberKey));
-      const projectThreads = threads.filter((thread) =>
-        memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+    const memberKeys = new Set(members.map(memberKey));
+    const projectThreads = threads.filter((thread) =>
+      memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+    );
+    const isWholeGroup = members.length === group.memberProjects.length;
+    const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
+    const singleMember = members.length === 1 ? members[0]! : null;
+    const targetLabel = singleMember?.title ?? group.displayName;
+    const confirmed = await settlePromise(() =>
+      api.dialogs.confirm(
+        [
+          projectThreads.length > 0
+            ? `Remove ${targetKind} "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
+            : `Remove ${targetKind} "${targetLabel}"?`,
+          ...(singleMember
+            ? [
+                `Path: ${singleMember.workspaceRoot}`,
+                ...(singleMember.environmentLabel
+                  ? [`Environment: ${singleMember.environmentLabel}`]
+                  : []),
+              ]
+            : [`This removes ${members.length} grouped project entries.`]),
+          ...(projectThreads.length > 0
+            ? [
+                "This permanently clears conversation history for those threads and any archived threads.",
+              ]
+            : ["This permanently clears any archived conversation history."]),
+          isWholeGroup && !hasOtherMembers
+            ? "This removes only the project entries, not the files on disk."
+            : "Other entries in this grouped project are unaffected.",
+          "This action cannot be undone.",
+        ].join("\n"),
+        { variant: "destructive" },
+      ),
+    );
+    if (confirmed._tag === "Failure" || !confirmed.value) return;
+    if (checkProjectAccess(members, "Failed to remove project")) return;
+
+    const draftStore = useComposerDraftStore.getState();
+    for (const member of members) {
+      if (checkProjectAccess([member], "Failed to remove project")) return;
+      const memberThreads = projectThreads.filter(
+        (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
       );
-      const isWholeGroup = members.length === group.memberProjects.length;
-      const targetKind = hasOtherMembers || !isWholeGroup ? "checkout" : "project";
-      const singleMember = members.length === 1 ? members[0]! : null;
-      const targetLabel = singleMember?.title ?? group.displayName;
-      const confirmed = await settlePromise(() =>
-        api.dialogs.confirm(
-          [
-            projectThreads.length > 0
-              ? `Remove ${targetKind} "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
-              : `Remove ${targetKind} "${targetLabel}"?`,
-            ...(singleMember
-              ? [
-                  `Path: ${singleMember.workspaceRoot}`,
-                  ...(singleMember.environmentLabel
-                    ? [`Environment: ${singleMember.environmentLabel}`]
-                    : []),
-                ]
-              : [`This removes ${members.length} grouped project entries.`]),
-            ...(projectThreads.length > 0
-              ? [
-                  "This permanently clears conversation history for those threads and any archived threads.",
-                ]
-              : ["This permanently clears any archived conversation history."]),
-            isWholeGroup && !hasOtherMembers
-              ? "This removes only the project entries, not the files on disk."
-              : "Other entries in this grouped project are unaffected.",
-            "This action cannot be undone.",
-          ].join("\n"),
-          { variant: "destructive" },
-        ),
+      const result = mapAtomCommandResult(
+        await deleteProject({
+          environmentId: member.environmentId,
+          input: {
+            projectId: member.id,
+            force: true,
+          },
+        }),
+        () => undefined,
       );
-      if (confirmed._tag === "Failure" || !confirmed.value) return;
-      if (checkProjectAccess(members, "Failed to remove project")) return;
-
-      const draftStore = useComposerDraftStore.getState();
-      for (const member of members) {
-        if (checkProjectAccess([member], "Failed to remove project")) return;
-        const memberThreads = projectThreads.filter(
-          (thread) =>
-            thread.environmentId === member.environmentId && thread.projectId === member.id,
-        );
-        const result = mapAtomCommandResult(
-          await deleteProject({
-            environmentId: member.environmentId,
-            input: {
-              projectId: member.id,
-              force: true,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          reportFailure(`Failed to remove "${member.title}"`, result);
-          return;
-        }
-        const projectRef = scopeProjectRef(member.environmentId, member.id);
-        await waitForProjectRemoval(projectRef);
-        releaseProjectDraftUploads(
-          projectRef,
-          memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
-        );
-        const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
-        if (projectDraftThread) {
-          draftStore.clearDraftThread(projectDraftThread.draftId);
-        }
-        draftStore.clearProjectDraftThreadId(projectRef);
+      if (result._tag === "Failure") {
+        reportFailure(`Failed to remove "${member.title}"`, result);
+        return;
       }
-
-      if (isWholeGroup && !hasOtherMembers) {
-        void navigate({ to: "/", replace: true });
+      const projectRef = scopeProjectRef(member.environmentId, member.id);
+      await waitForProjectRemoval(projectRef);
+      releaseProjectDraftUploads(
+        projectRef,
+        memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+      );
+      const projectDraftThread = draftStore.getDraftThreadByProjectRef(projectRef);
+      if (projectDraftThread) {
+        draftStore.clearDraftThread(projectDraftThread.draftId);
       }
-    },
-    [
-      checkProjectAccess,
-      deleteProject,
-      group.displayName,
-      group.memberProjects.length,
-      hasOtherMembers,
-      navigate,
-      reportFailure,
-      threads,
-    ],
-  );
+      draftStore.clearProjectDraftThreadId(projectRef);
+    }
+
+    if (isWholeGroup && !hasOtherMembers) {
+      void navigate({ to: "/", replace: true });
+    }
+  };
 
   const checkoutsByEnvironment = new Map<EnvironmentId, SidebarProjectGroupMember[]>();
   for (const member of group.memberProjects) {
