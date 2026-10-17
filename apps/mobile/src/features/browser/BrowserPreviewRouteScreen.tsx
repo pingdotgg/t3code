@@ -174,6 +174,7 @@ function BrowserPreviewScreen({
             streaming={streaming}
             ready={streaming && canControl}
             onCommand={(input) => streamRef.current?.command(input)}
+            onPaste={() => streamRef.current?.paste()}
           />
           {live ? (
             <PreviewStreamWebView
@@ -209,12 +210,14 @@ function BrowserAddressBar({
   ready,
   streaming,
   onCommand,
+  onPaste,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly ready: boolean;
   readonly streaming: boolean;
   readonly onCommand: PreviewStreamRef["command"];
+  readonly onPaste: PreviewStreamRef["paste"];
 }) {
   const url = browserTabUrl(tab);
   const [draft, setDraft] = useState<string | null>(null);
@@ -263,7 +266,12 @@ function BrowserAddressBar({
         disabled={!ready}
         onPress={() => onCommand({ type: "reload" })}
       />
-      <BrowserTabMenu environmentId={environmentId} tab={tab} disabled={!streaming} />
+      <BrowserTabMenu
+        environmentId={environmentId}
+        tab={tab}
+        disabled={!streaming}
+        onPaste={ready ? onPaste : undefined}
+      />
     </View>
   );
 }
