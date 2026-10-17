@@ -247,6 +247,16 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+// Codex records setup context as user text ahead of the real request. Skip
+// these leading blocks when deriving a title; imported messages keep them.
+const CODEX_TITLE_PREAMBLE =
+  /^(?:\s*(?:<(recommended_plugins|environment_context|user_instructions|INSTRUCTIONS|in-app-browser-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>|# AGENTS\.md instructions\b[^\n]*|## My request for Codex:))+/;
+
+function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
+  const request = source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text;
+  return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
+}
+
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
     readonly contents: string;
@@ -267,6 +277,7 @@ function parseAgentSessionRecords(
   // timestamp text, so only transcript metadata can provide a resumable ID.
   let providerSessionId = input.source === "codex" ? "" : input.fallbackSessionId;
   let title: string | null = null;
+  let derivedTitle: string | undefined;
   let model: string | null = null;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
@@ -331,6 +342,9 @@ function parseAgentSessionRecords(
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
+    }
+    if (derivedTitle === undefined && message.role === "user") {
+      derivedTitle = deriveTitle(input.source, message.text);
     }
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
@@ -452,13 +466,12 @@ function parseAgentSessionRecords(
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
     : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
-  const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
 
   return {
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: title ?? (derivedTitle && derivedTitle.length > 0 ? derivedTitle : "Imported thread"),
+    title: title ?? derivedTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
