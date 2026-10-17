@@ -4,12 +4,14 @@ import {
   type ProviderAuthState,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -20,6 +22,14 @@ import { Cursor, InMemoryCredentialStore } from "./sdk.ts";
 import type { ProviderAuthController } from "@t3tools/provider-core/server/auth";
 
 const AUTH_TIMEOUT_MS = 300_000;
+
+// Verification failures carry the provider's reason, such as a plan Cursor refuses.
+const failureMessage = (cause: Cause.Cause<ProviderSetupError>) => {
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error)
+    ? error.value.detail
+    : "Cursor sign-in failed or expired. Start sign-in again.";
+};
 
 interface AuthFlow {
   readonly id: string;
@@ -269,7 +279,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
               expiresAt: null,
               message: Exit.isSuccess(result)
                 ? "Signed in with Cursor."
-                : "Cursor sign-in failed or expired. Start sign-in again.",
+                : failureMessage(result.cause),
             });
           }),
         ),

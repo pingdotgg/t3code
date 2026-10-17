@@ -26,6 +26,11 @@ export class CursorSdkCatalogError extends Schema.TaggedError<CursorSdkCatalogEr
       ? "Cursor SDK authentication failed."
       : "Cursor SDK catalog request failed.";
   }
+
+  /** Cursor accepted the key, but the account's plan cannot use the SDK (free accounts). */
+  get planRequired(): boolean {
+    return this.cause instanceof CursorSdkError && this.cause.code === "plan_required";
+  }
 }
 
 export class CursorSdkCatalog extends Context.Service<

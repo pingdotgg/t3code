@@ -250,7 +250,8 @@ it.layer(NodeServices.layer)("CursorAuth", (it) => {
       yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "waiting");
       yield* Effect.sync(() => harness.complete.resolve());
-      yield* phase(harness.auth, "failed");
+      const failed = yield* phase(harness.auth, "failed");
+      expect(failed.message).toBe("Could not verify the Cursor sign-in.");
       expect(yield* Effect.promise(() => harness.store.load())).toBeUndefined();
       expect(yield* harness.auth.readApiKey).toBeUndefined();
       expect(Exit.isFailure(yield* Effect.exit(harness.auth.requireApiKey))).toBe(true);
