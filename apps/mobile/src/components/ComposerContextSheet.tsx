@@ -185,6 +185,7 @@ export function ComposerContextSheet(props: {
   return (
     <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
       <ScrollView
+        nestedScrollEnabled
         className="flex-1"
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
         contentContainerStyle={{

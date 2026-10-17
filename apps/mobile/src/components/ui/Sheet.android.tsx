@@ -18,9 +18,12 @@ export function Sheet(props: SheetProps) {
       onDismiss={props.onClose}
       onNativeDismiss={props.onClose}
     >
-      <View collapsable={false} className="flex-1 bg-sheet">
+      {/* Flex children are not bounded by the FormSheet host on Android, so pin to its edges.
+          Material coordinates drags with the first nested-scrolling view in native order. The Compose
+          header has one, so the content comes first and column-reverse draws it below. */}
+      <View collapsable={false} className="absolute inset-0 flex-col-reverse bg-sheet">
+        <View className="flex-1">{props.children}</View>
         <AndroidSheetHeader title={props.title} onBack={() => setIsOpen(false)} />
-        {props.children}
       </View>
     </FormSheet>
   );
