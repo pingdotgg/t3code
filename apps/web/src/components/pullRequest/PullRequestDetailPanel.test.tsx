@@ -13,10 +13,11 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
-const { newThread, prepareThread, refresh, Wrapper, Trigger } = vi.hoisted(() => ({
+const { newThread, prepareThread, refresh, update, Wrapper, Trigger } = vi.hoisted(() => ({
   newThread: vi.fn(),
   prepareThread: vi.fn(),
   refresh: vi.fn(),
+  update: vi.fn(),
   Wrapper: ({ children }: { children?: ReactNode }) => children,
   Trigger: ({ children, render }: { children?: ReactNode; render?: ReactElement }) => (
     <>
@@ -47,13 +48,15 @@ vi.mock("~/hooks/useHandleNewThread", () => ({ useNewThreadHandler: () => newThr
 vi.mock("~/lib/sourceControlActions", () => ({
   usePreparePullRequestThreadAction: () => ({ run: prepareThread, isAllowed: true, error: null }),
 }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: (command: unknown) => (command === "update" ? update : vi.fn()),
+}));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/pullRequests")>()),
   pullRequestEnvironment: {
     detail: () => "detail",
     activity: () => "activity",
-
+    update: "update",
     reviewGuide: () => "review-guide",
     generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
   },
@@ -79,6 +82,7 @@ vi.mock("~/state/usePullRequestStack", () => ({
     refresh,
   }),
 }));
+vi.mock("../ui/input", () => ({ Input: "input" }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(), update: vi.fn() } }));
 vi.mock("../ui/tooltip", () => ({
   TooltipProvider: Wrapper,
@@ -236,6 +240,7 @@ beforeEach(() => {
     _tag: "Success",
     value: { branch: "feature", worktreePath: "/workspace/pr" },
   });
+  update.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
 });
 afterEach(() => {
   act(() => renderer?.unmount());
@@ -291,6 +296,61 @@ const unrelatedThread = {
   pullRequests: [link(9, "created")],
   linkedPullRequest: { ...surface, number: 9, url: link(9, "created").url },
 };
+
+it.each([
+  { isComposing: true, keyCode: 13 },
+  { isComposing: false, keyCode: 229 },
+])("does not save the PR title during IME composition (%j)", async ({ isComposing, keyCode }) => {
+  await act(async () => {
+    renderer = create(
+      <PullRequestDetailPanel
+        environmentId={threadRef.environmentId}
+        reference={detail}
+        context="page"
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />,
+    );
+  });
+  await click("Edit title");
+  const titleInput = () => renderer.root.findByType("input");
+  const title = "日本語のタイトル";
+  await act(async () => titleInput().props.onChange({ target: { value: title } }));
+
+  const preventDefault = vi.fn();
+  await act(async () =>
+    titleInput().props.onKeyDown({
+      key: "Enter",
+      keyCode,
+      nativeEvent: { isComposing },
+      preventDefault,
+    }),
+  );
+  expect(update).not.toHaveBeenCalled();
+  expect(titleInput().props.value).toBe(title);
+  expect(preventDefault).not.toHaveBeenCalled();
+
+  await act(async () =>
+    titleInput().props.onKeyDown({
+      key: "Enter",
+      keyCode: 13,
+      nativeEvent: { isComposing: false },
+      preventDefault,
+    }),
+  );
+  expect(update).toHaveBeenCalledExactlyOnceWith({
+    environmentId: threadRef.environmentId,
+    input: { ...surface, title },
+  });
+  expect(renderer.root.findAllByType("input")).toHaveLength(0);
+});
 
 describe.each([
   ["own PR, a lower layer of the thread's stack", stackThread, threadRef],
