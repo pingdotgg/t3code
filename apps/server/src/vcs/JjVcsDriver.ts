@@ -1,5 +1,6 @@
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -21,8 +22,10 @@ import {
 } from "@t3tools/contracts";
 import { splitNullSeparatedGitStdoutPaths } from "./GitVcsDriverCore.ts";
 import * as JjAvailability from "./JjAvailability.ts";
+import { makeJjCheckpointOps } from "./JjCheckpoints.ts";
 import * as JjProcess from "./JjProcess.ts";
 import * as JjRepo from "./JjRepo.ts";
+import { makeJjReviewDiff, type JjReviewDiffOps } from "./JjReviewDiff.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import { chunkPathsForCheckIgnore, splitLineSeparatedPaths } from "./VcsPathCodecs.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -80,6 +83,8 @@ type VcsDriverService = VcsDriver.VcsDriver["Service"];
 export interface JjVcsDriverShape extends VcsDriverService {
   readonly capabilities: VcsDriverCapabilities & { readonly kind: "jj" };
   readonly repoPaths: (cwd: string) => Effect.Effect<JjRepo.JjRepoPaths, VcsError>;
+  /** Always implemented here: `false` for a repository jj detects but cannot operate on. */
+  readonly checkpointsUsable: (cwd: string) => Effect.Effect<boolean, never>;
   /** Fails with `VcsUnsupportedOperationError` when jj is missing, old, or non-colocated. */
   readonly ensureUsable: (
     operation: string,
@@ -87,6 +92,7 @@ export interface JjVcsDriverShape extends VcsDriverService {
   ) => Effect.Effect<JjRepo.JjRepoPaths & { readonly gitDir: string }, VcsError>;
   /** `@`. Snapshots the working copy, that is the point. */
   readonly currentChange: (cwd: string) => Effect.Effect<JjChange, VcsError>;
+  readonly readBranchChangeTotals: JjReviewDiffOps["readBranchChangeTotals"];
   /** Any revset, `--limit 1`. `null` when it resolves to nothing, and when it resolves to root. */
   readonly changeAt: (cwd: string, revset: string) => Effect.Effect<JjChange | null, VcsError>;
   /** `heads(::@ & bookmarks())::@`, newest first. Empty when `@` has no bookmarked ancestor. */
@@ -285,6 +291,7 @@ export const makeVcsDriverShape = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
+  const crypto = yield* Crypto.Crypto;
   const availability = yield* JjAvailability.makeJjAvailability;
 
   const capabilities = {
@@ -854,17 +861,43 @@ export const makeVcsDriverShape = Effect.gen(function* () {
       : relativePaths.filter((relativePath) => !ignoredPaths.has(relativePath));
   });
 
+  const checkpointsUsable: JjVcsDriverShape["checkpointsUsable"] = (cwd) =>
+    ensureUsable("JjVcsDriver.checkpointsUsable", cwd).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const ensureGitDir = (operation: string, cwd: string) =>
+    ensureUsable(operation, cwd).pipe(Effect.map((paths) => paths.gitDir));
+
+  const reviewDiff = makeJjReviewDiff({
+    crypto,
+    process: vcsProcess,
+    ensureGitDir,
+    currentChange,
+    currentSegment,
+    repoPaths,
+    listWorkspaces,
+    changeAt,
+    listRemoteNames,
+    resolveDefaultBookmark,
+  });
 
   return {
     capabilities,
     repoMetadataKey,
     execute,
+    checkpoints: makeJjCheckpointOps({ crypto, process: vcsProcess, ensureGitDir, currentChange }),
+    checkpointsUsable,
     detectRepository,
     isInsideWorkTree,
     listWorkspaceFiles,
     listRemotes,
     filterIgnoredPaths,
     initRepository,
+    getDiffPreview: reviewDiff.getDiffPreview,
+    getDiffFileContents: reviewDiff.getDiffFileContents,
+    readBranchChangeTotals: reviewDiff.readBranchChangeTotals,
     repoPaths,
     ensureUsable,
     currentChange,
@@ -880,7 +913,6 @@ export const makeVcsDriverShape = Effect.gen(function* () {
   } satisfies JjVcsDriverShape;
 });
 
-export const layer = Layer.effect(
-  JjVcsDriver,
-  Effect.map(makeVcsDriverShape, (shape) => JjVcsDriver.of(shape)),
-);
+export const makeJjVcsDriver = Effect.map(makeVcsDriverShape, (shape) => JjVcsDriver.of(shape));
+
+export const layer = Layer.effect(JjVcsDriver, makeJjVcsDriver);

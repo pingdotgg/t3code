@@ -7,12 +7,15 @@ import * as NodeUtil from "node:util";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { beforeAll, describe } from "@effect/vitest";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlProviderRegistry from "../../sourceControl/SourceControlProviderRegistry.ts";
 import { isJjVersionSupported, parseJjVersion } from "../JjAvailability.ts";
 import * as JjVcsDriver from "../JjVcsDriver.ts";
 import * as VcsProcess from "../VcsProcess.ts";
@@ -22,7 +25,8 @@ const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 const probe = NodeChildProcess.spawnSync("jj", ["--version"], { encoding: "utf8" });
 const probedVersion = probe.status === 0 ? parseJjVersion(probe.stdout) : null;
 
-const JJ_AVAILABLE: boolean = probedVersion !== null && isJjVersionSupported(probedVersion);
+export const JJ_VERSION: string | null = probedVersion;
+export const JJ_AVAILABLE: boolean = probedVersion !== null && isJjVersionSupported(probedVersion);
 
 /**
  * Allocate only when tests run, so collection failures and skipped suites cannot leak config dirs.
@@ -97,15 +101,19 @@ export const runGit = (
     catch: (cause) => new JjTestCommandError({ command: `git ${args.join(" ")}`, cwd, cause }),
   }).pipe(Effect.map((result) => result.stdout));
 
-const JjDriverLayer = JjVcsDriver.layer.pipe(
+/** The driver over a real subprocess runner, which is what every jj fixture below runs against. */
+export const JjDriverLayer = JjVcsDriver.layer.pipe(
   Layer.provideMerge(VcsProcess.layer),
   Layer.provideMerge(NodeServices.layer),
 );
 
-interface SeedJjRepoInput {
+export interface SeedJjRepoInput {
   readonly prefix: string;
+  /** Adds `seed.txt`, commits it and bookmarks `main` on `@-`. */
   readonly seed?: boolean;
+  /** Creates `remote.git`, wires it up as `origin` and pushes `main`. Implies `seed`. */
   readonly withRemote?: boolean;
+  /** `false` builds an external-store repository, the shape T3 refuses to operate on. */
   readonly colocated?: boolean;
 }
 
@@ -116,7 +124,7 @@ export interface SeededJjRepo {
   readonly remotePath: string;
 }
 
-const seedJjRepo = Effect.fnUntraced(function* (input: SeedJjRepoInput) {
+export const seedJjRepo = Effect.fnUntraced(function* (input: SeedJjRepoInput) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const created = yield* fileSystem.makeTempDirectoryScoped({ prefix: input.prefix });
@@ -155,6 +163,7 @@ export interface JjRepoFixture extends SeededJjRepo {
   readonly path: Path.Path;
 }
 
+/** {@link seedJjRepo} plus the driver, with the real driver layer already provided. */
 export const withJjRepo = <A, E>(
   input: SeedJjRepoInput,
   use: (fixture: JjRepoFixture) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
@@ -169,3 +178,47 @@ export const withJjRepo = <A, E>(
       path: yield* Path.Path,
     });
   }).pipe(Effect.provide(JjDriverLayer));
+
+interface RepoPaths {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly root: string;
+}
+
+export const write = (fixture: RepoPaths, relativePath: string, contents: string) =>
+  fixture.fileSystem.writeFileString(fixture.path.join(fixture.root, relativePath), contents);
+
+export const read = (fixture: RepoPaths, relativePath: string) =>
+  fixture.fileSystem.readFileString(fixture.path.join(fixture.root, relativePath));
+
+export const jjOut = (cwd: string, args: ReadonlyArray<string>) =>
+  runJj(cwd, args).pipe(Effect.map((stdout) => stdout.trim()));
+
+export const commitId = (cwd: string, revset: string) =>
+  jjOut(cwd, ["log", "-r", revset, "--no-graph", "-T", "commit_id"]);
+
+export const changeId = (cwd: string, revset: string) =>
+  jjOut(cwd, ["log", "-r", revset, "--no-graph", "-T", "change_id"]);
+
+const unknownSourceControlProvider = SourceControlProvider.SourceControlProvider.pipe(
+  Effect.provide(
+    Layer.mock(SourceControlProvider.SourceControlProvider)({
+      kind: SourceControlProviderKind.make("unknown"),
+    }),
+  ),
+);
+
+/** Resolves to an unknown-kind provider. Unstubbed members fail loudly, which a status poll must not hit. */
+export const stubSourceControlProviders =
+  SourceControlProviderRegistry.SourceControlProviderRegistry.pipe(
+    Effect.provide(
+      Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+        resolveLink: () => undefined,
+        resolve: () => unknownSourceControlProvider,
+        resolveHandle: () =>
+          unknownSourceControlProvider.pipe(
+            Effect.map((provider) => ({ provider, context: null })),
+          ),
+      }),
+    ),
+  );

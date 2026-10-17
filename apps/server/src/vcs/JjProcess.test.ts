@@ -1,5 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { TestClock } from "effect/testing";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ProcessRunner from "../processRunner.ts";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import { ChildProcessSpawner } from "effect/process";
@@ -307,6 +311,120 @@ describe("colocatedGitCommand", () => {
       }).pipe(Effect.provide(recordingProcess(calls, () => output())));
     });
   }
+
+  it.effect("does not infer checkpoint retry policy from the operation name", () => {
+    const calls: VcsProcess.VcsProcessInput[] = [];
+    return Effect.gen(function* () {
+      const process = yield* VcsProcess.VcsProcess;
+      yield* JjProcess.colocatedGitCommand(
+        process,
+        VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+        { gitDir: "/repo/.git", cwd: "/repo" },
+        ["update-ref", "refs/t3/checkpoints/test", "HEAD"],
+      );
+      assert.isTrue(calls[0]?.allowNonZeroExit);
+    }).pipe(Effect.provide(recordingProcess(calls, () => output())));
+  });
+
+  it.effect("keeps checkpoint retry policy in VcsProcess", () => {
+    const calls: VcsProcess.VcsProcessInput[] = [];
+    return Effect.gen(function* () {
+      const process = yield* VcsProcess.VcsProcess;
+      yield* JjProcess.colocatedGitCommand(
+        process,
+        VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+        { gitDir: "/repo/.git", cwd: "/repo" },
+        ["add", "-A"],
+        { retryTransientFailures: true },
+      );
+      assert.equal(calls[0]?.allowNonZeroExit, false);
+    }).pipe(Effect.provide(recordingProcess(calls, () => output())));
+  });
+
+  it.effect("retries transient checkpoint Git failures through the colocated command", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const process = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () =>
+            Effect.sync(() => {
+              attempts += 1;
+              return {
+                stdout: "",
+                stderr:
+                  attempts === 1 ? "fatal: Unable to create '/repo/index.lock': File exists" : "",
+                code: ChildProcessSpawner.ExitCode(attempts === 1 ? 1 : 0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+      );
+      const fiber = yield* JjProcess.colocatedGitCommand(
+        process,
+        VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+        { gitDir: "/repo/.git", cwd: "/repo" },
+        ["add", "-A"],
+        { retryTransientFailures: true },
+      ).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("150 millis");
+      const result = yield* Fiber.join(fiber);
+      assert.equal(result.exitCode, 0);
+      assert.equal(attempts, 2);
+    }),
+  );
+
+  it.effect("falls back to writeout-only when macOS rejects a checkpoint's full fsync", () =>
+    Effect.gen(function* () {
+      const fsyncMethods: Array<string | undefined> = [];
+      const process = yield* VcsProcess.make.pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.sync(() => {
+              const method = input.args.find((arg) => arg.startsWith("core.fsyncMethod="));
+              fsyncMethods.push(method);
+              const failed = method === "core.fsyncMethod=fsync";
+              return {
+                stdout: "",
+                stderr: failed
+                  ? "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported"
+                  : "",
+                code: ChildProcessSpawner.ExitCode(failed ? 128 : 0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+      );
+      const result = yield* JjProcess.colocatedGitCommand(
+        process,
+        VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+        { gitDir: "/repo/.git", cwd: "/repo" },
+        [
+          "-c",
+          "core.fsync=objects,reference",
+          "-c",
+          "core.fsyncMethod=fsync",
+          "update-ref",
+          "refs/t3/checkpoints/x",
+          "HEAD",
+        ],
+        { retryTransientFailures: true },
+      );
+      assert.equal(result.exitCode, 0);
+      assert.deepStrictEqual(fsyncMethods, [
+        "core.fsyncMethod=fsync",
+        "core.fsyncMethod=writeout-only",
+      ]);
+    }),
+  );
 
   it.effect("always passes an explicit git directory and spawns in the given cwd", () => {
     const calls: VcsProcess.VcsProcessInput[] = [];

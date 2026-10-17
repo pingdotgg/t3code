@@ -192,7 +192,7 @@ function parseBranchAb(value: string): { ahead: number; behind: number } {
   };
 }
 
-function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
+export function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   const fields = stdout.split("\0");
   const files: ReviewDiffFileStat[] = [];
   for (let index = 0; index < fields.length; index++) {

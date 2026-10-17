@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { VcsError } from "@t3tools/contracts";
+import { CheckpointRef, VcsError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -537,10 +537,20 @@ describeJj("JjVcsDriver usability", () => {
     ),
   );
 
+  it.effect("supports checkpoints in a colocated repository", () =>
+    withRepo(({ driver, root }) =>
+      Effect.gen(function* () {
+        assert.isTrue(yield* driver.checkpointsUsable(root));
+      }),
+    ),
+  );
+
   it.effect("refuses a repository that is not colocated, with an actionable reason", () =>
     withJjRepo({ prefix: "t3-jj-external-", colocated: false }, ({ driver, root }) =>
       Effect.gen(function* () {
         assert.equal((yield* driver.repoPaths(root)).gitDir, null);
+        assert.isFalse(yield* driver.checkpointsUsable(root));
+
         const error = yield* driver.currentChange(root).pipe(Effect.flip);
         assert.equal(error._tag, "VcsUnsupportedOperationError");
         assert.include(
@@ -646,4 +656,102 @@ describeJj("JjVcsDriver list reads", () => {
       ),
     );
   });
+});
+
+describeJj("JjVcsDriver authored checkpoint paths", () => {
+  it.effect("includes paths across committed changes and checkpoint snapshots", () =>
+    withJjRepo({ prefix: "t3-jj-authored-", seed: true }, ({ driver, root, fileSystem, path }) =>
+      Effect.gen(function* () {
+        assert(driver.checkpoints);
+        const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/from");
+        const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/to");
+        yield* driver.checkpoints.captureCheckpoint({
+          cwd: root,
+          checkpointRef: fromCheckpointRef,
+        });
+        yield* fileSystem.writeFileString(path.join(root, "committed.txt"), "committed\n");
+        yield* runJj(root, ["new", "-m", "next change"]);
+        yield* fileSystem.writeFileString(path.join(root, "snapshot.txt"), "snapshot\n");
+        yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef: toCheckpointRef });
+        const paths = yield* driver.checkpoints.listAuthoredPaths({
+          cwd: root,
+          fromCheckpointRef,
+          toCheckpointRef,
+        });
+        assert.isNotNull(paths);
+        assert.deepEqual(Array.from(paths ?? []).sort(), ["committed.txt", "snapshot.txt"]);
+        const filteredDiff = yield* driver.checkpoints.diffCheckpoints({
+          cwd: root,
+          fromCheckpointRef,
+          toCheckpointRef,
+          filePaths: ["snapshot.txt"],
+          ignoreWhitespace: false,
+        });
+        assert.include(filteredDiff, "snapshot.txt");
+        assert.notInclude(filteredDiff, "committed.txt");
+        assert.equal(
+          yield* driver.checkpoints.diffCheckpoints({
+            cwd: root,
+            fromCheckpointRef,
+            toCheckpointRef,
+            filePaths: [],
+            ignoreWhitespace: false,
+          }),
+          "",
+        );
+      }),
+    ),
+  );
+
+  it.effect("falls back to the complete diff when checkpoint parents are unchanged", () =>
+    withRepo(({ driver, root }) =>
+      Effect.gen(function* () {
+        assert(driver.checkpoints);
+        const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/same");
+        yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+        assert.isNull(
+          yield* driver.checkpoints.listAuthoredPaths({
+            cwd: root,
+            fromCheckpointRef: checkpointRef,
+            toCheckpointRef: checkpointRef,
+          }),
+        );
+      }),
+    ),
+  );
+});
+
+describeJj("JjVcsDriver merge checkpoint paths", () => {
+  it.effect("keeps the full diff when the starting snapshot has multiple parents", () =>
+    withJjRepo(
+      { prefix: "t3-jj-merge-authored-", seed: true },
+      ({ driver, root, fileSystem, path }) =>
+        Effect.gen(function* () {
+          assert(driver.checkpoints);
+          yield* fileSystem.writeFileString(path.join(root, "left.txt"), "left\n");
+          yield* runJj(root, ["bookmark", "create", "left"]);
+          yield* runJj(root, ["new", "main"]);
+          yield* fileSystem.writeFileString(path.join(root, "right.txt"), "right\n");
+          yield* runJj(root, ["new", "left", "@"]);
+          const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/merge-from");
+          const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/merge-to");
+          yield* driver.checkpoints.captureCheckpoint({
+            cwd: root,
+            checkpointRef: fromCheckpointRef,
+          });
+          yield* runJj(root, ["new"]);
+          yield* driver.checkpoints.captureCheckpoint({
+            cwd: root,
+            checkpointRef: toCheckpointRef,
+          });
+          assert.isNull(
+            yield* driver.checkpoints.listAuthoredPaths({
+              cwd: root,
+              fromCheckpointRef,
+              toCheckpointRef,
+            }),
+          );
+        }),
+    ),
+  );
 });
