@@ -13,6 +13,7 @@ import Animated, {
   LinearTransition,
   ReduceMotion,
   useAnimatedStyle,
+  useReducedMotion,
   useSharedValue,
   withTiming,
   type EntryExitAnimationFunction,
@@ -130,19 +131,38 @@ export function ComposerDictationDraftContent(props: {
   );
 }
 
+/**
+ * Flips the entire row while keeping the outgoing controls intact until it leaves.
+ * With reduced motion the faces swap without an entering animation: Android can
+ * drop its single collapsed frame on mount, leaving the row laid out and tappable
+ * at the initial opacity of 0.
+ */
 export function ComposerDictationToolbar(props: {
   readonly children: ReactNode;
   readonly showsDictation: boolean;
   readonly visible?: boolean;
 }) {
+  const reducedMotion = useReducedMotion();
   return (
     <View className="relative h-[44px] overflow-hidden">
       {props.visible !== false ? (
         <Animated.View
           key={props.showsDictation ? "dictation" : "draft"}
           className="absolute inset-0"
-          entering={props.showsDictation ? DICTATION_TOOLBAR_ENTERING : DRAFT_TOOLBAR_ENTERING}
-          exiting={props.showsDictation ? DICTATION_TOOLBAR_EXITING : DRAFT_TOOLBAR_EXITING}
+          entering={
+            reducedMotion
+              ? undefined
+              : props.showsDictation
+                ? DICTATION_TOOLBAR_ENTERING
+                : DRAFT_TOOLBAR_ENTERING
+          }
+          exiting={
+            reducedMotion
+              ? undefined
+              : props.showsDictation
+                ? DICTATION_TOOLBAR_EXITING
+                : DRAFT_TOOLBAR_EXITING
+          }
           style={{ backfaceVisibility: "hidden" }}
         >
           {props.children}
