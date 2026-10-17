@@ -1,5 +1,7 @@
 import * as NodeModule from "node:module";
+import * as NodeNet from "node:net";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as Undici from "undici";
 
 // undici stays external to the CLI bundle (scripts/lib/cli-external-packages.ts).
@@ -40,4 +42,33 @@ export function installHttp1FetchDispatcher(): void {
  */
 export function keepOutboundFetchOnHttp1(): void {
   if (builtinFetchUsesHttp2(process.versions.undici)) installHttp1FetchDispatcher();
+}
+
+// @types/node does not declare setTypeOfService yet.
+type TypeOfServiceSocket = {
+  setTypeOfService?: (this: NodeNet.Socket, typeOfService: number) => NodeNet.Socket;
+};
+
+/**
+ * The undici 7 that Node 24 and Electron bundle calls `setTypeOfService()` on
+ * every HTTP/1.1 request, from a socket callback, without catching. macOS
+ * rejects it with EINVAL once the peer has reset the connection, so one request
+ * to a listener that resets exits the server. The request still fails on its
+ * own. undici 8.8 ignores these errors (https://github.com/nodejs/undici/pull/5547).
+ */
+export function ignoreMacosTypeOfServiceEinval(
+  platform = HostProcess.Platform.defaultValue(),
+  socketPrototype: TypeOfServiceSocket = NodeNet.Socket.prototype as NodeNet.Socket &
+    TypeOfServiceSocket,
+): void {
+  const setTypeOfService = socketPrototype.setTypeOfService;
+  if (platform !== "darwin" || typeof setTypeOfService !== "function") return;
+  socketPrototype.setTypeOfService = function (typeOfService) {
+    try {
+      return setTypeOfService.call(this, typeOfService);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "EINVAL") return this;
+      throw error;
+    }
+  };
 }
