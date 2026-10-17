@@ -6,6 +6,7 @@ import {
   getGitActionDisabledReason,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
@@ -103,8 +104,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
-  const currentStatusSummary = statusSummary(gitStatus.data);
+  const vcsTerminology = resolveVcsTerminology(gitStatus.data);
+  const currentBranchLabel =
+    gitStatus.data?.refName ??
+    selectedThread?.branch ??
+    (gitStatus.data?.vcs?.kind === "jj" ? `No ${vcsTerminology.refNoun}` : "Detached HEAD");
+  const currentStatusSummary = statusSummary(gitStatus.data, vcsTerminology);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
@@ -140,13 +145,16 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const openExistingPr = useCallback(async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
-      Dialog.alert("No open PR", "This branch does not have an open pull request.");
+      Dialog.alert(
+        "No open PR",
+        `This ${vcsTerminology.refNoun} does not have an open pull request.`,
+      );
       return;
     }
     if (!(await openPullRequest(prUrl))) {
       Dialog.alert("Unable to open PR", "The pull request could not be opened.");
     }
-  }, [gitStatus.data, openPullRequest]);
+  }, [gitStatus.data, openPullRequest, vcsTerminology]);
 
   const runActionWithPrompt = useCallback(
     async (input: GitActionRequestInput) => {
@@ -321,7 +329,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <SheetListRow
           icon="text.bubble"
           title="Review changes"
-          subtitle="Inspect changes, uncommitted edits, and turn diffs"
+          subtitle={
+            gitStatus.data?.vcs?.kind === "jj"
+              ? `Inspect ${vcsTerminology.workspaceNoun} changes and turn diffs`
+              : "Inspect changes, uncommitted edits, and turn diffs"
+          }
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
@@ -335,11 +347,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
         <SheetListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
+          title={`${vcsTerminology.refNounPluralTitle} & ${vcsTerminology.workspaceNounPlural}`}
           subtitle={
             canChangeThreadBranch
-              ? "Switch branch, create branch, or move to a worktree"
-              : "View branches and worktrees"
+              ? `Switch ${vcsTerminology.refNoun}, create ${vcsTerminology.refNoun}, or move to a ${vcsTerminology.workspaceNoun}`
+              : `View ${vcsTerminology.refNounPlural} and ${vcsTerminology.workspaceNounPlural}`
           }
           disabled={busy || !isRepo}
           onPress={() =>
@@ -369,8 +381,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
                     tintColorClassName="accent-foreground-muted"
                   />
                   <Text className="text-xs text-foreground-muted">
-                    {chain.kind === "native" ? "Stack" : "Branch stack"} · {chain.layers.length} PRs
-                    · bottom to top
+                    {chain.kind === "native" ? "Stack" : `${vcsTerminology.refNounTitle} stack`} ·{" "}
+                    {chain.layers.length} PRs · bottom to top
                   </Text>
                 </View>
               ) : null}
@@ -404,7 +416,9 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         </View>
       ) : null}
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {currentWorktreePath ? (
+        <MetaCard label={vcsTerminology.workspaceNounTitle} value={currentWorktreePath} />
+      ) : null}
     </ScrollView>
   );
 

@@ -52,12 +52,14 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
 import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
 import {
@@ -713,6 +715,10 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  resolveSourceControlProvider?: () => Effect.Effect<
+    SourceControlProvider["Service"],
+    SourceControlProviderFailure
+  >;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -811,7 +817,7 @@ function makeManager(input?: {
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
           resolveHandle: () => Effect.succeed({ provider, context: null }),
-          resolve: () => Effect.succeed(provider),
+          resolve: input?.resolveSourceControlProvider ?? (() => Effect.succeed(provider)),
           discover: Effect.succeed([]),
         }),
       ),
@@ -876,6 +882,25 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       let remoteReads = 0;
       const workflowContext = yield* Layer.build(
         GitWorkflowService.layer.pipe(
+          Layer.provide(
+            Layer.mock(JjVcsDriver.JjVcsDriver)({
+              capabilities: {
+                kind: "jj",
+                supportsWorktrees: false,
+                supportsBookmarks: true,
+                supportsAtomicSnapshot: true,
+                supportsPushDefaultRemote: false,
+                ignoreClassifier: "git-compatible-fallback",
+              },
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(JjWorkflow.JjWorkflow)({
+              invalidateLocalStatus: () => Effect.void,
+              invalidateRemoteStatus: () => Effect.void,
+              invalidateStatus: () => Effect.void,
+            }),
+          ),
           Layer.provide(
             Layer.succeed(GitManager.GitManager, {
               ...manager,
@@ -3605,7 +3630,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("applies a V2-native thread's project settings to generated commit text", () =>
+  it.effect("prefers the thread's project settings over the stacked action's project ID", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -3692,6 +3717,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         cwd: repoDir,
         action: "commit",
         threadId,
+        projectId: ProjectId.make("project:ignored-action-input"),
       });
 
       expect(generatedModelSelection).toEqual(projectModel);
@@ -4206,6 +4232,85 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "feature/push-dirty",
         ]).pipe(Effect.map((output) => output.stdout.trim())),
       ).toBe("Push dirty branch");
+    }),
+  );
+
+  it.effect("captures the PR temp directory when constructing the manager", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const directory = yield* makeTempDir("t3code-pr-snapshot-");
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = process.env.TMPDIR;
+          process.env.TMPDIR = directory;
+          return previous;
+        }),
+        (previous) =>
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env.TMPDIR;
+            else process.env.TMPDIR = previous;
+          }),
+      );
+      const { service } = createGitHubProviderWithFakeGh();
+      let createdBodyFile: string | undefined;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...service,
+          createChangeRequest: ({ bodyFile }) =>
+            Effect.sync(() => {
+              createdBodyFile = bodyFile;
+              expect(NodePath.dirname(bodyFile)).toBe(directory);
+              expect(NodeFS.readFileSync(bodyFile, "utf8").length).toBeGreaterThan(0);
+            }),
+        },
+      });
+      process.env.TMPDIR = NodePath.join(directory, "not-created");
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+      expect(result.pr.status).toBe("created");
+      expect(createdBodyFile).toBeDefined();
+      expect(NodeFS.existsSync(createdBodyFile!)).toBe(false);
+    }),
+  );
+
+  it.effect("resolves the PR provider before refreshing branch status", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const commands: string[] = [];
+      const failure = new SourceControlProviderFailure({
+        provider: SourceControlProviderKind.make("github"),
+        operation: "resolve",
+        cwd: repoDir,
+        detail: "Provider unavailable",
+      });
+      const { manager } = yield* makeManager({
+        gitCommands: commands,
+        resolveSourceControlProvider: () => Effect.fail(failure),
+      });
+      const error = yield* manager
+        .runStackedAction(
+          { cwd: repoDir, action: "create_pr", actionId: "provider-before-status" },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  if (event.kind === "phase_started" && event.phase === "pr") {
+                    commands.length = 0;
+                  }
+                }),
+            },
+          },
+        )
+        .pipe(Effect.flip);
+      expect(error).toBe(failure);
+      expect(commands).toEqual([]);
     }),
   );
 

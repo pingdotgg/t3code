@@ -32,12 +32,13 @@ function request(name: string, error?: string): ProjectScriptEditorRequest {
   };
 }
 
-const open = (nextRequest: ProjectScriptEditorRequest) =>
+const open = (nextRequest: ProjectScriptEditorRequest, workspaceNoun?: string) =>
   act(async () =>
     root.render(
       <StrictMode>
         <ProjectScriptEditorDialog
           environmentId={EnvironmentId.make("test")}
+          {...(workspaceNoun === undefined ? {} : { workspaceNoun })}
           request={nextRequest}
           scripts={[]}
           onSubmit={onSubmit}
@@ -80,6 +81,26 @@ afterEach(async () => {
 });
 
 describe("project action editor save lifecycle", () => {
+  it.each([
+    [undefined, "worktree"],
+    ["workspace", "workspace"],
+  ])("saves the settle action using %s terminology", async (workspaceNoun, expectedNoun) => {
+    onSubmit.mockResolvedValue(AsyncResult.success(undefined));
+    await open(request("build"), workspaceNoun);
+    const settleLabel = [...document.querySelectorAll("label")].find(
+      (label) => label.textContent === `Run in the thread's ${expectedNoun} when the thread settles`,
+    );
+    expect(settleLabel).toBeDefined();
+    await act(async () => {
+      settleLabel!.click();
+    });
+    await act(async () => submit());
+    expect(onSubmit).toHaveBeenCalledWith(
+      "build",
+      expect.objectContaining({ runOnSettle: true }),
+    );
+  });
+
   it("blocks repeated submits and edits until the current save completes", async () => {
     const save = deferredSave();
     onSubmit.mockReturnValue(save.promise);

@@ -1,11 +1,13 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
   formatGitActionElapsed,
   requiresDefaultBranchConfirmation,
+  getGitActionDisabledReason,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
   resolveGitActionProgressPresentation,
@@ -35,6 +37,96 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
     ...overrides,
   };
 }
+
+describe("upstream Git copy and jj action guards", () => {
+  it("keeps the exact upstream detached-ref hint", () => {
+    assert.deepEqual(resolveQuickAction(status({ refName: null }), false), {
+      label: "Commit",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Create and checkout a ref before pushing or opening a pull request.",
+    });
+  });
+
+  it("keeps upstream disabled-action reasons and their priority", () => {
+    const dirty = status({ hasWorkingTreeChanges: true, behindCount: 1 });
+    const push = buildMenuItems(dirty, false).find((item) => item.id === "push")!;
+    assert.equal(
+      getGitActionDisabledReason({
+        item: push,
+        gitStatus: dirty,
+        isBusy: false,
+        hasPrimaryRemote: true,
+      }),
+      "Commit or stash local changes before pushing.",
+    );
+    const clean = status();
+    const commit = buildMenuItems(clean, false)[0]!;
+    assert.equal(
+      getGitActionDisabledReason({
+        item: commit,
+        gitStatus: clean,
+        isBusy: false,
+        hasPrimaryRemote: true,
+      }),
+      "Worktree is clean. Make changes before committing.",
+    );
+  });
+
+  it("does not suggest stashing jj working-copy changes before pushing", () => {
+    const dirty = status({
+      hasWorkingTreeChanges: true,
+      aheadCount: 0,
+      vcs: { kind: "jj" },
+    });
+    const push = buildMenuItems(dirty, false).find((item) => item.id === "push")!;
+    assert.equal(
+      getGitActionDisabledReason({
+        item: push,
+        gitStatus: dirty,
+        isBusy: false,
+        hasPrimaryRemote: true,
+      }),
+      "Commit local changes before pushing.",
+    );
+  });
+
+  it("blocks every action when jj is unsupported", () => {
+    const unsupported = status({
+      hasWorkingTreeChanges: true,
+      aheadCount: 1,
+      vcs: { kind: "jj", unsupportedReason: "Jujutsu is unavailable." },
+    });
+    assert.isTrue(buildMenuItems(unsupported, false).every((item) => item.disabled));
+    assert.deepInclude(resolveQuickAction(unsupported, false), {
+      disabled: true,
+      kind: "show_hint",
+      hint: "Jujutsu is unavailable.",
+    });
+  });
+
+  it("retains jj bookmark wording in feature action stages and confirmation", () => {
+    assert.deepEqual(
+      buildGitActionProgressStages({
+        action: "commit",
+        hasCustomCommitMessage: true,
+        hasWorkingTreeChanges: true,
+        featureBranch: true,
+        vcsTerminology: JJ_VCS_TERMINOLOGY,
+      }),
+      ["Preparing feature bookmark...", "Committing..."],
+    );
+    assert.equal(
+      resolveDefaultBranchActionDialogCopy({
+        action: "push",
+        branchName: "main",
+        includesCommit: false,
+        vcsTerminology: JJ_VCS_TERMINOLOGY,
+      }).title,
+      "Push to default bookmark?",
+    );
+  });
+});
 
 describe("git action progress presentation", () => {
   it("keeps the phase on the first row and hook output on the second", () => {
@@ -1094,6 +1186,16 @@ describe("buildGitActionProgressStages", () => {
       "Generating PR content...",
       "Creating pull request...",
     ]);
+  });
+
+  it("names the feature ref with Git nouns when no VCS terminology is supplied", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit",
+      hasCustomCommitMessage: true,
+      hasWorkingTreeChanges: true,
+      featureBranch: true,
+    });
+    assert.deepEqual(stages, ["Preparing feature ref...", "Committing..."]);
   });
 });
 

@@ -43,7 +43,7 @@ export interface DeleteCheckpointRefsInput {
 export class CheckpointStore extends Context.Service<
   CheckpointStore,
   {
-    readonly isGitRepository: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
+    readonly supportsCheckpoints: (cwd: string) => Effect.Effect<boolean, CheckpointStoreError>;
 
     readonly captureCheckpoint: (
       input: CaptureCheckpointInput,
@@ -94,10 +94,16 @@ export const make = Effect.gen(function* () {
     return handle.driver.checkpoints satisfies VcsCheckpointOps;
   });
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>
-    vcsRegistry
-      .detect({ cwd, requestedKind: "git" })
-      .pipe(Effect.map((repository) => repository !== null));
+  const supportsCheckpoints: CheckpointStore["Service"]["supportsCheckpoints"] = Effect.fn(
+    "CheckpointStore.supportsCheckpoints",
+  )(function* (cwd: string) {
+    const handle = yield* vcsRegistry.detect({ cwd });
+    if (!handle?.driver.checkpoints) {
+      return false;
+    }
+    const usable = handle.driver.checkpointsUsable;
+    return usable ? yield* usable(cwd) : true;
+  });
 
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
@@ -145,7 +151,7 @@ export const make = Effect.gen(function* () {
   });
 
   return CheckpointStore.of({
-    isGitRepository,
+    supportsCheckpoints,
     captureCheckpoint,
     hasCheckpointRef,
     restoreCheckpoint,

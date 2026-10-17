@@ -1,10 +1,16 @@
 import { MessageId } from "@t3tools/contracts";
+import { GIT_VCS_TERMINOLOGY, JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
-import { openRevertConfirm, RevertConfirmHost } from "./ChatOverlayHosts";
+import {
+  BranchRestoreConfirmHost,
+  openBranchRestoreConfirm,
+  openRevertConfirm,
+  RevertConfirmHost,
+} from "./ChatOverlayHosts";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -51,4 +57,42 @@ describe("RevertConfirmHost", () => {
     await act(() => root.render(host("env:b")));
     await vi.waitFor(() => expect(dialog()).toBeNull());
   });
+});
+
+describe("BranchRestoreConfirmHost", () => {
+  it.each([GIT_VCS_TERMINOLOGY, JJ_VCS_TERMINOLOGY])(
+    "preserves $systemName terminology and thread ownership",
+    async (terminology) => {
+      const onConfirm = vi.fn();
+      const host = (threadKey: string) => (
+        <AppAtomRegistryProvider>
+          <BranchRestoreConfirmHost
+            threadKey={threadKey}
+            threadBranch="feature"
+            canWriteSourceControl
+            refNoun={terminology.refNoun}
+            refSwitchChangesDescription={terminology.refSwitchChangesDescription}
+            onConfirm={onConfirm}
+          />
+        </AppAtomRegistryProvider>
+      );
+      await act(() => root.render(host("env:a")));
+      await act(() => openBranchRestoreConfirm("env:b"));
+      expect(dialog()).toBeNull();
+
+      await act(() => openBranchRestoreConfirm("env:a"));
+      expect(dialog()?.textContent).toContain(terminology.refSwitchChangesDescription);
+      const confirm = [...(dialog()?.querySelectorAll("button") ?? [])].find(
+        (button) => button.textContent === `Switch ${terminology.refNoun}`,
+      );
+      expect(confirm).toBeDefined();
+      await act(() => confirm?.click());
+      expect(onConfirm).toHaveBeenCalledExactlyOnceWith();
+      await vi.waitFor(() => expect(dialog()).toBeNull());
+
+      await act(() => openBranchRestoreConfirm("env:a"));
+      await act(() => root.render(host("env:b")));
+      await vi.waitFor(() => expect(dialog()).toBeNull());
+    },
+  );
 });

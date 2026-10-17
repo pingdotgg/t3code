@@ -142,6 +142,8 @@ export function BranchRestoreConfirmHost(props: {
   readonly threadKey: string | null;
   readonly threadBranch: string;
   readonly canWriteSourceControl: boolean;
+  readonly refNoun: string;
+  readonly refSwitchChangesDescription: string;
   readonly onConfirm: () => void;
 }) {
   const open = useThreadOverlay(branchRestoreConfirmAtom, props.threadKey) !== null;
@@ -157,10 +159,7 @@ export function BranchRestoreConfirmHost(props: {
           <AlertDialogTitle>
             Switch to <code className="font-medium">{props.threadBranch}</code>?
           </AlertDialogTitle>
-          <AlertDialogDescription>
-            You have uncommitted changes. They'll carry over to the other branch, or block the
-            switch if they conflict.
-          </AlertDialogDescription>
+          <AlertDialogDescription>{props.refSwitchChangesDescription}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
@@ -172,7 +171,7 @@ export function BranchRestoreConfirmHost(props: {
               props.onConfirm();
             }}
           >
-            Switch branch
+            Switch {props.refNoun}
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>

@@ -6,6 +6,7 @@ import {
   ProjectId,
   ThreadId,
   VcsProcessSpawnError,
+  VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -20,11 +21,13 @@ import * as Scope from "effect/Scope";
 import * as ServerConfig from "../config.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as JjWorkflow from "../jj/JjWorkflow.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -38,6 +41,8 @@ const layerGitWorkflow = (vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>) =>
   GitWorkflow.layer.pipe(
     Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(vcsProcess ?? VcsProcess.layer))),
     Layer.provide(Layer.mock(GitManager.GitManager)({})),
+    Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)({})),
+    Layer.provide(JjVcsDriver.layer.pipe(Layer.provide(vcsProcess ?? VcsProcess.layer))),
   );
 
 const layerEnrichment = ProjectEnrichmentService.layer.pipe(
@@ -57,6 +62,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
+  readonly registry?: Layer.Layer<VcsDriverRegistry.VcsDriverRegistry>;
   readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
@@ -77,6 +83,10 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
     Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),
+    Layer.provideMerge(
+      options?.registry ??
+        VcsDriverRegistry.layer.pipe(Layer.provide(options?.vcsProcess ?? VcsProcess.layer)),
+    ),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
@@ -139,6 +149,24 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
     }).pipe(Effect.provide(layer(baseDir)));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+it.effect("offers nothing when the data dir sits inside a jj checkout", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scratch-jj-" });
+    yield* fileSystem.makeDirectory(path.join(checkout, ".jj"));
+    const baseDir = path.join(checkout, ".t3");
+    yield* fileSystem.makeDirectory(baseDir);
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      assert.equal(
+        (yield* Effect.flip(scratch.ensureScratchProject))._tag,
+        "ScratchUnavailableError",
+      );
+    }).pipe(Effect.provide(layer(baseDir)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
 
 it.effect("offers a Scratch folder when Git is not installed", () =>
   withScratch(
@@ -161,6 +189,27 @@ it.effect("offers a Scratch folder when Git is not installed", () =>
                 method: "spawn",
                 syscall: `spawn ${input.command}`,
               }),
+            }),
+          ),
+      }),
+    },
+  ),
+);
+it.effect("keeps Scratch available when the added jj detection fails", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
+      }),
+    {
+      registry: Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+        detect: () =>
+          Effect.fail(
+            new VcsUnsupportedOperationError({
+              operation: "test.detect",
+              kind: "jj",
+              detail: "Cannot inspect the jj marker.",
             }),
           ),
       }),

@@ -1,4 +1,5 @@
 import type { VcsRef } from "@t3tools/contracts";
+import { getVcsTerminology, type VcsTerminology } from "@t3tools/shared/vcs";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   useEffect,
@@ -46,6 +47,7 @@ export function BranchPicker({
   renderItem,
   getItemType,
   children,
+  terminology = getVcsTerminology("git"),
 }: {
   items: string[];
   filteredItems: string[];
@@ -65,6 +67,7 @@ export function BranchPicker({
   renderItem: (value: string, index: number) => ReactNode;
   getItemType?: ((value: string) => string) | undefined;
   children: ReactNode;
+  terminology?: VcsTerminology;
 }) {
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
@@ -171,7 +174,7 @@ export function BranchPicker({
       {children}
       <ComboboxPopup {...popupProps}>
         <ComboboxSearchInput
-          placeholder="Search refs..."
+          placeholder={`Search ${terminology.systemName === "Jujutsu" ? terminology.refNounPlural : "refs"}...`}
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
           onKeyDown={(event) => {
@@ -189,7 +192,9 @@ export function BranchPicker({
           }}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No refs found.</ComboboxEmpty>
+          <ComboboxEmpty>
+            No {terminology.systemName === "Jujutsu" ? terminology.refNounPlural : "refs"} found.
+          </ComboboxEmpty>
           <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
             <ComboboxListVirtualized className="size-full min-w-0">
               <LegendList<string>
@@ -235,15 +240,14 @@ export function BranchPicker({
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
                       size="sm"
-                      aria-label="Start worktree from origin"
+                      aria-label={`Start ${terminology.workspaceNoun} from origin`}
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
+                {`Creates the ${terminology.workspaceNoun} from the latest matching ${terminology.refNoun} on origin instead of your local ${terminology.refNoun}.`}
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -262,6 +266,7 @@ export function BranchPickerRefItem({
   disabled,
   onClick,
   onContextMenu,
+  terminology = getVcsTerminology("git"),
 }: {
   branch: VcsRef;
   projectCwd: string | null;
@@ -270,6 +275,7 @@ export function BranchPickerRefItem({
   disabled?: boolean;
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
+  terminology?: VcsTerminology;
 }) {
   const itemValue = refName.name;
   const hasSecondaryWorktree =
@@ -277,7 +283,7 @@ export function BranchPickerRefItem({
   const badge = refName.current
     ? "current"
     : hasSecondaryWorktree
-      ? "worktree"
+      ? terminology.workspaceNoun
       : refName.isRemote
         ? "remote"
         : refName.isDefault

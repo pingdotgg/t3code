@@ -279,8 +279,8 @@ function DiscoveryItemRow({
   // A search jump to a setting inside this row opens it when the target arrives.
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
   const targetsThisRow =
-    (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
     searchTargetId === sourceControlHostSettingsSearchId(item.kind) ||
+    (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
     (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id);
   if (targetsThisRow && !isExpanded && seenSearchTargetId !== searchTargetId) {
     setIsExpanded(true);
