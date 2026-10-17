@@ -14,7 +14,7 @@ import {
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
-import { memo, type ReactNode, Suspense, use, useMemo } from "react";
+import { memo, type ReactNode, Suspense, use } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -54,14 +54,10 @@ function SyntaxTokens({
 }) {
   const { resolvedTheme } = useTheme();
   const highlighter = use(getSyntaxHighlighterPromise(language));
-  const { tokens } = useMemo(
-    () =>
-      highlighter.codeToTokens(text, {
-        lang: language,
-        theme: resolveDiffThemeName(resolvedTheme),
-      }),
-    [highlighter, text, language, resolvedTheme],
-  );
+  const { tokens } = highlighter.codeToTokens(text, {
+    lang: language,
+    theme: resolveDiffThemeName(resolvedTheme),
+  });
   return tokens.flatMap((line, lineIndex) => [
     lineIndex > 0 ? "\n" : "",
     ...line.map((token) => (
@@ -75,6 +71,16 @@ function SyntaxTokens({
 const monoClassName =
   "font-mono text-(length:--font-size-code,var(--text-2xs)) leading-relaxed whitespace-pre-wrap break-words select-text";
 
+function isJsonText(text: string): boolean {
+  if (!text) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function StructuredValue({
   value,
   highlightJson = false,
@@ -85,15 +91,7 @@ function StructuredValue({
   readonly language?: "typescript";
 }) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  const isJson = useMemo(() => {
-    if (!highlightJson || !text) return false;
-    try {
-      JSON.parse(text);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [highlightJson, text]);
+  const isJson = highlightJson && isJsonText(text);
   if (!text) return null;
   return (
     <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
@@ -309,8 +307,8 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           ) : null}
           {item.changes !== undefined && item.changes.length > 0 ? (
             <ul className="space-y-1 font-mono text-muted-foreground">
-              {item.changes.map((change, index) => (
-                <li key={`${change.operation}:${change.path}:${index}`}>
+              {item.changes.map((change) => (
+                <li key={JSON.stringify([change.operation, change.oldPath, change.path])}>
                   {change.operation} {change.oldPath ? `${change.oldPath} → ` : ""}
                   {formatWorkspaceRelativePath(change.path, props.workspaceRoot)}
                   {change.fileType || change.mimeType
