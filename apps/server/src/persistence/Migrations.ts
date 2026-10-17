@@ -65,6 +65,7 @@ import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
+import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -130,6 +131,7 @@ export const migrationEntries = [
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
+  [63, "DropUnusedV1Projections", Migration0063],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

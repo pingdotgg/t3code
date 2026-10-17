@@ -21,18 +21,6 @@ export const SHOWCASE_SCENES = [
 ] as const;
 export type ShowcaseScene = (typeof SHOWCASE_SCENES)[number];
 
-const PROJECTOR_NAMES = [
-  "projection.projects",
-  "projection.threads",
-  "projection.thread-messages",
-  "projection.thread-proposed-plans",
-  "projection.thread-activities",
-  "projection.thread-sessions",
-  "projection.thread-turns",
-  "projection.checkpoints",
-  "projection.pending-approvals",
-] as const;
-
 const MODEL_SELECTION = JSON.stringify({ instanceId: "codex", model: "gpt-5.4" });
 const PROJECT_SCRIPTS = JSON.stringify([
   {
@@ -394,23 +382,6 @@ function insertThread(
     );
   database
     .prepare(
-      `INSERT INTO projection_turns (
-        thread_id, turn_id, pending_message_id, assistant_message_id, state, requested_at,
-        started_at, completed_at, checkpoint_turn_count, checkpoint_ref, checkpoint_status,
-        checkpoint_files_json, source_proposed_plan_thread_id, source_proposed_plan_id
-      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, '[]', NULL, NULL)`,
-    )
-    .run(
-      input.id,
-      turnId,
-      isWorking ? null : `${input.id}-answer`,
-      isWorking ? "running" : "completed",
-      minutesBefore(now, input.minutesAgo + 2),
-      minutesBefore(now, input.minutesAgo + 2),
-      isWorking ? null : updatedAt,
-    );
-  database
-    .prepare(
       `INSERT INTO projection_thread_sessions (
         thread_id, status, provider_name, provider_instance_id, provider_session_id,
         provider_thread_id, runtime_mode, active_turn_id, last_error, updated_at
@@ -424,14 +395,9 @@ function insertThread(
 // do not read the V1 thread rows; moving the seed to V2 is tracked in
 // https://github.com/pingdotgg/t3code/issues/15013.
 const SEEDED_V1_TABLES = [
-  "projection_pending_approvals",
-  "projection_thread_proposed_plans",
-  "projection_thread_activities",
   "projection_thread_messages",
   "projection_thread_sessions",
-  "projection_turns",
   "projection_threads",
-  "projection_state",
 ] as const;
 
 const SEEDED_PROJECTION_TABLES = [...SEEDED_V1_TABLES, "projection_projects"] as const;
@@ -558,62 +524,6 @@ function seedDatabase(
       }
     }
 
-    const turnId = `${SHOWCASE_THREAD_ID}-turn`;
-    const insertActivity = database.prepare(
-      `INSERT INTO projection_thread_activities (
-        activity_id, thread_id, turn_id, tone, kind, summary, payload_json, sequence, created_at
-      ) VALUES (?, ?, ?, 'tool', 'tool.completed', ?, ?, ?, ?)`,
-    );
-    insertActivity.run(
-      "trace-remote-handoff",
-      SHOWCASE_THREAD_ID,
-      turnId,
-      "Traced the remote handoff path",
-      JSON.stringify({
-        itemType: "command_execution",
-        title: "Traced the remote handoff path",
-        detail: "Three environments, one continuous workspace",
-        status: "completed",
-      }),
-      1,
-      minutesBefore(now, 8),
-    );
-    insertActivity.run(
-      "sync-command-center",
-      SHOWCASE_THREAD_ID,
-      turnId,
-      "Synced the command center",
-      JSON.stringify({
-        itemType: "file_change",
-        title: "Synced the command center",
-        detail: "2 files changed · instant handoffs · calm reconnects",
-        status: "completed",
-      }),
-      2,
-      minutesBefore(now, 6),
-    );
-    insertActivity.run(
-      "run-changed-suite",
-      SHOWCASE_THREAD_ID,
-      turnId,
-      "Ran the changed workspace",
-      JSON.stringify({
-        itemType: "command_execution",
-        title: "Ran the changed workspace",
-        detail: "612 tests passed · 3 environments online",
-        status: "completed",
-      }),
-      3,
-      minutesBefore(now, 4),
-    );
-
-    for (const [index, projector] of PROJECTOR_NAMES.entries()) {
-      database
-        .prepare(
-          "INSERT INTO projection_state (projector, last_applied_sequence, updated_at) VALUES (?, ?, ?)",
-        )
-        .run(projector, index + 1, minutesBefore(now, 1));
-    }
     database.exec("COMMIT");
   } catch (error) {
     // A failed BEGIN (or an error SQLite already auto-rolled back) leaves no
