@@ -366,8 +366,9 @@ function notifyThemeSaveFailure(): void {
   );
 }
 
-// These run in their own hooks so the results stay cached across the palette's
-// later hook calls; the thread and project items key on them.
+// Kept as "use memo" hooks: inlined, each result reaches the dialog's returned
+// <CommandPaletteContent> through the action and thread item arrays built after
+// the browse hooks, and the compiler leaves all of them uncached.
 function useThemeCards(
   customThemes: ReturnType<typeof useCustomThemes>,
   environmentThemes: ReturnType<typeof useEnvironmentThemeDefinitions>,
@@ -384,29 +385,6 @@ function useThemeCards(
       })
       .map(getThemeCardDefinition),
   ];
-}
-
-function useProviderEntryMap(
-  environments: ReturnType<typeof useEnvironments>["environments"],
-  primaryEnvironmentId: ReturnType<typeof usePrimaryEnvironmentId>,
-  providers: Parameters<typeof deriveProviderInstanceEntries>[0],
-) {
-  "use memo";
-  const map = new Map<string, ProviderInstanceEntry>();
-  for (const environment of environments) {
-    const serverConfig = environment.serverConfig;
-    const environmentProviders =
-      serverConfig?.providers ??
-      (environment.environmentId === primaryEnvironmentId ? providers : []);
-    const derived = deriveProviderInstanceEntries(environmentProviders);
-    const entries = serverConfig
-      ? applyProviderInstanceSettings(derived, serverConfig.settings, null)
-      : derived;
-    for (const entry of entries) {
-      map.set(`${environment.environmentId}:${entry.instanceId}`, entry);
-    }
-  }
-  return map;
 }
 
 function useThreadContentMatchByKey(matches: ReturnType<typeof useThreadSearch>["matches"]) {
@@ -828,10 +806,20 @@ function OpenCommandPaletteDialog(props: {
   const environmentThemes = useEnvironmentThemeDefinitions();
   const themeCards = useThemeCards(customThemes, environmentThemes);
   const providers = useAtomValue(primaryServerProvidersAtom);
-  const providerEntryByEnvironmentAndInstanceId = useProviderEntryMap(
-    environments,
-    primaryEnvironmentId,
-    providers,
+  const providerEntryByEnvironmentAndInstanceId = new Map<string, ProviderInstanceEntry>(
+    environments.flatMap((environment) => {
+      const serverConfig = environment.serverConfig;
+      const derived = deriveProviderInstanceEntries(
+        serverConfig?.providers ??
+          (environment.environmentId === primaryEnvironmentId ? providers : []),
+      );
+      const entries = serverConfig
+        ? applyProviderInstanceSettings(derived, serverConfig.settings, null)
+        : derived;
+      return entries.map(
+        (entry) => [`${environment.environmentId}:${entry.instanceId}`, entry] as const,
+      );
+    }),
   );
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
