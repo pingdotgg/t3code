@@ -1260,25 +1260,6 @@ function BrowserKeybindingNotice() {
   );
 }
 
-// The panel calls hooks after these, so they would lose their caches inline. Separate hooks
-// keep the command options from rebuilding on every search keystroke.
-function useKeybindings(
-  serverKeybindings: Parameters<typeof mergeWithDefaultKeybindings>[0] | undefined,
-) {
-  "use memo";
-  const keybindings = mergeWithDefaultKeybindings(serverKeybindings ?? []);
-  return { keybindings, commandOptions: buildKeybindingCommandOptions(keybindings) };
-}
-
-function useKeybindingRows(
-  keybindings: ReturnType<typeof mergeWithDefaultKeybindings>,
-  query: string,
-) {
-  "use memo";
-  const rows = buildKeybindingRows(keybindings, query);
-  return { rows, groups: groupKeybindingRows(rows), anchorIds: keybindingAnchorIds(rows) };
-}
-
 function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
   const ids = new Map<string, string>();
   const seen = new Set<KeybindingCommand>();
@@ -1300,9 +1281,6 @@ export function KeybindingsSettingsPanel() {
   const canWriteSettings =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every((target) => writableIds.has(target.environmentId));
-  const { keybindings, commandOptions } = useKeybindings(
-    primaryEnvironment?.serverConfig?.keybindings,
-  );
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
@@ -1319,7 +1297,6 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  const { rows, groups, anchorIds } = useKeybindingRows(keybindings, query);
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
@@ -1328,6 +1305,15 @@ export function KeybindingsSettingsPanel() {
     if (searchTargetId.startsWith("keybinding-")) setQuery("");
   }
   const whenVariables = buildWhenVariableOptions();
+  const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
+  // Each derivation merges the defaults itself so the command options key on the
+  // server keybindings alone and do not rebuild on every search keystroke.
+  const commandOptions = buildKeybindingCommandOptions(
+    mergeWithDefaultKeybindings(serverKeybindings ?? []),
+  );
+  const rows = buildKeybindingRows(mergeWithDefaultKeybindings(serverKeybindings ?? []), query);
+  const groups = groupKeybindingRows(rows);
+  const anchorIds = keybindingAnchorIds(rows);
 
   const openKeybindingsFile = () => {
     if (
