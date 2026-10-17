@@ -1,0 +1,6 @@
+{
+  "type": "queued-run.cancel",
+  "commandId": "command-v2-queue-cancel",
+  "threadId": "thread-v2",
+  "runId": "run-v2-queued"
+}

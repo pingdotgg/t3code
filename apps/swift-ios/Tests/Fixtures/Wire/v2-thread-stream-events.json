@@ -1,0 +1,343 @@
+[
+  {
+    "kind": "event",
+    "sequence": 101,
+    "event": {
+      "id": "event-v2-1",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "message.updated",
+      "payload": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message-v2-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "role": "assistant",
+        "text": "The native wire contract and attachments are valid.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:01:00.000Z"
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 102,
+    "event": {
+      "id": "event-v2-2",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "turn-item.updated",
+      "payload": {
+        "id": "item-v2-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 13,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:01:00.000Z",
+        "updatedAt": "2026-08-07T12:01:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message-v2-assistant",
+        "text": "The native wire contract and attachments are valid.",
+        "streaming": false
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 103,
+    "event": {
+      "id": "event-v2-3",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "runtime-request.updated",
+      "payload": {
+        "id": "request-v2-approval",
+        "nodeId": "node-v2-approval",
+        "providerTurnId": "provider-turn-v2",
+        "nativeRequestRef": null,
+        "kind": "command",
+        "status": "resolved",
+        "responseCapability": {
+          "type": "live",
+          "providerSessionId": "provider-session-v2"
+        },
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "resolvedAt": "2026-08-07T12:01:00.000Z",
+        "decision": "accept"
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 104,
+    "event": {
+      "id": "event-v2-4",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "turn-item.updated",
+      "payload": {
+        "id": "item-v2-approval",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-approval",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 14,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:01:00.000Z",
+        "updatedAt": "2026-08-07T12:01:00.000Z",
+        "type": "approval_request",
+        "requestId": "request-v2-approval",
+        "requestKind": "command",
+        "prompt": "Run the focused wire fixture checks?",
+        "options": [
+          {
+            "decision": "accept",
+            "label": "Allow once"
+          },
+          {
+            "decision": "decline",
+            "label": "Decline"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 105,
+    "event": {
+      "id": "event-v2-5",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "run.updated",
+      "payload": {
+        "id": "run-v2-queued",
+        "threadId": "thread-v2",
+        "ordinal": 3,
+        "providerInstanceId": "codex",
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-5.4"
+        },
+        "providerThreadId": "provider-thread-v2",
+        "userMessageId": "message-v2-queued",
+        "rootNodeId": null,
+        "activeAttemptId": null,
+        "status": "cancelled",
+        "queuePosition": null,
+        "queueHeld": true,
+        "requestedAt": "2026-08-07T12:00:00.000Z",
+        "startedAt": null,
+        "completedAt": "2026-08-07T12:01:00.000Z",
+        "checkpointId": null,
+        "contextHandoffId": null
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 106,
+    "event": {
+      "id": "event-v2-6",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "provider-session.updated",
+      "payload": {
+        "id": "provider-session-v2",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "status": "error",
+        "cwd": "/workspace/fixture",
+        "model": "gpt-5.4",
+        "capabilities": {
+          "sessions": {
+            "supportsMultipleProviderThreadsPerSession": true,
+            "supportsModelSwitchInSession": true,
+            "supportsProviderSwitchingViaHandoff": true,
+            "supportsRuntimeModeSwitchInSession": true,
+            "pendingRequestsSurviveRestart": false
+          },
+          "threads": {
+            "canCreateEmptyThread": true,
+            "canReadThreadSnapshot": true,
+            "canRollbackThread": true,
+            "canForkThread": true,
+            "canForkFromTurn": true,
+            "canForkFromSubagentThread": false,
+            "exposesNativeThreadId": true
+          },
+          "turns": {
+            "exposesNativeTurnId": true,
+            "emitsTurnStarted": true,
+            "emitsTurnCompleted": true,
+            "supportsInterrupt": true,
+            "supportsActiveSteering": true,
+            "supportsSteeringByInterruptRestart": true,
+            "supportsQueuedMessages": true,
+            "terminalStatusQuality": "strong"
+          },
+          "streaming": {
+            "streamsAssistantText": true,
+            "streamsReasoning": true,
+            "streamsToolOutput": true,
+            "streamsPlanText": true,
+            "emitsMessageCompleted": true
+          },
+          "tools": {
+            "exposesToolItemIds": true,
+            "emitsToolStarted": true,
+            "emitsToolCompleted": true,
+            "emitsToolOutput": true,
+            "supportsMcpTools": true,
+            "supportsDynamicToolCallbacks": true
+          },
+          "approvals": {
+            "supportsCommandApproval": true,
+            "supportsFileReadApproval": true,
+            "supportsFileChangeApproval": true,
+            "supportsApplyPatchApproval": true,
+            "approvalsHaveNativeRequestIds": true,
+            "approvalCallbacksAreLiveOnly": true,
+            "approvalsCanOriginateFromSubagents": false
+          },
+          "planning": {
+            "emitsPlanUpdated": true,
+            "emitsTodoList": true,
+            "emitsProposedPlan": true,
+            "supportsStructuredQuestions": true,
+            "planDeltasHaveItemIds": true
+          },
+          "subagents": {
+            "supportsSubagents": true,
+            "exposesSubagentThreadIds": true,
+            "emitsSubagentLifecycle": true,
+            "canWaitForSubagents": true,
+            "canCloseSubagents": true,
+            "canForkSubagentThread": false
+          },
+          "context": {
+            "acceptsSystemContext": true,
+            "acceptsDeveloperContext": true,
+            "acceptsSyntheticUserContext": true,
+            "canGenerateSummaries": true,
+            "canConsumeHandoffSummaries": true,
+            "supportsDeltaHandoff": true,
+            "supportsFullThreadHandoff": true,
+            "maxRecommendedHandoffChars": null
+          },
+          "checkpointing": {
+            "appCanCheckpointFilesystem": true,
+            "supportsNestedCheckpointScopes": true,
+            "providerCanRollbackConversation": true,
+            "providerRollbackReturnsSnapshot": true,
+            "providerCanReadConversationSnapshot": true
+          },
+          "identity": {
+            "nativeThreadIds": "strong",
+            "nativeTurnIds": "strong",
+            "nativeItemIds": "strong",
+            "nativeRequestIds": "strong"
+          },
+          "runtimePolicy": {
+            "enforcement": "native"
+          }
+        },
+        "createdAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:01:00.000Z",
+        "lastError": "Provider connection closed."
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 107,
+    "event": {
+      "id": "event-v2-7",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "provider-session.detached",
+      "payload": {
+        "providerSessionId": "provider-session-v2",
+        "detachedAt": "2026-08-07T12:01:00.000Z",
+        "reason": "Connection closed"
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 108,
+    "event": {
+      "id": "event-v2-8",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "turn-item.updated",
+      "payload": {
+        "id": "item-v2-history-assistant",
+        "threadId": "thread-v2",
+        "runId": "run-v2-history",
+        "nodeId": "node-v2-history",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 1,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:01:00.000Z",
+        "type": "assistant_message",
+        "messageId": "message-v2-history-assistant",
+        "text": "The initial contract is valid.",
+        "streaming": false
+      }
+    }
+  },
+  {
+    "kind": "event",
+    "sequence": 109,
+    "event": {
+      "id": "event-v2-9",
+      "threadId": "thread-v2",
+      "occurredAt": "2026-08-07T12:01:00.000Z",
+      "type": "turn-item.updated",
+      "payload": {
+        "id": "item-v2-notice",
+        "threadId": "thread-v2",
+        "runId": "run-v2-active",
+        "nodeId": "node-v2-root",
+        "providerThreadId": "provider-thread-v2",
+        "providerTurnId": "provider-turn-v2",
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 18,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-08-07T12:00:00.000Z",
+        "completedAt": "2026-08-07T12:00:00.000Z",
+        "updatedAt": "2026-08-07T12:01:00.000Z",
+        "type": "system_notice",
+        "message": "Provider disconnected. Reconnect to continue."
+      }
+    }
+  },
+  {
+    "kind": "synchronized"
+  }
+]

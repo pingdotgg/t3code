@@ -1,0 +1,7 @@
+{
+  "type": "run.interrupt",
+  "commandId": "command-v2-interrupt",
+  "threadId": "thread-v2",
+  "runId": "run-v2-active",
+  "holdQueue": true
+}

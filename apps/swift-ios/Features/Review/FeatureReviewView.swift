@@ -1,0 +1,710 @@
+import SwiftUI
+import UIKit
+
+public struct FeatureReviewView: View {
+    @SwiftUI.Environment(\.scenePhase) private var scenePhase
+    let client: any FeatureClient
+    let threadID: String
+    /// The composer owns draft persistence, model selection, modes, and delivery.
+    let onAppendComment: (ComposerContextRecord) async throws -> Void
+
+    @State private var selectedTarget: FeatureReviewTarget?
+    @State private var review: FeatureReview?
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+    @State private var loadGeneration = FeatureAsyncGeneration()
+
+    public init(
+        client: any FeatureClient,
+        threadID: String,
+        initialTarget: FeatureReviewTarget? = nil,
+        onAppendComment: @escaping (ComposerContextRecord) async throws -> Void
+    ) {
+        self.client = client
+        self.threadID = threadID
+        _selectedTarget = State(initialValue: initialTarget)
+        self.onAppendComment = onAppendComment
+    }
+
+    public var body: some View {
+        Group {
+            if isLoading, review == nil {
+                ProgressView("Loading changes…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let review {
+                reviewList(review)
+            } else {
+                ContentUnavailableView(
+                    "Review unavailable",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text(errorMessage ?? "Changes could not be loaded.")
+                )
+            }
+        }
+        .background(T3Colors.background)
+        .navigationTitle("Review")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await load() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("Reload changes")
+            }
+        }
+        .task { await load() }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, review != nil, !isLoading else { return }
+            Task { await load() }
+        }
+    }
+
+    private func reviewList(_ review: FeatureReview) -> some View {
+        List {
+            if let sources = review.sources, !sources.isEmpty {
+                Section {
+                    Menu {
+                        ForEach(sources) { source in
+                            Button {
+                                Task { await load(target: source.target) }
+                            } label: {
+                                if source.id == review.selectedSourceID {
+                                    Label(source.title, systemImage: "checkmark")
+                                } else {
+                                    Text(source.title)
+                                }
+                            }
+                        }
+                    } label: {
+                        LabeledContent("Compare", value: review.title)
+                    }
+                    .disabled(isLoading)
+                    if isLoading { ProgressView("Loading changes…") }
+                }
+            }
+            if let historyError = review.historyError {
+                Text(historyError).font(T3Typography.supporting).foregroundStyle(.orange)
+            }
+            if let errorMessage {
+                Section {
+                    FeatureRefreshFailureRow(message: errorMessage) {
+                        Task { await load() }
+                    }
+                }
+            }
+
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(review.title)
+                            .font(T3Typography.navigationTitle)
+                        if let base = review.baseReference {
+                            Text(base)
+                                .font(T3Typography.tool)
+                                .foregroundStyle(T3Colors.textSecondary)
+                        }
+                    }
+                    Spacer()
+                    FeatureDiffStatsLabel(additions: review.additions, deletions: review.deletions)
+                }
+                .padding(.vertical, 3)
+
+                if review.isTruncated {
+                    Label("Large diff, showing a partial result", systemImage: "exclamationmark.triangle")
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Section("\(review.files.count) changed \(review.files.count == 1 ? "file" : "files")") {
+                if review.files.isEmpty {
+                    ContentUnavailableView(
+                        "No changes",
+                        systemImage: "checkmark.circle",
+                        description: Text("This source has no changes.")
+                    )
+                    .listRowBackground(Color.clear)
+                }
+                ForEach(review.files) { file in
+                    NavigationLink {
+                        FeatureDiffView(
+                            client: client,
+                            threadID: threadID,
+                            file: file,
+                            onAppendComment: onAppendComment
+                        )
+                        .id(file.id)
+                    } label: {
+                        FeatureReviewFileRow(file: file)
+                    }
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .refreshable { await load() }
+    }
+
+    private func load(target: FeatureReviewTarget? = nil) async {
+        let generation = loadGeneration.begin()
+        isLoading = true
+        defer {
+            if loadGeneration.accepts(generation) { isLoading = false }
+        }
+        do {
+            var sources = review?.sources
+            var historyError = review?.historyError
+            let loaded: FeatureReview
+            if let target {
+                loaded = try await client.loadReview(threadID: threadID, target: target)
+            } else {
+                let catalog = try await client.loadReview(threadID: threadID)
+                sources = catalog.sources
+                historyError = catalog.historyError
+                let source = sources?.first { $0.id == review?.selectedSourceID }
+                    ?? sources?.first { $0.target == selectedTarget }
+                if let source, source.id != catalog.selectedSourceID {
+                    loaded = try await client.loadReview(threadID: threadID, target: source.target)
+                } else {
+                    loaded = catalog
+                }
+            }
+            guard loadGeneration.accepts(generation) else { return }
+            var next = loaded
+            next.sources = sources ?? loaded.sources
+            next.historyError = historyError
+            if let source = next.sources?.first(where: { $0.id == next.selectedSourceID }) {
+                next.title = source.title
+                for index in next.files.indices { next.files[index].sourceTitle = source.title }
+                selectedTarget = source.target
+            }
+            review = next
+            errorMessage = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard loadGeneration.accepts(generation) else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+}
+
+private struct FeatureReviewFileRow: View {
+    let file: FeatureReviewFile
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(changeLabel)
+                .font(.caption2.monospaced().weight(.bold))
+                .foregroundStyle(changeColor)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(fileName)
+                    .font(T3Typography.homeTitle)
+                    .lineLimit(1)
+                if !directory.isEmpty {
+                    Text(directory)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            FeatureDiffStatsLabel(additions: file.additions, deletions: file.deletions)
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var fileName: String {
+        file.path.split(separator: "/").last.map(String.init) ?? file.path
+    }
+
+    private var directory: String {
+        let components = file.path.split(separator: "/")
+        return components.dropLast().joined(separator: "/")
+    }
+
+    private var changeLabel: String {
+        switch file.change {
+        case .added: "A"
+        case .modified: "M"
+        case .deleted: "D"
+        case .renamed: "R"
+        case .binary: "B"
+        }
+    }
+
+    private var changeColor: Color {
+        switch file.change {
+        case .added: .green
+        case .deleted: .red
+        case .renamed: .blue
+        case .modified, .binary: .orange
+        }
+    }
+}
+
+struct FeatureDiffStatsLabel: View {
+    let additions: Int
+    let deletions: Int
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if additions > 0 {
+                Text("+\(additions)").foregroundStyle(.green)
+            }
+            if deletions > 0 {
+                Text("−\(deletions)").foregroundStyle(.red)
+            }
+        }
+        .font(T3Typography.tool.monospacedDigit().weight(.medium))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(additions) additions, \(deletions) deletions")
+    }
+}
+
+private struct FeatureDiffView: View {
+    let client: any FeatureClient
+    let threadID: String
+    let file: FeatureReviewFile
+    let onAppendComment: (ComposerContextRecord) async throws -> Void
+
+    @State private var hydration: FeatureDiffHydration
+    @State private var selectedLine: FeatureReviewLineSelection?
+    @State private var rangeAnchor: FeatureReviewLineSelection?
+    @State private var isCommenting = false
+    @State private var comment = ""
+    @State private var isAppending = false
+    @State private var commentError: String?
+    @FocusState private var isCommentFocused: Bool
+
+    init(
+        client: any FeatureClient,
+        threadID: String,
+        file: FeatureReviewFile,
+        onAppendComment: @escaping (ComposerContextRecord) async throws -> Void
+    ) {
+        self.client = client
+        self.threadID = threadID
+        self.file = file
+        self.onAppendComment = onAppendComment
+        _hydration = State(initialValue: FeatureDiffHydration(lines: file.lines))
+    }
+
+    var body: some View {
+        Group {
+            if hydration.lines.isEmpty, hydration.isLoading {
+                ProgressView("Loading full diff…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let hydrationError = hydration.errorMessage, hydration.lines.isEmpty {
+                ContentUnavailableView {
+                    Label("Couldn’t load this diff", systemImage: "exclamationmark.circle")
+                } description: {
+                    Text(hydrationError)
+                } actions: {
+                    Button("Try again") { Task { await hydrate() } }
+                        .buttonStyle(.borderedProminent)
+                }
+            } else if hydration.lines.isEmpty {
+                ContentUnavailableView(
+                    file.change == .binary ? "Binary file" : "Diff unavailable",
+                    systemImage: file.change == .binary ? "doc.richtext" : "doc.text.magnifyingglass",
+                    description: Text("No line-level preview is available.")
+                )
+            } else {
+                GeometryReader { proxy in
+                    ScrollView([.horizontal, .vertical]) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(hydration.lines) { line in
+                                FeatureDiffLineRow(
+                                    line: line,
+                                    isSelected: selectedLine?.contains(selection(for: line)) == true,
+                                    minimumWidth: proxy.size.width
+                                ) {
+                                    guard !isAppending, let selection = selection(for: line) else { return }
+                                    if let anchor = rangeAnchor {
+                                        guard let range = anchor.extending(to: selection) else { return }
+                                        selectedLine = range
+                                        rangeAnchor = nil
+                                    } else {
+                                        selectedLine = selection
+                                    }
+                                    openCommentComposer()
+                                } startRange: {
+                                    guard !isAppending, let selection = selection(for: line) else { return }
+                                    rangeAnchor = selection
+                                    selectedLine = selection
+                                    isCommenting = false
+                                    isCommentFocused = false
+                                }
+                            }
+                        }
+                        .frame(minWidth: proxy.size.width, alignment: .leading)
+                        .padding(.vertical, 8)
+                    }
+                }
+            }
+        }
+        .background(T3Colors.background)
+        .navigationTitle(file.path.split(separator: "/").last.map(String.init) ?? file.path)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    rangeAnchor = nil
+                    selectedLine = nil
+                    openCommentComposer()
+                } label: {
+                    Image(systemName: "text.bubble")
+                }
+                .accessibilityLabel("Add file review comment")
+                .disabled(isAppending)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let rangeAnchor {
+                HStack {
+                    Text("Tap the last \(rangeAnchor.side.rawValue) line")
+                    Spacer()
+                    Button("Comment") {
+                        self.rangeAnchor = nil
+                        openCommentComposer()
+                    }
+                    Button("Cancel") {
+                        self.rangeAnchor = nil
+                        selectedLine = nil
+                    }
+                }
+                .font(T3Typography.supporting)
+                .padding()
+                .background(T3Colors.surface)
+            }
+            if isCommenting {
+                FeatureDiffCommentComposer(
+                    comment: $comment,
+                    isFocused: $isCommentFocused,
+                    location: commentLocation,
+                    isAppending: isAppending,
+                    error: commentError
+                ) {
+                    isCommenting = false
+                    selectedLine = nil
+                    isCommentFocused = false
+                    commentError = nil
+                } copyPrompt: {
+                    UIPasteboard.general.string = reviewDraft.prompt
+                } submit: {
+                    appendComment()
+                }
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let hydrationError = hydration.errorMessage, !hydration.lines.isEmpty {
+                FeatureRefreshFailureRow(message: hydrationError) {
+                    Task { await hydrate() }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(T3Colors.surface)
+            }
+        }
+        .task(id: file.id) { await hydrate() }
+    }
+
+    private var trimmedComment: String {
+        comment.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var reviewDraft: FeatureReviewCommentDraft {
+        FeatureReviewCommentDraft(
+            filePath: file.path, line: selectedLine, body: comment,
+            sourceID: file.sourceID ?? file.sourceKind ?? "working-tree",
+            sourceTitle: file.sourceTitle ?? "Working changes"
+        )
+    }
+
+    private var commentLocation: String {
+        guard let selectedLine else { return file.path }
+        return "\(file.path) · \(selectedLine.label)"
+    }
+
+    private func selection(for line: FeatureDiffLine) -> FeatureReviewLineSelection? {
+        if (rangeAnchor?.side ?? selectedLine?.side) == .old, let oldLine = line.oldLine {
+            return FeatureReviewLineSelection(side: .old, line: oldLine)
+        }
+        if let newLine = line.newLine {
+            return FeatureReviewLineSelection(side: .new, line: newLine)
+        }
+        if let oldLine = line.oldLine {
+            return FeatureReviewLineSelection(side: .old, line: oldLine)
+        }
+        return nil
+    }
+
+    private func openCommentComposer() {
+        isCommenting = true
+        commentError = nil
+        Task { @MainActor in
+            await Task.yield()
+            isCommentFocused = true
+        }
+    }
+
+    private func hydrate() async {
+        let attempt = hydration.begin()
+        do {
+            let contents = try await client.loadReviewFileContents(threadID: threadID, file: file)
+            hydration.succeed(
+                attempt,
+                lines: contents.map { FeatureFullDiffHydrator.lines(for: file, contents: $0) }
+            )
+        } catch is CancellationError {
+            hydration.cancel(attempt)
+        } catch {
+            hydration.fail(attempt, message: error.localizedDescription)
+        }
+    }
+
+    private func appendComment() {
+        guard !trimmedComment.isEmpty, !isAppending else { return }
+        // A record is the entire draft addition, so never silently truncate the comment.
+        guard comment.utf16.count <= 16_000 else {
+            commentError = "Review comments must be at most 16,000 characters."
+            return
+        }
+        let record = reviewDraft.contextRecord(lines: hydration.lines)
+        isAppending = true
+        commentError = nil
+        Task {
+            defer { isAppending = false }
+            do {
+                try await onAppendComment(record)
+                comment = ""
+                selectedLine = nil
+                isCommenting = false
+                isCommentFocused = false
+            } catch {
+                commentError = error.localizedDescription
+            }
+        }
+    }
+}
+
+/// The review comment field. It owns the reads of the draft text so typing
+/// only re-renders this composer, not the diff lines above it.
+private struct FeatureDiffCommentComposer: View {
+    @Binding var comment: String
+    var isFocused: FocusState<Bool>.Binding
+    let location: String
+    let isAppending: Bool
+    let error: String?
+    let close: () -> Void
+    let copyPrompt: () -> Void
+    let submit: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("REVIEW COMMENT")
+                        .font(T3Typography.eyebrow)
+                        .foregroundStyle(T3Colors.textTertiary)
+                    Text(location)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .frame(width: T3Metrics.minimumTapTarget, height: T3Metrics.minimumTapTarget)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.textSecondary)
+                .accessibilityLabel("Close review comment")
+                .disabled(isAppending)
+            }
+
+            TextField(
+                "What should change?",
+                text: $comment,
+                axis: .vertical
+            )
+            .font(T3Typography.composer)
+            .lineLimit(2 ... 6)
+            .focused(isFocused)
+            .disabled(isAppending)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(T3Colors.input)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(T3Colors.border, lineWidth: 1)
+            }
+
+            if let error {
+                Text(error)
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.danger)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: copyPrompt) {
+                    Label("Copy prompt", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity, minHeight: 42)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(T3Colors.textSecondary)
+                .background(T3Colors.surfaceRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .disabled(trimmedComment.isEmpty)
+
+                Button(action: submit) {
+                    HStack(spacing: 7) {
+                        if isAppending {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "plus")
+                        }
+                        Text("Add to draft")
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 42)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(T3Colors.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .disabled(trimmedComment.isEmpty || isAppending)
+            }
+            .font(T3Typography.control)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(T3Colors.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(T3Colors.separator)
+                .frame(height: 1)
+        }
+    }
+
+    private var trimmedComment: String {
+        comment.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct FeatureDiffLineRow: View {
+    let line: FeatureDiffLine
+    let isSelected: Bool
+    let minimumWidth: CGFloat
+    let select: () -> Void
+    let startRange: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            if line.kind == .hunk {
+                Text(line.text)
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 10)
+                    .fixedSize(horizontal: true, vertical: false)
+            } else {
+                lineNumber(line.oldLine)
+                lineNumber(line.newLine)
+                Text(prefix)
+                    .foregroundStyle(prefixColor)
+                    .frame(width: 18)
+                diffText
+                    .fixedSize(horizontal: true, vertical: false)
+                    .textSelection(.enabled)
+                    .padding(.trailing, 12)
+            }
+        }
+        .font(T3Typography.code)
+        .t3CodeTextSize()
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(
+            minWidth: minimumWidth,
+            minHeight: line.kind == .hunk ? 30 : 22,
+            alignment: .leading
+        )
+        .background(isSelected ? T3Colors.accent.opacity(0.14) : background)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Rectangle()
+                    .fill(T3Colors.accent)
+                    .frame(width: 2)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: select)
+        .onLongPressGesture(perform: startRange)
+        .accessibilityAction(named: "Start line range", startRange)
+        .accessibilityAction(named: "Add review comment", select)
+    }
+
+    private func lineNumber(_ value: Int?) -> some View {
+        Text(value.map(String.init) ?? "")
+            .foregroundStyle(.tertiary)
+            .frame(width: 48, alignment: .trailing)
+            .padding(.trailing, 7)
+            .accessibilityHidden(true)
+    }
+
+    private var prefix: String {
+        switch line.kind {
+        case .addition: "+"
+        case .deletion: "−"
+        case .context, .hunk: " "
+        }
+    }
+
+    private var prefixColor: Color {
+        switch line.kind {
+        case .addition: .green
+        case .deletion: .red
+        case .context, .hunk: .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var diffText: some View {
+        if let spans = line.spans, !spans.isEmpty {
+            HStack(spacing: 0) {
+                ForEach(spans.indices, id: \.self) { index in
+                    let span = spans[index]
+                    Text(verbatim: span.text.isEmpty ? " " : span.text)
+                        .foregroundStyle(.primary)
+                        .fontWeight(span.kind == .changed ? .semibold : .regular)
+                        .background(span.kind == .changed ? changedSpanBackground : Color.clear)
+                }
+            }
+        } else {
+            Text(line.text.isEmpty ? " " : line.text)
+                .foregroundStyle(.primary)
+        }
+    }
+
+    private var changedSpanBackground: Color {
+        switch line.kind {
+        case .addition: Color.green.opacity(0.28)
+        case .deletion: Color.red.opacity(0.28)
+        case .context, .hunk: Color.clear
+        }
+    }
+
+    private var background: Color {
+        switch line.kind {
+        case .addition: Color.green.opacity(0.11)
+        case .deletion: Color.red.opacity(0.11)
+        case .hunk: Color.blue.opacity(0.08)
+        case .context: Color.clear
+        }
+    }
+}
