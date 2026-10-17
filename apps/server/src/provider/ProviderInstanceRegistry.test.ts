@@ -526,6 +526,117 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }),
   );
 
+  it.live("shows Claude's usage on the first refresh after signing back in", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const loginMarker = path.join(fixtures.claudeHomePath, "logged-in");
+      const instanceId = ProviderInstanceId.make("claude_relogin");
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [{ name: "T3_CLAUDE_LOGIN_MARKER", value: loginMarker, sensitive: false }],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const instance = yield* registry.getInstance(instanceId);
+      expect(instance).toBeDefined();
+
+      const signedOut = yield* instance!.snapshot.refresh;
+      expect(signedOut.auth.status).toBe("unauthenticated");
+      expect(signedOut.usageLimits).toBeUndefined();
+
+      // `/login` in a terminal; T3 only learns of it on the next refresh.
+      yield* fs.writeFileString(loginMarker, "");
+      const signedIn = yield* instance!.snapshot.refresh;
+      expect(signedIn.auth.status).toBe("authenticated");
+      expect(signedIn.usageLimits?.unavailable).toBeUndefined();
+      expect(signedIn.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  const refreshClaudeTwice = (failure: "probe" | "usage" | "none") =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixtures = yield* makeTildeProviderFixtures();
+      const recovered = path.join(fixtures.claudeHomePath, "recovered");
+      const probeLog = path.join(fixtures.claudeHomePath, "probes.log");
+      const instanceId = ProviderInstanceId.make(`claude_${failure}`);
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [
+              { name: "T3_CLAUDE_PROBE_LOG", value: probeLog, sensitive: false },
+              ...(failure === "none"
+                ? []
+                : [
+                    {
+                      name:
+                        failure === "probe"
+                          ? "T3_CLAUDE_PROBE_FAILS_UNTIL"
+                          : "T3_CLAUDE_USAGE_FAILS_UNTIL",
+                      value: recovered,
+                      sensitive: false,
+                    },
+                  ]),
+            ],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const instance = yield* registry.getInstance(instanceId);
+      expect(instance).toBeDefined();
+      const first = yield* instance!.snapshot.refresh;
+      yield* fs.writeFileString(recovered, "");
+      const second = yield* instance!.snapshot.refresh;
+      const probes = (yield* fs.readFileString(probeLog)).split("\n").filter(Boolean).length;
+      return { first, second, probes };
+    }).pipe(Effect.provide(layerTest));
+
+  it.live.skipIf(windowsHost)("keeps a Claude probe that read usage until it expires", () =>
+    Effect.gen(function* () {
+      const { first, second, probes } = yield* refreshClaudeTwice("none");
+      expect(first.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+      expect(second.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+      // Counts the provider's own startup refresh too: every later refresh reuses the first probe.
+      expect(probes).toBe(1);
+    }),
+  );
+
+  for (const failure of ["probe", "usage"] as const) {
+    it.live.skipIf(windowsHost)(
+      `probes Claude again on the next refresh after its ${failure} failed`,
+      () =>
+        Effect.gen(function* () {
+          const { first, second, probes } = yield* refreshClaudeTwice(failure);
+          expect(first.usageLimits?.windows ?? []).toEqual([]);
+          expect(second.auth.status).toBe("authenticated");
+          expect(second.usageLimits?.unavailable).toBeUndefined();
+          expect(second.usageLimits?.windows.map((window) => window.id)).toEqual(["five_hour"]);
+          // The provider's own startup refresh may add a probe, so only the minimum is fixed.
+          expect(probes).toBeGreaterThanOrEqual(2);
+        }),
+    );
+  }
+
   it.live(
     "shadows instances whose driver is not registered in this build without failing boot",
     () =>
