@@ -119,23 +119,20 @@ function TelemetryExportForm() {
           if (!environment || saving) return;
           setSaving(true);
           setMessage(null);
-          try {
-            const result = await updateSettings({
-              environmentId: environment.environmentId,
-              input: {
-                patch: {
-                  observability: Object.fromEntries(
-                    changedSignals.map(({ key }) => [key, values[key]]),
-                  ),
-                },
+          const result = await updateSettings({
+            environmentId: environment.environmentId,
+            input: {
+              patch: {
+                observability: Object.fromEntries(
+                  changedSignals.map(({ key }) => [key, values[key]]),
+                ),
               },
-            });
-            if (result._tag === "Success") {
-              setDraft({});
-              setMessage("Saved. Restart the server to apply.");
-            }
-          } finally {
-            setSaving(false);
+            },
+          });
+          setSaving(false);
+          if (result._tag === "Success") {
+            setDraft({});
+            setMessage("Saved. Restart the server to apply.");
           }
         }}
       >
