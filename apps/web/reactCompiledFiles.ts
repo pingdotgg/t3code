@@ -39,4 +39,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/auth/PairingRouteSurface.tsx",
   "apps/web/src/components/Sidebar.logic.ts",
   "apps/web/src/components/pullRequest/usePullRequestFilesViewed.ts",
+  "apps/web/src/hooks/useLiveRefresh.ts",
 ] as const;
