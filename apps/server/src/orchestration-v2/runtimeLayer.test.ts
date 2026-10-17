@@ -7509,6 +7509,131 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("pages a long thread again until its draft reply is submitted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-draft-reply");
+      const projectId = ProjectId.make("pr-watch-draft-reply-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch draft reply",
+        workspaceRoot: "/workspace/watch",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-draft-reply-create"),
+        threadId,
+        projectId,
+        title: "Watch draft reply",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 8 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("pr-watch-draft-reply-link"),
+        threadId,
+        ...key,
+        url: "https://github.com/pingdotgg/t3code/pull/8",
+        source: "agent",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-draft-reply-start"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+
+      const detail = watchedPullRequestDetail({
+        projectId,
+        number: key.number,
+        at: "2026-10-02T12:00:00.000Z",
+      });
+      const old: PullRequestComment = {
+        id: "old",
+        kind: "review-comment",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        body: "Old.",
+        createdAt: "1900-01-01T00:00:00.000Z",
+        url: null,
+        path: "src/index.ts",
+        reviewState: null,
+      };
+      const firstTen = Array.from({ length: 10 }, (_, index) => ({ ...old, id: `old-${index}` }));
+      // The draft and the submitted reply are the same comment; GitHub dates it on submission.
+      const draft = { ...old, id: "reply-11", body: "Draft reply.", pending: true };
+      const submitted = {
+        ...old,
+        id: "reply-11",
+        body: "Submitted reply.",
+        createdAt: "2999-01-01T00:00:00.000Z",
+      };
+      let reply: PullRequestComment = draft;
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              detail: () => Effect.succeed(detail),
+              // Submitting a review moves the remarks fingerprint, as GitHub's submission time does.
+              watchFingerprint: () =>
+                Effect.succeed({
+                  status: "open",
+                  remarks: reply === draft ? "draft" : "submitted",
+                }),
+              invalidate: () => Effect.void,
+              activity: () =>
+                Effect.succeed({
+                  comments: [],
+                  commentCount: 0,
+                  commentsTruncated: false,
+                  reviewThreadsTruncated: false,
+                  reviewThreads: [
+                    {
+                      id: "review-thread",
+                      path: "src/index.ts",
+                      line: 1,
+                      side: "right",
+                      isResolved: false,
+                      isOutdated: false,
+                      comments: firstTen,
+                      commentCount: 11,
+                      nextCommentsCursor: "after-10",
+                    },
+                  ],
+                  commits: [],
+                }),
+              threadComments: () => Effect.succeed({ comments: [reply], nextCursor: null }),
+            }),
+          ),
+        ),
+      );
+      const wakeTexts = Effect.map(
+        orchestrator.getThreadRecords(threadId, ["messages"]),
+        ({ messages }) => messages.flatMap((message) => (message.notification ? message.text : [])),
+      );
+
+      yield* reactor.sweep;
+      assert.notInclude((yield* wakeTexts).join("\n"), "Draft reply.");
+
+      // Submitting leaves the thread's comment count as it was, and its cached page is still fresh;
+      // the review's submission time moves the fingerprint, which reads the thread again.
+      yield* TestClock.adjust("2 minutes");
+      reply = submitted;
+      yield* reactor.sweep;
+      assert.include((yield* wakeTexts).at(-1) ?? "", "Submitted reply.");
+    }),
+  );
+
   it.effect("persists rejected command receipts across retries", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

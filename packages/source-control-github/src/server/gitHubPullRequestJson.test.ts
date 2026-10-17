@@ -119,7 +119,9 @@ const threadCommentsOf = ({ nodes, ...connection }: Json) => ({
   totalCount: (nodes ?? []).length,
   pageInfo: LAST_PAGE,
   ...connection,
-  nodes: (nodes ?? []).map(remark),
+  nodes: (nodes ?? []).map((node: Json) =>
+    remark({ publishedAt: node["createdAt"] ?? null, state: "SUBMITTED", ...node }),
+  ),
 });
 const requestedReviewer = (raw: Json | null) =>
   raw === null
@@ -986,6 +988,43 @@ describe("review thread decoding", () => {
     expect(result.threads[0]?.thread.comments.map((comment) => comment.id)).toEqual(["t2"]);
   });
 
+  it("carries a draft reply into the conversation as pending, dated by its submission otherwise", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_d",
+            isResolved: false,
+            path: "apps/server/src/ws.ts",
+            comments: {
+              nodes: [
+                {
+                  id: "t1",
+                  body: "fix this",
+                  createdAt: "2026-07-01T00:00:00Z",
+                  publishedAt: "2026-07-01T00:30:00Z",
+                  state: "SUBMITTED",
+                },
+                {
+                  id: "t2",
+                  body: "drafting",
+                  createdAt: "2026-07-01T01:00:00Z",
+                  publishedAt: null,
+                  state: "PENDING",
+                },
+              ],
+            },
+          },
+        ]),
+      ),
+    );
+    const comments = reviewThreadConversation(result.threads.map((entry) => entry.thread));
+    expect(comments.map(({ id, createdAt, pending }) => ({ id, createdAt, pending }))).toEqual([
+      { id: "t1", createdAt: "2026-07-01T00:30:00Z", pending: undefined },
+      { id: "t2", createdAt: "2026-07-01T01:00:00Z", pending: true },
+    ]);
+  });
+
   it("keeps GitHub's own count of a thread whose comments were not all read", () => {
     const result = expectSuccess(
       decodeReviewThreadsJson(
@@ -1032,6 +1071,44 @@ describe("review thread decoding", () => {
     expect(decoded.comments.map((comment) => comment.id)).toEqual(["t9"]);
     expect(decoded.hiddenCount).toBe(1);
     expect(decoded.nextCursor).toBeNull();
+  });
+
+  it("dates a review comment by its review's submission and marks drafts pending", () => {
+    const decoded = expectSuccess(
+      decodeReviewThreadCommentsJson(
+        JSON.stringify({
+          data: {
+            repository: { pullRequest: { id: "PR_1" } },
+            node: {
+              pullRequest: { id: "PR_1" },
+              comments: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [
+                  {
+                    id: "submitted",
+                    createdAt: "2026-07-01T00:00:00Z",
+                    publishedAt: "2026-07-01T00:30:00Z",
+                    state: "SUBMITTED",
+                  },
+                  {
+                    id: "draft",
+                    createdAt: "2026-07-01T00:10:00Z",
+                    publishedAt: null,
+                    state: "PENDING",
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+    expect(
+      decoded.comments.map(({ id, createdAt, pending }) => ({ id, createdAt, pending })),
+    ).toEqual([
+      { id: "submitted", createdAt: "2026-07-01T00:30:00Z", pending: undefined },
+      { id: "draft", createdAt: "2026-07-01T00:10:00Z", pending: true },
+    ]);
   });
 });
 
@@ -1799,12 +1876,16 @@ describe("pull request watch fingerprints", () => {
       readonly reviews: number;
       readonly removals: number;
       readonly timelineItems: number;
+      readonly reviewSubmittedAt?: string | null;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
       headRefOid: "abc123",
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
-      reviews: { totalCount: input.reviews, nodes: [] },
+      reviews: {
+        totalCount: input.reviews,
+        nodes: [{ lastEditedAt: null, submittedAt: input.reviewSubmittedAt ?? null }],
+      },
       reviewThreads: { totalCount: 0 },
       mergeQueueRemovals: { totalCount: input.timelineItems, filteredCount: input.removals },
       commits: {
@@ -1840,6 +1921,8 @@ describe("pull request watch fingerprints", () => {
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
     const replied = fingerprint({ ...base, reviews: 2 });
+    // The viewer counts its own pending review, so submitting it moves only its time.
+    const submitted = fingerprint({ ...base, reviewSubmittedAt: "2026-10-11T08:55:38Z" });
 
     expect(checkFinished.status).not.toBe(before.status);
     expect(checkFinished.remarks).toBe(before.remarks);
@@ -1853,5 +1936,7 @@ describe("pull request watch fingerprints", () => {
     // GitHub's totalCount counts every timeline item, whatever itemTypes asks for.
     const queued = fingerprint({ ...base, timelineItems: 4 });
     expect(queued.status).toBe(before.status);
+    expect(submitted.remarks).not.toBe(before.remarks);
+    expect(submitted.status).toBe(before.status);
   });
 });

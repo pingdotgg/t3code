@@ -84,7 +84,9 @@ query PullRequestStackMembership($owner: String!, $name: String!, $number: Int!)
 # What a pull request watch needs to notice. Comments come most recently updated first, since an
 # edit moves `updatedAt`, so an edit to an old comment on a long pull request is still in the page.
 # Reviews have no such order: an edit to a review older than the last hundred waits for the
-# watch's periodic full read, as do edits to comments inside review threads.
+# watch's periodic full read, as do edits to comments inside review threads. Submitting a pending
+# review changes no count, since the viewer already counts its own pending review and its
+# comments, so the newest submission time is part of it too.
 query PullRequestWatchFingerprint(
   $owner: String!
   $name: String!
@@ -106,6 +108,7 @@ query PullRequestWatchFingerprint(
         totalCount
         nodes {
           lastEditedAt
+          submittedAt
         }
       }
       reviewThreads {

@@ -252,7 +252,9 @@ describe("evaluatePullRequestWatch", () => {
       remark("reviewer", "2026-10-02T12:06:00Z"),
     ];
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, comments);
-    assert.deepEqual(baseline.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
+    assert.deepEqual(baseline.changes, [
+      { kind: "remarks", remarks: [comments[1]!], own: "agent-user" },
+    ]);
     assert.isTrue(baseline.next.passed);
     assert.isTrue(baseline.next.conflicting);
     assert.equal(baseline.next.wakes, 1);
@@ -688,7 +690,7 @@ describe("evaluatePullRequestWatch", () => {
     const late = { ...remark("bot", "2026-10-02T12:06:00Z"), id: "late" };
     const reported = evaluatePullRequestWatch(watch(), detail(), [first]);
     const again = evaluatePullRequestWatch(reported.next, detail(), [first, late]);
-    assert.deepEqual(again.changes, [{ kind: "remarks", remarks: [late] }]);
+    assert.deepEqual(again.changes, [{ kind: "remarks", remarks: [late], own: "agent-user" }]);
     assert.deepEqual(again.next.remarkIds, [first.id, "late"]);
   });
 
@@ -702,14 +704,14 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [old]).changes, []);
     const edited = { ...old, editedAt: "2026-10-02T12:06:00Z" };
     const report = evaluatePullRequestWatch(watching, detail(), [edited]);
-    assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [edited], own: "agent-user" }]);
     assert.equal(report.next.remarksThrough, edited.editedAt);
     assert.deepEqual(report.next.remarkIds, [old.id]);
     assert.isTrue(report.exhausted);
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited]).changes, []);
     const late = { ...edited, id: "late" };
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), [edited, late]).changes, [
-      { kind: "remarks", remarks: [late] },
+      { kind: "remarks", remarks: [late], own: "agent-user" },
     ]);
   });
 
@@ -724,14 +726,18 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [seen]).changes, []);
     const edited = { ...seen, editedAt: "2026-10-10T20:04:50.000Z" };
     const first = evaluatePullRequestWatch(watching, detail(), [edited]);
-    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited] }]);
+    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [edited], own: "agent-user" }]);
     assert.strictEqual(first.next.remarksThrough, edited.editedAt);
     assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, []);
     const again = { ...seen, editedAt: "2026-10-10T20:05:50.000Z" };
     const second = evaluatePullRequestWatch(first.next, detail(), [again]);
-    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again] }]);
+    assert.deepEqual(second.changes, [{ kind: "remarks", remarks: [again], own: "agent-user" }]);
     assert.deepEqual(evaluatePullRequestWatch(second.next, detail(), [again]).changes, []);
-    const own = { ...edited, author: { login: "agent-user", name: null, avatarUrl: null } };
+    const own = {
+      ...edited,
+      author: { login: "agent-user", name: null, avatarUrl: null },
+      body: `${edited.body}\n<!-- t3code:agent -->`,
+    };
     assert.deepEqual(evaluatePullRequestWatch(watching, detail(), [own]).changes, []);
   });
 
@@ -747,20 +753,28 @@ describe("evaluatePullRequestWatch", () => {
     const contributor = detail({ author: { login: "contributor", name: null, avatarUrl: null } });
     const reply = remark("contributor", "2026-10-02T12:06:00Z");
     assert.deepEqual(evaluatePullRequestWatch(watch(), contributor, [reply]).changes, [
-      { kind: "remarks", remarks: [reply] },
+      { kind: "remarks", remarks: [reply], own: "agent-user" },
     ]);
+    // Without a viewer, the author is taken to be the agent, whose marked replies stay quiet.
     const noViewer = detail({ viewer: undefined, author: contributor.author });
-    assert.deepEqual(evaluatePullRequestWatch(watch(), noViewer, [reply]).changes, []);
+    const marked = { ...reply, body: `${reply.body}\n<!-- t3code:agent -->` };
+    assert.deepEqual(evaluatePullRequestWatch(watch(), noViewer, [marked]).changes, []);
   });
 
   it("reports remarks from others once and never the agent's own", () => {
     const comments = [
-      remark("agent-user", "2026-10-02T12:05:00Z", "Fixed in the latest push."),
+      remark(
+        "agent-user",
+        "2026-10-02T12:05:00Z",
+        "Fixed in the latest push.\n<!-- t3code:agent -->",
+      ),
       remark("macroscope-app[bot]", "2026-10-02T12:06:00Z"),
       remark("reviewer", "2026-10-02T11:00:00Z", "Older than the watch."),
     ];
     const report = evaluatePullRequestWatch(watch(), detail(), comments);
-    assert.deepEqual(report.changes, [{ kind: "remarks", remarks: [comments[1]!] }]);
+    assert.deepEqual(report.changes, [
+      { kind: "remarks", remarks: [comments[1]!], own: "agent-user" },
+    ]);
     assert.equal(report.next.remarksThrough, "2026-10-02T12:06:00Z");
     assert.deepEqual(evaluatePullRequestWatch(report.next, detail(), comments).changes, []);
   });
@@ -820,6 +834,58 @@ describe("evaluatePullRequestWatch", () => {
       report,
     });
     assert.include(text, `: "${quoted}" `);
+  });
+
+  it("wakes for the user's own account when they share it with the agent", () => {
+    const comments = [remark("agent-user", "2026-10-02T12:05:00Z", "Please split this function.")];
+    assert.deepEqual(evaluatePullRequestWatch(watch(), detail(), comments).changes, [
+      { kind: "remarks", remarks: comments, own: "agent-user" },
+    ]);
+  });
+
+  it("only lets the shared account mark a remark as the agent's", () => {
+    const marked = "Done.\n<!--  t3code:agent thread=t1 -->";
+    const comments = [
+      remark("agent-user", "2026-10-02T12:05:00Z", marked),
+      remark("reviewer", "2026-10-02T12:06:00Z", marked),
+    ];
+    assert.deepEqual(evaluatePullRequestWatch(watch(), detail(), comments).changes, [
+      { kind: "remarks", remarks: [comments[1]!], own: "agent-user" },
+    ]);
+  });
+
+  it("only takes a marker alone on the last line as the agent's", () => {
+    const quoted = [
+      "Agents should end with `<!-- t3code:agent -->`, not start with it.",
+      "Quoting the agent:\n> Done.\n> <!-- t3code:agent -->",
+      "Ends inline <!-- t3code:agent -->",
+    ].map((body, index) => remark("agent-user", `2026-10-02T12:0${index}:00Z`, body));
+    const marked = remark("agent-user", "2026-10-02T12:05:00Z", "Done.\n\n<!-- t3code:agent -->\n");
+    assert.deepEqual(evaluatePullRequestWatch(watch(), detail(), [...quoted, marked]).changes, [
+      { kind: "remarks", remarks: quoted, own: "agent-user" },
+    ]);
+  });
+
+  it("holds a draft review comment back until its review is submitted", () => {
+    const draft = { ...remark("agent-user", "2026-10-02T12:05:00Z"), pending: true };
+    const other = remark("reviewer", "2026-10-02T12:10:00Z");
+    const first = evaluatePullRequestWatch(watch(), detail(), [draft, other]);
+    assert.deepEqual(first.changes, [{ kind: "remarks", remarks: [other], own: "agent-user" }]);
+    // Submitting gives the comment its review's time, after what was already read.
+    const submitted = { ...draft, pending: undefined, createdAt: "2026-10-02T12:20:00Z" };
+    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [submitted, other]).changes, [
+      { kind: "remarks", remarks: [submitted], own: "agent-user" },
+    ]);
+  });
+
+  it("wakes when the user edits the agent's remark and drops the marker", () => {
+    const original = remark("agent-user", "2026-10-02T12:05:00Z", "Done.\n<!-- t3code:agent -->");
+    const first = evaluatePullRequestWatch(watch(), detail(), [original]);
+    assert.deepEqual(first.changes, []);
+    const edited = { ...original, body: "Not done, see line 4.", editedAt: "2026-10-02T12:30:00Z" };
+    assert.deepEqual(evaluatePullRequestWatch(first.next, detail(), [edited]).changes, [
+      { kind: "remarks", remarks: [edited], own: "agent-user" },
+    ]);
   });
 
   it("reports a conflict once, until the branch is clean again", () => {
@@ -1091,5 +1157,25 @@ describe("pullRequestWatchEndMessage", () => {
       `Pull request #7 (${url}) was closed without merging, so T3 Code stopped watching it. If it is reopened, call watch_pull_request to watch it again.`,
     );
     assert.equal(closed.notification.summary, "#7: closed, stopped watching");
+  });
+});
+
+describe("pullRequestWatchMessage", () => {
+  it("points out unmarked comments from the agent's own account", () => {
+    const report = evaluatePullRequestWatch(watch(), detail(), [
+      remark("Agent-User", "2026-10-02T12:10:00Z", "Please split this function."),
+    ]);
+    const message = pullRequestWatchMessage({
+      number: 12,
+      url: "https://github.com/o/r/pull/12",
+      baseBranch: "main",
+      headSha: report.next.headSha,
+      report,
+    });
+    assert.include(message.text, '  - Agent-User (your account) on src/index.ts: "Please split');
+    assert.include(
+      message.text,
+      "without the <!-- t3code:agent --> marker are most likely the user's",
+    );
   });
 });

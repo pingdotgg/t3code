@@ -151,6 +151,15 @@ export const PullRequestMergeMethod = Schema.Literals(["MERGE", "REBASE", "SQUAS
 export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type
 
 /**
+ * The possible states of a pull request review comment.
+ *
+ * - `PENDING`: A comment that is part of a pending review
+ * - `SUBMITTED`: A comment that is part of a submitted review
+ */
+export const PullRequestReviewCommentState = Schema.Literals(["PENDING", "SUBMITTED"])
+export type PullRequestReviewCommentState = typeof PullRequestReviewCommentState.Type
+
+/**
  * The review status of a pull request.
  *
  * - `APPROVED`: The pull request has received an approving review.

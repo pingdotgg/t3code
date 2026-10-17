@@ -356,6 +356,8 @@ function threadComments(
       author,
       body: id,
       createdAt: "2026-07-01T00:00:00Z",
+      publishedAt: "2026-07-01T00:00:00Z",
+      state: "SUBMITTED",
       lastEditedAt: null,
       url: `https://github.com/acme/web/pull/7#discussion_${id}`,
       isMinimized: false,

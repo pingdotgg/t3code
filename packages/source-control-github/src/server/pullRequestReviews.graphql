@@ -35,6 +35,9 @@ fragment ThreadComment on PullRequestReviewComment {
   }
   body
   createdAt
+  # When its review was submitted; null while the review is a draft, whose `state` is `PENDING`.
+  publishedAt
+  state
   lastEditedAt
   url
   isMinimized

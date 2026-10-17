@@ -987,15 +987,18 @@ export interface GitHubPullRequestWatchFingerprint {
   readonly remarks: string;
 }
 
-type EditedConnection = WatchedPullRequest["comments"] | WatchedPullRequest["reviews"];
 type StateCounts = ReadonlyArray<{ readonly state: string; readonly count: number }> | null;
 
-const newestEdit = (connection: EditedConnection) =>
-  (connection?.nodes ?? []).reduce(
-    (newest, node) =>
-      node?.lastEditedAt != null && node.lastEditedAt > newest ? node.lastEditedAt : newest,
-    "",
-  );
+// An edit only ever moves `lastEditedAt` forward, so the newest one stands for them all, and the
+// same holds for a review's `submittedAt`.
+const newest = <Field extends "lastEditedAt" | "submittedAt">(
+  nodes: ReadonlyArray<Partial<Record<Field, string | null>> | null> | null | undefined,
+  field: Field,
+) =>
+  (nodes ?? []).reduce((latest, node) => {
+    const at = node?.[field];
+    return at != null && at > latest ? at : latest;
+  }, "");
 
 const stateCounts = (counts: StateCounts) =>
   (counts ?? [])
@@ -1019,9 +1022,10 @@ export function toPullRequestWatchFingerprint(
     ].join(" "),
     remarks: [
       pr.comments.totalCount,
-      newestEdit(pr.comments),
+      newest(pr.comments.nodes, "lastEditedAt"),
       pr.reviews?.totalCount ?? 0,
-      newestEdit(pr.reviews),
+      newest(pr.reviews?.nodes, "lastEditedAt"),
+      newest(pr.reviews?.nodes, "submittedAt"),
       pr.reviewThreads.totalCount,
     ].join(" "),
   };
@@ -1331,6 +1335,7 @@ export function reviewThreadConversation(
       path: thread.path,
       reviewState: null,
       reactions: comment.reactions ?? [],
+      ...(comment.pending === true ? { pending: true } : {}),
     })),
   );
 }
@@ -1360,17 +1365,23 @@ export function toReviewDismissalsPage(result: ReviewDismissals.Result): {
   };
 }
 
+/**
+ * A review comment joins the conversation when its review is submitted, so that is its time: a
+ * line drafted long before must not land behind remarks already read. Until then only the
+ * reader sees it, as `pending`.
+ */
 function toThreadComment(comment: ThreadComment, viewer: string | null): PullRequestThreadComment {
   const reviewUrl = trimmed(comment.pullRequestReview?.url);
   return {
     id: comment.id,
     author: toActor(comment.author),
     body: comment.body,
-    createdAt: comment.createdAt,
+    createdAt: comment.publishedAt ?? comment.createdAt,
     editedAt: comment.lastEditedAt,
     url: trimmed(comment.url),
     ...(reviewUrl === null ? {} : { reviewUrl }),
     reactions: toReactions(comment.reactionGroups, viewer),
+    ...(comment.state === "PENDING" ? { pending: true } : {}),
   };
 }
 

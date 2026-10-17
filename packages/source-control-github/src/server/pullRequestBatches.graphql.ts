@@ -289,7 +289,9 @@ export interface IssueCommentConnection extends Schema.Struct.Type<typeof IssueC
 /** A review object for a given pull request. */
 export const ReviewsNodesPullRequestReview = Schema.Struct({
   /** The moment the editor made the last edit */
-  lastEditedAt: Schema.NullOr(Shared.DateTime)
+  lastEditedAt: Schema.NullOr(Shared.DateTime),
+  /** Identifies when the Pull Request Review was submitted */
+  submittedAt: Schema.NullOr(Shared.DateTime)
 })
 export interface ReviewsNodesPullRequestReview extends Schema.Struct.Type<typeof ReviewsNodesPullRequestReview.fields> {}
 
@@ -409,7 +411,7 @@ export const PullRequestWatchFingerprint = GraphQL.query("PullRequestWatchFinger
       { name: "mergeQueue", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt}}reviewThreads{totalCount}mergeQueueRemovals:timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){filteredCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state mergeable headRefOid comments(first:100 orderBy:{field:UPDATED_AT direction:DESC}){totalCount nodes{lastEditedAt}}reviews(last:100){totalCount nodes{lastEditedAt submittedAt}}reviewThreads{totalCount}mergeQueueRemovals:timelineItems(itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){filteredCount}commits(last:1){nodes{commit{statusCheckRollup{contexts{checkRunCountsByState{state count}statusContextCountsByState{state count}}}}}}}}"] }
     ],
     fragments: []
   },
