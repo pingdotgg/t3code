@@ -828,6 +828,109 @@ describe("OpenCodeAdapterV2", () => {
     ),
   );
 
+  it.effect("continues child turn ordinals when a later Task call resumes the same session", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
+      const root = "ses_root";
+      const child = "ses_child";
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("resumed-child", root, {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+          get: async () => ({
+            data: { id: child, parentID: root, permission: [], time: { created: 2, updated: 2 } },
+          }),
+          update: async () => ({ data: { id: child, parentID: root } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => event.type === "provider_turn.updated"),
+        Stream.map((event) => event.providerTurn),
+        Stream.filter(
+          (turn) =>
+            turn.providerThreadId !== harness.providerThread.id && turn.status === "completed",
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* push({
+        type: "message.updated",
+        properties: {
+          sessionID: root,
+          info: { id: promptId, sessionID: root, role: "user", time: { created: 1 } },
+        },
+      });
+      for (const ordinal of [1, 2]) {
+        yield* push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: root,
+            part: {
+              id: `prt_task_${ordinal}`,
+              sessionID: root,
+              messageID: "msg_root_assistant",
+              type: "tool",
+              tool: "task",
+              callID: `call_task_${ordinal}`,
+              state: {
+                status: "running",
+                input: {
+                  description: "Child task",
+                  prompt: `Child turn ${ordinal}`,
+                  subagent_type: "general",
+                  ...(ordinal === 2 ? { task_id: child } : {}),
+                },
+                title: "Child task",
+                metadata: { sessionId: child },
+                time: { start: ordinal },
+              },
+            },
+          },
+        });
+        yield* push({
+          type: "message.updated",
+          properties: {
+            sessionID: child,
+            info: {
+              id: `msg_child_user_${ordinal}`,
+              sessionID: child,
+              role: "user",
+              time: { created: ordinal },
+            },
+          },
+        });
+        yield* push({
+          type: "session.status",
+          properties: { sessionID: child, status: { type: "idle" } },
+        });
+      }
+      const turns = yield* Fiber.join(received);
+      yield* push({
+        type: "session.status",
+        properties: { sessionID: root, status: { type: "idle" } },
+      });
+      assert.deepEqual(
+        turns.map((turn) => turn.ordinal),
+        [1, 2],
+      );
+      assert.notEqual(turns[0]?.id, turns[1]?.id);
+      assert.equal(turns[0]?.providerThreadId, turns[1]?.providerThreadId);
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect("titles OpenCode reads and searches from their input", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();

@@ -1405,19 +1405,26 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   permission: childPermission,
                 }),
             );
-            threads.set(childSessionId, {
-              nativeSessionId: childSessionId,
-              providerThread: childProviderThread,
-              appThread: childThread,
-              activeTurn: null,
-              providerTurns: new Map(),
-              runtimeRequests: new Map(),
-              messageRoles: new Map(),
-              userMessageIds: [],
-              parentSubagent: context,
-              nextChildTurnOrdinal: 1,
-              nextAdmissionGeneration: 1,
-            });
+            const existingChildState = threads.get(childSessionId);
+            if (existingChildState !== undefined) {
+              existingChildState.providerThread = childProviderThread;
+              existingChildState.appThread = childThread;
+              existingChildState.parentSubagent = context;
+            } else {
+              threads.set(childSessionId, {
+                nativeSessionId: childSessionId,
+                providerThread: childProviderThread,
+                appThread: childThread,
+                activeTurn: null,
+                providerTurns: new Map(),
+                runtimeRequests: new Map(),
+                messageRoles: new Map(),
+                userMessageIds: [],
+                parentSubagent: context,
+                nextChildTurnOrdinal: 1,
+                nextAdmissionGeneration: 1,
+              });
+            }
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver: OPENCODE_PROVIDER,
