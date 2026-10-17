@@ -224,6 +224,24 @@ export function buildMenuItems(
   ];
 }
 
+/**
+ * Whether the git actions menu has anything to run or read. When every row is
+ * disabled, publishing is not offered, and there is no status error, the
+ * primary button already explains the state, so the menu trigger is disabled.
+ */
+export function hasGitActionMenuContent(input: {
+  menuItems: readonly GitActionMenuItem[];
+  canWriteSourceControl: boolean;
+  canPublishRepository: boolean;
+  hasStatusError: boolean;
+}): boolean {
+  return (
+    input.canPublishRepository ||
+    input.hasStatusError ||
+    (input.canWriteSourceControl && input.menuItems.some((item) => !item.disabled))
+  );
+}
+
 export function resolveQuickAction(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,

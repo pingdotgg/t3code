@@ -5,6 +5,7 @@ import {
   buildGitActionProgressStages,
   buildMenuItems,
   formatGitActionElapsed,
+  hasGitActionMenuContent,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -428,6 +429,47 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
         dialogAction: "create_pr",
       },
     ]);
+  });
+});
+
+describe("hasGitActionMenuContent", () => {
+  const menuContent = (
+    gitStatus: VcsStatusResult | null,
+    overrides: Partial<Parameters<typeof hasGitActionMenuContent>[0]> = {},
+  ) =>
+    hasGitActionMenuContent({
+      menuItems: buildMenuItems(gitStatus, false, gitStatus?.hasPrimaryRemote ?? true),
+      canWriteSourceControl: true,
+      canPublishRepository: false,
+      hasStatusError: false,
+      ...overrides,
+    });
+
+  it("is false for a clean, up-to-date ref where every action is disabled", () => {
+    assert.isFalse(menuContent(status()));
+  });
+
+  it("is true when any action is enabled", () => {
+    assert.isTrue(menuContent(status({ hasWorkingTreeChanges: true })));
+    assert.isTrue(menuContent(status({ aheadCount: 1 })));
+  });
+
+  it("is false when the connection cannot change source control", () => {
+    assert.isFalse(
+      menuContent(status({ hasWorkingTreeChanges: true }), { canWriteSourceControl: false }),
+    );
+  });
+
+  it("is true when publishing is offered for a repo without a remote", () => {
+    assert.isTrue(
+      menuContent(status({ hasPrimaryRemote: false, hasUpstream: false }), {
+        canPublishRepository: true,
+      }),
+    );
+  });
+
+  it("is true when there is a status error to read", () => {
+    assert.isTrue(menuContent(null, { hasStatusError: true }));
   });
 });
 
