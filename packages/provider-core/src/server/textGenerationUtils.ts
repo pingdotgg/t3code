@@ -33,7 +33,15 @@ export function sanitizeCommitSubject(raw: string): string {
   if (withoutTrailingPeriod.length <= 72) {
     return withoutTrailingPeriod;
   }
-  return withoutTrailingPeriod.slice(0, 72).trimEnd();
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
+    withoutTrailingPeriod,
+  );
+  let subject = "";
+  for (const { segment } of segments) {
+    if (subject.length + segment.length > 72) break;
+    subject += segment;
+  }
+  return subject.trimEnd() || "Update project files";
 }
 
 export function sanitizePrTitle(raw: string): string {
