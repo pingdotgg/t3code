@@ -112,6 +112,19 @@ function stacksEqual(
   );
 }
 
+/** Stack ids are unique only within a repository, e.g. GitHub's fallback to the stack number. */
+function nativeStackKeyOf(link: ThreadPullRequestLink, stack: ThreadPullRequestStack): string {
+  const key = normalizeThreadPullRequestKey(link);
+  return `${key.host}/${key.repository}#stack:${stack.id}`;
+}
+
+function sameLayerNumbers(left: ThreadPullRequestStack, right: ThreadPullRequestStack): boolean {
+  return (
+    left.layers.length === right.layers.length &&
+    left.layers.every((layer, index) => layer.number === right.layers[index]!.number)
+  );
+}
+
 function skipReason(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error ? error.message : String(error);
@@ -199,6 +212,7 @@ export const make = Effect.gen(function* () {
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
+    const stacksReadThisSweep = new Map<string, ThreadPullRequestStack | null>();
     const persistence = yield* Semaphore.make(1);
 
     const syncEntry = Effect.fn("PullRequestSyncReactor.syncEntry")(function* (
@@ -271,7 +285,9 @@ export const make = Effect.gen(function* () {
         number: first.link.number,
       };
       const generation = requested.get(key);
-      if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
+      // A stack retry reads past the cache, or it could get back the layer list it is retrying.
+      const invalidated = generation !== undefined || retryStacks.has(key);
+      if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
       const fields = snapshotFieldsOf(summary);
       const needsStack =
@@ -286,6 +302,10 @@ export const make = Effect.gen(function* () {
         );
       const knownUnstacked =
         summary.stack === null && entries.every((entry) => entry.link.stack === null);
+      // A sibling can flag this group while its summary read is in flight.
+      if (!invalidated && retryStacks.has(key) && !knownUnstacked) {
+        yield* pullRequests.invalidate({ reference: ref });
+      }
       const fetchedStack = !needsStack
         ? null
         : knownUnstacked
@@ -312,6 +332,27 @@ export const make = Effect.gen(function* () {
           return;
         }
         retryStacks.delete(key);
+        const fetched = fetchedStack.stack;
+        stacksReadThisSweep.set(key, fetched);
+        // A layer pushed above an older member changes none of that member's own fields, so it
+        // would keep its shorter layer list. Members of this stack whose layer list differs read
+        // their stack once, in this sweep if still pending or the next; agreeing ones read none.
+        if (fetched !== null) {
+          const fetchedKey = nativeStackKeyOf(first.link, fetched);
+          for (const [siblingKey, siblingEntries] of groups) {
+            if (siblingKey === key) continue;
+            const readThisSweep = stacksReadThisSweep.get(siblingKey);
+            const stale = siblingEntries.some(({ link }) => {
+              const stack = readThisSweep === undefined ? link.stack : readThisSweep;
+              return (
+                stack !== null &&
+                nativeStackKeyOf(link, stack) === fetchedKey &&
+                !sameLayerNumbers(stack, fetched)
+              );
+            });
+            if (stale) retryStacks.add(siblingKey);
+          }
+        }
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
