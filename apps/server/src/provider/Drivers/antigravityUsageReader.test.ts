@@ -164,6 +164,74 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("prices Antigravity effort variants at their base model", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "variants.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(protoBytes(1, protoText(19, "Gemini 3.7 Flash Control"))),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            0,
+            new Uint8Array(protoBytes(9, protoNumber(2, 10))),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            1,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1319), ...protoNumber(2, 11)])),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            2,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1132), ...protoNumber(2, 12)])),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      assert.deepStrictEqual(
+        records(result).map((record) => [record.model, record.rateModel]),
+        [
+          ["gemini-3.7-flash-control", "gemini-3.7-flash"],
+          ["gemini-3.8-flash-medium", "gemini-3.8-flash"],
+          ["gemini-3-flash-agent", "gemini-3-flash-preview"],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("prices a merged Antigravity alias by the model it adopts", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "adopt.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            5,
+            new Uint8Array(protoBytes(9, [...protoNumber(2, 100), ...protoText(11, "response")])),
+          ]);
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+            0,
+            new Uint8Array(
+              protoBytes(1, [
+                ...protoText(19, "Gemini 3.8 Flash High"),
+                ...protoBytes(4, [...protoNumber(2, 100), ...protoText(11, "response")]),
+              ]),
+            ),
+          ]);
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(
+        records(result).map((record) => [record.model, record.rateModel]),
+        [["gemini-3.8-flash-high", "gemini-3.8-flash"]],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("merges Antigravity aliases that bridge previously separate step records", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
