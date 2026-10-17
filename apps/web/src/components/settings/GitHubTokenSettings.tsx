@@ -39,20 +39,17 @@ export function GitHubTokenSettings({
 
   const save = async (target: string, token: string) => {
     setSaving(true);
-    try {
-      const result = await updateSettings({
-        environmentId,
-        // The map travels whole: every other saved token as its redaction marker, which keeps it.
-        input: {
-          patch: { sourceControlHosts: { github: { tokens: { ...tokens, [target]: token } } } },
-        },
-      });
-      if (result._tag === "Success") {
-        setDraft("");
-        onSaved();
-      }
-    } finally {
-      setSaving(false);
+    const result = await updateSettings({
+      environmentId,
+      // The map travels whole: every other saved token as its redaction marker, which keeps it.
+      input: {
+        patch: { sourceControlHosts: { github: { tokens: { ...tokens, [target]: token } } } },
+      },
+    });
+    setSaving(false);
+    if (result._tag === "Success") {
+      setDraft("");
+      onSaved();
     }
   };
 
