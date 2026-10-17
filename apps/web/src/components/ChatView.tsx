@@ -1943,6 +1943,15 @@ export default function ChatView(props: ChatViewProps) {
       : null;
   const [reconnectWarningGraceElapsedEnvironmentId, setReconnectWarningGraceElapsedEnvironmentId] =
     useState<EnvironmentId | null>(null);
+  // Each reconnect attempt gets its own grace period, including a later one to
+  // the same environment.
+  const [graceReconnectingEnvironmentId, setGraceReconnectingEnvironmentId] = useState(
+    activeReconnectingEnvironmentId,
+  );
+  if (graceReconnectingEnvironmentId !== activeReconnectingEnvironmentId) {
+    setGraceReconnectingEnvironmentId(activeReconnectingEnvironmentId);
+    setReconnectWarningGraceElapsedEnvironmentId(null);
+  }
   const reconnectWarningGraceElapsed = hasEnvironmentReconnectWarningGraceElapsed(
     activeReconnectingEnvironmentId,
     reconnectWarningGraceElapsedEnvironmentId,
