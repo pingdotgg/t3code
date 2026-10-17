@@ -22,7 +22,6 @@ import {
 import React, {
   type FormEvent,
   type KeyboardEvent,
-  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -189,21 +188,24 @@ export function ProjectScriptEditorDialog({
     [request],
   );
 
-  useEffect(() => {
-    if (!request) return;
-    setName(request.initial.name);
-    setCommand(request.initial.command);
-    setIcon(request.initial.icon);
-    setIconPickerOpen(false);
-    setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
-    setWaitForSetup(request.initial.waitForSetup);
-    setRunOnSettle(request.initial.runOnSettle);
-    setKeybinding(request.initial.keybinding ?? "");
-    setPreviewUrl(request.initial.previewUrl ?? "");
-    setAutoOpenPreview(request.initial.autoOpenPreview);
-    setValidationError(request.error ?? null);
-    setSavingRequest(null);
-  }, [request, setIconPickerOpen]);
+  const [formRequest, setFormRequest] = useState<ProjectScriptEditorRequest | null>(null);
+  if (request !== formRequest) {
+    setFormRequest(request);
+    if (request) {
+      setName(request.initial.name);
+      setCommand(request.initial.command);
+      setIcon(request.initial.icon);
+      setIconPickerOpen(false);
+      setRunOnWorktreeCreate(request.initial.runOnWorktreeCreate);
+      setWaitForSetup(request.initial.waitForSetup);
+      setRunOnSettle(request.initial.runOnSettle);
+      setKeybinding(request.initial.keybinding ?? "");
+      setPreviewUrl(request.initial.previewUrl ?? "");
+      setAutoOpenPreview(request.initial.autoOpenPreview);
+      setValidationError(request.error ?? null);
+      setSavingRequest(null);
+    }
+  }
 
   const close = () => {
     pendingSubmissionRef.current = null;
