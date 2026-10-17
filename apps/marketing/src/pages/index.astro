@@ -421,16 +421,7 @@ const mobileEndorsementRows = [
 <script>
   import { fetchLatestRelease, RELEASES_URL, type ReleaseAsset } from "../lib/releases";
   import { startHomeMotion } from "../lib/homeMotion";
-
-  type Platform = { os: "mac" | "win" | "linux"; label: string };
-
-  function detectPlatform(): Platform | null {
-    const ua = navigator.userAgent;
-    if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
-    if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
-    if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
-    return null;
-  }
+  import { detectPlatform, getMobileStoreUrl, type Platform } from "../lib/platform";
 
   // Macs always get the arm64 build. Browsers cannot reliably tell Apple Silicon
   // from Intel (the UA lies, GPU strings lie), and a wrong guess hands an Apple
@@ -456,12 +447,19 @@ const mobileEndorsementRows = [
     const ctaLabel = document.getElementById("cta-download-label");
     const kbd = document.getElementById("pr-button-kbd");
 
-    const platform = detectPlatform();
+    const platform = detectPlatform(navigator.userAgent, navigator.maxTouchPoints);
     if (!platform) return;
     document.documentElement.dataset.platform = platform.os;
     if (label) label.textContent = platform.label;
     if (ctaLabel) ctaLabel.textContent = platform.label;
-    if (kbd && platform.os !== "mac") kbd.textContent = "Ctrl ⏎";
+    if (kbd && platform.os !== "mac" && platform.os !== "ios") kbd.textContent = "Ctrl ⏎";
+
+    const storeUrl = getMobileStoreUrl(platform);
+    if (storeUrl) {
+      if (btn) btn.href = storeUrl;
+      if (ctaBtn) ctaBtn.href = storeUrl;
+      return;
+    }
 
     try {
       const release = await fetchLatestRelease();
@@ -659,7 +657,8 @@ const mobileEndorsementRows = [
     flex-shrink: 0;
   }
 
-  :global([data-platform="mac"]) .dl-icon--apple { display: block; }
+  :global([data-platform="mac"]) .dl-icon--apple,
+  :global([data-platform="ios"]) .dl-icon--apple { display: block; }
   :global([data-platform="win"]) .dl-icon--windows { display: block; }
   :global([data-platform="linux"]) .dl-icon--linux { display: block; }
   :global(html:not([data-platform])) .dl-icon--apple { display: block; }
