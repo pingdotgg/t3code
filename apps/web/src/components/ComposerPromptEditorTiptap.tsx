@@ -428,7 +428,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="span"
-      className="inline-flex min-w-0 max-w-full select-none"
+      className={cn(CHIP_NODE_SELECTION_CLASS_NAME, "min-w-0 max-w-full")}
       contentEditable={false}
       spellCheck={false}
       data-composer-citation-chip="true"
