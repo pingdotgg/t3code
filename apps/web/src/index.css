@@ -2045,7 +2045,17 @@ code {
 .chat-markdown th,
 .chat-markdown td {
   padding: 0.45rem 0.75rem;
-  text-align: left;
+}
+
+/* Preserve explicit Markdown column alignment. */
+.chat-markdown th:not([align]),
+.chat-markdown td:not([align]) {
+  text-align: center;
+}
+
+.chat-markdown th [data-text-direction],
+.chat-markdown td [data-text-direction] {
+  text-align: inherit;
 }
 
 .chat-markdown thead th {
