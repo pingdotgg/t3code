@@ -16,8 +16,18 @@ describe("T3 orchestration provider instructions", () => {
     assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
     assert.include(
       T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Do not use `t3_thread_send` on `childThreadId`",
+      "For independent T3 delegated review rounds",
     );
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "use `t3_thread_send` on its `childThreadId`",
+    );
+    assert.include(
+      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "a requested follow-up creates a fresh task",
+    );
+    assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "For every T3 delegated review round");
+    assert.notInclude(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Do not use `t3_thread_send`");
   });
 
   it("documents structured schedules instead of JSON strings", () => {
