@@ -8356,6 +8356,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           liveness.set(providerThreadId, live);
           return live;
         });
+      // A probe that fails cannot vouch the work ended, so the roster stays.
+      const stillReportsBackgroundWork = (providerThread: OrchestrationV2ProviderThread) =>
+        Effect.gen(function* () {
+          if (providerThread.providerSessionId == null) return false;
+          const session = yield* providerSessions
+            .get(providerThread.providerSessionId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isNone(session) || !session.value.hasPendingBackgroundWorkForThread) {
+            return false;
+          }
+          return yield* session.value
+            .hasPendingBackgroundWorkForThread(providerThread)
+            .pipe(Effect.catchCause(() => Effect.succeed(true)));
+        });
       for (const item of pendingBackgroundTurnItems({
         turnItems: input.projection.turnItems,
         runs: input.projection.runs,
@@ -8458,10 +8472,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       for (const providerThread of input.projection.providerThreads) {
-        if (
-          (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 ||
-          (yield* hasLiveSession(providerThread.id))
-        ) {
+        if ((providerThread.pendingBackgroundTasks?.length ?? 0) === 0) continue;
+        if (providerThread.id === input.stoppedProviderThreadId) {
+          // Stop ended this thread's work, and the process's own report clearing
+          // the roster is dropped once a later run whose start failed takes
+          // lastRunOrdinal. Work Stop could not reach, such as an OpenCode
+          // subagent whose interrupt failed, still runs and keeps its roster.
+          if (yield* stillReportsBackgroundWork(providerThread)) continue;
+        } else if (yield* hasLiveSession(providerThread.id)) {
           continue;
         }
         yield* emitEvent({

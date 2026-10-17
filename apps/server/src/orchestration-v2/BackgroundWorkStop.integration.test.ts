@@ -38,10 +38,14 @@ const stopEarlierBackgroundWork = ({
   failedStart = false,
   stopWithQueue,
   olderStart = false,
+  staleRoster = false,
+  stopMissesBackgroundWork = false,
   stalledRun,
   workflowMember = false,
 }: {
   readonly failedStart?: boolean;
+  readonly staleRoster?: boolean;
+  readonly stopMissesBackgroundWork?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
@@ -83,6 +87,18 @@ const stopEarlierBackgroundWork = ({
                 lastError: null,
               },
               events: Stream.fromQueue(events),
+              ...(stopMissesBackgroundWork
+                ? {
+                    // Stop's interrupt never reached a background child, as when
+                    // OpenCode cannot stop a subagent, so it is still running.
+                    hasPendingBackgroundWorkForThread: (providerThread) =>
+                      Effect.sync(() =>
+                        interrupts.some(
+                          (interrupt) => interrupt.providerThread.id === providerThread.id,
+                        ),
+                      ),
+                  }
+                : {}),
               ensureThread: ({ threadId }) =>
                 Effect.succeed({
                   id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
@@ -412,6 +428,26 @@ const stopEarlierBackgroundWork = ({
 
         const codexProviderThread = (yield* orchestrator.getThreadProjection(threadId))
           .providerThreads[0]!;
+        if (staleRoster) {
+          // The live process still lists a background command that Stop will
+          // end, and its report of the cleared roster never lands.
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("stale-roster"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...codexProviderThread,
+                  pendingBackgroundTasks: [
+                    { taskId: "sleep", description: "Wait before the recheck", kind: "command" },
+                  ],
+                },
+              },
+            ],
+          });
+        }
         const subagentThread = (name: string) =>
           Effect.gen(function* () {
             const subagentThreadId = ThreadId.make(`thread:${name}`);
@@ -906,6 +942,15 @@ const stopEarlierBackgroundWork = ({
         }
         const testerThread = yield* orchestrator.getThreadProjection(tester.threadId);
         assert.equal(testerThread.nodes[0]?.status, "interrupted");
+        if (staleRoster) {
+          assert.deepEqual(
+            after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
+              ?.pendingBackgroundTasks,
+            stopMissesBackgroundWork
+              ? [{ taskId: "sleep", description: "Wait before the recheck", kind: "command" }]
+              : [],
+          );
+        }
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -924,6 +969,14 @@ it.effect("Stop reaches background work an earlier provider thread still runs", 
 
 it.effect("Stop settles workflow members without subagent turn items", () =>
   stopEarlierBackgroundWork({ workflowMember: true }),
+);
+
+it.effect("Stop clears a live provider thread's roster its process no longer reports", () =>
+  stopEarlierBackgroundWork({ staleRoster: true }),
+);
+
+it.effect("Stop keeps a live provider thread's roster its process still reports", () =>
+  stopEarlierBackgroundWork({ staleRoster: true, stopMissesBackgroundWork: true }),
 );
 
 it.effect(
