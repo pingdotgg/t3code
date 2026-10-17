@@ -24,4 +24,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useIncrementalTimelineEntries.ts",
   "apps/web/src/hooks/useProactivePanels.ts",
   "apps/web/src/hooks/useRightPanelSurfaceClose.ts",
+  "apps/web/src/components/ui/tooltip.tsx",
 ] as const;
