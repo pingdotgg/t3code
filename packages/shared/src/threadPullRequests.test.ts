@@ -315,6 +315,94 @@ describe("resolveThreadPullRequestChains", () => {
     });
   });
 
+  it.each(
+    [
+      [18, 20, 83, 84],
+      [83, 18, 20, 84],
+    ].map((numbers) => ({ numbers })),
+  )("orders inconsistent native snapshots with stored links $numbers", ({ numbers }) => {
+    const links = numbers.map((number) =>
+      link(number, {
+        linkedAt: "2026-01-01T00:00:00.000Z",
+        snapshot: snapshot(),
+        stack: {
+          kind: "native",
+          id: "80",
+          number: 80,
+          url: "https://github.com/pingdotgg/t3code/stacks/80",
+          base: "main",
+          layers: (number < 83
+            ? [79, 37, 38, 39, 76, 18, 20]
+            : [79, 37, 38, 39, 76, 18, 20, 83, 84]
+          ).map((number) => ({ number, headBranch: `pr-${number}`, state: "open" })),
+        },
+      }),
+    );
+    const chains = resolveThreadPullRequestChains(links);
+    expect
+      .soft(chains.map((chain) => chain.layers.map((layer) => layer.number)))
+      .toEqual([[18, 20, 83, 84]]);
+    expect(chains[0]?.depths).toEqual([0, 1, 2, 3]);
+    const current = resolveThreadCurrentPullRequest(links);
+    expect(current).toMatchObject({ kind: "stack", top: { number: 84 } });
+    expect(current?.kind === "stack" ? current.open.map((entry) => entry.number) : null).toEqual([
+      84, 83, 20, 18,
+    ]);
+    expect(links.map((entry) => entry.number)).toEqual(numbers);
+  });
+
+  it.each([
+    {
+      snapshots: [
+        [9, 8, 7, 3],
+        [1, 2],
+        [1, 2],
+      ],
+      expected: [1, 2, 3],
+    },
+    {
+      snapshots: [
+        [2, 1],
+        [9, 1, 2],
+        [9, 1, 2],
+      ],
+      expected: [1, 2, 3],
+    },
+    {
+      snapshots: [
+        [2, 1],
+        [1, 2],
+        [1, 2],
+      ],
+      expected: [2, 1, 3],
+    },
+    {
+      snapshots: [
+        [3, 2],
+        [3, 2],
+        [3, 2],
+        [3, 2],
+      ],
+      expected: [3, 2, 1, 4],
+    },
+  ])("orders partial native snapshots $snapshots as $expected", ({ snapshots, expected }) => {
+    const links = snapshots.map((numbers, index) =>
+      link(index + 1, {
+        stack: {
+          kind: "native",
+          id: "s1",
+          number: 1,
+          url: "https://github.com/pingdotgg/t3code/stacks/1",
+          base: "main",
+          layers: numbers.map((number) => ({ number, headBranch: `pr-${number}`, state: "open" })),
+        },
+      }),
+    );
+    expect(resolveThreadPullRequestChains(links)[0]?.layers.map((layer) => layer.number)).toEqual(
+      expected,
+    );
+  });
+
   it("uses the native stack order when the host provides one", () => {
     const stack = {
       kind: "native" as const,
