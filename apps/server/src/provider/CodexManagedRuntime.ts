@@ -23,6 +23,8 @@ const managedCodexLaunchArgs = [
   "features.api_key_model_discovery=true",
   "features.multi_agent=false",
   "features.multi_agent_v2=false",
+  // The model catalog can still select multi-agent V2 unless agents are disabled outright.
+  "agents.enabled=false",
   'model_providers.openai_token_sharing.env_key="ACCESS_TOKEN"',
   'model_providers.openai_token_sharing.wire_api="responses"',
   "model_providers.openai_token_sharing.requires_openai_auth=false",

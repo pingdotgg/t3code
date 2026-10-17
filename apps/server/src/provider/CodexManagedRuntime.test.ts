@@ -17,11 +17,22 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
-import { codexAppServerArgs } from "./codexLaunchArgs.ts";
+import { codexAppServerArgs, codexExecLaunchArgs } from "./codexLaunchArgs.ts";
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeSettings = Schema.decodeSync(CodexSettings);
+const configOverrides = (argv: ReadonlyArray<string>) => {
+  const overrides = new Map<string, string>();
+  argv.forEach((arg, index) => {
+    const override = arg === "-c" || arg === "--config" ? argv[index + 1] : undefined;
+    const separator = override?.indexOf("=") ?? -1;
+    if (override !== undefined && separator > 0) {
+      overrides.set(override.slice(0, separator), override.slice(separator + 1));
+    }
+  });
+  return overrides;
+};
 it.effect("managed home defaults to the global Codex home and honors configured home paths", () =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
@@ -163,8 +174,14 @@ it.effect.each(
             'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
           );
           assert.include(args, "features.api_key_model_discovery=true");
-          assert.include(args, "features.multi_agent=false");
-          assert.include(args, "features.multi_agent_v2=false");
+          // Codex 0.162 picks multi-agent V2 from the model catalog unless `agents.enabled` is
+          // false, so the feature flags alone still expose native agent tools (#17679).
+          for (const argv of [args, codexExecLaunchArgs(effective.config.launchArgs)]) {
+            const overrides = configOverrides(argv);
+            assert.strictEqual(overrides.get("features.multi_agent"), "false");
+            assert.strictEqual(overrides.get("features.multi_agent_v2"), "false");
+            assert.strictEqual(overrides.get("agents.enabled"), "false");
+          }
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(args, "model_providers.openai_token_sharing.supports_websockets=false");
