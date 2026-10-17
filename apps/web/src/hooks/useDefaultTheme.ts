@@ -1,10 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerSettingsAtom } from "../state/server";
-import { getThemeDefinition, singleAppearanceOf } from "../themePalette";
-import { useEnvironmentThemeDefinitions } from "./useEnvironmentTheme";
+import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
 import { useTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
@@ -54,12 +53,16 @@ export function useDefaultThemeAdoption(): void {
   const settings = useAtomValue(primaryServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
   const { setTheme, setAppearanceMode } = useTheme();
-  const environmentThemes = useEnvironmentThemeDefinitions();
+  // Re-read when published or custom palettes change, so a theme that resolves late still applies.
+  const definition = useSyncExternalStore(
+    subscribeToCustomThemes,
+    () => getThemeDefinition(defaultTheme),
+    () => null,
+  );
 
   useEffect(() => {
     if (typeof window === "undefined" || environmentId === null) return;
     const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
-    const definition = getThemeDefinition(defaultTheme);
     const generation = defaultThemeToApply({
       environmentId,
       defaultTheme,
@@ -81,12 +84,5 @@ export function useDefaultThemeAdoption(): void {
     // light half with no retry.
     if (half !== null && !setAppearanceMode(half)) return;
     writeAppliedGeneration(storageKey, generation);
-  }, [
-    environmentId,
-    defaultTheme,
-    defaultThemeSetAt,
-    environmentThemes,
-    setTheme,
-    setAppearanceMode,
-  ]);
+  }, [environmentId, defaultTheme, defaultThemeSetAt, definition, setTheme, setAppearanceMode]);
 }
