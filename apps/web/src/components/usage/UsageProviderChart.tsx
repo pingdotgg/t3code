@@ -223,51 +223,90 @@ function buildChart(
   return { columns, scale, stepX, paths: paths.toSorted((a, b) => b.total - a.total) };
 }
 
-// Rebuilding the chart walks every period and provider; keep it cached across hover renders.
-function useChart(
-  periods: readonly string[],
-  totals: readonly DailyTotals[] | readonly HourlyTotals[],
-  metric: UsageChartMetric,
-  providers: readonly UsageProviderKind[],
-  loadingProviders: ReadonlySet<UsageProviderKind>,
-) {
-  "use memo";
-  const byPeriod = new Map<string, DailyTotals | HourlyTotals>(
-    totals.map((entry) => ["hourStart" in entry ? entry.hourStart : entry.day, entry]),
+function UsageChartTooltip({
+  tooltipRef,
+  label,
+  column,
+  providers,
+  loadingProviders,
+  format,
+}: {
+  readonly tooltipRef: React.Ref<HTMLDivElement>;
+  readonly label: string;
+  readonly column: DayColumn | undefined;
+  readonly providers: readonly UsageProviderKind[];
+  readonly loadingProviders: ReadonlySet<UsageProviderKind>;
+  readonly format: (value: number) => string;
+}) {
+  const partial = providers.some((provider) => loadingProviders.has(provider));
+  return (
+    <div
+      ref={tooltipRef}
+      className="surface-glass pointer-events-none absolute z-10 min-w-36 max-w-full rounded-xl border border-border/50 px-2.5 py-2 text-xs shadow-lg"
+      style={{
+        left: "var(--usage-tooltip-left, 0px)",
+        top: "var(--usage-tooltip-top, 0px)",
+      }}
+    >
+      <div className="mb-1 text-muted-foreground">{label}</div>
+      {providers.map((provider) => {
+        const { label: providerLabel, driverKind } = PROVIDER_PRESENTATION[provider];
+        return (
+          <div key={provider} className="flex items-center justify-between gap-3">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <ProviderInstanceIcon
+                driverKind={driverKind}
+                displayName={providerLabel}
+                iconClassName="size-3"
+              />
+              {providerLabel}
+            </span>
+            <span
+              className={cn(
+                "tabular-nums",
+                loadingProviders.has(provider) ? "text-muted-foreground" : "text-foreground",
+              )}
+            >
+              {format(column?.bands.find((band) => band.provider === provider)?.value ?? 0)}
+            </span>
+          </div>
+        );
+      })}
+      <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
+        <span className="text-muted-foreground">Total</span>
+        <span className={cn("tabular-nums", partial ? "text-muted-foreground" : "text-foreground")}>
+          {format(column?.total ?? 0)}
+        </span>
+      </div>
+    </div>
   );
-  return buildChart(periods, byPeriod, metric, providers, loadingProviders);
 }
 
-export function UsageProviderChart({
+function UsageChartPlot({
+  periods,
+  columns,
+  stepX,
   providers,
-  loadingProviders = NONE_LOADING,
-  days,
-  daily,
-  hours,
-  hourly,
-  metric,
-  referenceTime,
-  resolution,
-  timeZone,
-}: UsageProviderChartProps) {
-  const periods = resolution === "hour" ? hours : days;
-  const { columns, scale, paths, stepX } = useChart(
-    periods,
-    resolution === "hour" ? hourly : daily,
-    metric,
-    providers,
-    loadingProviders,
-  );
+  loadingProviders,
+  format,
+  formatTooltipPeriod,
+  ariaLabel,
+  children,
+}: {
+  readonly periods: readonly string[];
+  readonly columns: readonly DayColumn[];
+  readonly stepX: number;
+  readonly providers: readonly UsageProviderKind[];
+  readonly loadingProviders: ReadonlySet<UsageProviderKind>;
+  readonly format: (value: number) => string;
+  readonly formatTooltipPeriod: (period: string) => string;
+  readonly ariaLabel: string;
+  readonly children: React.ReactNode;
+}) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
-
-  const toY = (value: number) => valueToY(value, scale.max);
-  const seriesClassName = (loading: boolean) =>
-    cn("transition-opacity", loading && "opacity-40 delay-150");
-
-  const format = metric === "tokens" ? formatTokens : formatUsd;
 
   const positionTooltip = () => {
     const plot = plotRef.current;
@@ -320,8 +359,82 @@ export function UsageProviderChart({
   };
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
-  const hoveredColumn = hoverIndex === null ? undefined : columns[hoverIndex];
-  const partial = providers.some((provider) => loadingProviders.has(provider));
+
+  return (
+    <div
+      ref={plotRef}
+      className="relative h-56 flex-1"
+      onMouseMove={handleMove}
+      onMouseLeave={() => {
+        hoverPositionRef.current = null;
+        setHoverIndex(null);
+      }}
+    >
+      <svg
+        className="h-full w-full"
+        viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={ariaLabel}
+      >
+        {children}
+        {hoverIndex === null ? null : (
+          <line
+            x1={hoverIndex * stepX}
+            x2={hoverIndex * stepX}
+            y1={PLOT_TOP}
+            y2={VIEW_HEIGHT}
+            stroke="currentColor"
+            strokeWidth={1}
+            className="text-muted-foreground"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </svg>
+
+      {hoverIndex === null || hoveredPeriod === undefined ? null : (
+        <UsageChartTooltip
+          tooltipRef={tooltipRef}
+          label={formatTooltipPeriod(hoveredPeriod)}
+          column={columns[hoverIndex]}
+          providers={providers}
+          loadingProviders={loadingProviders}
+          format={format}
+        />
+      )}
+    </div>
+  );
+}
+
+export function UsageProviderChart({
+  providers,
+  loadingProviders = NONE_LOADING,
+  days,
+  daily,
+  hours,
+  hourly,
+  metric,
+  referenceTime,
+  resolution,
+  timeZone,
+}: UsageProviderChartProps) {
+  const periods = resolution === "hour" ? hours : days;
+  const totals: readonly (DailyTotals | HourlyTotals)[] = resolution === "hour" ? hourly : daily;
+  const byPeriod = new Map(
+    totals.map((entry) => ["hourStart" in entry ? entry.hourStart : entry.day, entry]),
+  );
+  const { columns, scale, paths, stepX } = buildChart(
+    periods,
+    byPeriod,
+    metric,
+    providers,
+    loadingProviders,
+  );
+
+  const toY = (value: number) => valueToY(value, scale.max);
+  const seriesClassName = (loading: boolean) =>
+    cn("transition-opacity", loading && "opacity-40 delay-150");
+  const format = metric === "tokens" ? formatTokens : formatUsd;
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
@@ -346,125 +459,54 @@ export function UsageProviderChart({
             : null}
         </div>
 
-        <div
-          ref={plotRef}
-          className="relative h-56 flex-1"
-          onMouseMove={handleMove}
-          onMouseLeave={() => {
-            hoverPositionRef.current = null;
-            setHoverIndex(null);
-          }}
+        <UsageChartPlot
+          periods={periods}
+          columns={columns}
+          stepX={stepX}
+          providers={providers}
+          loadingProviders={loadingProviders}
+          format={format}
+          formatTooltipPeriod={formatTooltipPeriod}
+          ariaLabel={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
         >
-          <svg
-            className="h-full w-full"
-            viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-            preserveAspectRatio="none"
-            role="img"
-            aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
-          >
-            {scale.ticks.map((tick) => {
-              const y = toY(tick);
-              return (
-                <line
-                  key={tick}
-                  x1={0}
-                  x2={VIEW_WIDTH}
-                  y1={y}
-                  y2={y}
-                  stroke="currentColor"
-                  strokeWidth={1}
-                  className="text-border"
-                  vectorEffect="non-scaling-stroke"
-                />
-              );
-            })}
-
-            {paths.map(({ provider, loading, area }) => (
-              <path
-                key={provider}
-                d={area}
-                className={seriesClassName(loading)}
-                fill={PROVIDER_PRESENTATION[provider].color}
-                fillOpacity={0.12}
-              />
-            ))}
-            {paths.map(({ provider, loading, line }) => (
-              <path
-                key={provider}
-                d={line}
-                className={seriesClassName(loading)}
-                fill="none"
-                stroke={PROVIDER_PRESENTATION[provider].color}
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-              />
-            ))}
-
-            {hoverIndex === null ? null : (
+          {scale.ticks.map((tick) => {
+            const y = toY(tick);
+            return (
               <line
-                x1={hoverIndex * stepX}
-                x2={hoverIndex * stepX}
-                y1={PLOT_TOP}
-                y2={VIEW_HEIGHT}
+                key={tick}
+                x1={0}
+                x2={VIEW_WIDTH}
+                y1={y}
+                y2={y}
                 stroke="currentColor"
                 strokeWidth={1}
-                className="text-muted-foreground"
+                className="text-border"
                 vectorEffect="non-scaling-stroke"
               />
-            )}
-          </svg>
+            );
+          })}
 
-          {hoveredPeriod === undefined ? null : (
-            <div
-              ref={tooltipRef}
-              className="surface-glass pointer-events-none absolute z-10 min-w-36 max-w-full rounded-xl border border-border/50 px-2.5 py-2 text-xs shadow-lg"
-              style={{
-                left: "var(--usage-tooltip-left, 0px)",
-                top: "var(--usage-tooltip-top, 0px)",
-              }}
-            >
-              <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
-              {providers.map((provider) => {
-                const { label, driverKind } = PROVIDER_PRESENTATION[provider];
-                return (
-                  <div key={provider} className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <ProviderInstanceIcon
-                        driverKind={driverKind}
-                        displayName={label}
-                        iconClassName="size-3"
-                      />
-                      {label}
-                    </span>
-                    <span
-                      className={cn(
-                        "tabular-nums",
-                        loadingProviders.has(provider)
-                          ? "text-muted-foreground"
-                          : "text-foreground",
-                      )}
-                    >
-                      {format(
-                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
-                      )}
-                    </span>
-                  </div>
-                );
-              })}
-              <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
-                <span className="text-muted-foreground">Total</span>
-                <span
-                  className={cn(
-                    "tabular-nums",
-                    partial ? "text-muted-foreground" : "text-foreground",
-                  )}
-                >
-                  {format(hoveredColumn?.total ?? 0)}
-                </span>
-              </div>
-            </div>
-          )}
-        </div>
+          {paths.map(({ provider, loading, area }) => (
+            <path
+              key={provider}
+              d={area}
+              className={seriesClassName(loading)}
+              fill={PROVIDER_PRESENTATION[provider].color}
+              fillOpacity={0.12}
+            />
+          ))}
+          {paths.map(({ provider, loading, line }) => (
+            <path
+              key={provider}
+              d={line}
+              className={seriesClassName(loading)}
+              fill="none"
+              stroke={PROVIDER_PRESENTATION[provider].color}
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+            />
+          ))}
+        </UsageChartPlot>
       </div>
 
       <div className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase">
