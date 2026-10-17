@@ -119,6 +119,17 @@ export const make = Effect.gen(function* () {
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
     }
 
+    if (!JJ_REPOSITORY_DETECTION_ENABLED) {
+      return yield* detectWithDriver("git", git, input.cwd);
+    }
+
+    // Colocated repos answer both probes; native jj workspaces must win over Git worktrees.
+    const jjDetected = yield* detectWithDriver("jj", jj, input.cwd).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (jjDetected) {
+      return jjDetected;
+    }
     return yield* detectWithDriver("git", git, input.cwd);
   });
 
@@ -127,16 +138,20 @@ export const make = Effect.gen(function* () {
   const foldersBelowRoot = (cwd: string, rootPath: string) => {
     const relative = path.relative(path.resolve(rootPath), path.resolve(cwd));
     if (relative.startsWith("..") || path.isAbsolute(relative)) return [cwd];
-    return Array.from({ length: relative.split(path.sep).length }, (_, levelsUp) =>
-      path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
+    return Array.from(
+      { length: relative === "" ? 1 : relative.split(path.sep).length + 1 },
+      (_, levelsUp) => path.resolve(cwd, ...Array<string>(levelsUp).fill("..")),
     );
   };
 
   const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
     Effect.all({
-      gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
-        fileSystem.exists(path.join(folder, ".git")),
-      ),
+      markerEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
+        Effect.all([
+          fileSystem.exists(path.join(folder, ".git")),
+          fileSystem.exists(path.join(folder, ".jj")),
+        ]),
+      ).pipe(Effect.map((entries) => entries.flat())),
       repositoryOnDisk: Effect.forEach(
         repository.metadataPath === null
           ? [cwd]
@@ -147,7 +162,7 @@ export const make = Effect.gen(function* () {
 
   const detectionCache = yield* Cache.makeWith<
     string,
-    { readonly handle: VcsDriverHandle; readonly gitEntries: ReadonlyArray<boolean> } | null,
+    { readonly handle: VcsDriverHandle; readonly markerEntries: ReadonlyArray<boolean> } | null,
     VcsError
   >(
     (key) =>
@@ -156,7 +171,7 @@ export const make = Effect.gen(function* () {
         const handle = yield* detectResolvedKind(input);
         if (handle === null) return null;
         const disk = yield* readDiskState(input.cwd, handle.repository);
-        return { handle, gitEntries: disk?.gitEntries ?? [] };
+        return { handle, markerEntries: disk?.markerEntries ?? [] };
       }),
     {
       capacity: DETECTION_CACHE_CAPACITY,
@@ -176,8 +191,8 @@ export const make = Effect.gen(function* () {
       const disk = yield* readDiskState(input.cwd, cached.handle.repository);
       if (
         disk?.repositoryOnDisk &&
-        disk.gitEntries.length === cached.gitEntries.length &&
-        disk.gitEntries.every((exists, index) => exists === cached.gitEntries[index])
+        disk.markerEntries.length === cached.markerEntries.length &&
+        disk.markerEntries.every((exists, index) => exists === cached.markerEntries[index])
       ) {
         return cached.handle;
       }

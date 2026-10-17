@@ -23,6 +23,7 @@ import * as Schema from "effect/Schema";
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
@@ -213,6 +214,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
   const git = yield* GitVcsDriver.GitVcsDriver;
+  const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
 
@@ -245,6 +247,14 @@ const make = Effect.gen(function* () {
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     gitWorkflow.isRepository(config.baseDir).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
+      Effect.flatMap((isGit) =>
+        isGit
+          ? Effect.succeed(true)
+          : registry.detect({ cwd: config.baseDir, requestedKind: "jj" }).pipe(
+              Effect.map((handle) => handle !== null),
+              Effect.orElseSucceed(() => false),
+            ),
+      ),
       Effect.map((isRepository) =>
         isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
       ),

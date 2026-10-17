@@ -32,3 +32,19 @@ Ambiguous ancestry, unchanged parents or older refs without capture-time metadat
 The jj equivalent of the checkpoint pipeline's fallback-to-HEAD is the parent tree, not `@` itself. Missing-ref restore uses the current working copy's merged parents. A historical checkpoint diff instead uses the captured endpoint's merged parents and captured tree, so later edits or parent changes in `@` cannot alter the result. None of these bases resolve through the shared Git `HEAD`. `jj restore` from `@`'s own id prints `Nothing changed.` and exits 0, which would report a revert that did nothing.
 
 jj's synthetic root has an all-zeros id, not a usable Git object. [`JjVcsDriver.ts`](../../apps/server/src/vcs/JjVcsDriver.ts) drops root parents and returns `null` when `changeAt` resolves root. A first change therefore has `parentCommitIds: []`. Restore has no committed fallback there; diffs use Git's empty tree when they need an empty base. Default-bookmark, review-diff base and remote-tracking resolution must treat root as absent, never pass its zero id to Git.
+
+## jj owns the working copy, Git owns the object store
+
+In a colocated repo every jj commit, `@` included, is a real Git object in
+`<mainWorkspaceRoot>/.git` pinned by `refs/jj/keep/<sha>`. So the split is fixed:
+
+- Snapshot and restore are jj only. Git's `HEAD` is not the working-copy change `@`; `git restore` or `git clean` bypasses jj's working-copy state even in a colocated secondary workspace.
+- Diff patches and numstat use Git plumbing against the resolved object store for changes with a single parent. For merge changes, checkpoint and review diffs use `jj diff --git` so the patch reflects jj’s merged-parent semantics.
+- Hosting operations and per-thread merge-base config use the main workspace root and its `.git/config`. Local bookmarks are exported as Git branch refs in the colocated store. Background status fetches use Git with noninteractive authentication and write only `refs/t3/remotes/<encoded-remote>/*`, a namespace jj does not import. Fetch disables Git's configured remote-tracking ref mappings as well. Ahead counts use jj's nonempty changes above the Git merge bases; behind counts read the fetched Git objects. A background remote update therefore cannot move a tracked local bookmark or detach the workspace from it.
+
+Hence the scope limit: a jj repo with no reachable `.git` is detected as jj and reported unusable,
+never quietly treated as Git. [`JjRepo.resolveJjRepoPaths`](../../apps/server/src/vcs/JjRepo.ts)
+follows a secondary workspace's `.jj/repo` pointer back to the main root so every Git call still has
+a `--git-dir`.
+
+Private behind counts are bounded by time, output size and commit count. Timeouts and output limits retain jj's known remote-bookmark count. Reaching the commit cap reports a lower bound of 1000 rather than a potentially stale zero, so Pull remains available. Remote discovery failures still surface as errors.
