@@ -108,13 +108,19 @@ const make = Effect.gen(function* () {
               },
               identity,
             );
-      if (own === null || own.host !== key.host || own.repository !== key.repository) {
+      if (
+        identity == null ||
+        own === null ||
+        own.host !== key.host ||
+        own.repository !== key.repository
+      ) {
         return yield* new PullRequestOperationError({
           operation: "generateReviewGuide",
           detail:
             "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
         });
       }
+      return identity.locator;
     },
   );
 
@@ -148,12 +154,45 @@ const make = Effect.gen(function* () {
 
   const checkoutHead = Effect.fn("PullRequestReviewGuideService.checkoutHead")(function* (
     workspaceRoot: string,
+    locator: RepositoryIdentity["locator"],
     detail: PullRequestDetail,
     headSha: string,
     stack: PullRequestStack | null,
     runId: string,
   ) {
-    const remote = yield* git.resolvePrimaryRemoteName(workspaceRoot);
+    // The remote for the pull request's own repository, not the checkout's primary one: in a
+    // fork's checkout that is `upstream`, and the fork's `origin` may have a base branch far
+    // behind the one the pull request targets. Found by URL among the remotes as they are now,
+    // since the identity is cached and its remote may have been renamed since. `ls-remote
+    // --get-url` reports the URL git would fetch from, as the identity's was read, and unlike
+    // `remote get-url` it also answers for a remote configured outside the repository.
+    const names = yield* git
+      .execute({
+        operation: "PullRequestReviewGuideService.listRemotes",
+        cwd: workspaceRoot,
+        args: ["remote"],
+      })
+      .pipe(Effect.map((result) => result.stdout.split("\n").filter((name) => name.length > 0)));
+    const remote = yield* Effect.findFirst(
+      [locator.remoteName, ...names.filter((name) => name !== locator.remoteName)],
+      (name) =>
+        git
+          .execute({
+            operation: "PullRequestReviewGuideService.remoteUrl",
+            cwd: workspaceRoot,
+            args: ["ls-remote", "--get-url", "--", name],
+          })
+          .pipe(
+            Effect.map((result) => result.stdout.trim() === locator.remoteUrl),
+            Effect.orElseSucceed(() => false),
+          ),
+    ).pipe(Effect.map(Option.getOrUndefined));
+    if (remote === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail: "This project's checkout no longer has a remote for the pull request's repository.",
+      });
+    }
     const fetch = (args: ReadonlyArray<string>) =>
       git.execute({
         operation: "PullRequestReviewGuideService.fetch",
@@ -327,6 +366,7 @@ const make = Effect.gen(function* () {
     input: PullRequestRef,
     key: ThreadPullRequestKey,
     workspaceRoot: string,
+    locator: RepositoryIdentity["locator"],
     detail: PullRequestDetail,
     headSha: string,
     runId: string,
@@ -349,6 +389,7 @@ const make = Effect.gen(function* () {
     );
     const { generated, change } = yield* checkoutHead(
       workspaceRoot,
+      locator,
       detail,
       headSha,
       stack,
@@ -412,7 +453,7 @@ const make = Effect.gen(function* () {
       });
     }
     const { key, workspaceRoot, identity } = yield* keyFor(input);
-    yield* requireOwnRepository(key, identity);
+    const locator = yield* requireOwnRepository(key, identity);
     const runKey = keyString(key);
     yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
@@ -465,7 +506,7 @@ const make = Effect.gen(function* () {
         return updated;
       });
     const runId = `${runCounter++}`;
-    yield* write(input, key, workspaceRoot, detail, currentHeadSha, runId, owns).pipe(
+    yield* write(input, key, workspaceRoot, locator, detail, currentHeadSha, runId, owns).pipe(
       Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
