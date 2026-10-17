@@ -22,7 +22,7 @@ import {
   matchesKeybindingShortcut,
   normalizeEventKey,
 } from "@t3tools/shared/keybindings";
-import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -135,29 +135,27 @@ export function HtmlRenderDocument(props: {
   // binding counts whatever its `when`, and a key that any binding gives to
   // another command stays with the page. Only Cmd/Ctrl chords: a printable key
   // would type into the composer instead.
-  const { shortcuts, blocked } = useMemo(() => {
-    const mac = isMacPlatform(navigator.platform);
-    const resolve = (shortcut: KeybindingShortcut): HtmlRenderShortcut => ({
-      key: shortcut.key,
-      metaKey: shortcut.metaKey || (shortcut.modKey && mac),
-      ctrlKey: shortcut.ctrlKey || (shortcut.modKey && !mac),
-      shiftKey: shortcut.shiftKey,
-      altKey: shortcut.altKey,
-    });
-    const blocked = [...keybindings, ...(environmentKeybindings ?? [])]
-      .filter((binding) => !HTML_RENDER_SHORTCUT_COMMANDS.has(binding.command))
-      .map((binding) => resolve(binding.shortcut));
-    const shortcuts = new Map<string, HtmlRenderShortcut>();
-    for (const { command, shortcut } of keybindings) {
-      if (
-        HTML_RENDER_SHORTCUT_COMMANDS.has(command) &&
-        (shortcut.metaKey || shortcut.ctrlKey || shortcut.modKey)
-      ) {
-        shortcuts.set(shortcutConflictKey(shortcut), resolve(shortcut));
-      }
+  const mac = isMacPlatform(navigator.platform);
+  const resolve = (shortcut: KeybindingShortcut): HtmlRenderShortcut => ({
+    key: shortcut.key,
+    metaKey: shortcut.metaKey || (shortcut.modKey && mac),
+    ctrlKey: shortcut.ctrlKey || (shortcut.modKey && !mac),
+    shiftKey: shortcut.shiftKey,
+    altKey: shortcut.altKey,
+  });
+  const blocked = [...keybindings, ...(environmentKeybindings ?? [])]
+    .filter((binding) => !HTML_RENDER_SHORTCUT_COMMANDS.has(binding.command))
+    .map((binding) => resolve(binding.shortcut));
+  const shortcutsByKey = new Map<string, HtmlRenderShortcut>();
+  for (const { command, shortcut } of keybindings) {
+    if (
+      HTML_RENDER_SHORTCUT_COMMANDS.has(command) &&
+      (shortcut.metaKey || shortcut.ctrlKey || shortcut.modKey)
+    ) {
+      shortcutsByKey.set(shortcutConflictKey(shortcut), resolve(shortcut));
     }
-    return { shortcuts: [...shortcuts.values()], blocked };
-  }, [environmentKeybindings, keybindings]);
+  }
+  const shortcuts = [...shortcutsByKey.values()];
   const postShortcuts = () => {
     frameRef.current?.contentWindow?.postMessage(
       htmlRenderShortcutsMessage(shortcuts, blocked),
