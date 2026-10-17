@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./synchronization": {
+      "types": "./src/synchronization.ts",
+      "import": "./src/synchronization.ts"
+    },
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"

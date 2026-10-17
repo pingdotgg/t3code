@@ -363,6 +363,34 @@ it.live.each(["thread", "shell"] as const)(
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
+it.effect("reports a malformed known replay event before it can emit a completion marker", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:malformed-replay");
+    yield* sql`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        'malformed:1', 'thread', ${threadId}, 1, 'message.updated',
+        '2026-10-17T00:00:00.000Z', 'server', '{}', '{}', 2
+      )
+    `;
+    const error = yield* subscribeOrchestrationV2Thread({
+      threadId,
+      afterSequence: 0,
+      requestCompletionMarker: true,
+    }).pipe(
+      Effect.flip,
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        streamStoredEventsFrom: () => Stream.never,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+    );
+    assert.equal(error._tag, "OrchestrationV2GetThreadProjectionError");
+  }).pipe(Effect.provide(ReplayTestLayer)),
+);
+
 // Compaction keeps the oldest and newest event per message, so a cursor older
 // than the deleted rows still replays each message where the client would
 // first have seen it (reducers append on first sight) and reaches the same

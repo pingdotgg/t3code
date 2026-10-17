@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { rpcInitialItems } from "./rpcInitialItems.ts";
+import { recordSynchronization } from "@t3tools/shared/synchronization";
 import { subscribeChatGptHandoff } from "./provider/CodexChatGptHandoff.ts";
 import { subscribeCodexAuthCallback } from "./provider/CodexAuthCallback.ts";
 import {
@@ -746,6 +747,12 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
 
+    yield* recordSynchronization("connecting", {
+      side: "server",
+      stream: "thread",
+      threadId: input.threadId,
+    });
+
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.thread_id": input.threadId,
     });
@@ -813,12 +820,28 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           ),
         );
 
-    const completionMarker =
+    const completionMarker = (mode: "resume" | "snapshot") =>
       input.requestCompletionMarker === true
-        ? Stream.make({ kind: "synchronized" as const })
+        ? Stream.fromEffect(
+            recordSynchronization("marker_emitted", {
+              side: "server",
+              stream: "thread",
+              threadId: input.threadId,
+              mode,
+            }).pipe(Effect.as({ kind: "synchronized" as const })),
+          )
         : Stream.empty;
 
-    const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* () {
+    const snapshotThenLive = Effect.fn("ws.orchestrationV2.threadSnapshotThenLive")(function* (
+      reason: string,
+    ) {
+      yield* recordSynchronization("snapshot", {
+        side: "server",
+        stream: "thread",
+        threadId: input.threadId,
+        mode: "snapshot",
+        reason,
+      });
       const useBoundedSnapshot = shouldUseBoundedThreadSnapshot(input);
       const snapshot = yield* (
         useBoundedSnapshot
@@ -849,7 +872,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             projection: projectThreadProjectionForWire(snapshot.projection),
           };
       return Stream.concat(
-        Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
+        Stream.concat(rpcInitialItems([snapshotItem]), completionMarker("snapshot")),
         eventStreamFrom(snapshotSequence),
       );
     });
@@ -858,6 +881,14 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     // tail, so no event published during the replay window is lost; overlapping
     // events are deduped by sequence on the client.
     if (input.afterSequence !== undefined) {
+      yield* recordSynchronization("resuming", {
+        side: "server",
+        stream: "thread",
+        threadId: input.threadId,
+        mode: "resume",
+        reason: "cached_cursor",
+        afterSequence: input.afterSequence,
+      });
       const highWater = yield* applicationEvents.latestAgentSequence(input.threadId).pipe(
         Effect.mapError(
           (cause) =>
@@ -869,7 +900,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ),
       );
       if (input.afterSequence > highWater) {
-        return yield* snapshotThenLive();
+        return yield* snapshotThenLive("cursor_ahead");
       }
       const stats = yield* applicationEvents
         .getAgentReplayStats({
@@ -894,7 +925,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         stats.eventCount > THREAD_RESUME_MAX_REPLAY_EVENTS ||
         !isThreadReplayRawPayloadSafe(stats.rawPayloadBytes)
       ) {
-        return yield* snapshotThenLive();
+        return yield* snapshotThenLive("replay_limit");
       }
       if (stats.hasCreateEvent) {
         const shell = yield* threadManagement.getThreadShell(input.threadId).pipe(
@@ -909,7 +940,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         );
         // A retained creation can belong to a thread already deleted.
         // Only replace its bounded replay when a snapshot can exist.
-        if (shell !== null) return yield* snapshotThenLive();
+        if (shell !== null) return yield* snapshotThenLive("thread_recreated");
       }
       const replay = yield* loadReplayThrough(input.afterSequence, highWater);
       const plan = decideThreadResume({
@@ -919,15 +950,15 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         replayEncodedBytes: threadReplayEncodedBytes(replay),
       });
       if (plan.mode === "snapshot") {
-        return yield* snapshotThenLive();
+        return yield* snapshotThenLive("resume_plan");
       }
       return Stream.concat(
-        Stream.concat(rpcInitialItems(replay), completionMarker),
+        Stream.concat(rpcInitialItems(replay), completionMarker("resume")),
         eventStreamFrom(highWater),
       );
     }
 
-    return yield* snapshotThenLive();
+    return yield* snapshotThenLive("no_cursor");
   },
 );
 
@@ -3102,7 +3133,6 @@ const layerWsRpc = (
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
 export const WS_RPC_SERVER_OPTIONS = {
-  disableTracing: true,
   disableFatalDefects: true,
 } as const;
 

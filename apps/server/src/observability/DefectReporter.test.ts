@@ -9,6 +9,7 @@ import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { Rpc, RpcClient, RpcGroup, RpcServer } from "effect/rpc";
 
 import { WS_RPC_SERVER_OPTIONS } from "../ws.ts";
@@ -36,6 +37,46 @@ const withErrorLogs = <A, E, R>(
 const errorMessage = (cause: Cause.Cause<unknown>) => (Cause.squash(cause) as Error).message;
 
 describe("DefectReporter", () => {
+  it.effect("parents local RPC handlers to the propagated client trace", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* Effect.gen(function* () {
+        let client!: Effect.Success<
+          ReturnType<typeof RpcClient.makeNoSerialization<TestRpc, never>>
+        >;
+        const server = yield* RpcServer.makeNoSerialization(TestRpcs, {
+          ...WS_RPC_SERVER_OPTIONS,
+          onFromServer: (response) => client.write(response),
+        }).pipe(
+          Effect.provide(
+            TestRpcs.toLayer({
+              subscribe: () => Stream.never,
+              boom: () => Effect.void.pipe(Effect.withSpan("handler.transition")),
+            }),
+          ),
+        );
+        client = yield* RpcClient.makeNoSerialization(TestRpcs, {
+          supportsAck: true,
+          onFromClient: ({ message }) => server.write(0, message),
+        });
+        yield* client.client.boom().pipe(Effect.withSpan("client.request"));
+      }).pipe(Effect.withTracer(tracer));
+      const request = spans.find((span) => span.name === "client.request");
+      const transition = spans.find((span) => span.name === "handler.transition");
+      assert.isDefined(request);
+      assert.isDefined(transition);
+      assert.equal(transition!.traceId, request!.traceId);
+      assert.equal(transition!.status._tag, "Ended");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("a dying RPC handler fails alone, and its defect is logged", () =>
     withErrorLogs((logs) =>
       Effect.gen(function* () {
