@@ -2010,6 +2010,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       themeAppearance,
       userBubbleColor,
       viewportWidth,
+      contentWidth,
+      skills: props.skills,
     }),
     [
       props.worktreeSetup,
@@ -2026,6 +2028,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       themeAppearance,
       userBubbleColor,
       viewportWidth,
+      contentWidth,
+      props.skills,
     ],
   );
   const reportHeaderMaterialVisibility = useCallback(
