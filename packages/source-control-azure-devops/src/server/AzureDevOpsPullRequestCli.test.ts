@@ -173,6 +173,47 @@ afterEach(() => {
 });
 
 layer("AzureDevOpsPullRequestCli.layer", (it) => {
+  it.effect("reports the latest pushed source commit even while the trial merge is stale", () =>
+    Effect.gen(function* () {
+      const previousHead = "a".repeat(40);
+      const latestHead = "c".repeat(40);
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(json({ ...pullRequestRow, lastMergeSourceCommit: { commitId: previousHead } })),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              json({
+                value: [
+                  {
+                    id: 2,
+                    sourceRefCommit: { commitId: latestHead },
+                    commonRefCommit: { commitId: "b".repeat(40) },
+                  },
+                  ...oneIteration.value,
+                ],
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))));
+      const provider = yield* AzureDevOpsPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "platform/web",
+        host: "dev.azure.com",
+        number: 42,
+      });
+
+      expect(detail.headSha).toBe(latestHead);
+      expect(argsOfCall(2)).toContain("iterationId=2");
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
   it.effect("asks for one row more than the page, to probe for a next page", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequests(3, 1))));

@@ -177,7 +177,73 @@ describe("getChangeRequest", () => {
       });
 
       expect(detail.changedFiles).toBe(2);
+      expect(detail.headSha).toBe(ITERATION.headCommit);
     }),
+  );
+
+  it.effect("preserves the newest head when file counting fails", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+            getPullRequest: () => Effect.succeed(PULL_REQUEST),
+            listIterations: () =>
+              Effect.succeed([ITERATION, { ...ITERATION, id: 4, headCommit: "new-head" }]),
+            listIterationChanges: () =>
+              Effect.fail(
+                new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: "/w",
+                  operation: "listIterationChanges",
+                  cause: "unavailable",
+                }),
+              ),
+          }),
+        ),
+      );
+
+      const detail = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "dev.azure.com",
+        number: 7,
+      });
+      expect(detail.headSha).toBe("new-head");
+      expect(detail.changedFiles).toBe(0);
+    }),
+  );
+
+  it.effect.each(["missing", "failed"] as const)(
+    "leaves the head unavailable when the iteration read is %s",
+    (state) =>
+      Effect.gen(function* () {
+        const provider = yield* make.pipe(
+          Effect.provide(
+            Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
+              getPullRequest: () => Effect.succeed(PULL_REQUEST),
+              listIterations: () =>
+                state === "missing"
+                  ? Effect.succeed([])
+                  : Effect.fail(
+                      new AzureDevOpsPullRequestCli.AzureDevOpsPullRequestReadError({
+                        command: "az",
+                        cwd: "/w",
+                        operation: "listIterations",
+                        cause: "unavailable",
+                      }),
+                    ),
+            }),
+          ),
+        );
+        const detail = yield* provider.getChangeRequest({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "dev.azure.com",
+          number: 7,
+        });
+        expect(detail.headSha).toBeUndefined();
+        expect(detail.changedFiles).toBe(0);
+      }),
   );
 });
 
