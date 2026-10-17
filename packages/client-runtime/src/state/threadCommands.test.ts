@@ -182,6 +182,27 @@ describe("remote thread lifecycle commands", () => {
       }),
   );
 
+  it.effect("re-acknowledges an early-woken thread on a same-time re-snooze", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const staleSnoozedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+        ...SNAPSHOT,
+        threads: [{ ...SNAPSHOT.threads[0]!, snoozedUntil: FUTURE, snoozedAt: staleSnoozedAt }],
+      });
+      void h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      });
+      const snoozedAt = h.registry.get(h.visibleAtom)?.threads[0]?.snoozedAt;
+      expect(snoozedAt).toBeDefined();
+      expect(DateTime.toEpochMillis(snoozedAt!)).toBeGreaterThan(
+        DateTime.toEpochMillis(staleSnoozedAt),
+      );
+      yield* Queue.take(h.requests);
+    }),
+  );
+
   it.effect("keeps the preview after acknowledgement until the matching shell update arrives", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
