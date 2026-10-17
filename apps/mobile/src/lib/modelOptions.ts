@@ -154,6 +154,22 @@ export function isModelSelectionUnavailable(
   );
 }
 
+/** Whether a new-task composer on this machine would block starting with the selection. */
+export function isNewTaskModelSelectionBlocked(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null,
+  projectId: ProjectId | null,
+): boolean {
+  if (!selection) return false;
+  const key = `${selection.instanceId}:${selection.model}`;
+  return (
+    isModelSelectionUnavailable(config, selection, projectId) ||
+    buildModelOptions(config, selection, selection.instanceId, projectId).some(
+      (option) => option.key === key && option.isUnavailable === true,
+    )
+  );
+}
+
 export function describeUnavailableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection,

@@ -45,7 +45,7 @@ import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
   groupByProvider,
-  isModelSelectionUnavailable,
+  isNewTaskModelSelectionBlocked,
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
   resolveSelectableModelSelection,
@@ -1010,8 +1010,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
               providerInstanceId: selectedModelInstanceId ?? null,
               providerDriver: selectedProviderStatus?.driver ?? null,
             }) &&
-            // The same check the send guard applies once the draft is there.
-            !isModelSelectionUnavailable(
+            // The same checks the start button applies once the draft is there.
+            !isNewTaskModelSelectionBlocked(
               serverConfigs.get(environmentId),
               selectedModelInstanceId !== undefined && selectedModelName !== undefined
                 ? { instanceId: selectedModelInstanceId, model: selectedModelName }
