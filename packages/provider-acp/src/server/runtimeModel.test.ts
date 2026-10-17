@@ -1505,6 +1505,7 @@ describe("extractMcpToolCallIdentity", () => {
       't3-code__delegate_task: {"mode":"async"}',
       "delegate_task_t3-code",
       "t3-code/delegate_task",
+      "delegate_task",
       'delegate_task: {"mode":"async"}',
     ]) {
       const toolCall = toolCallFromUpdate({
@@ -1519,6 +1520,18 @@ describe("extractMcpToolCallIdentity", () => {
         tool: "delegate_task",
       });
     }
+  });
+
+  it("does not claim an agent's own tool that shares a T3 tool name", () => {
+    // Hermes' built-in delegate_task, titled "<tool>: <description>" like all its calls.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "own-delegate-1",
+      kind: "execute",
+      title: "delegate_task: 1 tasks: Run the terminal command 'echo child-result-42'",
+      status: "pending",
+    });
+    expect(extractMcpToolCallIdentity(toolCall)).toBeUndefined();
   });
 
   it("recovers T3 identity from goose _meta despite LLM-rewritten titles", () => {
