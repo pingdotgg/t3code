@@ -52,13 +52,9 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import {
-  useProjects,
-  useServerConfigs,
-  useThreadProjection,
-  useThreadShells,
-} from "../../state/entities";
+import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
+import { useChatThreadPresentation } from "../../hooks/useChatThreadPresentation";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
@@ -208,8 +204,11 @@ export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
-  const ref = scopeThreadRef(props.environmentId, props.threadId);
-  const projection = useThreadProjection(ref)?.projection ?? null;
+  const ref = useMemo(
+    () => scopeThreadRef(props.environmentId, props.threadId),
+    [props.environmentId, props.threadId],
+  );
+  const { projection } = useChatThreadPresentation(ref, false);
   const providers = useServerConfigs().get(props.environmentId)?.providers;
   const runtimeSubagents = useMemo(
     () => projectedSubagentsToRuntime(projection?.subagents ?? []),

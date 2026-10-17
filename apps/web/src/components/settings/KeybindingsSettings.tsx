@@ -18,6 +18,7 @@ import {
   type RefObject,
   useCallback,
   useMemo,
+  memo,
   useReducer,
   useRef,
   useState,
@@ -983,7 +984,8 @@ function KeybindingHoverRowMenu(props: {
   );
 }
 
-function KeybindingSettingsRow(props: KeybindingRowProps) {
+/** One binding as a settings row: pills flush right, actions fading in beside them on hover. */
+const KeybindingSettingsRow = memo(function KeybindingSettingsRow(props: KeybindingRowProps) {
   const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onRemove } = props;
   const editor = useKeybindingRowEditor({ row, allRows, onSave });
 
@@ -1012,7 +1014,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
       }
     />
   );
-}
+});
 
 function useNewKeybindingDraft({
   allRows,
@@ -1229,7 +1231,10 @@ interface KeybindingsGroupsProps extends KeybindingRowActions {
 
 function KeybindingsGroups(props: KeybindingsGroupsProps) {
   const { groups, anchorIds, savingCommand, ...rowActions } = props;
-  const rowLimit = useProgressiveRowLimit(INITIAL_KEYBINDING_ROWS);
+  const rowLimit = useProgressiveRowLimit(
+    INITIAL_KEYBINDING_ROWS,
+    groups.reduce((total, group) => total + group.rows.length, 0),
+  );
   const shownGroups: Array<{ group: KeybindingGroup; rows: KeybindingGroup["rows"] }> = [];
   let budget = rowLimit;
   for (const group of groups) {

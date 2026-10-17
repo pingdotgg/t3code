@@ -37,9 +37,6 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
-vi.mock("@tanstack/react-pacer", () => ({
-  useDebouncedValue: (value: unknown) => [value, { state: { isPending: false } }],
-}));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (_environmentId: unknown, scope: string) =>
     scope === AuthOrchestrationOperateScope

@@ -54,7 +54,7 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
@@ -599,6 +599,7 @@ function OpenCommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
+  const router = useRouter();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState(openIntent?.kind === "search" ? openIntent.query : "");
@@ -642,6 +643,14 @@ function OpenCommandPaletteDialog(props: {
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
+  const settingsIntent =
+    highlightedItemValue === "action:settings"
+      ? "/settings/general"
+      : availableSettingsSearchItems.find((item) => `setting:${item.id}` === highlightedItemValue)
+          ?.to;
+  useEffect(() => {
+    if (settingsIntent) void router.preloadRoute({ to: settingsIntent }).catch(() => undefined);
+  }, [router, settingsIntent]);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const paletteRouteTarget = useParams({
@@ -763,13 +772,7 @@ function OpenCommandPaletteDialog(props: {
     [threadSearch.matches],
   );
   const [browseGeneration, setBrowseGeneration] = useState(0);
-  const browseNavigationRef = useRef<ReturnType<typeof createBrowseNavigationCoordinator> | null>(
-    null,
-  );
-  if (browseNavigationRef.current === null) {
-    browseNavigationRef.current = createBrowseNavigationCoordinator();
-  }
-  const browseNavigation = browseNavigationRef.current;
+  const [browseNavigation] = useState(createBrowseNavigationCoordinator);
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
@@ -1744,7 +1747,9 @@ function OpenCommandPaletteDialog(props: {
     setViewStack([]);
     setLinkedThreadSearch(openIntent);
     setQuery(openIntent.query);
-    clearOpenIntent();
+    if (document.activeElement?.matches("#t3-command-palette input[role=combobox]")) {
+      clearOpenIntent();
+    }
   }, [browseNavigation, clearOpenIntent, openIntent]);
 
   useLayoutEffect(() => {
@@ -3301,6 +3306,7 @@ function OpenCommandPaletteDialog(props: {
     handleAddProjectForEnvironment,
     isPickingProjectFolder,
     primaryEnvironmentId,
+    setIsPickingProjectFolder,
   ]);
 
   const inputAccessory =
@@ -3468,6 +3474,9 @@ function OpenCommandPaletteDialog(props: {
             ? { startAddon: <FolderPlusIcon /> }
             : {}),
         onKeyDown: handleKeyDown,
+        onFocus: () => {
+          if (openIntent?.kind === "search") clearOpenIntent();
+        },
       }}
       mode="none"
       items={resultRows.itemValues}

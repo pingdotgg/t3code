@@ -29,6 +29,7 @@ import {
   type ThemeDefinition,
 } from "../../themePalette";
 import { cn } from "../../lib/utils";
+import { syncBrowserChromeTheme } from "../../hooks/useTheme";
 import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Input } from "../ui/input";
@@ -437,6 +438,7 @@ export function ThemeEditorPanel({
   useEffect(() => {
     if (!open || !isDraftSeeded) return;
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
+    syncBrowserChromeTheme();
   }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
 
   useEffect(() => {

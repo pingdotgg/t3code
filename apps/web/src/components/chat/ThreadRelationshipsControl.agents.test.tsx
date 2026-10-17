@@ -23,8 +23,10 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
+vi.mock("../../hooks/useChatThreadPresentation", () => ({
+  useChatThreadPresentation: () => ({ projection: state.projection, visibleTurnItems: [] }),
+}));
 vi.mock("../../state/entities", () => ({
-  useThreadProjection: () => ({ projection: state.projection }),
   useThreadShells: () => state.shells,
   useProjects: () => state.projects,
   useServerConfigs: () => state.configs,

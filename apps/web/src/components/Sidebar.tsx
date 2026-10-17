@@ -1,3 +1,4 @@
+import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { type EnvironmentId, type ScopedProjectRef, type ServerConfig } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -88,6 +89,12 @@ import {
 import {
   memo,
   useEffect,
+  Children,
+  cloneElement,
+  createContext,
+  isValidElement,
+  use,
+  type ComponentProps,
   useLayoutEffect,
   useReducer,
   useRef,
@@ -238,6 +245,11 @@ import {
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
+  SIDEBAR_ROW_HEIGHT_REM,
+  sidebarInitialRowBudgetRem,
+  useSidebarRowViewport,
+} from "./Sidebar.viewport";
+import {
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
   ThreadWorktreeIndicator,
@@ -277,7 +289,13 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import {
+  Tooltip as TooltipRoot,
+  TooltipPopup,
+  TooltipProvider as TooltipProviderRoot,
+  TooltipTrigger,
+} from "./ui/tooltip";
+import { observeResize } from "../lib/observeResize";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
   composerDraftHasUserContent,
@@ -757,6 +775,53 @@ function checkThreadOperations(
   return false;
 }
 
+const SidebarTooltipHandle = createContext<TooltipPrimitive.Handle<ReactNode> | null>(null);
+
+/** One floating popup serves every row and its quick actions. */
+function TooltipProvider({ children, ...props }: ComponentProps<typeof TooltipProviderRoot>) {
+  const [handle] = useState(() => TooltipPrimitive.createHandle<ReactNode>());
+  useEffect(() => {
+    // Only a scroll that moves the open trigger dismisses it; the chat
+    // timeline scrolls on its own while a reply streams.
+    const close = (event: Event) => {
+      if (!handle.isOpen) return;
+      const trigger = document.querySelector('[data-slot="tooltip-trigger"][data-popup-open]');
+      if (!(event.target instanceof Node) || !trigger || !event.target.contains(trigger)) return;
+      if (trigger === document.activeElement) return;
+      handle.close();
+    };
+    document.addEventListener("scroll", close, true);
+    return () => document.removeEventListener("scroll", close, true);
+  }, [handle]);
+  return (
+    <TooltipProviderRoot {...props}>
+      <SidebarTooltipHandle value={handle}>
+        {children}
+        <TooltipRoot handle={handle}>{({ payload }) => payload}</TooltipRoot>
+      </SidebarTooltipHandle>
+    </TooltipProviderRoot>
+  );
+}
+
+function Tooltip({
+  children,
+  disabled = false,
+}: {
+  children: ReactNode;
+  disabled?: boolean | undefined;
+}) {
+  const handle = use(SidebarTooltipHandle);
+  useEffect(() => {
+    if (disabled) handle?.close();
+  }, [disabled, handle]);
+  const parts = Children.toArray(children);
+  const trigger = parts.find((child) => isValidElement(child) && child.type === TooltipTrigger);
+  if (handle === null || !isValidElement<TooltipPrimitive.Trigger.Props<ReactNode>>(trigger))
+    return null;
+  const payload = parts.filter((child) => child !== trigger);
+  return cloneElement(trigger, { handle, payload, disabled });
+}
+
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;
@@ -1046,10 +1111,7 @@ function SnoozeMenuButton(props: {
   );
 }
 
-type SortableThreadRowBag = Pick<
-  ReturnType<typeof useSortable>,
-  "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
->;
+type SortableThreadRowBag = { isDragging: boolean };
 
 // useSortable memoizes on its `disabled` object, so a fresh one per render
 // re-renders every row and marker on each sidebar update.
@@ -1058,6 +1120,10 @@ const SIDEBAR_SORTABLE_DRAG_ENABLED = { draggable: false } as const;
 
 function SortableThreadRow(props: {
   id: string;
+  title: string;
+  variant: "card" | "slim";
+  keepMounted: boolean;
+  initiallyVisible: boolean;
   disabled: boolean;
   contextDrag: boolean;
   environmentId: EnvironmentId;
@@ -1072,16 +1138,60 @@ function SortableThreadRow(props: {
         : SIDEBAR_SORTABLE_DRAG_ENABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,
   });
-  // dnd-kit memoizes each field but not the bag, so the memoized row would
-  // rerender on every shell update without this.
-  const bag = {
-    listeners,
-    setNodeRef,
-    transform: props.contextDrag ? null : transform,
-    transition: props.contextDrag && isDragging ? "transform 150ms ease-out" : transition,
-    isDragging: isDragging && !props.contextDrag,
+  const [node, setNode] = useState<HTMLElement | null>(null);
+  const [visible, setVisible] = useSidebarRowViewport(node, props.initiallyVisible);
+  const focusedRef = useRef(false);
+  const attach = (element: HTMLElement | null) => {
+    setNodeRef(element);
+    setNode(element);
   };
-  return props.children(bag);
+  useLayoutEffect(() => {
+    // The swap commit still holds the detached placeholder; wait for the row.
+    if (!visible || !focusedRef.current || !node?.isConnected) return;
+    focusedRef.current = false;
+    node.querySelector<HTMLElement>('[tabindex="0"]')?.focus();
+  }, [visible, node]);
+  const bag = { isDragging: isDragging && !props.contextDrag };
+  const rowTransform = props.contextDrag ? null : transform;
+  const mounted =
+    visible || props.keepMounted || isDragging || node?.contains(document.activeElement);
+  return (
+    <li
+      key={props.variant}
+      ref={attach}
+      data-thread-item={props.id}
+      className={cn(
+        "list-none",
+        mounted && "[content-visibility:auto]",
+        mounted &&
+          (props.variant === "card"
+            ? "py-0.5 [contain-intrinsic-size:auto_78px]"
+            : "[contain-intrinsic-size:auto_36px]"),
+        bag.isDragging && "relative z-20",
+      )}
+      style={{
+        height: mounted ? undefined : `${SIDEBAR_ROW_HEIGHT_REM[props.variant]}rem`,
+        transform: CSS.Translate.toString(rowTransform),
+        transition: props.contextDrag && isDragging ? "transform 150ms ease-out" : transition,
+        visibility: !bag.isDragging && rowTransform?.scaleY === 0 ? "hidden" : undefined,
+      }}
+      {...listeners}
+    >
+      {mounted ? (
+        props.children(bag)
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={props.title}
+          onFocus={() => {
+            focusedRef.current = true;
+            setVisible(true);
+          }}
+        />
+      )}
+    </li>
+  );
 }
 
 const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
@@ -1818,22 +1928,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       "bg-sidebar bg-linear-to-b from-sidebar-row-active to-sidebar-row-active text-sidebar-foreground opacity-100 shadow-lg",
   );
   const sortable = props.sortable;
-  const sortableRootProps = sortable
-    ? {
-        ref: sortable.setNodeRef,
-        style: {
-          transform: CSS.Translate.toString(sortable.transform),
-          transition: sortable.transition,
-          // A zero-height boundary also makes dnd-kit scale the source to
-          // zero. Only projected peers use scaleY as a visibility sentinel.
-          visibility:
-            !sortable.isDragging && sortable.transform?.scaleY === 0
-              ? ("hidden" as const)
-              : undefined,
-        },
-        ...sortable.listeners,
-      }
-    : {};
+  // Sweeps reuse the corresponding row-drop action badge.
   const destinationVerb = sortable?.isDragging
     ? props.dropVerb
     : props.sweepAction === "unsnooze"
@@ -1986,20 +2081,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   if (variant === "slim") {
     return (
-      <li
-        data-thread-item={threadKey}
-        {...sortableRootProps}
-        {...(fileDropHandlers ?? {})}
-        className={cn(
-          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
-          sortable?.isDragging && "relative z-20",
-        )}
-      >
+      <>
         <Tooltip disabled={sortable?.isDragging}>
           <TooltipTrigger
             render={
               <div
                 ref={rowRef}
+                {...(fileDropHandlers ?? {})}
                 role="button"
                 tabIndex={0}
                 aria-label={accessibility.label}
@@ -2134,27 +2222,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
-      </li>
+      </>
     );
   }
 
   const diff = latestRunDiff(thread);
 
   return (
-    <li
-      data-thread-item={threadKey}
-      {...sortableRootProps}
-      {...(fileDropHandlers ?? {})}
-      className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        sortable?.isDragging && "relative z-20",
-      )}
-    >
+    <>
       <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
             <div
               ref={rowRef}
+              {...(fileDropHandlers ?? {})}
               role="button"
               tabIndex={0}
               aria-label={accessibility.label}
@@ -2395,7 +2476,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         </TooltipTrigger>
         {detailsTooltip}
       </Tooltip>
-    </li>
+    </>
   );
 });
 
@@ -2406,7 +2487,7 @@ function latestRunDiff(
   return null;
 }
 
-const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
+type SidebarSearchResultRowProps = {
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
@@ -2419,10 +2500,49 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   resultId: string;
   searchMatch: EnvironmentThreadSearchMatch | null;
   searchQuery: string;
-  onHighlight: () => void;
-  onSelect: () => void;
+  index: number;
+  onHighlight: (index: number) => void;
+  onSelect: (thread: SidebarThreadSummary) => void;
   onFileDropThreads: (threadRef: ScopedThreadRef, files: File[]) => void;
-}) {
+};
+
+const SidebarSearchResultRow = memo(function SidebarSearchResultRow(
+  props: SidebarSearchResultRowProps,
+) {
+  const [node, setNode] = useState<HTMLLIElement | null>(null);
+  const [visible] = useSidebarRowViewport(node, props.index < 24);
+  const keepMounted = props.isHighlighted || props.isRouteActive;
+  const [height, setHeight] = useState(props.searchMatch ? "3.75rem" : "2.25rem");
+  useEffect(() => {
+    if (!node || (!visible && !keepMounted)) return;
+    return observeResize(node, ([entry]) => {
+      const size = entry?.borderBoxSize[0]?.blockSize;
+      if (size !== undefined && size > 0) {
+        const rem = Number.parseFloat(
+          getComputedStyle(node.ownerDocument.documentElement).fontSize,
+        );
+        setHeight(`${size / rem}rem`);
+      }
+    });
+  }, [node, visible, keepMounted]);
+  return visible || keepMounted ? (
+    <SidebarSearchResultContent {...props} setSlotNode={setNode} />
+  ) : (
+    <li ref={setNode} role="presentation" className="list-none" style={{ height }}>
+      <div
+        id={props.resultId}
+        role="option"
+        aria-label={props.thread.title}
+        aria-selected={false}
+      />
+    </li>
+  );
+});
+
+const SidebarSearchResultContent = memo(function SidebarSearchResultContent({
+  setSlotNode,
+  ...props
+}: SidebarSearchResultRowProps & { setSlotNode: (node: HTMLLIElement | null) => void }) {
   const { thread } = props;
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
@@ -2485,7 +2605,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
     return () => window.removeEventListener("dragend", clearFileDrag);
   }, [isFileDragOver]);
   return (
-    <li role="presentation" className="list-none" {...fileDropHandlers}>
+    <li ref={setSlotNode} role="presentation" className="list-none" {...fileDropHandlers}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -2500,8 +2620,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               aria-current={accessibility.current}
               aria-describedby={`${props.resultId}-pr`}
               aria-label={accessibility.label}
-              onMouseMove={props.onHighlight}
-              onClick={props.onSelect}
+              onMouseMove={() => props.onHighlight(props.index)}
+              onClick={() => props.onSelect(thread)}
               className={cn(
                 "group/sidebar-row group/v2-row flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1 text-left text-sm outline-none",
                 props.isHighlighted || props.isRouteActive
@@ -4630,8 +4750,9 @@ export default function Sidebar() {
                           ) ?? null
                         }
                         searchQuery={threadSearchQuery}
-                        onHighlight={() => setActiveSearchResultIndex(index)}
-                        onSelect={() => selectThreadSearchResult(thread)}
+                        index={index}
+                        onHighlight={setActiveSearchResultIndex}
+                        onSelect={selectThreadSearchResult}
                         onFileDropThreads={handleThreadFileDrop}
                       />
                     );
@@ -4782,17 +4903,29 @@ export default function Sidebar() {
                           />
                         );
                       };
+                      let rowIndex = 0;
+                      let rowTopRem = 0;
+                      const initialRowBudgetRem = sidebarInitialRowBudgetRem();
                       const renderThreadRow = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
+                        initiallyVisible: boolean,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
+                        const variant =
+                          section === "settled" || section === "snoozed" ? "slim" : "card";
                         return (
                           <SortableThreadRow
                             key={threadKey}
                             id={threadKey}
+                            title={thread.title}
+                            variant={variant}
+                            keepMounted={
+                              routeThreadKey === threadKey || renamingThreadKey === threadKey
+                            }
+                            initiallyVisible={initiallyVisible}
                             contextDrag={isContextDrag}
                             environmentId={thread.environmentId}
                             disabled={
@@ -4820,7 +4953,21 @@ export default function Sidebar() {
                       ];
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          const initiallyVisible = rowIndex < 16 || rowTopRem < initialRowBudgetRem;
+                          rowIndex += 1;
+                          rowTopRem +=
+                            SIDEBAR_ROW_HEIGHT_REM[
+                              item.section === "settled" || item.section === "snoozed"
+                                ? "slim"
+                                : "card"
+                            ];
+                          items.push(
+                            renderThreadRow(
+                              threadByKey.get(item.key)!,
+                              item.section,
+                              initiallyVisible,
+                            ),
+                          );
                           continue;
                         }
                         switch (item.marker) {

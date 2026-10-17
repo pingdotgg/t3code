@@ -150,6 +150,47 @@ const isUnavailableBootstrapFdError = Predicate.compose(
   (_) => _.code === "EBADF" || _.code === "ENOENT",
 );
 
+/**
+ * Chromium leaves inherited descriptors without close-on-exec in Electron's
+ * Node children. Electron also opens native descriptors without that flag,
+ * so close only descriptors whose information still matches the parent.
+ * Run after reading the envelope, before services or the spawn host start.
+ */
+export const closeInheritedElectronDescriptors = Effect.fn("closeInheritedElectronDescriptors")(
+  function* (preservedFds: ReadonlyArray<number | undefined>) {
+    const platform = yield* HostProcess.Platform;
+    const environment = yield* HostProcess.Environment;
+    if (platform !== "linux" || environment.ELECTRON_RUN_AS_NODE !== "1") return;
+    const preserved = new Set([0, 1, 2, ...preservedFds]);
+    yield* Effect.sync(() => {
+      let descriptors: string[];
+      let parentPid: string | undefined;
+      try {
+        descriptors = NodeFS.readdirSync("/proc/self/fd");
+        parentPid = /^PPid:\s+(\d+)$/m.exec(NodeFS.readFileSync("/proc/self/status", "utf8"))?.[1];
+      } catch {
+        return;
+      }
+      if (parentPid === undefined) return;
+      for (const descriptor of descriptors) {
+        const fd = Number(descriptor);
+        if (preserved.has(fd)) continue;
+        try {
+          const info = NodeFS.readFileSync(`/proc/self/fdinfo/${fd}`, "utf8");
+          const flags = /^flags:\s+([0-7]+)$/m.exec(info)?.[1];
+          if (flags === undefined || (Number.parseInt(flags, 8) & 0o2000000) !== 0) continue;
+          // POSIX locks belong to the parent process and are absent in child fdinfo.
+          const parentInfo = NodeFS.readFileSync(`/proc/${parentPid}/fdinfo/${fd}`, "utf8");
+          if (parentInfo.replace(/^lock:.*\n/gm, "") !== info.replace(/^lock:.*\n/gm, "")) continue;
+          NodeFS.closeSync(fd);
+        } catch {
+          // A descriptor may already have closed; unavailable procfs is harmless.
+        }
+      }
+    });
+  },
+);
+
 const isFdReady = (fd: number) =>
   Effect.try({
     try: () => NodeFS.fstatSync(fd),

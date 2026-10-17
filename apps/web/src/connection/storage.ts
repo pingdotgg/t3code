@@ -15,7 +15,6 @@ import {
   setRoutesInCatalog,
   replaceCatalogValue,
   Persistence,
-  makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -28,7 +27,18 @@ import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ServerConfig,
+  ThreadId,
+  TurnItemId,
+  VcsListRefsResult,
+} from "@t3tools/contracts";
+import {
+  boundedSnapshotProjection,
+  omitCheckpointItemFiles,
+  omitLocalVisibleTurnItems,
+} from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -69,8 +79,17 @@ const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDoc
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
+const encodeStoredShellSnapshot = Schema.encodeEffect(StoredShellSnapshotJson);
+const shellRowsPrefix = (environmentId: EnvironmentId) => `${environmentId}\u0000`;
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
 const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
+const CompactThreadCache = Schema.Struct({
+  format: Schema.Literal("compact-thread-1"),
+  data: Schema.String,
+  omitLocal: Schema.Boolean,
+  checkpointItemIds: Schema.Array(TurnItemId),
+});
+const isCompactThreadCache = Schema.is(CompactThreadCache);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJson);
 const encodeStoredServerConfig = Schema.encodeEffect(StoredServerConfigJson);
 const decodeStoredVcsRefs = Schema.decodeUnknownEffect(StoredVcsRefsJson);
@@ -624,11 +643,6 @@ export const layer = Layer.effectContext(
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
-    // Remembers each thread row's encoding, so a save only encodes rows that changed.
-    const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
-      yieldToHost: yieldToBrowserTask,
-    });
-
     const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
         Effect.map((document) => document.targets),
@@ -733,9 +747,8 @@ export const layer = Layer.effectContext(
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
           Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
           Effect.flatMap((raw) => {
-            if (typeof raw !== "string") {
-              return Effect.succeedNone;
-            }
+            // Row manifests and future formats stay intact until live data refills the cache.
+            if (typeof raw !== "string") return Effect.succeedNone;
             return decodeOrDiscardOrchestrationCache(
               decodeStoredShellSnapshot(raw).pipe(
                 Effect.mapError((cause) => persistenceError("load-shell", cause)),
@@ -806,15 +819,26 @@ export const layer = Layer.effectContext(
           threadCacheKey(environmentId, threadId),
         ).pipe(
           Effect.flatMap((raw) => {
-            if (typeof raw !== "string") {
+            const compaction = isCompactThreadCache(raw) ? raw : undefined;
+            const encoded = compaction?.data ?? raw;
+            if (typeof encoded !== "string") {
               return Effect.succeedNone;
             }
             return decodeOrDiscardOrchestrationCache(
-              decodeStoredThreadSnapshot(raw).pipe(
+              decodeStoredThreadSnapshot(encoded).pipe(
                 Effect.mapError((cause) => persistenceError("load-thread", cause)),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId && stored.threadId === threadId
-                    ? Option.some(stored.snapshot)
+                    ? Option.some({
+                        ...stored.snapshot,
+                        projection: boundedSnapshotProjection({
+                          ...stored.snapshot,
+                          ...(compaction?.omitLocal === true
+                            ? { turnItemsOmitLocalVisible: true as const }
+                            : {}),
+                          checkpointFilesOmittedItemIds: compaction?.checkpointItemIds,
+                        }),
+                      })
                     : Option.none(),
                 ),
               ),
@@ -829,17 +853,25 @@ export const layer = Layer.effectContext(
         ),
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
+          const projection = omitLocalVisibleTurnItems(snapshot.projection) ?? snapshot.projection;
+          const compact = omitCheckpointItemFiles(projection);
           const encoded = yield* encodeStoredThreadSnapshot({
             schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
             environmentId,
             threadId: snapshot.projection.thread.id,
-            snapshot,
+            snapshot: { ...snapshot, projection: compact?.projection ?? projection },
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
             threadCacheKey(environmentId, snapshot.projection.thread.id),
-            encoded,
+            // Old clients refetch object envelopes instead of misreading bounded history.
+            {
+              format: "compact-thread-1",
+              data: encoded,
+              omitLocal: projection !== snapshot.projection,
+              checkpointItemIds: compact?.itemIds ?? [],
+            },
           );
         }).pipe(
           Effect.mapError((cause) =>
@@ -913,6 +945,14 @@ export const layer = Layer.effectContext(
           [
             Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),
             removeDatabaseValue(database, SHELL_STORE_NAME, environmentId),
+            removeDatabaseValuesInRange(
+              database,
+              SHELL_STORE_NAME,
+              IDBKeyRange.bound(
+                shellRowsPrefix(environmentId),
+                `${shellRowsPrefix(environmentId)}\uffff`,
+              ),
+            ),
             removeDatabaseValuesInRange(
               database,
               THREAD_STORE_NAME,

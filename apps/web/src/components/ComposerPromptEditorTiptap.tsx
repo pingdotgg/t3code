@@ -47,7 +47,6 @@ import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
   expandCollapsedComposerCursor,
-  isCollapsedCursorAdjacentToInlineToken,
   pastedPathQueryLength,
 } from "~/composer-logic";
 import {
@@ -134,7 +133,21 @@ export interface ComposerPromptEditorHandle {
 export interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
-  /** Resets undo history when a kept editor switches threads. */
+  /**
+   * Changes when the value was rewritten outside the editor. A rewrite can equal the last
+   * rendered value while the editor holds newer typing, so the new version still applies it.
+   */
+  valueVersion?: number;
+  /**
+   * Reads the prompt's current source of truth. A concurrent render can commit
+   * a value read before the latest keystroke; while the source already equals
+   * the editor, that older value is not applied.
+   */
+  readValue?: (() => string) | undefined;
+  /**
+   * The thread the prompt belongs to. A kept chat view that switches threads
+   * keeps its editor, and a new scope starts a new undo history.
+   */
   historyScope?: string;
   /**
    * Render Markdown styling (bold, italic, code, strike, task checkboxes).
@@ -798,6 +811,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     suggestionListId,
     activeSuggestionId,
     isPathQueryActive,
+    valueVersion,
+    readValue,
     containerClassName,
     className,
     placeholderClassName,
@@ -886,6 +901,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     contextIds: literalText ? [] : collectInlineContextIds(value),
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
+  const initialContentRef = useRef<ReturnType<typeof buildDocJson> | null>(null);
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
@@ -922,7 +938,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       const fromFlat = pmToFlat(map, from);
       const toFlat = pmToFlat(map, to);
       const nextValue = map.value;
-      const nextCursor = clampEditorCursor(map.value, flatToCollapsed(map, fromFlat));
+      // The doc cursor counts typed `@name` text by its characters. The prompt counts it as one
+      // token, as the controlled effect below does, so report the clamped cursor.
+      const docCursor = flatToCollapsed(map, fromFlat);
+      const nextCursor = clampEditorCursor(nextValue, docCursor);
       const nextExpandedCursor = Math.max(
         0,
         Math.min(map.value.length, flatToMarkdown(map, fromFlat)),
@@ -955,6 +974,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       if (previousSnapshot.value === nextValue && nextValue !== latestValueRef.current) {
         return;
       }
+      latestValueRef.current = nextValue;
       snapshotRef.current = {
         value: nextValue,
         cursor: nextCursor,
@@ -965,8 +985,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       const suppressTrigger =
         literalText ||
         inCodeBlock ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
+        map.runs.some((run) => {
+          if (run.kind !== "token") return false;
+          const start = run.collapsedStart + run.openLen;
+          return docCursor === start || docCursor === start + run.docLen;
+        });
       onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, contextIds);
     },
     [clampEditorCursor, literalText],
@@ -1108,7 +1131,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             ]
           : []),
       ],
-      content: buildDocJson(
+      content: (initialContentRef.current ??= buildDocJson(
         value,
         (name) => {
           const normalized = name.startsWith("$") ? name.slice(1) : name;
@@ -1126,7 +1149,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           };
         },
         { styling: richText, literalText },
-      ),
+      )),
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
@@ -1432,11 +1455,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           return true;
         },
       },
-      onUpdate: ({ editor: updated }) => {
-        handleEditorChange(updated);
-      },
-      onSelectionUpdate: ({ editor: updated }) => {
-        handleEditorChange(updated);
+      onTransaction: ({ editor: updated, transaction, appendedTransactions }) => {
+        if ([transaction, ...appendedTransactions].some((tr) => tr.docChanged || tr.selectionSet)) {
+          handleEditorChange(updated);
+        }
       },
     },
     [],
@@ -1528,6 +1550,16 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     ) {
       return;
     }
+    if (
+      !initialSelection &&
+      previousSnapshot.value !== value &&
+      readValue?.() === previousSnapshot.value
+    ) {
+      // The editor's text is the latest, so selection updates and focusAt
+      // must not wait for the older value to be applied.
+      latestValueRef.current = previousSnapshot.value;
+      return;
+    }
     const normalizedExpandedCursor = expandEditorCursor(value, normalizedCursor);
     snapshotRef.current = {
       value,
@@ -1589,9 +1621,12 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     editor,
     expandEditorCursor,
     literalText,
+    readValue,
     richText,
     skillLabelFor,
     value,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- An outside rewrite can equal the last rendered value.
+    valueVersion,
   ]);
 
   // Runs after the effect above has loaded the new thread's prompt, so undo

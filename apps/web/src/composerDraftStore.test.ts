@@ -2940,7 +2940,9 @@ describe("composer draft persistence", () => {
       expect(attachmentReads).toBe(0);
       expect(stringify).not.toHaveBeenCalled();
 
-      await vi.advanceTimersByTimeAsync(300);
+      await vi.advanceTimersByTimeAsync(200);
+      useComposerDraftStore.getState().setPrompt(typingRef, "Draft 20");
+      await vi.advanceTimersByTimeAsync(100);
       expect(attachmentReads).toBe(1);
       expect(stringify).toHaveBeenCalledTimes(1);
 

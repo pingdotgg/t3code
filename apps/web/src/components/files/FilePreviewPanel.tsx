@@ -30,7 +30,7 @@ import {
 } from "@pierre/diffs/edit";
 import type { WorkerPoolManager } from "@pierre/diffs/worker";
 import { EditProvider, File, Virtualizer, useWorkerPool } from "@pierre/diffs/react";
-import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { DiffWorkerPoolProvider, preloadDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import {
   isAtomCommandInterrupted,
@@ -116,6 +116,12 @@ import {
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+
+export function preloadFileViewer() {
+  return preloadDiffWorkerPool(
+    resolveDiffThemeName(document.documentElement.classList.contains("dark") ? "dark" : "light"),
+  );
+}
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;

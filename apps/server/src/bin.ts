@@ -35,6 +35,9 @@ if (
   }
   if (process.argv.length === 3 && command === "--version") {
     process.stdout.write(`t3 v${packageJson.version}\n`);
+  } else if (command === "--bootstrap-fd" || command?.startsWith("--bootstrap-fd=")) {
+    const { runLightCli } = await import("./binLightCli.ts");
+    await runLightCli("desktop");
   } else if (
     command === "pair" ||
     command === "auth" ||

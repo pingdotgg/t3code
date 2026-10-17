@@ -1165,6 +1165,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ];
         startIds.push(rows[1]!.turn_item_id);
         yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
+        yield* sql`INSERT INTO orchestration_v2_projection_checkpoints VALUES (
+          ${`checkpoint:${run}`}, ${threadId}, ${`scope:${run}`}, ${runId}, ${`node:notification-turn-pages:${run}`},
+          NULL, 1, ${run}, 'ready', ${nowIso}, json_object(
+            'id', ${`checkpoint:${run}`}, 'threadId', ${threadId}, 'scopeId', ${`scope:${run}`},
+            'runId', ${runId}, 'nodeId', ${`node:notification-turn-pages:${run}`}, 'parentCheckpointId', NULL,
+            'ordinalWithinScope', 1, 'appRunOrdinal', ${run}, 'ref', ${`refs/t3/notification-turn-pages/${run}`},
+            'status', 'ready', 'capturedAt', ${nowIso},
+            'files', json('[{"path":"a.ts","kind":"modified","additions":1,"deletions":0}]'))
+        )`;
       }
 
       const { statements, tracer } = traceSqlStatements();
@@ -1215,6 +1224,50 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         cursor = page.nextCursor;
       }
       assert.deepEqual(loaded, allIds);
+      // Exercise the same user/agent input cohorts with this existing run fixture.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items
+        SET type = 'user_message', payload_json = json_set(payload_json,
+          '$.type', 'user_message', '$.createdBy', 'agent', '$.creationSource', 'server',
+          '$.inputIntent', 'queued_turn', '$.messageId', turn_item_id, '$.text', 'wake', '$.attachments', json('[]'))
+        WHERE turn_item_id IN (SELECT value FROM json_each(${encodeUnknownJsonString(startIds)})) AND type = 'notification'`;
+      const viewport = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 77,
+        deferHistoricalSupport: true,
+      });
+      const boundedViewport = buildBoundedThreadProjection({ ...viewport, viewportWindow: true });
+      assert.deepEqual(
+        boundedViewport.projection.checkpoints
+          .map((checkpoint) => checkpoint.appRunOrdinal)
+          .toSorted((a, b) => Number(a) - Number(b)),
+        Array.from({ length: 152 }, (_, index) => index + 261),
+      );
+      assert.deepInclude(
+        boundedViewport.projection.checkpoints.find(
+          (checkpoint) => checkpoint.appRunOrdinal === 393,
+        ),
+        {
+          files: [],
+          deferredFileCount: 1,
+        },
+      );
+      assert.lengthOf(
+        boundedViewport.projection.checkpoints.find(
+          (checkpoint) => checkpoint.appRunOrdinal === 412,
+        )!.files,
+        1,
+      );
+      // No user turn in the latest 152 starts: only the viewport's checkpoint stays listed.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items
+        SET payload_json = json_set(payload_json, '$.createdBy', 'agent')
+        WHERE thread_id = ${threadId} AND type = 'user_message'`;
+      const agent = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 1,
+        deferHistoricalSupport: true,
+      });
+      assert.deepEqual(
+        agent.projection.checkpoints.map((checkpoint) => checkpoint.appRunOrdinal),
+        [412],
+      );
     }),
   );
 
@@ -1443,6 +1496,25 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         assert.lengthOf(sharedNodeSnapshot.projection.visibleTurnItems, 76);
         assert.deepEqual(sharedNodeSnapshot.projection.nodes, snapshot.projection.nodes);
+
+        const promptId = TurnItemId.make("item:bounded-node-history:prompt");
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+          SELECT ${promptId}, thread_id, run_id, ${rootNodeId}, provider_thread_id,
+            provider_turn_id, parent_item_id, 0, 'user_message', status, updated_at,
+            json_set(payload_json, '$.id', ${promptId}, '$.nodeId', ${rootNodeId}, '$.ordinal', 0,
+              '$.type', 'user_message', '$.messageId', 'prompt', '$.text', 'Start the long run',
+              '$.attachments', json('[]'), '$.inputIntent', 'turn_start', '$.createdBy', 'user', '$.creationSource', 'web')
+          FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${duplicateItemId}`;
+        const viewport = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 75,
+          deferHistoricalSupport: true,
+        });
+        assert.strictEqual(viewport.projection.visibleTurnItems[0]?.sourceItemId, promptId);
+        assert.lengthOf(viewport.projection.visibleTurnItems, 76);
+        const legacy = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 75 });
+        assert.isFalse(
+          legacy.projection.visibleTurnItems.some((row) => row.sourceItemId === promptId),
+        );
       }),
   );
 
@@ -5837,12 +5909,32 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = json_set(payload_json, '$.pullRequests', json('[]'))
         WHERE thread_id = ${threadId}`;
+      yield* store.apply({
+        id: EventId.make("event:older-writer:visited"),
+        type: "thread.visit-recorded",
+        threadId,
+        occurredAt: at,
+        payload: { lastVisitedAt: at },
+      });
       assert.deepEqual(yield* store.getThreadsWithPullRequests(), []);
-      // Its write marks the read projection stale, so shells read the payload it wrote.
+      // Its write marked the read projection stale. The visit rebuilt it from
+      // that payload, so shells read what it wrote without decoding the thread.
+      const [read] = yield* sql<{ readonly source_stale: number }>`
+        SELECT source_stale FROM orchestration_v2_projection_thread_reads
+        WHERE thread_id = ${threadId}`;
+      assert.equal(read?.source_stale, 0);
       assert.deepEqual(
         (yield* store.getThreadShell(threadId, { compactPullRequests: true }))?.pullRequests,
         [],
       );
+      yield* store.apply({
+        id: EventId.make("event:older-writer:marked-unread"),
+        type: "thread.visit-recorded",
+        threadId,
+        occurredAt: at,
+        payload: { lastVisitedAt: null },
+      });
+      assert.equal((yield* store.getThreadShell(threadId))?.lastVisitedAt, null);
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = ${stored!.payload_json} WHERE thread_id = ${threadId}`;
       assert.equal((yield* store.getThreadsWithPullRequests()).length, 1);

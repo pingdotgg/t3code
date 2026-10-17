@@ -274,6 +274,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
         }),
       ),
+      // A cache can wait before writing. A deletion in that wait has already
+      // removed the entry, so remove the write that landed after it.
+      Effect.tap(() =>
+        committed.state.status === "deleted"
+          ? cache.removeThread(environmentId, threadId)
+          : Effect.void,
+      ),
       Effect.catch((error) =>
         Effect.logWarning("Could not persist the thread cache.").pipe(
           Effect.annotateLogs({
@@ -695,7 +702,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 { _tag: "loaded" },
                 {
                   ...latest,
-                  data: Option.some(mergeOlderHistoryIntoProjection(latest.data.value, page.items)),
+                  data: Option.some(
+                    mergeOlderHistoryIntoProjection(latest.data.value, page.items, page.support),
+                  ),
                   status: complete && waiting ? "synchronizing" : latest.status,
                   history: complete
                     ? applyHistoryPageMeta(latest.history, page)
@@ -861,6 +870,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 acceptBoundedSnapshot: true as const,
                 acceptCompactTurnItems: true as const,
                 acceptCompactCheckpointItems: true as const,
+                acceptViewportWindow: true as const,
               }
             : {}),
         };

@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
 import * as ConnectionStorage from "./storage";
+import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "../test-fixtures";
 
 const emptyCatalog = {
   schemaVersion: 1,
@@ -135,6 +136,73 @@ describe("ConnectionStorage.makeCatalogBackend", () => {
 });
 
 describe("environment cache removal", () => {
+  it.effect("compacts snapshots and reads legacy caches without discarding future formats", () => {
+    vi.stubGlobal("window", {});
+    const values = new Map<IDBValidKey, unknown>();
+    const request = (result: unknown) => {
+      const value = Object.assign(new EventTarget(), { result, error: null });
+      queueMicrotask(() => value.dispatchEvent(new Event("success")));
+      return value;
+    };
+    const database = Object.assign(new EventTarget(), {
+      close: vi.fn(),
+      transaction: () => {
+        const transaction = new EventTarget();
+        return Object.assign(transaction, {
+          objectStore: () => ({
+            get: (key: IDBValidKey) => request(values.get(key)),
+            put: (value: unknown, key: IDBValidKey) => {
+              values.set(key, value);
+              queueMicrotask(() => transaction.dispatchEvent(new Event("complete")));
+            },
+          }),
+        });
+      },
+    });
+    vi.stubGlobal("indexedDB", { open: () => request(database) });
+    return Effect.gen(function* () {
+      const cache = yield* Persistence.EnvironmentCacheStore;
+      const environmentId = EnvironmentId.make("env");
+      const projection = makeThreadProjectionFixture();
+      const item = {
+        ...makeStreamingTimelineFixture().visibleTurnItems[2]!.item,
+        threadId: projection.thread.id,
+      };
+      const snapshot = {
+        snapshotSequence: 1,
+        projection: {
+          ...projection,
+          turnItems: [item],
+          visibleTurnItems: [
+            {
+              position: 0,
+              visibility: "local" as const,
+              sourceThreadId: item.threadId,
+              sourceItemId: item.id,
+              item,
+            },
+          ],
+        },
+      };
+      yield* cache.saveThread(environmentId, snapshot);
+      const [key, envelope] = [...values.entries()][0] as [
+        IDBValidKey,
+        { data: string; omitLocal: boolean },
+      ];
+      expect(envelope).toMatchObject({ format: "compact-thread-1", omitLocal: true });
+      const loaded = Option.getOrThrow(yield* cache.loadThread(environmentId, item.threadId));
+      expect(loaded.projection.turnItems).toEqual([item]);
+      expect(loaded.projection.turnItems[0]).toBe(loaded.projection.visibleTurnItems[0]?.item);
+      values.set(key, JSON.stringify({ ...JSON.parse(envelope.data), snapshot }));
+      expect(
+        Option.getOrThrow(yield* cache.loadThread(environmentId, item.threadId)).projection
+          .turnItems,
+      ).toEqual([item]);
+      values.set(key, { format: "future-cache" });
+      expect(Option.isNone(yield* cache.loadThread(environmentId, item.threadId))).toBe(true);
+      expect(values.get(key)).toEqual({ format: "future-cache" });
+    }).pipe(Effect.provide(ConnectionStorage.layer));
+  });
   it.effect("fails both removal operations when IndexedDB aborts their commits", () =>
     Effect.gen(function* () {
       vi.stubGlobal("window", {});

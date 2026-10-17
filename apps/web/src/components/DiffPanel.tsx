@@ -44,7 +44,6 @@ import {
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadProjection, useThreadShell } from "../state/entities";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
@@ -81,7 +80,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
-import { reviewEnvironment } from "../state/review";
+import { reviewEnvironment, reviewWorkspaceRevision } from "../state/review";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
@@ -182,6 +181,12 @@ function DiffFileHeaderSuffix({
     </>
   );
 }
+
+// Preserve explicit refresh epochs across short panel remounts.
+const diffRefreshVersions = new Map<string, number>();
+// The cache key each review scope's preview last loaded, so a workspace
+// change while the panel was closed still refreshes it on reopen.
+const loadedPreviewCacheKeys = new Map<string, string>();
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
@@ -334,8 +339,36 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
-  const branchDiffPreview = useEnvironmentQuery(
-    canReadFiles && selectedRunId === null && activeThread && activeCwd
+  const reviewScope = JSON.stringify([
+    activeThread?.environmentId,
+    activeCwd,
+    selectedBaseRef,
+    diffIgnoreWhitespace,
+  ]);
+  const [refreshVersion, setRefreshVersion] = useState({
+    scope: reviewScope,
+    version: diffRefreshVersions.get(reviewScope) ?? 0,
+  });
+  const version =
+    refreshVersion.scope === reviewScope
+      ? refreshVersion.version
+      : (diffRefreshVersions.get(reviewScope) ?? 0);
+  const savedFileRevision = useAtomValue(
+    reviewWorkspaceRevision(activeThread?.environmentId, activeCwd ?? undefined),
+  );
+  const reviewCacheKey = JSON.stringify([workspaceMutationId, savedFileRevision, version]);
+  const refreshBranchDiffPreview = useCallback(() => {
+    const next = Math.max(Date.now(), (diffRefreshVersions.get(reviewScope) ?? 0) + 1);
+    if (diffRefreshVersions.size >= 64 && !diffRefreshVersions.has(reviewScope))
+      diffRefreshVersions.delete(diffRefreshVersions.keys().next().value!);
+    diffRefreshVersions.set(reviewScope, next);
+    setRefreshVersion({ scope: reviewScope, version: next });
+  }, [reviewScope, setRefreshVersion]);
+  const previewEnabled = canReadFiles && selectedRunId === null && activeThread && activeCwd;
+  // One preview per scope: a new cache key refreshes it in place, so a
+  // superseded preview is never kept beside the current one.
+  const requestedBranchDiffPreview = useEnvironmentQuery(
+    previewEnabled
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -346,17 +379,40 @@ export default function DiffPanel({
         })
       : null,
   );
+  const refreshPreviewQuery = requestedBranchDiffPreview.refresh;
+  useEffect(() => {
+    if (!previewEnabled) return;
+    const loaded = loadedPreviewCacheKeys.get(reviewScope);
+    if (loaded === reviewCacheKey) return;
+    if (loadedPreviewCacheKeys.size >= 64 && loaded === undefined)
+      loadedPreviewCacheKeys.delete(loadedPreviewCacheKeys.keys().next().value!);
+    loadedPreviewCacheKeys.set(reviewScope, reviewCacheKey);
+    if (loaded !== undefined) refreshPreviewQuery();
+  }, [previewEnabled, refreshPreviewQuery, reviewCacheKey, reviewScope]);
+  const [previousPreview, setPreviousPreview] = useState({
+    scope: reviewScope,
+    data: requestedBranchDiffPreview.data,
+  });
+  if (
+    requestedBranchDiffPreview.data !== null &&
+    (previousPreview.scope !== reviewScope ||
+      previousPreview.data !== requestedBranchDiffPreview.data)
+  ) {
+    setPreviousPreview({ scope: reviewScope, data: requestedBranchDiffPreview.data });
+  }
+  const branchDiffPreview = {
+    ...requestedBranchDiffPreview,
+    data:
+      requestedBranchDiffPreview.data ??
+      (previousPreview.scope === reviewScope ? previousPreview.data : null),
+  };
   const canRefreshGitDiff =
     isGitRepo && selectedRunId === null && activeThread != null && activeCwd != null;
-  const activeThreadRefreshKey = routeThreadRef
-    ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
-    : null;
 
   const selectedGitSource = branchDiffPreview.data?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
-  const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const refreshDiffFromUserAction = refreshBranchDiffPreview;
 
   const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
     const preview = branchDiffPreview.data;
@@ -485,7 +541,6 @@ export default function DiffPanel({
       : undefined,
     preview: renderablePatch,
   });
-  const refreshBranchDiffPreview = refreshPreviewQuery;
 
   useEffect(() => {
     if (!canRefreshGitDiff) return;
@@ -493,13 +548,6 @@ export default function DiffPanel({
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [canRefreshGitDiff, refreshBranchDiffPreview]);
-
-  useWorkspaceMutationRefresh({
-    enabled: canRefreshGitDiff,
-    mutationId: workspaceMutationId,
-    refresh: refreshBranchDiffPreview,
-    resourceKey: `diff:${activeThreadRefreshKey ?? ""}`,
-  });
 
   const isRefreshingDiff = branchDiffPreview.isPending || areFilePatchesPending;
   const renderableFileEntries = useMemo(

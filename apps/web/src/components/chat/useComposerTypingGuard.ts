@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   COMPOSER_TYPING_IDLE_MS,
   createComposerTypingGuardState,
@@ -17,22 +17,35 @@ export function useComposerTypingGuard(scope: string, requestIds: readonly strin
     }),
   }));
   const state = snapshot.state;
+  const lastTypedAtRef = useRef(-Infinity);
+  useLayoutEffect(() => {
+    lastTypedAtRef.current = -Infinity;
+  }, [scope]);
   if (snapshot.scope !== scope || snapshot.requestsKey !== requestsKey) {
     setSnapshot((current) => ({
       scope,
       requestsKey,
       state: updateComposerTypingGuard(
         current.scope === scope
-          ? current.state
+          ? { ...current.state, lastTypedAt: lastTypedAtRef.current }
           : { ...createComposerTypingGuardState(), focused: current.state.focused },
         { type: "requests", requestIds, now: Date.now() },
       ),
     }));
   }
+  // Only the idle deadline changes during typing, not the rendered held requests.
   const dispatch = useCallback((event: Parameters<typeof updateComposerTypingGuard>[1]) => {
+    if (event.type === "type") {
+      lastTypedAtRef.current = event.now;
+      return;
+    }
+    const lastTypedAt = lastTypedAtRef.current;
+    if (event.type === "blur" || event.type === "send" || event.type === "idle") {
+      lastTypedAtRef.current = -Infinity;
+    }
     setSnapshot((current) => ({
       ...current,
-      state: updateComposerTypingGuard(current.state, event),
+      state: updateComposerTypingGuard({ ...current.state, lastTypedAt }, event),
     }));
   }, []);
   const onDraftChange = useCallback(() => dispatch({ type: "type", now: Date.now() }), [dispatch]);
@@ -41,11 +54,17 @@ export function useComposerTypingGuard(scope: string, requestIds: readonly strin
   const onSend = useCallback(() => dispatch({ type: "send" }), [dispatch]);
   useEffect(() => {
     if (state.held.size === 0) return;
-    const timeout = window.setTimeout(
-      () => dispatch({ type: "idle" }),
-      Math.max(0, state.lastTypedAt + COMPOSER_TYPING_IDLE_MS - Date.now()),
+    let timeout: number;
+    const releaseWhenIdle = () => {
+      const remaining = lastTypedAtRef.current + COMPOSER_TYPING_IDLE_MS - Date.now();
+      if (remaining > 0) timeout = window.setTimeout(releaseWhenIdle, remaining);
+      else dispatch({ type: "idle" });
+    };
+    timeout = window.setTimeout(
+      releaseWhenIdle,
+      Math.max(0, lastTypedAtRef.current + COMPOSER_TYPING_IDLE_MS - Date.now()),
     );
     return () => window.clearTimeout(timeout);
-  }, [state.held, state.lastTypedAt, dispatch]);
+  }, [state.held, dispatch]);
   return { heldRequestIds: state.held, onDraftChange, onFocus, onBlur, onSend };
 }

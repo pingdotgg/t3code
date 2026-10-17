@@ -308,6 +308,7 @@ export interface OrchestratorV2Shape {
     cursor: string,
     throughEntryId?: string,
     conversationOnly?: boolean,
+    includeSupport?: boolean,
   ) => Effect.Effect<OrchestrationV2ThreadHistoryPage, OrchestratorV2Error>;
   readonly getTimelinePage: (
     threadId: ThreadId,
@@ -11402,9 +11403,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
           ),
         ),
-    getThreadHistoryPage: (threadId, cursor, throughEntryId, conversationOnly) =>
+    getThreadHistoryPage: (threadId, cursor, throughEntryId, conversationOnly, includeSupport) =>
       projectionStore
-        .getThreadHistoryPage(threadId, cursor, throughEntryId, conversationOnly)
+        .getThreadHistoryPage(threadId, cursor, throughEntryId, conversationOnly, includeSupport)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getTimelinePage: (threadId, options) =>
       projectionStore

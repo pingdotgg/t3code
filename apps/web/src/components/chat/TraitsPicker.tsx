@@ -272,6 +272,7 @@ export interface TraitsMenuContentProps {
   model: string | null | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
+  getPrompt?: () => string;
   modelOptions?: ProviderOptions | null | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
@@ -287,6 +288,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   model,
   prompt,
   onPromptChange,
+  getPrompt,
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
@@ -341,17 +343,18 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
+    const currentPrompt = getPrompt?.() ?? prompt;
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
-        prompt.trim().length === 0
+        currentPrompt.trim().length === 0
           ? ULTRATHINK_PROMPT_PREFIX
-          : applyClaudePromptEffortPrefix(prompt, "ultrathink");
+          : applyClaudePromptEffortPrefix(currentPrompt, "ultrathink");
       onPromptChange(nextPrompt);
       return;
     }
     if (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id) return;
     if (ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id) {
-      const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
+      const stripped = currentPrompt.replace(/^Ultrathink:\s*/i, "");
       onPromptChange(stripped);
     }
     updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
@@ -565,6 +568,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   model,
   prompt,
   onPromptChange,
+  getPrompt,
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
@@ -674,7 +678,8 @@ export const TraitsPicker = memo(function TraitsPicker({
           {...(instanceId ? { instanceId } : {})}
           models={models}
           model={model}
-          prompt={prompt}
+          prompt={getPrompt?.() ?? prompt}
+          {...(getPrompt ? { getPrompt } : {})}
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           reportedModelSelection={reportedModelSelection}

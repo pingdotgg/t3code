@@ -45,6 +45,92 @@ function row(index: number): OrchestrationV2ProjectedTurnItem {
 }
 
 describe("threadHistoryMerge", () => {
+  it("hydrates support in order, keeps live values and fills deferred files", () => {
+    const run = (ordinal: number) => ({
+      id: `run-${ordinal}` as never,
+      threadId: v2ThreadId,
+      ordinal,
+      providerInstanceId: "codex" as never,
+      modelSelection: { instanceId: "codex" as never, model: "gpt-5" },
+      providerThreadId: null,
+      userMessageId: `message-${ordinal}` as never,
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: ordinal === 3 ? ("running" as const) : ("completed" as const),
+      requestedAt: NOW,
+      startedAt: NOW,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    });
+    const checkpoint = (ordinal: number) => ({
+      id: `checkpoint-${ordinal}` as never,
+      threadId: v2ThreadId,
+      scopeId: "scope" as never,
+      runId: `run-${ordinal}` as never,
+      nodeId: `node-${ordinal}` as never,
+      parentCheckpointId: null,
+      ordinalWithinScope: ordinal,
+      appRunOrdinal: ordinal,
+      ref: `refs/t3/${ordinal}` as never,
+      status: "ready" as const,
+      files: [],
+      capturedAt: DateTime.add(NOW, { minutes: ordinal }),
+    });
+    const attempt = (runOrdinal: number, attemptOrdinal: number, completed: boolean) => ({
+      id: `attempt-${runOrdinal}-${attemptOrdinal}` as never,
+      runId: `run-${runOrdinal}` as never,
+      attemptOrdinal,
+      rootNodeId: `node-${runOrdinal}` as never,
+      providerInstanceId: "codex" as never,
+      providerThreadId: "provider-thread" as never,
+      providerTurnId: null,
+      reason: attemptOrdinal === 1 ? ("initial" as const) : ("steering_restart" as const),
+      status: completed ? ("completed" as const) : ("running" as const),
+      startedAt: NOW,
+      completedAt: completed ? NOW : null,
+    });
+    const full = {
+      ...checkpoint(2),
+      files: [{ path: "a.ts", kind: "modified", additions: 1, deletions: 0 }],
+    };
+    const listed = { ...full, files: [], deferredFileCount: 1 };
+    const current = {
+      ...v2Projection,
+      runs: [run(2)],
+      attempts: [attempt(2, 1, true)],
+      checkpoints: [listed],
+      visibleTurnItems: [row(4)],
+      turnItems: [row(4).item],
+    };
+    const support = {
+      nodes: [],
+      checkpoints: [checkpoint(1), full, checkpoint(3)],
+      runs: [run(1), { ...run(2), status: "running" as const }, run(3)],
+      attempts: [attempt(1, 1, true), attempt(2, 2, false)],
+    };
+    for (const rows of [[], [row(1)], current.visibleTurnItems]) {
+      const merged = mergeOlderHistoryIntoProjection(current, rows, support);
+      expect(merged.runs[1]).toBe(current.runs[0]);
+      expect(merged.runs.map((value) => value.ordinal)).toEqual([1, 2, 3]);
+      expect(merged.attempts.map((value) => value.id)).toEqual([
+        "attempt-1-1",
+        "attempt-2-1",
+        "attempt-2-2",
+      ]);
+      expect(merged.checkpoints).toEqual([checkpoint(1), full, checkpoint(3)]);
+      expect(merged.checkpoints[1]).toBe(full);
+      expect(merged.visibleTurnItems.map((value) => value.sourceItemId)).toEqual(
+        rows[0]?.sourceItemId === "item-1" ? ["item-1", "item-4"] : ["item-4"],
+      );
+    }
+    const kept = mergeOlderHistoryIntoProjection({ ...current, checkpoints: [full] }, [], {
+      ...support,
+      checkpoints: [listed],
+    });
+    expect(kept.checkpoints[0]).toBe(full);
+  });
+
   it("fills activity around partial messages in canonical order and preserves live edits", () => {
     const initial = { ...v2Projection, turnItems: [row(4).item], visibleTurnItems: [row(4)] };
     const preview = [row(1), row(3)];

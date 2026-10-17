@@ -99,7 +99,7 @@ function checkpointTitle(checkpoint: ThreadCheckpointSummary): string {
 }
 
 function checkpointSubtitle(checkpoint: ThreadCheckpointSummary): string {
-  const fileCount = checkpoint.files.length;
+  const fileCount = checkpoint.deferredFileCount ?? checkpoint.files.length;
   if (checkpoint.status !== "ready") {
     return `Diff ${checkpoint.status}`;
   }

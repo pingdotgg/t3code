@@ -50,10 +50,6 @@
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
-    },
-    "./server/keychainToken": {
-      "types": "./src/server/keychainToken.ts",
-      "import": "./src/server/keychainToken.ts"
     }
   },
   "scripts": {

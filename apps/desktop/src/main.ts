@@ -227,9 +227,10 @@ const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provideMerge(ElectronApp.layer),
 );
 
+// node:http bypasses environment proxies and keeps undici out of the main bundle.
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
   Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(NodeHttpClient.layerUndici),
+  Layer.provideMerge(NodeHttpClient.layerNodeHttp),
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(layerElectron),
 );

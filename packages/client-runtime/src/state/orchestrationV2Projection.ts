@@ -171,6 +171,18 @@ function upsertVisibleTurnItem(
   ) {
     return rows;
   }
+  // Token updates replace the item in its existing slot. Only an ordinal or
+  // source change can require sorting and renumbering the visible timeline.
+  if (
+    previous !== undefined &&
+    previous.visibility === next.visibility &&
+    previous.sourceThreadId === next.sourceThreadId &&
+    previous.item.ordinal === item.ordinal
+  ) {
+    const updated = [...rows];
+    updated[index] = { ...previous, item };
+    return updated;
+  }
   if (
     index === -1 &&
     partialTimeline &&

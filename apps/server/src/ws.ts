@@ -109,7 +109,7 @@ import {
   HttpServerRespondable,
   HttpServerResponse,
 } from "effect/http";
-import { RpcSerialization, RpcServer } from "effect/rpc";
+import { RpcServer } from "effect/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
@@ -117,6 +117,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as StreamSerialization from "./orchestration-v2/StreamSerialization.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -741,6 +742,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly acceptBoundedSnapshot?: boolean;
     readonly acceptCompactTurnItems?: boolean;
     readonly acceptCompactCheckpointItems?: boolean;
+    readonly acceptViewportWindow?: boolean;
     readonly acceptThreadFieldEvents?: boolean;
   }) {
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -850,7 +852,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         useBoundedSnapshot
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
               rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-              userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+              deferHistoricalSupport: input.acceptViewportWindow === true,
+              userTurnLimit: input.acceptViewportWindow
+                ? undefined
+                : THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
             })
           : threadManagement.getThreadSnapshot(input.threadId)
       ).pipe(
@@ -869,6 +874,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             ...snapshot,
             compactTurnItems: input.acceptCompactTurnItems === true,
             compactCheckpointItems: input.acceptCompactCheckpointItems === true,
+            viewportWindow: input.acceptViewportWindow === true,
           })
         : {
             kind: "snapshot" as const,
@@ -1728,17 +1734,28 @@ const layerWsRpc = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
-          const editorConfig =
-            options.deferEditors === true
-              ? { availableEditors: [] }
-              : yield* resolveEditorConfig(
-                  yield* resolveAvailableEditorsForConfig(
-                    externalLauncher.resolveAvailableEditors(),
-                  ),
-                  resolveFileManagerRevealKindForConfig(
-                    externalLauncher.resolveFileManagerRevealKind(),
-                  ),
-                );
+          const [editorConfig, availableRemoteOpenTargets, availableDirectEndpoints] =
+            yield* Effect.all(
+              [
+                options.deferEditors === true
+                  ? Effect.succeed({ availableEditors: [] })
+                  : resolveAvailableEditorsForConfig(
+                      externalLauncher.resolveAvailableEditors(),
+                    ).pipe(
+                      Effect.flatMap((editors) =>
+                        resolveEditorConfig(
+                          editors,
+                          resolveFileManagerRevealKindForConfig(
+                            externalLauncher.resolveFileManagerRevealKind(),
+                          ),
+                        ),
+                      ),
+                    ),
+                resolveAvailableEditorsForConfig(remoteOpenTargets.resolveTargets()),
+                resolveAvailableEditorsForConfig(directEndpoints.resolve()),
+              ],
+              { concurrency: "unbounded" },
+            );
 
           return {
             environment,
@@ -1749,10 +1766,10 @@ const layerWsRpc = (
             issues: keybindingsConfig.issues,
             providers,
             ...editorConfig,
-            remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-              remoteOpenTargets.resolveTargets(),
-            ),
-            directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
+            // Same discovery-with-timeout treatment as editors: a slow probe
+            // must not stall server.getConfig, so it degrades to no targets.
+            remoteOpenTargets: availableRemoteOpenTargets,
+            directEndpoints: availableDirectEndpoints,
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
@@ -3241,7 +3258,7 @@ export const layer = Layer.unwrap(
               previewAutomationBroker,
               serverBrowser,
             ).pipe(
-              Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provideMerge(StreamSerialization.layer),
               // Request fibers run in the handlers' context, so this reporter sees
               // their defects, not the rest of the server's.
               Layer.provide(DefectReporter.layer),

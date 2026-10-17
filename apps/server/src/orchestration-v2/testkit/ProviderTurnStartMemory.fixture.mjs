@@ -30,6 +30,7 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
     app("project/ProjectService"),
     app("provider/ProviderAuthService"),
   ]);
+const Checkpoint = await app("orchestration-v2/CheckpointService");
 let current;
 let fullReads = 0;
 let threadReads = 0;
@@ -48,6 +49,7 @@ const session = {
 };
 const dependencies = Layer.mergeAll(
   Layer.mock(Handoff.ContextHandoffServiceV2)({}),
+  Layer.mock(Checkpoint.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
   Id.layer,
   FileSystem.layerNoop({}),
   Path.layer,

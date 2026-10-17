@@ -1,5 +1,5 @@
 import { preloadPatchFile } from "@pierre/diffs/ssr";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { EMPTY_COMPOSER_CONTEXT_RECORDS } from "../composerContextPresentation";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
@@ -11,6 +11,30 @@ import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 const EMPTY_SKILLS: ReadonlyArray<never> = [];
 
+// Below-fold previews defer their grammars, fonts, and WASM until visible.
+function useRevealed(ref: RefObject<HTMLElement | null>): boolean {
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const element = ref.current;
+    if (revealed || element === null) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setRevealed(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      observer.disconnect();
+      setRevealed(true);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref, revealed]);
+  return revealed;
+}
+
+// Serialized the way the composer stores inline tokens: the $skill and the
+// markdown-style file links render as chips, so the preview shows prompt
+// text and pills exactly as the real composer draws them.
 const PROMPT_PREVIEW_TEXT =
   "Use $frontend-design to fix the flaky test in " +
   "[surface.test.ts](apps/web/src/terminal/ghostty/surface.test.ts) and align the header with " +
@@ -19,6 +43,12 @@ const PROMPT_PREVIEW_TEXT =
 function noop() {}
 
 export function PromptFontPreview() {
+  const ref = useRef<HTMLDivElement>(null);
+  const revealed = useRevealed(ref);
+  return <div ref={ref}>{revealed ? <PromptPreview /> : <div className="mt-1 mb-2 h-16.5" />}</div>;
+}
+
+function PromptPreview() {
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);
   const [cursor, setCursor] = useState(PROMPT_PREVIEW_TEXT.length);
@@ -97,7 +127,7 @@ const DIFF_PREVIEW_THEME_BRIDGE = `
 
 function StaticDiffHtml({ html }: { html: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (host === null) return;
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });

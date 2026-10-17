@@ -23,6 +23,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -549,14 +550,21 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
 
   useLayoutEffect(() => {
     measure();
-  });
+  }, [element, measure]);
 
   useEffect(() => {
     if (!element) return;
     const stopObserving = observeResize(element, measure);
+    const mutations = new MutationObserver(() => flushSync(measure));
+    mutations.observe(element, { subtree: true, childList: true, characterData: true });
+    mutations.observe(element.ownerDocument.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
     document.fonts.addEventListener("loadingdone", measure);
     return () => {
       stopObserving();
+      mutations.disconnect();
       document.fonts.removeEventListener("loadingdone", measure);
     };
   }, [element, measure]);

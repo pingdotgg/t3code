@@ -534,5 +534,7 @@ it("does not scan every row against every run for a streaming item update", () =
   } as OrchestrationV2DomainEvent);
   expect(next?.visibleTurnItems.at(-1)?.item).toBe(payload);
   expect(next?.visibleTurnItems[0]).toBe(projection.visibleTurnItems[0]);
+  expect(next?.visibleTurnItems[998]).toBe(projection.visibleTurnItems[998]);
+  expect(next?.visibleTurnItems.at(-1)?.position).toBe(999);
   expect(runReads).toBeLessThanOrEqual(100);
 });

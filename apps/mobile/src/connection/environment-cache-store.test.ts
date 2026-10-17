@@ -1,6 +1,9 @@
+import * as Schema from "effect/Schema";
 import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+  StoredOrchestrationThreadSnapshot,
 } from "@t3tools/client-runtime/platform";
 import {
   CommandId,
@@ -27,6 +30,10 @@ const PROJECT_ID = ProjectId.make("project-1");
 const THREAD_ID = ThreadId.make("thread-1");
 const PROVIDER_INSTANCE_ID = ProviderInstanceId.make("codex");
 const NOW = DateTime.makeUnsafe("2026-07-29T12:00:00.000Z");
+// How a bundle without the deferred-thread envelope decodes a cached thread.
+const decodePlainStoredThread = Schema.decodeUnknownExit(
+  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
+);
 const SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
   schemaVersion: 1,
   snapshotSequence: 3,
@@ -246,6 +253,36 @@ describe("mobile SQLite environment cache store", () => {
       expect(memory.schemaVersions.get(cacheId(ENVIRONMENT_ID, "thread", THREAD_ID))).toBe(
         ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
       );
+
+      // An older bundle reads deferred checkpoints' empty file lists as "no
+      // changes", so it must not be able to decode their entry.
+      yield* store.saveThread(ENVIRONMENT_ID, {
+        ...THREAD_SNAPSHOT,
+        projection: {
+          ...THREAD_SNAPSHOT.projection,
+          checkpoints: [
+            {
+              id: "checkpoint-deferred" as never,
+              threadId: THREAD_ID,
+              scopeId: "scope" as never,
+              runId: null,
+              nodeId: "node" as never,
+              parentCheckpointId: null,
+              ordinalWithinScope: 1,
+              appRunOrdinal: 1,
+              ref: "refs/t3/deferred" as never,
+              status: "ready",
+              files: [],
+              deferredFileCount: 2,
+              capturedAt: NOW,
+            },
+          ],
+        },
+      });
+      const deferredPayload = memory.values.get(cacheId(ENVIRONMENT_ID, "thread", THREAD_ID))!;
+      expect(decodePlainStoredThread(deferredPayload)._tag).toBe("Failure");
+      const deferred = Option.getOrThrow(yield* store.loadThread(ENVIRONMENT_ID, THREAD_ID));
+      expect(deferred.projection.checkpoints[0]?.deferredFileCount).toBe(2);
     }),
   );
 

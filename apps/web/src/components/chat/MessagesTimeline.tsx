@@ -36,6 +36,7 @@ import {
 import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -208,6 +209,8 @@ import {
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
+  historyCursorAnchorsItem,
+  timelineRunIdsOpeningWindow,
   timelineTurnFoldRunIdsByEntryId,
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -407,6 +410,8 @@ export interface MessagesTimelineHistoryControls {
   readonly loading: boolean;
   readonly error: string | null;
   readonly onLoadEarlier: (throughEntryId?: string) => void;
+  /** Where the next older page ends; it names the oldest loaded row. */
+  readonly cursor?: string | null;
 }
 
 interface MessagesTimelineProps {
@@ -724,6 +729,32 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   }, []);
+
+  useEffect(() => {
+    if (!historyControls?.hasMoreHistory || historyControls.loading || historyControls.error)
+      return;
+    // A row window can start inside a folded turn. Hydrate its missing activity
+    // only when the reader opens it, stopping once a response boundary precedes it.
+    // The server keeps a long turn's prompt above the gap, so a prompt that
+    // opens the window still names its run, unless the cursor anchors on it:
+    // then the window starts at a turn boundary and nothing of it is missing.
+    const openingRunIds = new Set(timelineRunIdsOpeningWindow(timelineEntries));
+    const firstEntry = timelineEntries[0];
+    if (
+      firstEntry?.kind === "message" &&
+      firstEntry.message.role === "user" &&
+      firstEntry.message.runId != null &&
+      !historyCursorAnchorsItem(historyControls.cursor, firstEntry.projectedItem?.sourceItemId)
+    ) {
+      openingRunIds.add(firstEntry.message.runId);
+    }
+    for (const runId of paintedExpandedRunIds) {
+      if (openingRunIds.has(runId)) {
+        historyControls.onLoadEarlier(runId);
+        break;
+      }
+    }
+  }, [historyControls, paintedExpandedRunIds, timelineEntries]);
 
   const onToggleTurnFold = useCallback(
     (runId: RunId) => {
@@ -2764,7 +2795,8 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
 
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
-  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const message = useStreamingFrameMessage(row.message, ctx.threadRef);
+  const messageText = message.text || (message.streaming ? "" : "(empty response)");
 
   return (
     <>
@@ -2782,7 +2814,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               text={messageText}
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
+              isStreaming={Boolean(message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
@@ -2802,7 +2834,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           <AssistantMessageMeta
             className="mt-1.5"
             projectedItem={row.projectedItem}
-            message={row.message}
+            message={message}
             showCopyButton={row.showAssistantCopyButton}
             copyStreaming={row.assistantCopyStreaming}
           />
@@ -2810,6 +2842,58 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       </div>
     </>
   );
+}
+
+/** The message as the live row has it; the presentation snapshot freezes while tokens stream. */
+function readStreamedMessage(message: ChatMessage, threadRef: ScopedThreadRef): ChatMessage | null {
+  const item = appAtomRegistry
+    .get(environmentThreadDetails.visibleTurnItemsAtom(threadRef))
+    .find(
+      (row) => row.item.type === "assistant_message" && row.item.messageId === message.id,
+    )?.item;
+  return item?.type === "assistant_message"
+    ? {
+        ...message,
+        text: item.text,
+        updatedAt: DateTime.formatIso(item.updatedAt),
+        streaming: item.streaming,
+      }
+    : null;
+}
+
+/** Coalesce markdown work for token bursts, and show the final text immediately. */
+function useStreamingFrameMessage(
+  message: ChatMessage,
+  threadRef: ScopedThreadRef | null,
+): ChatMessage {
+  // A row that mounts mid-stream starts from the live text, not the snapshot's.
+  const [painted, setPainted] = useState(
+    () =>
+      (message.streaming && threadRef !== null ? readStreamedMessage(message, threadRef) : null) ??
+      message,
+  );
+  useEffect(() => {
+    if (!message.streaming || threadRef === null) return;
+    const atom = environmentThreadDetails.visibleTurnItemsAtom(threadRef);
+    let frame: number | undefined;
+    const paint = () => {
+      const streamed = readStreamedMessage(message, threadRef);
+      if (streamed) setPainted(streamed);
+    };
+    const unsubscribe = appAtomRegistry.subscribe(atom, () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        paint();
+      });
+    });
+    paint();
+    return () => {
+      unsubscribe();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, [message, threadRef]);
+  return message.streaming && painted.id === message.id ? painted : message;
 }
 
 function AssistantForkButton({

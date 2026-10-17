@@ -2,14 +2,7 @@ import { WorkerPoolContext, useWorkerPool } from "@pierre/diffs/react";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
@@ -33,6 +26,13 @@ let sharedWorkerPool:
     }
   | undefined;
 
+function diffWorkerPoolSize() {
+  const cores =
+    typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);
+  return Math.max(2, Math.min(6, Math.floor(cores / 2)));
+}
+
+/** Reuse workers across viewer intent and short panel closures. */
 function acquireDiffWorkerPool(themeName: DiffThemeName, poolSize: number) {
   const entry = (sharedWorkerPool ??= {
     pool: new WorkerPoolManager(
@@ -61,6 +61,26 @@ function acquireDiffWorkerPool(themeName: DiffThemeName, poolSize: number) {
   entry.idleTimer = undefined;
   entry.consumers += 1;
   return entry;
+}
+
+function releaseDiffWorkerPool(entry: NonNullable<typeof sharedWorkerPool>) {
+  entry.consumers -= 1;
+  if (entry.consumers !== 0) return;
+  entry.idleTimer = setTimeout(() => {
+    entry.idleTimer = undefined;
+    entry.pool.terminate();
+    if (sharedWorkerPool === entry) sharedWorkerPool = undefined;
+  }, DIFF_WORKER_IDLE_TTL_MS);
+}
+
+/** File picking is viewer intent; overlap worker assets with the file search. */
+export async function preloadDiffWorkerPool(themeName: DiffThemeName) {
+  const entry = acquireDiffWorkerPool(themeName, diffWorkerPoolSize());
+  try {
+    await entry.pool.initialize();
+  } finally {
+    releaseDiffWorkerPool(entry);
+  }
 }
 
 function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
@@ -129,26 +149,14 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
-  const workerPoolSize = useMemo(() => {
-    const cores =
-      typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);
-    return Math.max(2, Math.min(6, Math.floor(cores / 2)));
-  }, []);
+  const workerPoolSize = diffWorkerPoolSize();
   const workerPool = useSyncExternalStore(
     useCallback(
       (onStoreChange) => {
         if (typeof window === "undefined") return () => {};
         const entry = acquireDiffWorkerPool(diffThemeName, workerPoolSize);
         onStoreChange();
-        return () => {
-          entry.consumers -= 1;
-          if (entry.consumers !== 0) return;
-          entry.idleTimer = setTimeout(() => {
-            entry.idleTimer = undefined;
-            entry.pool.terminate();
-            if (sharedWorkerPool === entry) sharedWorkerPool = undefined;
-          }, DIFF_WORKER_IDLE_TTL_MS);
-        };
+        return () => releaseDiffWorkerPool(entry);
       },
       [diffThemeName, workerPoolSize],
     ),

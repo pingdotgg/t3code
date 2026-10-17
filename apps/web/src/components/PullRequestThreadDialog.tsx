@@ -7,7 +7,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -58,11 +57,13 @@ export function PullRequestThreadDialog({
   const [referenceDirty, setReferenceDirty] = useState(false);
   const [preparingMode, setPreparingMode] = useState<"local" | "worktree" | null>(null);
   const [prepareErrorMessage, setPrepareErrorMessage] = useState<string | null>(null);
-  const [debouncedReference, referenceDebouncer] = useDebouncedValue(
-    reference,
-    { wait: 450 },
-    (debouncerState) => ({ isPending: debouncerState.isPending }),
-  );
+  const [debouncedReference, setDebouncedReference] = useState(reference);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedReference(reference);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [reference]);
   const { data: gitStatus } = useEnvironmentQuery(
     cwd === null
       ? null
@@ -122,7 +123,7 @@ export function PullRequestThreadDialog({
     open &&
     parsedReference !== null &&
     resolvedPullRequest === null &&
-    (referenceDebouncer.state.isPending ||
+    (reference !== debouncedReference ||
       parsedReference !== parsedDebouncedReference ||
       pullRequestResolution.isPending ||
       pullRequestResolution.isFetching);

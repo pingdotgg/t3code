@@ -31,6 +31,7 @@ import {
   derivePhase,
   findLatestProposedPlan,
   isLatestRunSettled,
+  isStreamingProjectionTextUpdate,
   selectHandoffImageResources,
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
@@ -1405,6 +1406,34 @@ describe("work-log failure policy (#7999/#7893)", () => {
 });
 
 describe("incremental v2 timeline entries", () => {
+  it("keeps token text in its row and exposes completion, metadata, and control changes", () => {
+    const fixture = makeStreamingTimelineFixture("Partial");
+    const rows = fixture.visibleTurnItems;
+    const last = rows.at(-1)!;
+    if (last.item.type !== "assistant_message") throw new Error("Expected assistant fixture");
+    const before = {
+      ...makeThreadProjectionFixture(),
+      turnItems: rows.map((row) => row.item),
+      visibleTurnItems: rows,
+    };
+    const token = {
+      ...last,
+      item: { ...last.item, text: "Next token", updatedAt: DateTime.makeUnsafe(fixture.time(8)) },
+    };
+    const update = (row: typeof token) => ({
+      ...before,
+      turnItems: [...before.turnItems.slice(0, -1), row.item],
+      visibleTurnItems: [...rows.slice(0, -1), row],
+    });
+    expect(isStreamingProjectionTextUpdate(before, update(token))).toBe(true);
+    for (const next of [
+      update({ ...token, item: { ...token.item, streaming: false } }),
+      update({ ...token, sourceThreadId: ThreadId.make("inherited") }),
+      { ...update(token), runs: [...before.runs] },
+    ]) {
+      expect(isStreamingProjectionTextUpdate(before, next)).toBe(false);
+    }
+  });
   it("retains history and attachment previews through decoded streaming updates", () => {
     const fixture = makeStreamingTimelineFixture("Partial");
     const attachment = {

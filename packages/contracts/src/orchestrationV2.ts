@@ -1174,6 +1174,8 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   ref: CheckpointRef,
   status: Schema.Literals(["ready", "missing", "error", "stale"]),
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+  /** Viewport snapshots leave `files` empty for older turns; their history page carries them. */
+  deferredFileCount: Schema.optional(NonNegativeInt),
   capturedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
@@ -3226,6 +3228,8 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
    * file list their checkpoint already carries. See `checkpointFilesOmittedItemIds`.
    */
   acceptCompactCheckpointItems: Schema.optionalKey(Schema.Boolean),
+  /** Starts with a small row window; history pages hydrate older control metadata. */
+  acceptViewportWindow: Schema.optionalKey(Schema.Boolean),
   /** Accepts compact read-watermark and pull-request-link events. */
   acceptThreadFieldEvents: Schema.optionalKey(Schema.Boolean),
 });
@@ -3282,6 +3286,15 @@ export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
   ),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMoreHistory: Schema.Boolean,
+  /** Present only when requested by clients that hydrate older history metadata. */
+  support: Schema.optionalKey(
+    Schema.Struct({
+      nodes: Schema.Array(OrchestrationV2ExecutionNode),
+      checkpoints: Schema.Array(OrchestrationV2Checkpoint),
+      runs: Schema.Array(OrchestrationV2Run),
+      attempts: Schema.Array(OrchestrationV2RunAttempt),
+    }),
+  ),
 });
 export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
 

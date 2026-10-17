@@ -1132,10 +1132,16 @@ const make = Effect.gen(function* () {
         Effect.andThen(orchestrator.searchThread(input)),
       ),
     dispatch,
-    getThreadHistoryPage: (threadId, cursor, throughEntryId, conversationOnly) =>
+    getThreadHistoryPage: (threadId, cursor, throughEntryId, conversationOnly, includeSupport) =>
       ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(
-          orchestrator.getThreadHistoryPage(threadId, cursor, throughEntryId, conversationOnly),
+          orchestrator.getThreadHistoryPage(
+            threadId,
+            cursor,
+            throughEntryId,
+            conversationOnly,
+            includeSupport,
+          ),
         ),
       ),
     getTimelinePage: (threadId, options) =>

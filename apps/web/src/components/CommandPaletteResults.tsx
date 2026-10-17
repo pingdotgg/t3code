@@ -1,7 +1,7 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
-import { type RefObject, useCallback, useState } from "react";
+import { type RefObject, memo, useCallback, useState } from "react";
 import { cn } from "~/lib/utils";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
@@ -22,6 +22,9 @@ import {
 } from "./ui/command";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
+
+const paletteRowKey = (row: CommandPaletteRow) => row.key;
+const paletteRowType = (row: CommandPaletteRow) => row.kind;
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
@@ -107,6 +110,26 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
     );
   }, [listRef]);
 
+  const renderItem = useCallback(
+    ({ item: row }: { item: CommandPaletteRow }) =>
+      row.kind === "label" ? (
+        <div className={row.first ? undefined : "pt-1.5"}>
+          <CommandListHeading>{row.label}</CommandListHeading>
+        </div>
+      ) : row.itemIndex === null ? (
+        <DisabledCommandPaletteResultRow item={row.item} />
+      ) : (
+        <CommandPaletteResultRow
+          index={row.itemIndex}
+          item={row.item}
+          keybindings={props.keybindings}
+          isActive={props.highlightedItemValue === row.item.value}
+          onExecuteItem={props.onExecuteItem}
+        />
+      ),
+    [props.highlightedItemValue, props.keybindings, props.onExecuteItem],
+  );
+
   if (props.rows.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
   }
@@ -116,28 +139,12 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
       <LegendList<CommandPaletteRow>
         ref={listRef}
         data={props.rows}
-        keyExtractor={(row) => row.key}
-        getItemType={(row) => row.kind}
+        keyExtractor={paletteRowKey}
+        getItemType={paletteRowType}
         extraData={props.highlightedItemValue}
-        renderItem={({ item: row }) =>
-          row.kind === "label" ? (
-            <div className={row.first ? undefined : "pt-1.5"}>
-              <CommandListHeading>{row.label}</CommandListHeading>
-            </div>
-          ) : row.itemIndex === null ? (
-            <DisabledCommandPaletteResultRow item={row.item} />
-          ) : (
-            <CommandPaletteResultRow
-              index={row.itemIndex}
-              item={row.item}
-              keybindings={props.keybindings}
-              isActive={props.highlightedItemValue === row.item.value}
-              onExecuteItem={props.onExecuteItem}
-            />
-          )
-        }
+        renderItem={renderItem}
         estimatedItemSize={40}
-        drawDistance={400}
+        drawDistance={120}
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
         contentContainerClassName="px-2"
@@ -182,7 +189,7 @@ function DisabledCommandPaletteResultRow(props: {
   );
 }
 
-function CommandPaletteResultRow(props: {
+const CommandPaletteResultRow = memo(function CommandPaletteResultRow(props: {
   index?: number;
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
   isActive: boolean;
@@ -239,4 +246,4 @@ function CommandPaletteResultRow(props: {
       ) : null}
     </CommandItem>
   );
-}
+});

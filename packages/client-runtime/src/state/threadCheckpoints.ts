@@ -21,6 +21,8 @@ export interface ThreadCheckpointSummary {
     readonly additions: number;
     readonly deletions: number;
   }>;
+  /** Set while `files` waits for the turn's history page. */
+  readonly deferredFileCount?: number;
   readonly assistantMessageId: MessageId | null;
   readonly completedAt: string;
 }
@@ -43,6 +45,9 @@ export function deriveThreadCheckpointSummaries(
         checkpointRef: checkpoint.ref,
         status: checkpoint.status,
         files: checkpoint.files,
+        ...(checkpoint.deferredFileCount === undefined
+          ? {}
+          : { deferredFileCount: checkpoint.deferredFileCount }),
         assistantMessageId,
         completedAt: DateTime.formatIso(checkpoint.capturedAt),
       },

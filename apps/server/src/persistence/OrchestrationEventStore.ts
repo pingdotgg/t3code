@@ -180,6 +180,12 @@ interface ApplicationEventRow {
 const decodeV2EventJson = Schema.decodeUnknownEffect(OrchestrationV2DomainEventJson);
 const encodeV2EventJson = Schema.encodeEffect(OrchestrationV2DomainEventJson);
 const decodeV2StoredEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
+const decodeV2StoredHeader = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    sequence: OrchestrationV2StoredEvent.fields.sequence,
+    commandId: OrchestrationV2StoredEvent.fields.commandId,
+  }),
+);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -448,6 +454,7 @@ const makeEventStore = Effect.gen(function* () {
       (event) =>
         Effect.gen(function* () {
           const encoded = yield* encodeV2EventJson(event);
+          const normalized = yield* decodeV2EventJson(encoded);
           const subagent =
             encoded.type === "subagent.updated"
               ? encoded.payload
@@ -529,11 +536,11 @@ const makeEventStore = Effect.gen(function* () {
               if (oldest !== undefined) promptHints.delete(oldest);
             }
           }
-          return yield* decodeV2StoredEvent({
+          const header = yield* decodeV2StoredHeader({
             sequence: rows[0]?.sequence,
             commandId: input.commandId ?? null,
-            event,
           });
+          return { ...header, event: normalized };
         }),
       { concurrency: 1 },
     ).pipe(

@@ -112,7 +112,6 @@ export function ThreadDetailsCard({
             };
       });
     };
-    measure();
     return observeResize(element, measure);
   }, [contentElement, density, measurementKey]);
   const card = (

@@ -1,5 +1,5 @@
 import { ChevronRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   decodeThirdPartyLicenseManifest,
@@ -19,6 +19,8 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 /** Enough rows to fill a tall window; the rest render right after the first paint. */
 const INITIAL_LICENSE_ROWS = 40;
+// Off-screen rows are light, so later batches commit twice the first paint.
+const LICENSE_ROW_BATCH = 80;
 
 type LicenseManifestState =
   | { readonly status: "loading" }
@@ -56,17 +58,20 @@ function loadLicenseManifest(): Promise<ThirdPartyLicenseManifest> {
   return licenseManifestPromise;
 }
 
-function LicenseNoticeRow({
+const LicenseNoticeRow = memo(function LicenseNoticeRow({
   entry,
   open,
-  onOpenChange,
+  onSelectEntry,
 }: {
   readonly entry: ThirdPartyLicenseEntry;
   readonly open: boolean;
-  readonly onOpenChange: (open: boolean) => void;
+  readonly onSelectEntry: (key: string | null) => void;
 }) {
   return (
-    <Collapsible open={open} onOpenChange={onOpenChange}>
+    <Collapsible
+      open={open}
+      onOpenChange={(nextOpen) => onSelectEntry(nextOpen ? thirdPartyLicenseEntryKey(entry) : null)}
+    >
       {/* Rows out of view skip style and layout until scrolled to. */}
       <article className="[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto] sm:[contain-intrinsic-size:auto_2.25rem]">
         <div className="flex min-h-10 items-center hover:bg-muted/35 sm:min-h-9">
@@ -110,7 +115,7 @@ function LicenseNoticeRow({
       </article>
     </Collapsible>
   );
-}
+});
 
 function LicenseCount({
   filteredCount,
@@ -248,7 +253,11 @@ export function OpenSourceLicensesPanel() {
     [entries, query],
   );
   const retry = useCallback(() => setRequestVersion((value) => value + 1), []);
-  const rowLimit = useProgressiveRowLimit(INITIAL_LICENSE_ROWS);
+  const rowLimit = useProgressiveRowLimit(
+    INITIAL_LICENSE_ROWS,
+    filteredEntries.length,
+    LICENSE_ROW_BATCH,
+  );
   const shownEntries =
     filteredEntries.length > rowLimit ? filteredEntries.slice(0, rowLimit) : filteredEntries;
 
@@ -279,7 +288,7 @@ export function OpenSourceLicensesPanel() {
                     key={entryKey}
                     entry={entry}
                     open={openEntryKey === entryKey}
-                    onOpenChange={(open) => setOpenEntryKey(open ? entryKey : null)}
+                    onSelectEntry={setOpenEntryKey}
                   />
                 );
               })

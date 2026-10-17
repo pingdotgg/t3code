@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
 import { resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { createContext, useEffect, useRef, type ReactNode } from "react";
 
@@ -45,11 +46,24 @@ export function FileMetadataThreadProvider(props: {
     )
       return;
     const oldById = new Map(before.checkpoints.map((checkpoint) => [checkpoint.id, checkpoint]));
+    const latestCapture = before.checkpoints.reduce(
+      (max, checkpoint) => Math.max(max, DateTime.toEpochMillis(checkpoint.capturedAt)),
+      Number.NEGATIVE_INFINITY,
+    );
     const paths = new Set<string>();
     for (const checkpoint of checkpoints) {
       const old = oldById.get(checkpoint.id);
       oldById.delete(checkpoint.id);
       if (old?.files === checkpoint.files && old?.status === checkpoint.status) continue;
+      // History pages bring older checkpoints and fill deferred file lists.
+      // Neither means a file changed, so neither refreshes metadata.
+      const fromHistory =
+        old === undefined
+          ? DateTime.toEpochMillis(checkpoint.capturedAt) <= latestCapture
+          : old.deferredFileCount !== undefined &&
+            checkpoint.deferredFileCount === undefined &&
+            old.status === checkpoint.status;
+      if (fromHistory) continue;
       for (const file of checkpoint.files) paths.add(resolveWorkspaceFilePath(file.path, cwd));
       for (const file of old?.files ?? []) paths.add(resolveWorkspaceFilePath(file.path, cwd));
     }

@@ -19,6 +19,9 @@ import { isKdeCaptureSession, type KdeCapturePaths } from "./KdeSnapShot.ts";
 import { isGnomeCaptureSession, readPortalPng, resizeLinuxCapture } from "./linuxCaptureSession.ts";
 export { readPortalPng, resizeLinuxCapture } from "./linuxCaptureSession.ts";
 import { isHyprlandCaptureSession, type HyprlandCapturePaths } from "./HyprlandSnapShot.ts";
+// The entry chunk also imports NiriSnapShot, so a lazy import of it would
+// require application.cjs again, and conf evicts that from the require cache.
+import { captureNiriWindow, checkNiriCaptureSupport, niriSocketPath } from "./NiriSnapShot.ts";
 
 const PORTAL = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH = "/org/freedesktop/portal/desktop";
@@ -365,7 +368,6 @@ export class LinuxCaptureConnection {
 export async function getLinuxCaptureSupport(appId: string) {
   if (isHyprlandCaptureSession())
     return { linuxBackend: "hyprland" as const, linuxFeedbackAvailable: false };
-  const { niriSocketPath, checkNiriCaptureSupport } = await import("./NiriSnapShot.ts");
   const niri = niriSocketPath();
   if (niri) {
     await checkNiriCaptureSupport(niri);
@@ -392,7 +394,6 @@ export async function captureLinuxWindow(
     const { captureHyprlandWindow } = await import("./HyprlandSnapShot.ts");
     return captureHyprlandWindow(hyprlandPaths, options);
   }
-  const { niriSocketPath, captureNiriWindow } = await import("./NiriSnapShot.ts");
   const niri = niriSocketPath();
   if (niri) return captureNiriWindow(niri);
   const connection = new LinuxCaptureConnection();

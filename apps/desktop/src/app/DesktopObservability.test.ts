@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -76,18 +77,29 @@ interface ExportedRequest {
   readonly body: string;
 }
 
-const layerCollector = (requests: Array<ExportedRequest>) =>
+/**
+ * Answers every export with a 200 and keeps what was posted for assertions.
+ * `stallFirst` never answers the first export.
+ */
+const layerCollector = (
+  requests: Array<ExportedRequest>,
+  options?: { readonly stallFirst?: boolean },
+) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         requests.push({
           url: request.url,
           headers: request.headers,
           body:
             request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "",
         });
-        return HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }));
+        return options?.stallFirst === true && requests.length === 1
+          ? Effect.never
+          : Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+            );
       }),
     ),
   );
@@ -384,7 +396,7 @@ describe("DesktopObservability", () => {
     ),
   );
 
-  it.effect("exports main process log records to the configured logs endpoint", () => {
+  it.effect("exports log records after a stalled collector times out", () => {
     const requests: Array<ExportedRequest> = [];
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -394,6 +406,7 @@ describe("DesktopObservability", () => {
       const layerEnvironment = layerEnvironmentFor(baseDir, true, {
         T3CODE_OTLP_LOGS_URL: "https://collector.example.com/v1/logs",
         T3CODE_OTLP_HEADERS: "x-scope=desktop",
+        T3CODE_OTLP_EXPORT_INTERVAL_MS: "1000",
       });
       const tracePath = yield* Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -401,14 +414,21 @@ describe("DesktopObservability", () => {
       }).pipe(Effect.provide(layerEnvironment));
 
       yield* Effect.scoped(
-        Effect.logInfo("desktop log export").pipe(
-          Effect.withSpan("desktop-log-export-test"),
+        Effect.gen(function* () {
+          yield* Effect.logInfo("before the stall");
+          for (let second = 0; second < 15; second += 1) yield* TestClock.adjust("1 second");
+          yield* Effect.logInfo("desktop log export").pipe(
+            Effect.withSpan("desktop-log-export-test"),
+          );
+          for (let second = 0; second < 5; second += 1) yield* TestClock.adjust("1 second");
+          // Before shutdown, whose flush could hide a stuck exporter.
+          assert.isTrue(requests.some((request) => request.body.includes("desktop log export")));
+        }).pipe(
           Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(layerEnvironment))),
         ),
       );
 
-      assert.lengthOf(requests, 1);
-      const [request] = requests;
+      const request = requests.find((value) => value.body.includes("desktop log export"));
       assert.strictEqual(request?.url, "https://collector.example.com/v1/logs");
       assert.include(request?.body ?? "", "desktop log export");
       assert.include(request?.body ?? "", "service.runtime");
@@ -424,7 +444,13 @@ describe("DesktopObservability", () => {
       assert.lengthOf(record?.events ?? [], 0);
     }).pipe(
       Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, layerCollector(requests), layerEmptyEnv)),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerCollector(requests, { stallFirst: true }),
+          layerEmptyEnv,
+        ),
+      ),
     );
   });
 

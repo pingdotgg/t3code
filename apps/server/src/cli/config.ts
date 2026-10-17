@@ -21,7 +21,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
-import { readBootstrapEnvelope } from "../bootstrap.ts";
+import { closeInheritedElectronDescriptors, readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -283,6 +283,15 @@ export const resolveServerConfig = (
         ? yield* readBootstrapEnvelope(DesktopBackendBootstrap, bootstrapFd)
         : Option.none();
     const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
+    if (bootstrap !== undefined) {
+      yield* closeInheritedElectronDescriptors([
+        bootstrapFd,
+        bootstrap.desktopTelemetryFd,
+        bootstrap.desktopTelemetryControlFd,
+        bootstrap.desktopBrowserFd,
+        bootstrap.desktopBrowserControlFd,
+      ]);
+    }
 
     const mode: ServerConfig.RuntimeMode = Option.getOrElse(
       resolveOptionPrecedence(

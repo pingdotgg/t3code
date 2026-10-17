@@ -579,9 +579,14 @@ export interface TimelineEntriesProjection {
 
 export function deriveTimelineEntriesFromVisibleTurnItems(
   input: TimelineEntriesInput,
+  previous: TimelineEntriesProjection | null = null,
 ): TimelineEntry[] {
   const committedMessageIds = new Set<string>();
   const entries: TimelineEntry[] = [];
+  const previousById = new Map(previous?.entries.map((entry) => [entry.id, entry]));
+  const canReuse =
+    previous !== null && shallow(input.attachmentUrlById, previous.input.attachmentUrlById);
+  const previousRows = new Set(previous?.input.visibleTurnItems);
   const attemptByRootNodeId = new Map(
     (input.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -619,6 +624,20 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
+    const old = previousById.get(
+      item.type === "user_message" || item.type === "assistant_message" ? item.messageId : item.id,
+    );
+    if (
+      canReuse &&
+      previousRows.has(row) &&
+      old !== undefined &&
+      old.attempt === attempt &&
+      (item.type !== "proposed_plan" || input.plans === previous?.input.plans)
+    ) {
+      entries.push(old);
+      if (old.kind === "message") committedMessageIds.add(old.message.id);
+      continue;
+    }
     const attemptMetadata = attempt === undefined ? {} : { attempt };
     if (item.type === "notification") {
       entries.push({
@@ -910,6 +929,61 @@ export function isStreamingTurnItemTextUpdate(
   return Equal.equals(previousMetadata, nextMetadata);
 }
 
+/** A text-only token event can bypass the chat shell while its row reads live text. */
+export function isStreamingProjectionTextUpdate(
+  previous: OrchestrationV2ThreadProjection,
+  next: OrchestrationV2ThreadProjection,
+): boolean {
+  if (previous === next) return true;
+  const {
+    turnItems: beforeItems,
+    visibleTurnItems: beforeRows,
+    messages: beforeMessages,
+    updatedAt: _beforeTime,
+    ...before
+  } = previous;
+  const {
+    turnItems: afterItems,
+    visibleTurnItems: afterRows,
+    messages: afterMessages,
+    updatedAt: _afterTime,
+    ...after
+  } = next;
+  if (
+    !shallow(before, after) ||
+    beforeItems.length !== afterItems.length ||
+    beforeRows.length !== afterRows.length
+  )
+    return false;
+  if (beforeMessages !== afterMessages) {
+    if (beforeMessages.length !== afterMessages.length) return false;
+    for (let index = 0; index < beforeMessages.length; index++) {
+      const old = beforeMessages[index]!;
+      const message = afterMessages[index]!;
+      if (old === message) continue;
+      if (
+        old.role !== "assistant" ||
+        message.role !== "assistant" ||
+        !old.streaming ||
+        !message.streaming
+      )
+        return false;
+      const { text: _oldText, updatedAt: _oldUpdated, ...oldMetadata } = old;
+      const { text: _text, updatedAt: _updated, ...metadata } = message;
+      if (!Equal.equals(oldMetadata, metadata)) return false;
+    }
+  }
+  const changedItems = new Set<OrchestrationV2TurnItem>();
+  for (let index = 0; index < beforeRows.length; index++) {
+    const old = beforeRows[index]!;
+    const row = afterRows[index]!;
+    if (old === row) continue;
+    if (!isStreamingTurnItemTextUpdate(old, row)) return false;
+    changedItems.add(row.item);
+  }
+  return afterItems.every((item, index) => item === beforeItems[index] || changedItems.has(item));
+}
+
 function reuseTimelineEntries(
   input: TimelineEntriesInput,
   previous: TimelineEntriesProjection,
@@ -991,7 +1065,7 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 ): TimelineEntriesProjection {
   const reused = previous === null ? null : reuseTimelineEntries(input, previous);
   if (reused !== null) return { input, entries: reused };
-  const entries = deriveTimelineEntriesFromVisibleTurnItems(input);
+  const entries = deriveTimelineEntriesFromVisibleTurnItems(input, previous);
   if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
     return { input, entries };
   }

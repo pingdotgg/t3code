@@ -103,6 +103,7 @@ type ComposerPersistState =
   | { capturedState: ComposerDraftStoreState }
   | PersistedComposerDraftStoreState;
 
+// Desktop quit skips unload events, so drafts must also flush after a short pause.
 const composerDebouncedStorage = createDeferredStorage<StorageValue<ComposerPersistState>>(
   typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
   (value) =>
@@ -129,8 +130,10 @@ const composerPersistStorage: PersistStorage<ComposerPersistState> = {
 };
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  window.addEventListener("beforeunload", () => {
-    composerDebouncedStorage.flush();
+  window.addEventListener("beforeunload", () => composerDebouncedStorage.flush());
+  window.addEventListener("pagehide", () => composerDebouncedStorage.flush());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") composerDebouncedStorage.flush();
   });
 }
 
@@ -2857,6 +2860,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           });
         },
         setPrompt: (threadRef, prompt) => {
+          if (getComposerDraftState(get(), threadRef)?.prompt === prompt) return;
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -4229,10 +4233,14 @@ export function clearComposerDraftsEnvironment(environmentId: EnvironmentId): vo
   composerDebouncedStorage.flush();
 }
 
-export function useComposerThreadDraft(threadRef: ComposerThreadTarget): ComposerThreadDraftState {
-  return useComposerDraftStore((state) => {
-    return getComposerDraftState(state, threadRef) ?? EMPTY_THREAD_DRAFT;
-  });
+/** Subscribe only to the draft fields a composer part presents. */
+export function useComposerThreadDraftSelector<T>(
+  threadRef: ComposerThreadTarget,
+  select: (draft: ComposerThreadDraftState) => T,
+): T {
+  return useComposerDraftStore((state) =>
+    select(getComposerDraftState(state, threadRef) ?? EMPTY_THREAD_DRAFT),
+  );
 }
 
 export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {

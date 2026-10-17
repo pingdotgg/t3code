@@ -1,4 +1,4 @@
-import { Debouncer } from "@tanstack/react-pacer";
+import { createDebouncer } from "./lib/debounce";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
@@ -239,7 +239,7 @@ export function persistState(state: UiState): void {
   } catch {}
 }
 
-const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+const debouncedPersistState = createDebouncer(persistState, 500);
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);
@@ -453,7 +453,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
-useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+useUiStateStore.subscribe((state) => debouncedPersistState.schedule(state));
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {

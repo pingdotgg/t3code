@@ -37,7 +37,6 @@
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "@tanstack/react-pacer": "^0.19.4",
     "@tanstack/react-router": "^1.160.2",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-blockquote": "^3.31.3",

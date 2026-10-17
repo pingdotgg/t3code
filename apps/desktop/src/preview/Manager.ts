@@ -587,6 +587,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  let nextTabLifecycleGeneration = 0;
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1685,7 +1686,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       },
     );
     if (result.created) {
-      tabLifecycleGenerations.set(tabId, (tabLifecycleGenerations.get(tabId) ?? 0) + 1);
+      // Generations remain unique when a closed tab id is reused.
+      tabLifecycleGenerations.set(tabId, ++nextTabLifecycleGeneration);
     }
     yield* emit(tabId, result.state);
     return result.state;
@@ -1724,6 +1726,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (Option.isNone(tab)) return;
+    tabLifecycleGenerations.delete(tabId);
     const closedTab = tab.value;
     if (closedTab.webContentsId != null) {
       yield* Effect.all(

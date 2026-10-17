@@ -2,6 +2,7 @@ import { AuthFilesystemWriteScope, type EnvironmentId } from "@t3tools/contracts
 import { createRef, useEffect, useMemo } from "react";
 
 import { projectEnvironment } from "~/state/projects";
+import { invalidateReviewWorkspace } from "~/state/review";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -42,8 +43,16 @@ export function useFileSaveCoordinator({
               environmentId,
               input: { cwd, relativePath, contents: nextContents },
             }),
-          onConfirmed: (confirmedContents) =>
-            confirmProjectFileQueryData(environmentId, cwd, relativePath, confirmedContents),
+          onConfirmed: (confirmedContents) => {
+            const confirmed = confirmProjectFileQueryData(
+              environmentId,
+              cwd,
+              relativePath,
+              confirmedContents,
+            );
+            invalidateReviewWorkspace(environmentId, cwd);
+            return confirmed;
+          },
         });
         coordinatorRef.current = coordinator;
         return () => {

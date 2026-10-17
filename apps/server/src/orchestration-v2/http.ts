@@ -125,12 +125,15 @@ export const layer = HttpApiBuilder.group(
         anchorThreadId?: Parameters<
           typeof threadManagement.getThreadSnapshotWindow
         >[1]["anchorThreadId"],
+        viewportWindow = false,
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
             rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
-            userTurnLimit:
-              anchorItemId === undefined
+            deferHistoricalSupport: viewportWindow,
+            userTurnLimit: viewportWindow
+              ? undefined
+              : anchorItemId === undefined
                 ? THREAD_HISTORY_PAGE_POLICY.maxUserTurns
                 : OLDER_THREAD_USER_TURN_LIMIT,
             ...(anchorItemId === undefined ? {} : { anchorItemId }),
@@ -212,12 +215,25 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId).pipe(
-            traceLocalHandlerWork,
-          );
+          const viewportWindow = args.query.viewportWindow === "1";
+          const snapshot = yield* loadThreadSnapshotWindow(
+            args.params.threadId,
+            undefined,
+            undefined,
+            viewportWindow,
+          ).pipe(traceLocalHandlerWork);
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
+            viewportWindow,
+            ...(viewportWindow
+              ? {
+                  policy: {
+                    maxItems: THREAD_HISTORY_PAGE_POLICY.maxItems,
+                    maxEncodedBytes: THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+                  },
+                }
+              : {}),
           });
           return {
             snapshotSequence: snapshot.snapshotSequence,
@@ -247,6 +263,7 @@ export const layer = HttpApiBuilder.group(
               args.query.cursor,
               args.query.throughEntryId,
               args.query.view === "conversation",
+              args.query.includeSupport === "1",
             )
             .pipe(
               traceLocalHandlerWork,

@@ -27,6 +27,8 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as Tracer from "effect/Tracer";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientError from "effect/http/HttpClientError";
 import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -591,6 +593,33 @@ const layerBackendOutputLogFactory = Layer.effect(
   }),
 );
 
+// Bound both headers and body so a stalled collector cannot stop later exports.
+const withOtlpTimeout = (client: HttpClient.HttpClient) =>
+  client.pipe(
+    HttpClient.transform((response, request) =>
+      response.pipe(
+        Effect.tap((received) => received.arrayBuffer),
+        Effect.timeoutOrElse({
+          duration: "10 seconds",
+          orElse: () =>
+            Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  request,
+                  description: "OTLP export timed out",
+                }),
+              }),
+            ),
+        }),
+      ),
+    ),
+  );
+
+/**
+ * Logs and traces for the main process, assembled together because they share
+ * one read of the environment and Settings, and because a process gets exactly
+ * one logger set.
+ */
 const layerTelemetry = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -678,7 +707,11 @@ const layerTelemetry = Layer.unwrap(
     );
 
     return layerOtelWarnings.pipe(
-      Layer.provideMerge(Layer.mergeAll(layerLogger, layerTracer)),
+      Layer.provideMerge(
+        Layer.mergeAll(layerLogger, layerTracer).pipe(
+          Layer.updateService(HttpClient.HttpClient, withOtlpTimeout),
+        ),
+      ),
       Layer.provide(OtelEnvironment.layerResourceAttributes(endpoints.resourceAttributes)),
     );
   }),

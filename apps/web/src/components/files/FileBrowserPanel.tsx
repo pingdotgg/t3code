@@ -112,6 +112,11 @@ export default function FileBrowserPanel({
   workspaceMutationId,
   hostFolder = false,
 }: FileBrowserPanelProps) {
+  useEffect(() => {
+    void import("./FilePreviewPanel")
+      .then(({ preloadFileViewer }) => preloadFileViewer())
+      .catch(() => undefined);
+  }, []);
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
   const { resolvedTheme } = useTheme();

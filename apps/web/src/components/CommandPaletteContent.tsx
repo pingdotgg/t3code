@@ -33,8 +33,10 @@ export function CommandPaletteContent({
   // Direct-open flows replace the initial palette view after the dialog has
   // already moved focus. Reclaim it when the replacement input mounts so
   // typing cannot continue in the composer behind the modal.
+  // Focus in the mount commit, inside the opening gesture: mobile browsers
+  // raise the keyboard only then, and keys typed meanwhile reach the input.
   useLayoutEffect(() => {
-    inputRef.current?.focus();
+    inputRef.current?.focus({ preventScroll: true });
   }, []);
 
   return (

@@ -33,6 +33,7 @@ import * as ServerSettings from "../serverSettings.ts";
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
+const MAX_CACHED_WORKSPACES = 256;
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
 const MAX_FAILURE_DIAGNOSTIC_VALUE_LENGTH = 128;
 
@@ -227,6 +228,14 @@ export const make = Effect.gen(function* () {
     Scope.close(scope, Exit.void),
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
+  const activeCwds = new Map<string, number>();
+  const trimCache = (cache: Map<string, CachedVcsStatus>) => {
+    for (const cwd of cache.keys()) {
+      if (cache.size <= MAX_CACHED_WORKSPACES) break;
+      if (!activeCwds.has(cwd)) cache.delete(cwd);
+    }
+    return cache;
+  };
   // One permit per cwd for remote reads that write the cache. Without it a
   // periodic poll that started before `gh pr create` can finish after the
   // turn-end refresh and overwrite the fresh PR with its stale `pr: null`.
@@ -254,7 +263,10 @@ export const make = Effect.gen(function* () {
           ...previous,
           local: nextLocal,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [
+          previous.local?.fingerprint !== nextLocal.fingerprint,
+          trimCache(nextCache),
+        ] as const;
       });
 
       if (options?.publish && shouldPublish) {
@@ -284,7 +296,10 @@ export const make = Effect.gen(function* () {
           ...previous,
           remote: nextRemote,
         });
-        return [previous.remote?.fingerprint !== nextRemote.fingerprint, nextCache] as const;
+        return [
+          previous.remote?.fingerprint !== nextRemote.fingerprint,
+          trimCache(nextCache),
+        ] as const;
       });
 
       if (options?.publish && shouldPublish) {
@@ -325,7 +340,7 @@ export const make = Effect.gen(function* () {
       return [
         previous.local?.fingerprint !== nextLocal.fingerprint ||
           previous.remote?.fingerprint !== nextRemote.fingerprint,
-        nextCache,
+        trimCache(nextCache),
       ] as const;
     });
 
@@ -697,6 +712,16 @@ export const make = Effect.gen(function* () {
     Stream.unwrap(
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+        // Active subscriptions need their remote cache for turn-end PR refreshes.
+        yield* Effect.acquireRelease(
+          Effect.sync(() => activeCwds.set(cwd, (activeCwds.get(cwd) ?? 0) + 1)),
+          () => {
+            const count = activeCwds.get(cwd) ?? 0;
+            if (count <= 1) activeCwds.delete(cwd);
+            else activeCwds.set(cwd, count - 1);
+            return Ref.update(cacheRef, (cache) => trimCache(new Map(cache)));
+          },
+        );
         const subscription = yield* PubSub.subscribe(changesPubSub);
         const initialLocal = yield* getOrLoadLocalStatus(cwd);
         const cachedStatus = yield* getCachedStatus(cwd);

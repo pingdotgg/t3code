@@ -12,10 +12,15 @@ import {
   type OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2ThreadStreamItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as StreamSerialization from "./StreamSerialization.ts";
 
 import {
   projectTurnItemForWire,
@@ -50,6 +55,31 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it.effect("keeps streamed JSON compatible across subscribers and rejects invalid events", () =>
+    Effect.gen(function* () {
+      const serialization = yield* RpcSerialization.RpcSerialization;
+      const schema = serialization.codecFor(Schema.NonEmptyArray(OrchestrationV2ThreadStreamItem));
+      const event = projectDomainEventForWire({
+        id: EventId.make("event:shared-wire"),
+        type: "turn-item.updated",
+        threadId: base.threadId,
+        occurredAt: base.updatedAt,
+        payload: { ...base, output: { text: "PRIVATE_TOOL_OUTPUT" } },
+      });
+      const encode = Schema.encodeEffect(schema);
+      for (const requestId of ["first", "second"]) {
+        const values = yield* encode([{ kind: "event", sequence: 1, event }]);
+        const response = { _tag: "Chunk", requestId, values };
+        const json = serialization.makeUnsafe().encode(response);
+        expect(json).toBe(RpcSerialization.json.makeUnsafe().encode(response));
+        expect(json).not.toContain("PRIVATE_TOOL_OUTPUT");
+      }
+      expect(
+        Exit.isFailure(yield* Effect.exit(encode([{ kind: "event", sequence: -1, event }]))),
+      ).toBe(true);
+    }).pipe(Effect.provide(StreamSerialization.layer)),
+  );
+
   it("keeps copied handoff transcripts out of activity items and live events", () => {
     const item = {
       ...base,

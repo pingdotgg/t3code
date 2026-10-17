@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -72,6 +72,12 @@ function EmptyProjectFilePicker() {
 
 function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
   const { target } = props;
+  // Opening the picker is file-viewer intent; overlap the viewer chunk with search.
+  useEffect(() => {
+    void import("./FilePreviewPanel")
+      .then(({ preloadFileViewer }) => preloadFileViewer())
+      .catch(() => undefined);
+  }, []);
   const [query, setQuery] = useState(props.initialQuery ?? "");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const result = useProjectFilePickerQuery(

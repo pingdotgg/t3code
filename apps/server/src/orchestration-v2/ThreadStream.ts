@@ -11,6 +11,7 @@ import {
 import {
   buildBoundedThreadProjection,
   type BoundedProjectionResult,
+  THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
@@ -74,10 +75,20 @@ export function buildBoundedThreadStreamSnapshot(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly compactTurnItems?: boolean;
   readonly compactCheckpointItems?: boolean;
+  readonly viewportWindow?: boolean;
 }): ThreadSnapshotStreamItem {
   const bounded = buildBoundedThreadProjection({
     snapshotSequence: input.snapshotSequence,
     projection: projectThreadProjectionForWire(input.projection),
+    viewportWindow: input.viewportWindow === true,
+    ...(input.viewportWindow
+      ? {
+          policy: {
+            maxItems: THREAD_HISTORY_PAGE_POLICY.maxItems,
+            maxEncodedBytes: THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+          },
+        }
+      : {}),
   });
   return {
     kind: "snapshot",

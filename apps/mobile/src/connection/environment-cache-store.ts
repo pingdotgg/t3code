@@ -33,12 +33,24 @@ const StoredVcsRefs = Schema.Struct({
   refs: VcsListRefsResult,
 });
 
-const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
+// Deferred checkpoints have empty file lists that an older bundle, after an
+// OTA rollback, would show as turns with no changes. Their entries are
+// wrapped, so an older bundle fails to decode them, drops them and loads live.
+const StoredThreadCache = Schema.Union([
+  StoredOrchestrationThreadSnapshot,
+  Schema.Struct({
+    format: Schema.Literal("deferred-thread-1"),
+    stored: StoredOrchestrationThreadSnapshot,
+  }),
+]);
+const decodeStoredThreadCache = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(StoredThreadCache),
 );
-const encodeStoredThreadSnapshot = Schema.encodeEffect(
-  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
-);
+const decodeStoredThreadSnapshot = (raw: string) =>
+  decodeStoredThreadCache(raw).pipe(
+    Effect.map((cached) => ("format" in cached ? cached.stored : cached)),
+  );
+const encodeStoredThreadSnapshot = Schema.encodeEffect(Schema.fromJsonString(StoredThreadCache));
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(
   Schema.fromJsonString(StoredServerConfig),
 );
@@ -146,12 +158,18 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
     ),
     saveThread: Effect.fn("MobileEnvironmentCache.saveThread")(function* (environmentId, snapshot) {
       const threadId = snapshot.projection.thread.id;
-      const payload = yield* encodeStoredThreadSnapshot({
+      const stored = {
         schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
         environmentId,
         threadId,
         snapshot,
-      }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
+      };
+      const deferred = snapshot.projection.checkpoints.some(
+        (checkpoint) => checkpoint.deferredFileCount !== undefined,
+      );
+      const payload = yield* encodeStoredThreadSnapshot(
+        deferred ? { format: "deferred-thread-1", stored } : stored,
+      ).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
       yield* database
         .saveCache(
           environmentId,

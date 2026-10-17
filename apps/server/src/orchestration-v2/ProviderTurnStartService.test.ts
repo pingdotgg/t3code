@@ -32,6 +32,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import * as CheckpointService from "./CheckpointService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -98,6 +99,7 @@ it("does not commit running state when inherited background routing cannot be re
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         Path.layer,
@@ -140,7 +142,7 @@ it("does not commit running state when inherited background routing cannot be re
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
         Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
-        Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+        RuntimePolicy.layer,
       ),
     ),
   );
@@ -173,6 +175,7 @@ function makeLocalCommandHarness(input: {
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly baseline?: "failure" | "defect" | "interrupt" | "stop";
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -400,8 +403,27 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
-  const open = vi.fn(() =>
-    input.interruptOpen === true
+  let baselineSettled = false;
+  const captureBaseline = vi.fn(() =>
+    Effect.gen(function* () {
+      if (input.baseline === "interrupt") return yield* Effect.interrupt;
+      baselineSettled = true;
+      if (input.baseline === "stop") interruptRun();
+      if (input.baseline === "failure" || input.baseline === "defect") {
+        if (input.baseline === "defect") return yield* Effect.die("disk full");
+        return yield* Effect.fail(
+          new CheckpointService.CheckpointBaselineCaptureError({
+            scopeId: checkpointScopeId,
+            ordinalWithinScope: 1,
+            cause: "disk full",
+          }),
+        );
+      }
+    }),
+  );
+  const open = vi.fn(() => {
+    expect(baselineSettled).toBe(true);
+    return input.interruptOpen === true
       ? Effect.interrupt
       : "historyReadFailureAfterFallback" in input
         ? Effect.succeed(resumeFallbackSession as never)
@@ -438,8 +460,8 @@ function makeLocalCommandHarness(input: {
                   },
                   ensureThread: () => Effect.succeed(providerThread),
                 } as never)
-              : Effect.die("A local command must not open a native session."),
-  );
+              : Effect.die("A local command must not open a native session.");
+  });
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
@@ -514,6 +536,7 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
+        Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         Path.layer,
@@ -558,6 +581,7 @@ function makeLocalCommandHarness(input: {
     ),
   );
   return {
+    captureBaseline,
     getThreadRecords,
     getTurnStartContext,
     setProjection: (next: OrchestrationV2ThreadProjection) => {
@@ -1040,5 +1064,29 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
           },
         ]);
       }),
+  );
+}
+
+for (const baseline of ["failure", "defect", "interrupt", "stop"] as const) {
+  effectIt.effect(`settles baseline capture before starting a current provider (${baseline})`, () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        baseline,
+        failReadsAfterRunning: true,
+      });
+      const result = yield* harness.startWithRetry.pipe(Effect.exit);
+      expect(harness.captureBaseline).toHaveBeenCalledOnce();
+      if (baseline === "failure" || baseline === "defect") {
+        expect(harness.open).toHaveBeenCalledOnce();
+        expect(harness.startRootRun).toHaveBeenCalledOnce();
+      } else {
+        expect(harness.open).not.toHaveBeenCalled();
+        if (baseline === "interrupt") {
+          expect(result._tag).toBe("Failure");
+          expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+        } else expect(harness.projection().runs.at(-1)).toMatchObject({ status: "interrupted" });
+      }
+    }),
   );
 }

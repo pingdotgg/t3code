@@ -29,6 +29,8 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   timelineEntryTurnFoldRunId,
+  historyCursorAnchorsItem,
+  timelineRunIdsOpeningWindow,
   deriveMessagesTimelineRowsWithState,
   shouldCollapseUserMessage,
   liveWorkEntryLabel,
@@ -5463,4 +5465,23 @@ describe("shouldCollapseUserMessage", () => {
     expect(text.length).toBeGreaterThan(600);
     expect(shouldCollapseUserMessage(text)).toBe(false);
   });
+});
+
+it("hydrates an opening run only until its prompt is loaded", () => {
+  const fixture = makeStreamingTimelineFixture();
+  const entries = deriveTimelineEntriesFromVisibleTurnItems({
+    visibleTurnItems: fixture.visibleTurnItems,
+    optimisticMessages: [],
+  });
+  expect(timelineRunIdsOpeningWindow(entries)).toEqual(new Set());
+  expect(timelineRunIdsOpeningWindow(entries.slice(1))).toEqual(new Set([fixture.historyRunId]));
+});
+
+it("recognizes the history cursor's retained prompt without accepting missing or invalid cursors", () => {
+  const cursor = btoa(JSON.stringify({ v: 1, seq: 7, st: "thread", si: "prompt", p: 40 }));
+  expect(historyCursorAnchorsItem(cursor, "prompt")).toBe(true);
+  for (const value of [null, "%%%", cursor]) {
+    expect(historyCursorAnchorsItem(value, "other")).toBe(false);
+  }
+  expect(historyCursorAnchorsItem(cursor, undefined)).toBe(false);
 });

@@ -236,12 +236,19 @@ export function projectThreadProjectionForWire(
   };
 }
 
+const wireEvents = new WeakMap<OrchestrationV2DomainEvent, OrchestrationV2DomainEvent>();
+
 export function projectDomainEventForWire(
   event: OrchestrationV2DomainEvent,
 ): OrchestrationV2DomainEvent {
-  return event.type === "turn-item.updated"
-    ? { ...event, payload: projectTurnItemForWire(event.payload) }
-    : event.type === "context-handoff.updated"
-      ? { ...event, payload: projectContextHandoffForWire(event.payload) }
-      : event;
+  const cached = wireEvents.get(event);
+  if (cached !== undefined) return cached;
+  const projected =
+    event.type === "turn-item.updated"
+      ? { ...event, payload: projectTurnItemForWire(event.payload) }
+      : event.type === "context-handoff.updated"
+        ? { ...event, payload: projectContextHandoffForWire(event.payload) }
+        : event;
+  wireEvents.set(event, projected);
+  return projected;
 }

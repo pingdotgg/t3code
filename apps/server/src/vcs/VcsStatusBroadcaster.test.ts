@@ -70,6 +70,78 @@ const baseStatus: VcsStatusResult = {
   ...baseRemoteStatus,
 };
 
+it.effect("summarizes passive VCS subscriptions and sends a fresh snapshot on remount", () => {
+  const state = {
+    currentLocalStatus: {
+      ...baseLocalStatus,
+      hasWorkingTreeChanges: true,
+      workingTree: {
+        insertions: 1,
+        deletions: 0,
+        files: [{ path: "changed.ts", insertions: 1, deletions: 0 }],
+      },
+    },
+    currentRemoteStatus: baseRemoteStatus,
+    localStatusCalls: 0,
+    remoteStatusCalls: 0,
+    localInvalidationCalls: 0,
+    remoteInvalidationCalls: 0,
+  };
+  return Effect.gen(function* () {
+    const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+    const read = (options: { compact?: boolean; includeFiles?: boolean }) =>
+      broadcaster
+        .streamStatus({ cwd: "/repo", includeRemote: false, ...options })
+        .pipe(Stream.runHead);
+    const initial = Option.getOrThrow(yield* read({ compact: true }));
+    assert.strictEqual(initial._tag, "snapshot");
+    if (initial._tag !== "snapshot") return;
+    assert.deepStrictEqual(
+      initial.local.workingTree.files,
+      state.currentLocalStatus.workingTree.files,
+    );
+    assert.deepStrictEqual(Option.getOrThrow(yield* read({ compact: true })), initial);
+    for (const options of [{}, { compact: true, includeFiles: true }]) {
+      const full = Option.getOrThrow(yield* read(options));
+      assert.strictEqual(full._tag, "snapshot");
+      if (full._tag === "snapshot")
+        assert.deepStrictEqual(
+          full.local.workingTree.files,
+          state.currentLocalStatus.workingTree.files,
+        );
+    }
+    const activeSnapshot = yield* Deferred.make<void>();
+    const activeStream = yield* broadcaster
+      .streamStatus({ cwd: "/repo", includeRemote: false })
+      .pipe(
+        Stream.runForEach(() => Deferred.succeed(activeSnapshot, undefined)),
+        Effect.forkScoped,
+      );
+    yield* Deferred.await(activeSnapshot);
+    yield* broadcaster.getStatus({ cwd: "/repo" });
+    for (let index = 0; index < 300; index++) {
+      yield* broadcaster.getStatus({ cwd: `/repo-${index}` });
+    }
+    const reads = state.localStatusCalls;
+    state.currentLocalStatus = { ...state.currentLocalStatus, refName: "fresh-branch" };
+    const reloaded = yield* broadcaster.getStatus({ cwd: "/repo-0" });
+    assert.equal(reloaded.refName, "fresh-branch");
+    assert.equal(state.localStatusCalls, reads + 1);
+    state.currentRemoteStatus = remoteStatusWithPr;
+    assert.deepStrictEqual(
+      yield* broadcaster.refreshPullRequestStatus("/repo"),
+      remoteStatusWithPr,
+    );
+    yield* Fiber.interrupt(activeStream);
+    for (let index = 0; index < 300; index++) {
+      yield* broadcaster.getStatus({ cwd: `/later-${index}` });
+    }
+    const remoteReads = state.remoteStatusCalls;
+    yield* broadcaster.getStatus({ cwd: "/repo" });
+    assert.equal(state.remoteStatusCalls, remoteReads + 1);
+  }).pipe(Effect.provide(layerTestFor(state)));
+});
+
 function layerTestFor(state: {
   currentLocalStatus: VcsStatusLocalResult;
   currentRemoteStatus: VcsStatusRemoteResult | null;

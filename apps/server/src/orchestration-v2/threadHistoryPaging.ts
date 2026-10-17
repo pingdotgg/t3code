@@ -302,7 +302,9 @@ export function selectHistoryPageFromCursor<Row extends HistoryRow>(input: {
   };
   if (input.throughEntryId !== undefined) {
     const targetIndex = input.items.findIndex(
-      (row) => (row.item.messageId ?? row.item.id) === input.throughEntryId,
+      (row) =>
+        (row.item.messageId ?? row.item.id) === input.throughEntryId ||
+        row.item.runId === input.throughEntryId,
     );
     if (targetIndex >= 0 && targetIndex < anchorIndex) {
       const turns = input.items
@@ -455,11 +457,38 @@ export function buildBoundedThreadProjection(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly snapshotSequence: number;
   readonly policy?: ThreadHistoryPagePolicy | undefined;
+  readonly viewportWindow?: boolean;
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
+  const recentRows = input.projection.visibleTurnItems.slice(-policy.maxItems);
+  const retainedRunIds = new Set(recentRows.map(({ item }) => item.runId));
+  for (const run of input.projection.runs) {
+    if (["queued", "preparing", "starting", "running", "waiting"].includes(run.status)) {
+      retainedRunIds.add(run.id);
+    }
+  }
+  const retainedNodeIds = new Set(recentRows.map(({ item }) => item.nodeId));
+  const retainedCheckpointIds = new Set(
+    recentRows.flatMap(({ item }) => ("checkpointId" in item ? [item.checkpointId] : [])),
+  );
   const controlProjection = {
     ...input.projection,
+    ...(input.viewportWindow
+      ? {
+          // The store already bounds which turns are listed. Turns outside the
+          // window, including runs that only reach the store's surplus rows,
+          // stay listed without their files until their history page loads.
+          checkpoints: input.projection.checkpoints.map((checkpoint) =>
+            (checkpoint.runId !== null && retainedRunIds.has(checkpoint.runId)) ||
+            retainedNodeIds.has(checkpoint.nodeId) ||
+            retainedCheckpointIds.has(checkpoint.id) ||
+            checkpoint.deferredFileCount !== undefined
+              ? checkpoint
+              : { ...checkpoint, files: [], deferredFileCount: checkpoint.files.length },
+          ),
+        }
+      : {}),
     plans: input.projection.plans.filter((plan) => plan.status === "active"),
     contextHandoffs: input.projection.contextHandoffs.filter(
       (handoff) => handoff.status === "pending" || handoff.status === "ready",
@@ -498,7 +527,22 @@ export function buildBoundedThreadProjection(input: {
     policy: windowPolicy,
     rowEncodedBytes: (row) => projectedRowBoundedSnapshotEncodedBytes(row, threadId),
   });
-  const visibleTurnItems = renumberPositions(window.items);
+  // A viewport that starts inside a long turn keeps that turn's prompt above
+  // the gap. The cursor still points at the window, so paging fills the gap.
+  const oldestWindowRow = window.items[0];
+  const truncatedTurnStart =
+    input.viewportWindow === true &&
+    oldestWindowRow !== undefined &&
+    !isThreadHistoryTurnStart(oldestWindowRow.item) &&
+    oldestWindowRow.item.runId !== null
+      ? controlProjection.visibleTurnItems.find(
+          (row) =>
+            row.item.runId === oldestWindowRow.item.runId && isThreadHistoryTurnStart(row.item),
+        )
+      : undefined;
+  const visibleTurnItems = renumberPositions(
+    truncatedTurnStart === undefined ? window.items : [truncatedTurnStart, ...window.items],
+  );
   const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
   const dependencyTurnItems = retainedInterruptRequestTurnItems(
     controlProjection,

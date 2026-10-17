@@ -137,7 +137,7 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { truncate } from "@t3tools/shared/String";
 import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { Debouncer } from "@tanstack/react-pacer";
+import { createDebouncer } from "~/lib/debounce";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
@@ -393,18 +393,17 @@ import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
+  useEnvironmentShellBootstrapped,
   useProject,
   useProjects,
-  useThreadProjection,
   useThreadStatus,
   useThreadHistory,
   useThreadShell,
   useChildThreadInputs,
   useThreadRefs,
-  useThreadVisibleTurnItems,
   waitForThreadShell,
 } from "../state/entities";
-import { environmentShell } from "../state/shell";
+import { useChatThreadPresentation } from "../hooks/useChatThreadPresentation";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
@@ -1228,8 +1227,9 @@ export default function ChatView(props: ChatViewProps) {
     shellExists: serverThread !== null,
     waitForShell: draftThread !== null,
   });
-  const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
-  const serverProjection = serverThreadProjection?.projection ?? null;
+  const [isThreadFindActive, setIsThreadFindActive] = useState(false);
+  const { projection: serverProjection, visibleTurnItems: serverVisibleTurnItems } =
+    useChatThreadPresentation(routeThreadDetailRef, isThreadFindActive);
   const promptRef = useRef("");
   // Each view owns a composer; only the shown view publishes the shared ref.
   const composerRef = useRef<ChatComposerHandle | null>(null);
@@ -1273,7 +1273,6 @@ export default function ChatView(props: ChatViewProps) {
     () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
     [serverProjection?.providerTurns],
   );
-  const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
   const threadHistoryControls = useMemo<MessagesTimelineHistoryControls | undefined>(() => {
     if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
@@ -1283,6 +1282,7 @@ export default function ChatView(props: ChatViewProps) {
       hasMoreHistory: serverThreadHistory.hasMoreHistory,
       loading: serverThreadHistory.loading,
       error: serverThreadHistory.error,
+      cursor: serverThreadHistory.historyCursor,
       onLoadEarlier: (throughEntryId) => {
         void loadEarlierThreadHistory({
           environmentId: routeThreadDetailRef.environmentId,
@@ -1294,6 +1294,13 @@ export default function ChatView(props: ChatViewProps) {
       },
     };
   }, [loadEarlierThreadHistory, routeThreadDetailRef, serverThreadHistory]);
+  // Prompt recall past the loaded window pages older turns in. True while a
+  // page is on its way, false once there is nothing older to load.
+  const loadOlderPromptHistory = useCallback(() => {
+    if (!threadHistoryControls?.hasMoreHistory || threadHistoryControls.error) return false;
+    if (!threadHistoryControls.loading) threadHistoryControls.onLoadEarlier();
+    return true;
+  }, [threadHistoryControls]);
   const committedServerMessageIds = useMemo(
     () => deriveCommittedServerUserMessageIds(serverVisibleTurnItems),
     [serverVisibleTurnItems],
@@ -2093,10 +2100,9 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const handleOpenDraftProjectSettingsStable = useStableCallback(handleOpenDraftProjectSettings);
-  const activeEnvironmentShell = useEnvironmentQuery(
-    activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
+  const activeEnvironmentBootstrapComplete = useEnvironmentShellBootstrapped(
+    activeThread?.environmentId ?? null,
   );
-  const activeEnvironmentBootstrapComplete = activeEnvironmentShell.data?.snapshot._tag === "Some";
   const activeProjectKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.workspaceRoot}`
     : null;
@@ -4355,9 +4361,7 @@ export default function ChatView(props: ChatViewProps) {
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
-  const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
-  );
+  const showScrollDebouncer = useRef(createDebouncer(() => setShowScrollToBottom(true), 150));
   const timelineScrollIntentRef = useRef<"toward-end" | "away-from-end" | null>(null);
   const timelineScrollModeRef = useRef<TimelineScrollMode>("following-end");
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
@@ -4811,7 +4815,7 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       timelineScrollModeRef.current = "free-scrolling";
       liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
+      showScrollDebouncer.current.schedule();
     }
   };
   const onIsAtEndChangeStable = useStableCallback(onIsAtEndChange);
@@ -5907,7 +5911,6 @@ export default function ChatView(props: ChatViewProps) {
       displayedThreadRef?.environmentId ?? activeThread?.environmentId ?? environmentId,
     )?.serverConfig?.providers ?? EMPTY_PROVIDERS;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
-  const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = () => threadFindControlsRef.current?.open();
   const openThreadFindStable = useStableCallback(openThreadFind);
   const closeThreadFind = () => threadFindControlsRef.current?.close();
@@ -8849,6 +8852,8 @@ export default function ChatView(props: ChatViewProps) {
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
                               promptHistoryMessages={timelineMessages}
+                              onLoadOlderPromptHistory={loadOlderPromptHistory}
+                              olderPromptHistoryFailed={Boolean(threadHistoryControls?.error)}
                               isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
                               forceExpandedOnMobile={
