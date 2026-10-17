@@ -780,6 +780,42 @@ describe("ClientSettings pull request merge methods", () => {
   });
 });
 
+describe("ClientSettings pull request timeline", () => {
+  it("hides bots and the @codex review summon by default", () => {
+    expect(decodeClientSettings({})).toMatchObject({
+      pullRequestTimelineHideBots: true,
+      pullRequestHiddenComments: ["@codex review"],
+      pullRequestLatestOnlyBots: [],
+      pullRequestKeepBotApprovals: true,
+      pullRequestKeepBotChangeRequests: true,
+      pullRequestKeepBotReviewComments: false,
+      pullRequestCollapseBotComments: true,
+      pullRequestExtraBots: [],
+      pullRequestHumanAccounts: [],
+      pullRequestBotNameHeuristics: true,
+    });
+    expect(
+      decodeClientSettingsPatch({ pullRequestLatestOnlyBots: ["stamphog"] })
+        .pullRequestLatestOnlyBots,
+    ).toEqual(["stamphog"]);
+    expect(
+      decodeClientSettingsPatch({
+        pullRequestKeepBotReviewComments: true,
+        pullRequestCollapseBotComments: false,
+        pullRequestExtraBots: ["release-tool"],
+        pullRequestHumanAccounts: ["octo-bot"],
+        pullRequestBotNameHeuristics: false,
+      }),
+    ).toEqual({
+      pullRequestKeepBotReviewComments: true,
+      pullRequestCollapseBotComments: false,
+      pullRequestExtraBots: ["release-tool"],
+      pullRequestHumanAccounts: ["octo-bot"],
+      pullRequestBotNameHeuristics: false,
+    });
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

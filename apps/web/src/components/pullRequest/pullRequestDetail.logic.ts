@@ -513,6 +513,424 @@ export function groupPullRequestTimelineConversations(
 }
 
 /**
+ * Accounts that are bots whatever their profile says, copied from quiet-prs. Some post through a
+ * token and carry no bot flag at all.
+ */
+export const PULL_REQUEST_DEFAULT_BOT_LOGINS: ReadonlyArray<string> = [
+  "allcontributors",
+  "argos-ci",
+  "bundlemon",
+  "changeset-bot",
+  "codecov",
+  "codecov-commenter",
+  "codspeed-hq",
+  "coderabbitai",
+  "copilot",
+  "copilot-pull-request-reviewer",
+  "deepsource-autofix",
+  "dependabot",
+  "devin-ai-integration",
+  "ellipsis-dev",
+  "github-actions",
+  "github-advanced-security",
+  "graphite-app",
+  "greptile",
+  "greptile-apps",
+  "imgbot",
+  "lighthouse-ci",
+  "max-ai",
+  "mergify",
+  "netlify",
+  "posthog-bot",
+  "pre-commit-ci",
+  "renovate",
+  "semantic-release-bot",
+  "sentry-io",
+  "size-limit",
+  "snyk-bot",
+  "socket-security",
+  "sonarcloud",
+  "sonarqubecloud",
+  "sourcery-ai",
+  "trunk-io",
+  "vercel",
+];
+
+/** The name heuristics: `*-bot`, `bot-*`, `*-ci`, `*-app` and their near relatives. */
+const BOT_NAME_PATTERNS: ReadonlyArray<RegExp> = [
+  /(^|[-_.])((ci|cd|deploy|build)-?)?bots?$/iu,
+  /^bot[-_.]/iu,
+  /(^|[-_.])(app|action|actions|ci|cd)$/iu,
+];
+
+/** A strip shows this much of what a folded comment says. */
+export const PULL_REQUEST_COMMENT_PREVIEW_LIMIT = 140;
+
+/** Which accounts count as bots, beyond the host's own flag. */
+export interface PullRequestBotRecognition {
+  readonly extraBots: ReadonlyArray<string>;
+  readonly humanAccounts: ReadonlyArray<string>;
+  readonly nameHeuristics: boolean;
+}
+
+export const DEFAULT_PULL_REQUEST_BOT_RECOGNITION: PullRequestBotRecognition = {
+  extraBots: [],
+  humanAccounts: [],
+  nameHeuristics: true,
+};
+
+/** GitHub's GraphQL reports app logins without the `[bot]` that REST and settings carry. */
+function normalizedLogin(login: string): string {
+  return login
+    .trim()
+    .replace(/^@/u, "")
+    .replace(/\[bot\]$/iu, "")
+    .toLowerCase();
+}
+
+/** A list entry may hold several logins, split on spaces or commas, as quiet-prs reads them. */
+function normalizedLoginSet(values: ReadonlyArray<string>): ReadonlySet<string> {
+  return new Set(
+    values
+      .flatMap((value) => value.split(/[\s,]+/u))
+      .map(normalizedLogin)
+      .filter((login) => login.length > 0),
+  );
+}
+
+/**
+ * Decides who is a bot, first match winning: the always-human list, the host's bot flag or a
+ * `[bot]` login, the built-in list, the extra bot accounts, then the name heuristics. A comment
+ * with no author is a person's: a deleted account is not a bot.
+ */
+export function createPullRequestBotPredicate(
+  recognition: PullRequestBotRecognition = DEFAULT_PULL_REQUEST_BOT_RECOGNITION,
+): (actor: PullRequestActor | null) => boolean {
+  const humans = normalizedLoginSet(recognition.humanAccounts);
+  const bots = new Set([
+    ...PULL_REQUEST_DEFAULT_BOT_LOGINS,
+    ...normalizedLoginSet(recognition.extraBots),
+  ]);
+  return (actor) => {
+    if (actor === null) return false;
+    const login = normalizedLogin(actor.login);
+    if (login.length > 0 && humans.has(login)) return false;
+    if (actor.isBot === true || /\[bot\]\s*$/iu.test(actor.login)) return true;
+    if (bots.has(login)) return true;
+    return (
+      recognition.nameHeuristics &&
+      login.length > 0 &&
+      BOT_NAME_PATTERNS.some((pattern) => pattern.test(login))
+    );
+  };
+}
+
+export function isPullRequestBot(
+  actor: PullRequestActor | null,
+  recognition: PullRequestBotRecognition = DEFAULT_PULL_REQUEST_BOT_RECOGNITION,
+): boolean {
+  return createPullRequestBotPredicate(recognition)(actor);
+}
+
+/** The rules that hide bot noise, shared by the Timeline tab and the Summary comments list. */
+export interface PullRequestNoiseRules extends PullRequestBotRecognition {
+  readonly hiddenComments: ReadonlyArray<string>;
+  readonly latestOnlyBots: ReadonlyArray<string>;
+  readonly keepBotApprovals: boolean;
+  readonly keepBotChangeRequests: boolean;
+  readonly keepBotReviewComments: boolean;
+}
+
+export const DEFAULT_PULL_REQUEST_NOISE_RULES: PullRequestNoiseRules = {
+  ...DEFAULT_PULL_REQUEST_BOT_RECOGNITION,
+  hiddenComments: ["@codex review"],
+  latestOnlyBots: [],
+  keepBotApprovals: true,
+  keepBotChangeRequests: true,
+  keepBotReviewComments: false,
+};
+
+/** The client settings the noise rules are read from, as one selection. */
+export function pullRequestNoiseRulesFromSettings(settings: {
+  readonly pullRequestHiddenComments: ReadonlyArray<string>;
+  readonly pullRequestLatestOnlyBots: ReadonlyArray<string>;
+  readonly pullRequestKeepBotApprovals: boolean;
+  readonly pullRequestKeepBotChangeRequests: boolean;
+  readonly pullRequestKeepBotReviewComments: boolean;
+  readonly pullRequestExtraBots: ReadonlyArray<string>;
+  readonly pullRequestHumanAccounts: ReadonlyArray<string>;
+  readonly pullRequestBotNameHeuristics: boolean;
+}): PullRequestNoiseRules {
+  return {
+    hiddenComments: settings.pullRequestHiddenComments,
+    latestOnlyBots: settings.pullRequestLatestOnlyBots,
+    keepBotApprovals: settings.pullRequestKeepBotApprovals,
+    keepBotChangeRequests: settings.pullRequestKeepBotChangeRequests,
+    keepBotReviewComments: settings.pullRequestKeepBotReviewComments,
+    extraBots: settings.pullRequestExtraBots,
+    humanAccounts: settings.pullRequestHumanAccounts,
+    nameHeuristics: settings.pullRequestBotNameHeuristics,
+  };
+}
+
+export interface PullRequestTimelineFilterRules extends PullRequestNoiseRules {
+  readonly hideBots: boolean;
+}
+
+/** The fields of a comment or review that the noise rules read, whichever surface lists it. */
+export interface PullRequestActivityItem {
+  readonly id: string;
+  readonly actor: PullRequestActor | null;
+  readonly body: string | null;
+  readonly at: string;
+  readonly reviewState: string | null;
+  readonly isReview: boolean;
+}
+
+/**
+ * What hiding the bots does to one item. `fold` is a bot's: it folds into a one-line strip when
+ * bot comments collapse, and goes otherwise. `author` is whose strip it joins, which for a review
+ * thread is the bot that started it. `gone` is a summons or a latest-only bot's earlier word,
+ * which goes altogether either way.
+ */
+export type PullRequestNoiseDisposition =
+  | { readonly kind: "fold"; readonly author: PullRequestActor | null }
+  | { readonly kind: "gone" };
+
+/** Compared the way the comment reads on the page: markers dropped, spacing and case ignored. */
+function normalizedCommentText(text: string): string {
+  return text
+    .replace(/<!--[\s\S]*?-->/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Returns what hiding the bots does to each item it touches; an item missing from the map stays
+ * in full.
+ *
+ * - A comment whose whole text is a hidden phrase goes, whoever wrote it, but only on its own: in
+ *   a thread with replies it is part of a conversation.
+ * - A review thread reads as whoever started it, replies included, so a bot's finding folds away
+ *   with the reply that answered it and a person's thread stays even when a bot chimes in.
+ * - A latest-only bot keeps its newest item in full and loses the rest, verdicts included.
+ * - A bot's approval, change request or comment-only review stays while its keep setting is on.
+ */
+export function pullRequestNoiseDispositions(
+  items: ReadonlyArray<PullRequestActivityItem>,
+  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  rules: PullRequestNoiseRules,
+): ReadonlyMap<string, PullRequestNoiseDisposition> {
+  const isBot = createPullRequestBotPredicate(rules);
+  const hiddenComments = new Set(
+    rules.hiddenComments.map(normalizedCommentText).filter((phrase) => phrase.length > 0),
+  );
+  const latestOnly = normalizedLoginSet(rules.latestOnlyBots);
+  const threadByCommentId = new Map(
+    reviewThreads.flatMap((thread) =>
+      thread.comments.map((comment) => [comment.id, thread] as const),
+    ),
+  );
+
+  // Who an item speaks for once the bots are hidden, and whether that is a bot.
+  const speakerOf = (
+    item: PullRequestActivityItem,
+  ): { readonly bot: boolean; readonly author: PullRequestActor | null } => {
+    const thread = threadByCommentId.get(item.id);
+    const root = thread?.comments.toSorted((left, right) =>
+      left.createdAt.localeCompare(right.createdAt),
+    )[0];
+    if (thread === undefined || root === undefined) {
+      return { bot: isBot(item.actor), author: item.actor };
+    }
+    return { bot: isBot(root.author), author: root.author };
+  };
+  const isLone = (item: PullRequestActivityItem): boolean => {
+    const thread = threadByCommentId.get(item.id);
+    return (
+      thread === undefined ||
+      (thread.comments.length <= 1 &&
+        (thread.commentCount ?? 0) <= 1 &&
+        thread.nextCommentsCursor === undefined)
+    );
+  };
+  const keeps = (item: PullRequestActivityItem): boolean => {
+    if (!item.isReview) return false;
+    const outcome = pullRequestReviewOutcome(item.reviewState);
+    if (outcome === "approved") return rules.keepBotApprovals;
+    if (outcome === "changes-requested") return rules.keepBotChangeRequests;
+    return rules.keepBotReviewComments;
+  };
+
+  const speakers = new Map(items.map((item) => [item.id, speakerOf(item)] as const));
+  const latestOnlyLogin = (item: PullRequestActivityItem): string | null => {
+    const speaker = speakers.get(item.id);
+    if (speaker === undefined || !speaker.bot || speaker.author === null) return null;
+    const login = normalizedLogin(speaker.author.login);
+    return latestOnly.has(login) ? login : null;
+  };
+  // Hosts do not return activity in order, so the newest is decided by time, not position.
+  const newestByLogin = new Map<string, { readonly id: string; readonly at: number }>();
+  for (const item of items) {
+    const login = latestOnlyLogin(item);
+    if (login === null) continue;
+    const at = instant(item.at);
+    const current = newestByLogin.get(login);
+    if (current === undefined || (Number.isNaN(current.at) ? !Number.isNaN(at) : at > current.at)) {
+      newestByLogin.set(login, { id: item.id, at });
+    }
+  }
+
+  const dispositions = new Map<string, PullRequestNoiseDisposition>();
+  for (const item of items) {
+    if (
+      item.body !== null &&
+      isLone(item) &&
+      hiddenComments.has(normalizedCommentText(item.body))
+    ) {
+      dispositions.set(item.id, { kind: "gone" });
+      continue;
+    }
+    const speaker = speakers.get(item.id);
+    if (speaker === undefined || !speaker.bot) continue;
+    const login = latestOnlyLogin(item);
+    if (login !== null) {
+      if (newestByLogin.get(login)?.id !== item.id) dispositions.set(item.id, { kind: "gone" });
+      continue;
+    }
+    if (keeps(item)) continue;
+    dispositions.set(item.id, { kind: "fold", author: speaker.author });
+  }
+  return dispositions;
+}
+
+function commentActivityItem(comment: PullRequestComment): PullRequestActivityItem {
+  return {
+    id: comment.id,
+    actor: comment.author,
+    body: comment.body,
+    at: comment.createdAt,
+    reviewState: comment.reviewState,
+    isReview: comment.kind === "review",
+  };
+}
+
+export function pullRequestCommentNoiseDispositions(
+  comments: ReadonlyArray<PullRequestComment>,
+  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  rules: PullRequestNoiseRules,
+): ReadonlyMap<string, PullRequestNoiseDisposition> {
+  return pullRequestNoiseDispositions(comments.map(commentActivityItem), reviewThreads, rules);
+}
+
+/** The ids hiding the bots takes out of view, folded or gone. */
+export function hiddenPullRequestCommentIds(
+  comments: ReadonlyArray<PullRequestComment>,
+  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  rules: PullRequestNoiseRules,
+): ReadonlySet<string> {
+  return new Set(pullRequestCommentNoiseDispositions(comments, reviewThreads, rules).keys());
+}
+
+/** A row of the comments list once bot items fold: one item in full, or a strip for a run. */
+export type PullRequestCommentRow<T> =
+  | { readonly kind: "item"; readonly item: T }
+  | {
+      readonly kind: "fold";
+      readonly key: string;
+      readonly author: PullRequestActor | null;
+      readonly items: ReadonlyArray<T>;
+    };
+
+/**
+ * Folds back-to-back bot items from the same author into one strip, in the order given. An item
+ * that goes altogether is dropped and does not split the run either side of it; anything shown
+ * in full, or a different bot, does.
+ */
+export function foldPullRequestBotRuns<T extends { readonly id: string }>(
+  items: ReadonlyArray<T>,
+  dispositions: ReadonlyMap<string, PullRequestNoiseDisposition>,
+): ReadonlyArray<PullRequestCommentRow<T>> {
+  const rows: PullRequestCommentRow<T>[] = [];
+  let runLogin: string | null = null;
+  for (const item of items) {
+    const disposition = dispositions.get(item.id);
+    if (disposition?.kind === "gone") continue;
+    if (disposition === undefined) {
+      rows.push({ kind: "item", item });
+      runLogin = null;
+      continue;
+    }
+    const login = disposition.author === null ? "" : normalizedLogin(disposition.author.login);
+    const last = rows.at(-1);
+    if (last?.kind === "fold" && runLogin === login) {
+      rows[rows.length - 1] = { ...last, items: [...last.items, item] };
+    } else {
+      rows.push({ kind: "fold", key: item.id, author: disposition.author, items: [item] });
+    }
+    runLogin = login;
+  }
+  return rows;
+}
+
+function plainCommentText(body: string): string {
+  return body
+    .replace(/<!--[\s\S]*?-->/gu, "")
+    .replace(/^\s*>?\s*\[!\w+\]\s*$/gmu, "")
+    .replace(/!?(\[([^\]]+)\])\([^)]*\)/gu, "$2")
+    .replace(/^[\s>#*-]+/gmu, "")
+    .replace(/[*`]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** One line of a comment, as markdown would read; a bare approval says what it did instead. */
+export function pullRequestCommentPreview(
+  body: string,
+  reviewState: string | null = null,
+  limit: number = Number.POSITIVE_INFINITY,
+): string {
+  const outcome = pullRequestReviewOutcome(reviewState);
+  const text =
+    plainCommentText(body) ||
+    (outcome === "approved"
+      ? "approved these changes"
+      : outcome === "changes-requested"
+        ? "requested changes"
+        : reviewState !== null
+          ? "reviewed"
+          : "");
+  return text.length > limit ? `${text.slice(0, limit).trimEnd()}\u2026` : text;
+}
+
+export function filterPullRequestTimeline(
+  events: ReadonlyArray<PullRequestTimelineEvent>,
+  reviewThreads: ReadonlyArray<PullRequestReviewThread>,
+  rules: PullRequestTimelineFilterRules,
+): { readonly events: ReadonlyArray<PullRequestTimelineEvent>; readonly hiddenCount: number } {
+  if (!rules.hideBots) return { events, hiddenCount: 0 };
+  const hidden = pullRequestNoiseDispositions(
+    events
+      .filter((event) => event.kind === "comment" || event.kind === "review")
+      .map((event) => ({
+        id: event.id,
+        actor: event.actor,
+        body: event.body,
+        at: event.at,
+        reviewState: event.reviewState,
+        isReview: event.kind === "review",
+      })),
+    reviewThreads,
+    rules,
+  );
+  const kept = events.filter(
+    (event) => (event.kind !== "comment" && event.kind !== "review") || !hidden.has(event.id),
+  );
+  return { events: kept, hiddenCount: events.length - kept.length };
+}
+
+/**
  * A body that is nothing but a marker therefore renders as an empty block, so it is treated as
  * no body at all. The stripped text decides that and nothing else: the body itself is passed on
  * whole, because a comment demonstrating an HTML comment inside a code fence still has to show

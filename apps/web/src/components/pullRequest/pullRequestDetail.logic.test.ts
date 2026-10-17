@@ -60,6 +60,14 @@ import {
   resolvePullRequestMergeMethod,
   buildPullRequestTimeline,
   editPullRequestThreadComment,
+  createPullRequestBotPredicate,
+  DEFAULT_PULL_REQUEST_NOISE_RULES,
+  filterPullRequestTimeline,
+  foldPullRequestBotRuns,
+  hiddenPullRequestCommentIds,
+  pullRequestCommentNoiseDispositions,
+  pullRequestCommentPreview,
+  type PullRequestNoiseRules,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
@@ -718,6 +726,595 @@ describe("pull request timeline", () => {
       ["event", "1baf7bdcafe"],
       ["event", "created"],
     ]);
+  });
+});
+
+describe("pull request timeline bot filter", () => {
+  const rules = { ...DEFAULT_PULL_REQUEST_NOISE_RULES, hideBots: true };
+
+  function comment(
+    id: string,
+    login: string,
+    body: string,
+    overrides: Partial<PullRequestComment> = {},
+  ): PullRequestComment {
+    return {
+      id,
+      kind: "issue-comment",
+      author: { login, name: null, avatarUrl: null },
+      body,
+      createdAt: "2026-07-03T00:00:00Z",
+      url: null,
+      path: null,
+      reviewState: null,
+      ...overrides,
+    };
+  }
+
+  function review(id: string, login: string, reviewState: string, createdAt: string) {
+    return comment(id, login, "", { kind: "review", reviewState, createdAt });
+  }
+
+  function botThread(
+    comments: ReadonlyArray<{ readonly id: string; readonly login: string }>,
+  ): PullRequestReviewThread {
+    return {
+      id: `thread:${comments[0]?.id ?? "empty"}`,
+      path: "apps/web/src/page.tsx",
+      line: 12,
+      side: "right",
+      isResolved: false,
+      isOutdated: false,
+      comments: comments.map(({ id, login }) => ({
+        id,
+        author: { login, name: null, avatarUrl: null },
+        body: "finding",
+        createdAt: "2026-07-03T00:00:00Z",
+        url: null,
+      })),
+    };
+  }
+
+  function visibleIds(
+    comments: ReadonlyArray<PullRequestComment>,
+    reviewThreads: ReadonlyArray<PullRequestReviewThread> = [],
+    filterRules: Parameters<typeof filterPullRequestTimeline>[2] = rules,
+  ) {
+    const events = buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments });
+    const filtered = filterPullRequestTimeline(events, reviewThreads, filterRules);
+    return {
+      ids: filtered.events.map((event) => event.id),
+      hiddenCount: filtered.hiddenCount,
+    };
+  }
+
+  it("hides bot comments, by flag or by a [bot] login", () => {
+    const result = visibleIds([
+      comment("flagged", "vercel", "Preview ready", {
+        author: { login: "vercel", name: null, avatarUrl: null, isBot: true },
+      }),
+      comment("suffixed", "github-actions[bot]", "Coverage report"),
+      comment("person", "bilal", "looks good"),
+    ]);
+    expect(result.ids).not.toContain("flagged");
+    expect(result.ids).not.toContain("suffixed");
+    expect(result.ids).toContain("person");
+    expect(result.hiddenCount).toBe(2);
+  });
+
+  it("keeps a bot's approval and change request but not its plain review", () => {
+    const result = visibleIds([
+      review("approved", "stamphog[bot]", "APPROVED", "2026-07-03T00:00:00Z"),
+      review("changes", "greptile[bot]", "CHANGES_REQUESTED", "2026-07-04T00:00:00Z"),
+      review("commented", "greptile[bot]", "COMMENTED", "2026-07-05T00:00:00Z"),
+    ]);
+    expect(result.ids).toEqual(expect.arrayContaining(["approved", "changes"]));
+    expect(result.ids).not.toContain("commented");
+  });
+
+  it("hides a bot's inline finding with the reply that answered it", () => {
+    const threads = [
+      botThread([
+        { id: "finding", login: "chatgpt-codex-connector[bot]" },
+        { id: "reply", login: "bilal" },
+      ]),
+      botThread([
+        { id: "lone-finding", login: "chatgpt-codex-connector[bot]" },
+        { id: "bot-follow-up", login: "chatgpt-codex-connector[bot]" },
+      ]),
+    ];
+    const inline = { kind: "review-comment" as const, path: "apps/web/src/page.tsx" };
+    const result = visibleIds(
+      [
+        comment("finding", "chatgpt-codex-connector[bot]", "P1: fix this", inline),
+        comment("reply", "bilal", "fixed", inline),
+        comment("lone-finding", "chatgpt-codex-connector[bot]", "P2: and this", inline),
+        comment("bot-follow-up", "chatgpt-codex-connector[bot]", "still there", inline),
+      ],
+      threads,
+    );
+    expect(result.ids).not.toContain("finding");
+    expect(result.ids).not.toContain("reply");
+    expect(result.ids).not.toContain("lone-finding");
+    expect(result.ids).not.toContain("bot-follow-up");
+  });
+
+  it("hides a person's comment only when its whole text is a hidden phrase", () => {
+    const result = visibleIds([
+      comment("summon", "bilal", "  @Codex   REVIEW \n"),
+      comment("marked", "bilal", "<!-- tracking -->@codex review"),
+      comment("request", "bilal", "@codex review please fix X"),
+    ]);
+    expect(result.ids).not.toContain("summon");
+    expect(result.ids).not.toContain("marked");
+    expect(result.ids).toContain("request");
+  });
+
+  it("keeps only the newest event from a latest-only bot, whatever order it arrives in", () => {
+    const result = visibleIds(
+      [
+        review("newest", "stamphog[bot]", "COMMENTED", "2026-07-06T00:00:00Z"),
+        review("old-approval", "stamphog[bot]", "APPROVED", "2026-07-04T00:00:00Z"),
+        comment("old-comment", "StampHog[bot]", "Waiting on checks", {
+          createdAt: "2026-07-05T00:00:00Z",
+        }),
+        comment("person", "bilal", "thanks"),
+      ],
+      [],
+      { ...rules, latestOnlyBots: ["stamphog[bot]"] },
+    );
+    expect(result.ids).toContain("newest");
+    expect(result.ids).toContain("person");
+    expect(result.ids).not.toContain("old-approval");
+    expect(result.ids).not.toContain("old-comment");
+    expect(result.hiddenCount).toBe(2);
+  });
+
+  it("never hides commits or lifecycle events", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      author: { login: "renovate[bot]", name: null, avatarUrl: null, isBot: true },
+      commits: [
+        {
+          oid: "b0bcafe",
+          messageHeadline: "@codex review",
+          committedDate: "2026-07-02T00:00:00Z",
+          authors: [{ login: "dependabot[bot]", name: null, avatarUrl: null }],
+        },
+      ],
+      comments: [],
+      mergedAt: "2026-07-07T00:00:00Z",
+    });
+    expect(filterPullRequestTimeline(events, [], rules)).toEqual({ events, hiddenCount: 0 });
+  });
+
+  it("leaves the timeline untouched while bots are shown", () => {
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [
+        comment("bot", "github-actions[bot]", "Coverage report"),
+        comment("summon", "bilal", "@codex review"),
+      ],
+    });
+    expect(
+      filterPullRequestTimeline(events, [], {
+        ...rules,
+        hideBots: false,
+        latestOnlyBots: ["github-actions"],
+      }),
+    ).toEqual({ events, hiddenCount: 0 });
+  });
+
+  describe("on the comments list", () => {
+    function hiddenIds(
+      comments: ReadonlyArray<PullRequestComment>,
+      reviewThreads: ReadonlyArray<PullRequestReviewThread> = [],
+      latestOnlyBots: ReadonlyArray<string> = [],
+    ) {
+      return [
+        ...hiddenPullRequestCommentIds(comments, reviewThreads, { ...rules, latestOnlyBots }),
+      ].toSorted();
+    }
+
+    it("hides bot comments and keeps a person's", () => {
+      expect(
+        hiddenIds([
+          comment("flagged", "chatgpt-codex-connector", "Codex Review: Didn't find issues", {
+            author: { login: "chatgpt-codex-connector", name: null, avatarUrl: null, isBot: true },
+          }),
+          comment("suffixed", "chatgpt-codex-connector[bot]", "Reviewed commit abc"),
+          comment("person", "bilal", "looks good"),
+        ]),
+      ).toEqual(["flagged", "suffixed"]);
+    });
+
+    it("keeps a bot's approval and change request", () => {
+      expect(
+        hiddenIds([
+          review("approved", "stamphog[bot]", "APPROVED", "2026-07-03T00:00:00Z"),
+          review("changes", "greptile[bot]", "CHANGES_REQUESTED", "2026-07-04T00:00:00Z"),
+          review("commented", "greptile[bot]", "COMMENTED", "2026-07-05T00:00:00Z"),
+        ]),
+      ).toEqual(["commented"]);
+    });
+
+    it("hides a bot finding together with the reply in its thread", () => {
+      const inline = { kind: "review-comment" as const, path: "apps/web/src/page.tsx" };
+      expect(
+        hiddenIds(
+          [
+            comment("finding", "chatgpt-codex-connector[bot]", "P1: fix this", inline),
+            comment("reply", "bilal", "fixed", inline),
+            comment("lone-finding", "chatgpt-codex-connector[bot]", "P2: and this", inline),
+          ],
+          [
+            botThread([
+              { id: "finding", login: "chatgpt-codex-connector[bot]" },
+              { id: "reply", login: "bilal" },
+            ]),
+            botThread([{ id: "lone-finding", login: "chatgpt-codex-connector[bot]" }]),
+          ],
+        ),
+      ).toEqual(["finding", "lone-finding", "reply"]);
+    });
+
+    it("hides a person's @codex review summons", () => {
+      expect(
+        hiddenIds([
+          comment("summon", "MarconLP", "@codex review"),
+          comment("request", "MarconLP", "@codex review the cache change"),
+        ]),
+      ).toEqual(["summon"]);
+    });
+
+    it("keeps only the newest comment or review from a latest-only bot", () => {
+      expect(
+        hiddenIds(
+          [
+            review("newest", "stamphog[bot]", "APPROVED", "2026-07-06T00:00:00Z"),
+            review("old-approval", "stamphog[bot]", "APPROVED", "2026-07-04T00:00:00Z"),
+            comment("old-comment", "stamphog[bot]", "Waiting on checks", {
+              createdAt: "2026-07-05T00:00:00Z",
+            }),
+            comment("person", "bilal", "thanks"),
+          ],
+          [],
+          ["@StampHog"],
+        ),
+      ).toEqual(["old-approval", "old-comment"]);
+    });
+  });
+});
+
+describe("pull request bot noise rules, as quiet-prs", () => {
+  const rules: PullRequestNoiseRules = DEFAULT_PULL_REQUEST_NOISE_RULES;
+
+  function actor(login: string, isBot?: boolean) {
+    return { login, name: null, avatarUrl: null, ...(isBot === undefined ? {} : { isBot }) };
+  }
+
+  function comment(
+    id: string,
+    login: string,
+    body: string,
+    overrides: Partial<PullRequestComment> = {},
+  ): PullRequestComment {
+    return {
+      id,
+      kind: "issue-comment",
+      author: actor(login),
+      body,
+      createdAt: "2026-07-03T00:00:00Z",
+      url: null,
+      path: null,
+      reviewState: null,
+      ...overrides,
+    };
+  }
+
+  function review(id: string, login: string, reviewState: string, createdAt: string) {
+    return comment(id, login, "", { kind: "review", reviewState, createdAt });
+  }
+
+  const inline = { kind: "review-comment" as const, path: "apps/web/src/page.tsx" };
+
+  function thread(
+    comments: ReadonlyArray<{ readonly id: string; readonly login: string }>,
+    state: { readonly isResolved?: boolean; readonly isOutdated?: boolean } = {},
+  ): PullRequestReviewThread {
+    return {
+      id: `thread:${comments[0]?.id ?? "empty"}`,
+      path: "apps/web/src/page.tsx",
+      line: 12,
+      side: "right",
+      isResolved: state.isResolved ?? false,
+      isOutdated: state.isOutdated ?? false,
+      comments: comments.map(({ id, login }) => ({
+        id,
+        author: actor(login),
+        body: "finding",
+        createdAt: "2026-07-03T00:00:00Z",
+        url: null,
+      })),
+    };
+  }
+
+  function hidden(
+    comments: ReadonlyArray<PullRequestComment>,
+    reviewThreads: ReadonlyArray<PullRequestReviewThread> = [],
+    overrides: Partial<PullRequestNoiseRules> = {},
+  ) {
+    return [
+      ...hiddenPullRequestCommentIds(comments, reviewThreads, { ...rules, ...overrides }),
+    ].toSorted();
+  }
+
+  describe("a person's reply in a bot-started thread", () => {
+    const comments = [
+      comment("finding", "posthog[bot]", "P1: the cache key ignores the branch", inline),
+      comment("reply", "MarconLP", "Fixed in ea5b9d47: the key now includes the branch", inline),
+    ];
+    const ids = [
+      { id: "finding", login: "posthog[bot]" },
+      { id: "reply", login: "MarconLP" },
+    ];
+
+    it("folds an outdated, unresolved thread with the bots, reply and all", () => {
+      const threads = [thread(ids, { isOutdated: true })];
+      expect(hidden(comments, threads)).toEqual(["finding", "reply"]);
+      const dispositions = pullRequestCommentNoiseDispositions(comments, threads, rules);
+      expect(dispositions.get("reply")).toEqual({ kind: "fold", author: actor("posthog[bot]") });
+    });
+
+    it("folds a resolved thread the same way", () => {
+      expect(hidden(comments, [thread(ids, { isResolved: true })])).toEqual(["finding", "reply"]);
+    });
+
+    it("folds a current, unresolved thread too", () => {
+      expect(hidden(comments, [thread(ids)])).toEqual(["finding", "reply"]);
+    });
+
+    it("keeps an outdated thread a person started, bot replies included", () => {
+      expect(
+        hidden(
+          [
+            comment("question", "MarconLP", "Why is this cached?", inline),
+            comment("answer", "posthog[bot]", "It saves a request", inline),
+          ],
+          [
+            thread(
+              [
+                { id: "question", login: "MarconLP" },
+                { id: "answer", login: "posthog[bot]" },
+              ],
+              { isOutdated: true },
+            ),
+          ],
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  describe("bot recognition", () => {
+    const isBot = createPullRequestBotPredicate(rules);
+
+    it("lets the always-human list override every bot signal", () => {
+      const isBotUnlessHuman = createPullRequestBotPredicate({
+        ...rules,
+        humanAccounts: ["@Release-Bot", "renovate", "deploy-ci[bot]"],
+      });
+      expect(isBotUnlessHuman(actor("release-bot"))).toBe(false);
+      expect(isBotUnlessHuman(actor("renovate", true))).toBe(false);
+      expect(isBotUnlessHuman(actor("deploy-ci[bot]"))).toBe(false);
+      expect(isBotUnlessHuman(actor("dependabot[bot]"))).toBe(true);
+    });
+
+    it("trusts the host's flag and a [bot] login, in any case", () => {
+      expect(isBot(actor("acme-reviewer", true))).toBe(true);
+      expect(isBot(actor("acme-reviewer[BOT]"))).toBe(true);
+      expect(isBot(actor("acme-reviewer"))).toBe(false);
+    });
+
+    it("knows the built-in bots without any flag", () => {
+      for (const login of ["vercel", "Codecov", "coderabbitai", "posthog-bot", "copilot"]) {
+        expect(isBot(actor(login))).toBe(true);
+      }
+    });
+
+    it("adds the extra bot accounts, written either way", () => {
+      const withExtras = createPullRequestBotPredicate({
+        ...rules,
+        extraBots: ["@Release-Tool", "internal-deployer[bot], other-token"],
+      });
+      expect(withExtras(actor("release-tool"))).toBe(true);
+      expect(withExtras(actor("internal-deployer"))).toBe(true);
+      expect(withExtras(actor("other-token"))).toBe(true);
+      expect(isBot(actor("release-tool"))).toBe(false);
+    });
+
+    it("applies the name heuristics only while they are on", () => {
+      const logins = ["acme-bot", "bot-acme", "acme-ci", "acme-app", "acme_actions"];
+      for (const login of logins) expect(isBot(actor(login))).toBe(true);
+      const plain = createPullRequestBotPredicate({ ...rules, nameHeuristics: false });
+      for (const login of logins) expect(plain(actor(login))).toBe(false);
+      expect(plain(actor("acme-bot[bot]"))).toBe(true);
+      expect(isBot(actor("robotics"))).toBe(false);
+      expect(isBot(actor("abbot"))).toBe(false);
+    });
+
+    it("treats a comment with no author as a person's", () => {
+      expect(isBot(null)).toBe(false);
+    });
+
+    it("drives the comment filter, so an always-human bot's comment stays", () => {
+      const comments = [comment("renovate", "renovate[bot]", "Update dependency x")];
+      expect(hidden(comments)).toEqual(["renovate"]);
+      expect(hidden(comments, [], { humanAccounts: ["renovate"] })).toEqual([]);
+    });
+  });
+
+  describe("bot reviews by outcome", () => {
+    const reviews = [
+      review("approved", "greptile[bot]", "APPROVED", "2026-07-03T00:00:00Z"),
+      review("changes", "greptile[bot]", "CHANGES_REQUESTED", "2026-07-04T00:00:00Z"),
+      review("commented", "greptile[bot]", "COMMENTED", "2026-07-05T00:00:00Z"),
+      review("dismissed", "greptile[bot]", "DISMISSED", "2026-07-06T00:00:00Z"),
+    ];
+
+    it("keeps approvals and change requests and folds comment-only reviews by default", () => {
+      expect(hidden(reviews)).toEqual(["commented", "dismissed"]);
+    });
+
+    it("folds approvals once they are not kept", () => {
+      expect(hidden(reviews, [], { keepBotApprovals: false })).toEqual([
+        "approved",
+        "commented",
+        "dismissed",
+      ]);
+    });
+
+    it("folds change requests once they are not kept", () => {
+      expect(hidden(reviews, [], { keepBotChangeRequests: false })).toEqual([
+        "changes",
+        "commented",
+        "dismissed",
+      ]);
+    });
+
+    it("keeps comment-only and dismissed reviews when asked", () => {
+      expect(hidden(reviews, [], { keepBotReviewComments: true })).toEqual([]);
+    });
+
+    it("never keeps a bot's plain comment, whatever the review settings", () => {
+      expect(
+        hidden([comment("note", "greptile[bot]", "Summary")], [], { keepBotReviewComments: true }),
+      ).toEqual(["note"]);
+    });
+  });
+
+  describe("hidden phrases", () => {
+    it("hides a summons only as a lone comment", () => {
+      const comments = [
+        comment("lone", "MarconLP", "@codex review"),
+        comment("inline-lone", "MarconLP", "@codex review", inline),
+        comment("in-thread", "MarconLP", "@Codex  review", inline),
+        comment("bot-reply", "chatgpt-codex-connector[bot]", "On it", inline),
+      ];
+      const threads = [
+        thread([{ id: "inline-lone", login: "MarconLP" }]),
+        thread([
+          { id: "in-thread", login: "MarconLP" },
+          { id: "bot-reply", login: "chatgpt-codex-connector[bot]" },
+        ]),
+      ];
+      expect(hidden(comments, threads)).toEqual(["inline-lone", "lone"]);
+    });
+
+    it("drops a summons altogether rather than folding it", () => {
+      const dispositions = pullRequestCommentNoiseDispositions(
+        [comment("lone", "MarconLP", "@codex review")],
+        [],
+        rules,
+      );
+      expect(dispositions.get("lone")).toEqual({ kind: "gone" });
+    });
+  });
+
+  describe("latest only", () => {
+    const comments = [
+      review("old-approval", "stamphog[bot]", "APPROVED", "2026-07-04T00:00:00Z"),
+      comment("refusal", "stamphog[bot]", "Not yet: checks failing", {
+        createdAt: "2026-07-05T00:00:00Z",
+      }),
+      review("new-approval", "stamphog[bot]", "APPROVED", "2026-07-06T00:00:00Z"),
+      comment("other-bot", "vercel[bot]", "Preview ready"),
+    ];
+
+    it("drops a kept verdict that is not the newest, and keeps the newest whole", () => {
+      const dispositions = pullRequestCommentNoiseDispositions(comments, [], {
+        ...rules,
+        latestOnlyBots: ["stamphog"],
+      });
+      expect(dispositions.get("old-approval")).toEqual({ kind: "gone" });
+      expect(dispositions.get("refusal")).toEqual({ kind: "gone" });
+      expect(dispositions.has("new-approval")).toBe(false);
+      expect(dispositions.get("other-bot")?.kind).toBe("fold");
+    });
+
+    it("keeps a latest-only bot's newest comment in full even though it is not a verdict", () => {
+      expect(hidden(comments.slice(0, 2), [], { latestOnlyBots: ["StampHog[bot]"] })).toEqual([
+        "old-approval",
+      ]);
+    });
+
+    it("only applies to accounts recognised as bots", () => {
+      expect(
+        hidden(
+          [
+            comment("old", "MarconLP", "first", { createdAt: "2026-07-04T00:00:00Z" }),
+            comment("new", "MarconLP", "second", { createdAt: "2026-07-05T00:00:00Z" }),
+          ],
+          [],
+          { latestOnlyBots: ["MarconLP"] },
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  describe("fold runs", () => {
+    const comments = [
+      comment("a1", "vercel[bot]", "Preview one"),
+      comment("a2", "vercel[bot]", "Preview two"),
+      comment("summon", "MarconLP", "@codex review"),
+      comment("a3", "Vercel", "Preview three"),
+      comment("b1", "codecov[bot]", "Coverage"),
+      comment("person", "MarconLP", "Looks good"),
+      comment("a4", "vercel[bot]", "Preview four"),
+    ];
+
+    it("groups back-to-back items from one bot and splits on another author", () => {
+      const rows = foldPullRequestBotRuns(
+        comments,
+        pullRequestCommentNoiseDispositions(comments, [], rules),
+      );
+      expect(
+        rows.map((row) =>
+          row.kind === "item" ? row.item.id : row.items.map((item) => item.id).join("+"),
+        ),
+      ).toEqual(["a1+a2+a3", "b1", "person", "a4"]);
+      expect(rows[0]).toMatchObject({ kind: "fold", key: "a1", author: actor("vercel[bot]") });
+    });
+
+    it("folds a bot thread's reply into the strip of the bot that started it", () => {
+      const threadComments = [
+        comment("finding", "posthog[bot]", "P2: missing await", inline),
+        comment("reply", "MarconLP", "Fixed in ea5b9d47", inline),
+        comment("next", "posthog[bot]", "P2: another", inline),
+      ];
+      const threads = [
+        thread(
+          [
+            { id: "finding", login: "posthog[bot]" },
+            { id: "reply", login: "MarconLP" },
+          ],
+          { isOutdated: true },
+        ),
+        thread([{ id: "next", login: "posthog[bot]" }]),
+      ];
+      const rows = foldPullRequestBotRuns(
+        threadComments,
+        pullRequestCommentNoiseDispositions(threadComments, threads, rules),
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.kind === "fold" ? rows[0].items.length : 0).toBe(3);
+    });
+  });
+
+  it("previews the opening of a comment, or what a bare review did", () => {
+    expect(pullRequestCommentPreview("## Summary\n\n**Looks** `good`")).toBe("Summary Looks good");
+    expect(pullRequestCommentPreview("", "APPROVED")).toBe("approved these changes");
+    expect(pullRequestCommentPreview("", "CHANGES_REQUESTED")).toBe("requested changes");
+    expect(pullRequestCommentPreview("x".repeat(200), null, 140)).toBe(`${"x".repeat(140)}\u2026`);
   });
 });
 

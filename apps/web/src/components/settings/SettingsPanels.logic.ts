@@ -116,7 +116,21 @@ export type BrowserDefaultSettings = Pick<
   | "browserLinkTarget"
   | "browserAutoShowFloatingPreview"
   | "pullRequestLinksOpenInApp"
+  | "pullRequestTimelineHideBots"
+  | "pullRequestHiddenComments"
+  | "pullRequestLatestOnlyBots"
+  | "pullRequestKeepBotApprovals"
+  | "pullRequestKeepBotChangeRequests"
+  | "pullRequestKeepBotReviewComments"
+  | "pullRequestCollapseBotComments"
+  | "pullRequestExtraBots"
+  | "pullRequestHumanAccounts"
+  | "pullRequestBotNameHeuristics"
 >;
+
+function isSameStringList(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 function isSamePreviewViewport(
   left: PreviewViewportSetting,
@@ -158,6 +172,54 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
       : []),
     ...(settings.pullRequestLinksOpenInApp !== DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp
       ? ["Open pull requests in T3 Code"]
+      : []),
+    ...(settings.pullRequestTimelineHideBots !==
+    DEFAULT_UNIFIED_SETTINGS.pullRequestTimelineHideBots
+      ? ["Hide bots in pull request timelines"]
+      : []),
+    ...(isSameStringList(
+      settings.pullRequestHiddenComments,
+      DEFAULT_UNIFIED_SETTINGS.pullRequestHiddenComments,
+    )
+      ? []
+      : ["Hide comments that say exactly"]),
+    ...(isSameStringList(
+      settings.pullRequestLatestOnlyBots,
+      DEFAULT_UNIFIED_SETTINGS.pullRequestLatestOnlyBots,
+    )
+      ? []
+      : ["Show only the latest from"]),
+    ...(settings.pullRequestCollapseBotComments !==
+    DEFAULT_UNIFIED_SETTINGS.pullRequestCollapseBotComments
+      ? ["Collapse bot comments"]
+      : []),
+    ...(settings.pullRequestKeepBotApprovals !==
+    DEFAULT_UNIFIED_SETTINGS.pullRequestKeepBotApprovals
+      ? ["Keep bot approvals"]
+      : []),
+    ...(settings.pullRequestKeepBotChangeRequests !==
+    DEFAULT_UNIFIED_SETTINGS.pullRequestKeepBotChangeRequests
+      ? ["Keep bot change requests"]
+      : []),
+    ...(settings.pullRequestKeepBotReviewComments !==
+    DEFAULT_UNIFIED_SETTINGS.pullRequestKeepBotReviewComments
+      ? ["Keep bot reviews that only commented"]
+      : []),
+    ...(isSameStringList(
+      settings.pullRequestExtraBots,
+      DEFAULT_UNIFIED_SETTINGS.pullRequestExtraBots,
+    )
+      ? []
+      : ["Extra bot accounts"]),
+    ...(isSameStringList(
+      settings.pullRequestHumanAccounts,
+      DEFAULT_UNIFIED_SETTINGS.pullRequestHumanAccounts,
+    )
+      ? []
+      : ["Always treat as human"]),
+    ...(settings.pullRequestBotNameHeuristics !==
+    DEFAULT_UNIFIED_SETTINGS.pullRequestBotNameHeuristics
+      ? ["Bot name heuristics"]
       : []),
   ];
 }
