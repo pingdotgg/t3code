@@ -58,16 +58,6 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   );
 });
 
-// The active question keys the shortcut listener, so it must keep its identity across renders.
-function usePendingUserInputProgress(
-  questions: PendingUserInput["questions"],
-  answers: Record<string, PendingUserInputDraftAnswer>,
-  questionIndex: number,
-) {
-  "use memo";
-  return derivePendingUserInputProgress(questions, answers, questionIndex);
-}
-
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   prompt,
   cwd,
@@ -94,8 +84,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
-  const progress = usePendingUserInputProgress(prompt.questions, answers, questionIndex);
-  const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   // The auto-advance timer fires after the render that armed it.
   const advance = useStableCallback(onAdvance);
@@ -104,6 +92,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     optionValue: string;
   } | null>(null);
   const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
+  // The active question keys the shortcut listener, so it must keep its identity across renders.
+  const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const activeQuestion = progress.activeQuestion;
+  const customAnswerActive = progress.customAnswer.trim().length > 0;
+  // Read here, before the hooks below, so the compiler can keep `activeQuestion` cached.
+  const draftSelectedOptions = activeQuestion?.options.map(
+    (option) =>
+      !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
+  );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
 
   // The optimistic pick is dropped once the draft confirms it or the question moves on.
@@ -112,7 +109,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     activeQuestion &&
     !activeQuestion.multiSelect &&
     (optimisticSingleSelect.questionId !== activeQuestion.id ||
-      (progress.customAnswer.trim().length === 0 &&
+      (!customAnswerActive &&
         progress.selectedOptionValues.includes(optimisticSingleSelect.optionValue)))
   ) {
     setOptimisticSingleSelect(null);
@@ -179,8 +176,6 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   if (!activeQuestion) {
     return null;
   }
-
-  const customAnswerActive = progress.customAnswer.trim().length > 0;
 
   return (
     <Collapsible
@@ -255,8 +250,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   optimisticSingleSelect?.questionId === activeQuestion.id &&
                   optimisticSingleSelect.optionValue === optionValue;
                 const isSelected =
-                  isOptimisticallySelected ||
-                  (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
+                  isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const shortcutKey = index < 9 ? index + 1 : null;
                 const className = cn(
                   "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
