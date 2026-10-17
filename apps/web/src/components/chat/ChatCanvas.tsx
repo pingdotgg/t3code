@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentProps,
-  type CSSProperties,
-} from "react";
+import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
 import type { PreviewMiniPlayerObstacles } from "../preview/previewMiniPlayerLayout";
@@ -26,7 +18,7 @@ export function ChatCanvas({
   const [timelineElement, registerTimeline] = useState<HTMLElement | null>(null);
   const [preview, setPreview] = useState<ChatCanvasPreview | null>(null);
   const [detailsCard, setDetailsCard] = useState<PreviewMiniPlayerObstacles["detailsCard"]>(null);
-  const reportDetailsCard = useCallback((next: PreviewMiniPlayerObstacles["detailsCard"]) => {
+  const reportDetailsCard = (next: PreviewMiniPlayerObstacles["detailsCard"]) => {
     setDetailsCard((current) =>
       current?.left === next?.left &&
       current?.right === next?.right &&
@@ -34,7 +26,7 @@ export function ChatCanvas({
         ? current
         : next,
     );
-  }, []);
+  };
   const [measurements, setMeasurements] = useState({
     width: 0,
     height: 0,
@@ -47,7 +39,7 @@ export function ChatCanvas({
     findBarRight: 0,
     findBarBottom: 0,
   });
-  const reportPreview = useCallback((next: ChatCanvasPreview) => {
+  const reportPreview = (next: ChatCanvasPreview) => {
     setPreview((current) =>
       current?.key === next.key &&
       current.width === next.width &&
@@ -59,11 +51,9 @@ export function ChatCanvas({
         ? current
         : next,
     );
-  }, []);
-  const clearPreview = useCallback(
-    (key: string) => setPreview((current) => (current?.key === key ? null : current)),
-    [],
-  );
+  };
+  const clearPreview = (key: string) =>
+    setPreview((current) => (current?.key === key ? null : current));
   useLayoutEffect(() => {
     const element = elementRef.current;
     const probe = widthProbeRef.current;
@@ -103,42 +93,32 @@ export function ChatCanvas({
     if (timelineElement) observed.push(timelineElement);
     return observeResize(observed, measure);
   }, [composerOverlayElement, timelineElement, detailsCardTopInset]);
-  const context = useMemo(() => {
-    const container = { width: measurements.width, height: measurements.height };
-    const findBar =
-      detailsCardTopInset > 0
-        ? {
-            left: measurements.findBarLeft,
-            right: measurements.findBarRight,
-            bottom: measurements.findBarBottom,
-          }
-        : null;
-    return {
+  const container = { width: measurements.width, height: measurements.height };
+  const findBar =
+    detailsCardTopInset > 0
+      ? {
+          left: measurements.findBarLeft,
+          right: measurements.findBarRight,
+          bottom: measurements.findBarBottom,
+        }
+      : null;
+  const context = {
+    container,
+    lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
+    layout: resolveChatCanvasLayout({
+      ...measurements,
       container,
-      lane: { padding: measurements.padding, minChatWidth: measurements.minChatWidth },
-      layout: resolveChatCanvasLayout({
-        ...measurements,
-        container,
-        preview,
-        detailsCard,
-        findBar,
-      }),
-      previewKey: preview?.key ?? null,
-      reportPreview,
-      clearPreview,
-      registerTimeline,
-      reportDetailsCard,
-      detailsCardTopInset: findBar?.bottom ?? 0,
-    };
-  }, [
-    measurements,
-    preview,
-    detailsCard,
+      preview,
+      detailsCard,
+      findBar,
+    }),
+    previewKey: preview?.key ?? null,
     reportPreview,
     clearPreview,
+    registerTimeline,
     reportDetailsCard,
-    detailsCardTopInset,
-  ]);
+    detailsCardTopInset: findBar?.bottom ?? 0,
+  };
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>
