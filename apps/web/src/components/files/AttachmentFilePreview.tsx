@@ -48,26 +48,6 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
-// useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
-function useAttachmentResources(
-  attachmentId: string | undefined,
-  fileName: string,
-  mimeType: string,
-) {
-  "use memo";
-  const resource = attachmentId
-    ? {
-        _tag: "attachment" as const,
-        attachmentId,
-        fileName,
-        mimeType,
-        disposition: "inline" as const,
-      }
-    : null;
-  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
-  return { resource, downloadResource };
-}
-
 export function AttachmentFilePreview(props: {
   name: string;
   mimeType: string;
@@ -86,11 +66,17 @@ export function AttachmentFilePreview(props: {
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
-  const { resource, downloadResource } = useAttachmentResources(
-    attachmentId,
-    props.name,
-    props.mimeType,
-  );
+  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
+  const resource = attachmentId
+    ? {
+        _tag: "attachment" as const,
+        attachmentId,
+        fileName: props.name,
+        mimeType: props.mimeType,
+        disposition: "inline" as const,
+      }
+    : null;
+  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
