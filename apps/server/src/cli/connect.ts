@@ -45,7 +45,11 @@ import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
-import { offerServiceDuringOnboarding, recoverServiceOnboardingOffer } from "./service.ts";
+import {
+  offerServiceDuringOnboarding,
+  recoverServiceOnboardingOffer,
+  type ServiceOnboardingOutcome,
+} from "./service.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -676,6 +680,31 @@ const connectLogoutCommand = Command.make("logout", {
   ),
 );
 
+/** What `t3 connect` tells the user once background setup has settled. */
+export const reportServiceOnboarding = Effect.fn("cli.connect.report_service_onboarding")(
+  function* (outcome: ServiceOnboardingOutcome) {
+    if (outcome === "pending") {
+      yield* Console.log(
+        "\nBackground service restarting\n\nThe server establishes the T3 Connect link once it is back. Check the log above if it does not come back.",
+      );
+      return;
+    }
+    if (outcome === "ready") {
+      const platform = yield* HostProcess.Platform;
+      yield* Console.log(
+        platform === "darwin"
+          ? "\n✓ Background service ready\n\nT3 Code is set to run while you are logged in to this Mac. The server establishes the T3 Connect link on startup."
+          : "\n✓ Background service ready\n\nT3 Code is set to keep running after you log out. The server establishes the T3 Connect link on startup.",
+      );
+      return;
+    }
+    const serveCommand = yield* resolveCliCommand("serve");
+    yield* Console.log(
+      `\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
+    );
+  },
+);
+
 export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
   headless: headlessFlag,
@@ -692,19 +721,8 @@ export const connectCommand = Command.make("connect", {
         }
         yield* Console.log(`✓ Authorized${connectedAs(linked.identity)}`);
 
-        const background = yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding);
-        if (background) {
-          const platform = yield* HostProcess.Platform;
-          yield* Console.log(
-            platform === "darwin"
-              ? "\n✓ Background service ready\n\nT3 Code is set to run while you are logged in to this Mac. The server establishes the T3 Connect link on startup."
-              : "\n✓ Background service ready\n\nT3 Code is set to keep running after you log out. The server establishes the T3 Connect link on startup.",
-          );
-          return;
-        }
-        const serveCommand = yield* resolveCliCommand("serve");
-        yield* Console.log(
-          `\nNext\n  Start the server with \`${serveCommand}\` to make this machine reachable.`,
+        yield* reportServiceOnboarding(
+          yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding),
         );
       }),
     ),

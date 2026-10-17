@@ -495,13 +495,14 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // through the target's own CLI means a downgrade to a version without today's commands still
   // works.
   let serviceUpdated = false;
+  let serviceHandedOff: BootService.BootServicePlan | undefined;
   if (serviceInstalled && !serviceCurrent) {
     yield* Console.log(
       restartService
         ? "Restarting the background service..."
         : "Updating the background service...",
     );
-    yield* BootService.BootService.pipe(
+    const plan = yield* BootService.BootService.pipe(
       Effect.flatMap((target) =>
         target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
       ),
@@ -519,7 +520,8 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           }),
       ),
     );
-    serviceUpdated = restartService;
+    if (plan.handedOff === true) serviceHandedOff = plan;
+    else serviceUpdated = restartService;
   }
 
   progress.success(`Installed T3 Code ${targetVersion}`);
@@ -528,7 +530,11 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   } else {
     yield* Console.log(`  Run ${runtime.entryPath}\n`);
   }
-  if (serviceUpdated) {
+  if (serviceHandedOff !== undefined) {
+    yield* Console.log(
+      `  Background service switching to ${targetVersion} from a separate systemd unit, since this session runs inside it and disconnects when it restarts. Result: ${serviceHandedOff.logPath}`,
+    );
+  } else if (serviceUpdated) {
     yield* Console.log(`  Background service restarted on ${targetVersion}`);
   } else if (serviceInstalled && serviceCurrent) {
     yield* Console.log(`  Background service already on ${targetVersion}`);
