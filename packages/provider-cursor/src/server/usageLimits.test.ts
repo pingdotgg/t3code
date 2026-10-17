@@ -83,6 +83,11 @@ describe("Cursor usage limits", () => {
             '{"accessToken":"instance-token"}',
           );
           const client = HttpClient.make((request) => {
+            if (request.url.endsWith("/GetMe")) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, Response.json({ email: "cursor@example.com" })),
+              );
+            }
             expect(request.url).toBe(
               "https://cursor.example/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
             );
@@ -105,6 +110,8 @@ describe("Cursor usage limits", () => {
             const limits = yield* readCursorUsageLimits(
               { apiEndpoint: "https://cursor.example/" },
               { XDG_CONFIG_HOME: directory, HOME: directory, AGENT_CLI_CREDENTIAL_STORE: "file" },
+              false,
+              "cursor@example.com",
             ).pipe(
               Effect.provideService(HostProcess.Platform, platform),
               Effect.provideService(HttpClient.HttpClient, client),
@@ -127,9 +134,10 @@ describe("Cursor usage limits", () => {
                 { apiEndpoint: "" },
                 {
                   AGENT_CLI_CREDENTIAL_STORE: platform === "linux" ? "memory" : "default",
-                  ...(token ? { CURSOR_AUTH_TOKEN: token } : {}),
+                  ...(token ? { CURSOR_AUTH_TOKEN: token, CURSOR_API_KEY: "sdk-key" } : {}),
                 },
                 false,
+                "cursor@example.com",
               ).pipe(
                 Effect.provideService(HostProcess.Platform, platform),
                 Effect.provideService(
@@ -146,7 +154,11 @@ describe("Cursor usage limits", () => {
                     return Effect.succeed(
                       HttpClientResponse.fromWeb(
                         request,
-                        Response.json({ planUsage: { totalPercentUsed: 10 } }),
+                        Response.json(
+                          request.url.endsWith("/GetMe")
+                            ? { email: "cursor@example.com" }
+                            : { planUsage: { totalPercentUsed: 10 } },
+                        ),
                       ),
                     );
                   }),
@@ -162,32 +174,46 @@ describe("Cursor usage limits", () => {
 
   it.effect("reports failed requests without exposing credentials or response bodies", () =>
     Effect.gen(function* () {
-      const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "private-token" }).pipe(
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) =>
-              Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  new Response("private response", { status: 401 }),
+      for (const failedMethod of ["GetMe", "GetCurrentPeriodUsage"]) {
+        const limits = yield* withNodeServices(
+          readCursorUsageLimits(
+            { apiEndpoint: "" },
+            { CURSOR_AUTH_TOKEN: "private-token" },
+            false,
+            "cursor@example.com",
+          ).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) =>
+                Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    request.url.endsWith(`/${failedMethod}`)
+                      ? new Response("private response", { status: 401 })
+                      : Response.json({ email: "cursor@example.com" }),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      expect(limits.unavailable).toEqual({
-        reason: "probeFailed",
-        message: "Cursor could not read usage limits.",
-      });
+        );
+        expect(limits.unavailable).toEqual({
+          reason: "probeFailed",
+          message: "Cursor could not read usage limits.",
+        });
+      }
     }),
   );
 
   it.effect("does not use a stored login for an explicit API key", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_API_KEY: "different-account" }).pipe(
+        readCursorUsageLimits(
+          { apiEndpoint: "" },
+          { CURSOR_API_KEY: "different-account" },
+          true,
+          "cursor@example.com",
+        ).pipe(
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make(() => Effect.die("must not request usage")),
@@ -195,13 +221,14 @@ describe("Cursor usage limits", () => {
         ),
       );
       expect(limits.unavailable?.reason).toBe("unsupported");
+      expect(limits.unavailable?.message).toContain("API keys cannot read subscription limits");
     }),
   );
 
   it.effect("reads the default macOS Cursor login from Keychain for limits", () =>
     Effect.gen(function* () {
       const limits = yield* withNodeServices(
-        readCursorUsageLimits({ apiEndpoint: "" }, {}, true).pipe(
+        readCursorUsageLimits({ apiEndpoint: "" }, {}, true, "cursor@example.com").pipe(
           Effect.provideService(HostProcess.Platform, "darwin"),
           Effect.provideService(
             FileSystem.FileSystem,
@@ -216,7 +243,11 @@ describe("Cursor usage limits", () => {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
-                  Response.json({ planUsage: { totalPercentUsed: 42 } }),
+                  Response.json(
+                    request.url.endsWith("/GetMe")
+                      ? { email: "cursor@example.com" }
+                      : { planUsage: { totalPercentUsed: 42 } },
+                  ),
                 ),
               );
             }),
@@ -225,6 +256,49 @@ describe("Cursor usage limits", () => {
         Effect.succeed("keychain-token"),
       );
       expect(limits.windows[0]?.usedPercent).toBe(42);
+    }),
+  );
+
+  it.effect("withholds limits when the usage login cannot be matched to the instance", () =>
+    Effect.gen(function* () {
+      for (const email of [undefined, "", "other@example.com"]) {
+        const limits = yield* withNodeServices(
+          readCursorUsageLimits(
+            { apiEndpoint: "" },
+            { CURSOR_AUTH_TOKEN: "account-a-token" },
+            false,
+            "cursor@example.com",
+          ).pipe(
+            Effect.provideService(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                expect(request.url).toMatch(/\/GetMe$/);
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, Response.json({ email })),
+                );
+              }),
+            ),
+          ),
+        );
+        expect(limits.windows).toEqual([]);
+        expect(limits.unavailable).toMatchObject({ reason: "unsupported" });
+        expect(limits.unavailable?.message).toContain("could not be matched");
+      }
+    }),
+  );
+
+  it.effect("does not request limits when the instance account is unknown", () =>
+    Effect.gen(function* () {
+      const limits = yield* withNodeServices(
+        readCursorUsageLimits({ apiEndpoint: "" }, { CURSOR_AUTH_TOKEN: "account-a-token" }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("must not request limits")),
+          ),
+        ),
+      );
+      expect(limits.windows).toEqual([]);
+      expect(limits.unavailable?.message).toContain("could not verify");
     }),
   );
 

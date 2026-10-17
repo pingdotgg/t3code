@@ -1,13 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -16,6 +23,7 @@ import { CursorDriver } from "./driver.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 import * as CursorKeychain from "./CursorKeychain.ts";
+import * as CursorCredentialStore from "./credentialStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -51,6 +59,79 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
 );
 
 it.layer(layerTest)("CursorDriver", (it) => {
+  it.effect("reads matching CLI limits after signing in through T3", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("cursor-browser-limits");
+      const credentials = yield* CursorCredentialStore.makeCursorCredentialStore(instanceId);
+      yield* Effect.promise(() =>
+        credentials.store.save({
+          version: 1,
+          backendUrl: "https://api2.cursor.sh",
+          apiKey: "instance-browser-key",
+          createdAtMs: 0,
+        }),
+      );
+      const me = vi.spyOn(Cursor, "me").mockResolvedValue({
+        apiKeyName: "T3 Code",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        userEmail: "cursor@example.com",
+      });
+      const models = vi.spyOn(Cursor.models, "list").mockResolvedValue([]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          me.mockRestore();
+          models.mockRestore();
+        }),
+      );
+      const settings = yield* TestProviderHost.TestProviderHostSettings;
+      yield* Effect.addFinalizer(() => settings.set(DEFAULT_SERVER_SETTINGS));
+      yield* settings.set({
+        ...DEFAULT_SERVER_SETTINGS,
+        cursorKeychainUsageEnabled: true,
+      });
+      const requests: string[] = [];
+      const instance = yield* CursorDriver.create({
+        instanceId,
+        displayName: "Personal Cursor",
+        enabled: true,
+        environment: [
+          { name: "CURSOR_API_KEY", value: "", sensitive: true },
+          { name: "CURSOR_AUTH_TOKEN", value: "", sensitive: true },
+          { name: "AGENT_CLI_CREDENTIAL_STORE", value: "default", sensitive: false },
+        ],
+        config: CursorDriver.defaultConfig(),
+      }).pipe(
+        Effect.provideService(CursorKeychain.CursorKeychain, {
+          accessToken: Effect.succeed("cli-token"),
+        }),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push(request.url);
+            expect(request.headers.authorization).toBe("Bearer cli-token");
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  request.url.endsWith("/GetMe")
+                    ? { email: " CURSOR@example.com " }
+                    : { planUsage: { autoPercentUsed: 42, apiPercentUsed: 75 } },
+                ),
+              ),
+            );
+          }),
+        ),
+      );
+      const snapshot = yield* instance.snapshot.refresh;
+      expect(snapshot.auth.email).toBe("cursor@example.com");
+      expect(snapshot.usageLimits?.windows.map((window) => window.usedPercent)).toEqual([75, 42]);
+      expect(requests.map((url) => url.split("/").at(-1))).toEqual([
+        "GetMe",
+        "GetCurrentPeriodUsage",
+      ]);
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin"), Effect.scoped),
+  );
+
   it.effect(
     "persists browser credentials, uses them for chat, and closes the SDK session on logout",
     () =>

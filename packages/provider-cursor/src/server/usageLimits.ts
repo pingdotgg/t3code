@@ -21,6 +21,7 @@ import * as CursorKeychain from "./CursorKeychain.ts";
 const CursorCredentials = Schema.Struct({ accessToken: Schema.optional(Schema.String) });
 const DEFAULT_CURSOR_API_ENDPOINT = "https://api2.cursor.sh";
 const decodeCredentials = Schema.decodeEffect(Schema.fromJsonString(CursorCredentials));
+const CursorAccountResponse = Schema.Struct({ email: Schema.optional(Schema.String) });
 const CursorUsageResponse = Schema.Struct({
   billingCycleEnd: Schema.optional(Schema.Union([Schema.String, Schema.Number])),
   planUsage: Schema.optional(
@@ -61,10 +62,12 @@ export function cursorUsageResponseToLimits(
     : makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
 }
 
+/** Reads CLI limits only when its account matches the instance's SDK identity. */
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   settings: Pick<CursorSettings, "apiEndpoint">,
   environment: NodeJS.ProcessEnv = process.env,
   allowKeychain = false,
+  instanceEmail?: string,
 ) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   return yield* Effect.gen(function* () {
@@ -79,7 +82,12 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     let token = environment.CURSOR_AUTH_TOKEN?.trim();
     // An explicit API key can name a different account from the stored login.
     if (!token && environment.CURSOR_API_KEY?.trim()) {
-      return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message:
+          "Cursor API keys cannot read subscription limits. Use a T3 sign-in and a matching Cursor CLI login.",
+      });
     }
     const credentialStore = environment.AGENT_CLI_CREDENTIAL_STORE;
     if (!token && credentialStore === "memory") {
@@ -125,18 +133,44 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
       );
       token = credentials.accessToken?.trim();
     }
-    if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+    if (!token) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Cursor usage requires a CLI login or CURSOR_AUTH_TOKEN.",
+      });
+    }
+    if (!instanceEmail?.trim()) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Cursor could not verify this provider's account for usage limits.",
+      });
+    }
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
+    const dashboardRequest = (method: string) =>
+      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/${method}`).pipe(
         HttpClientRequest.bearerToken(token),
         HttpClientRequest.setHeaders({
           "connect-protocol-version": "1",
           "x-cursor-client-type": "cli",
         }),
         HttpClientRequest.bodyJsonUnsafe({}),
-      ),
+      );
+    // The CLI login is independent of the SDK sign-in. Verify it before
+    // publishing its limits under the instance's account identity.
+    const account = yield* HttpClientResponse.schemaBodyJson(CursorAccountResponse)(
+      yield* HttpClientResponse.filterStatusOk(yield* client.execute(dashboardRequest("GetMe"))),
     );
+    if (account.email?.trim().toLowerCase() !== instanceEmail.trim().toLowerCase()) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message:
+          "Cursor usage login could not be matched to this provider's account. Sign in to the same account in Cursor CLI.",
+      });
+    }
+    const response = yield* client.execute(dashboardRequest("GetCurrentPeriodUsage"));
     const body = yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );

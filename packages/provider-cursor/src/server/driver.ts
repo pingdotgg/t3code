@@ -224,8 +224,9 @@ export const CursorDriver: ProviderDriver<
                     Effect.flatMap((settings) =>
                       readCursorUsageLimits(
                         effectiveConfig,
-                        { ...processEnv, CURSOR_API_KEY: apiKey },
+                        processEnv,
                         settings.cursorKeychainUsageEnabled,
+                        snapshot.auth.email,
                       ),
                     ),
                     Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
