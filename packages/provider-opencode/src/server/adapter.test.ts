@@ -385,6 +385,80 @@ describe("OpenCodeAdapterV2", () => {
       ),
   );
 
+  it.effect("preserves native multi-select and custom-answer flags through a live reply", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let delivered: unknown;
+      const harness = yield* makeOpenCodeRuntimeHarness("question-flags", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+        question: {
+          reply: async (input: unknown) => {
+            delivered = input;
+            return { data: true };
+          },
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "runtime_request.updated" ||
+            (event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "question.asked",
+          properties: {
+            id: "question",
+            sessionID: "root",
+            questions: [
+              {
+                header: "Drinks",
+                question: "Which drinks?",
+                multiple: true,
+                custom: false,
+                options: [
+                  { label: "Tea", description: "Hot" },
+                  { label: "Water", description: "Cold" },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+      const events = yield* Fiber.join(received);
+      const item = events.find((event) => event.type === "turn_item.updated");
+      const request = events.find((event) => event.type === "runtime_request.updated");
+      assert.equal(item?.type, "turn_item.updated");
+      if (
+        item?.type !== "turn_item.updated" ||
+        item.turnItem.type !== "user_input_request" ||
+        request?.type !== "runtime_request.updated"
+      )
+        throw new Error("Native question missing");
+      assert.equal(item.turnItem.questions[0]?.multiSelect, true);
+      assert.equal(item.turnItem.questions[0]?.allowCustomAnswer, false);
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        answers: { "question-0-drinks": ["Tea", "Water"] },
+      });
+      assert.deepInclude(delivered, { answers: [["Tea", "Water"]] });
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
   it.effect.each(["permission", "question"] as const)(
     "cancels an undelivered %s reply at its deadline",
     (kind) =>
