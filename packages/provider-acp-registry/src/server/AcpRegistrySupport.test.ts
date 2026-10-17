@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  ACP_REGISTRY_MAX_AGENTS,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1045,6 +1046,48 @@ describe("AcpRegistrySupport", () => {
               ),
             ),
           { PATH: "" },
+        ),
+      ),
+    );
+  });
+
+  it.effect("returns up to the requested limit and 20 agents without one", () => {
+    const base = makeAgent({
+      binary: {
+        "linux-x86_64": { archive: archiveUrl, cmd: "example-agent" },
+      },
+    });
+    const agents = Array.from({ length: 25 }, (_, index) => {
+      const suffix = String(index).padStart(2, "0");
+      return { ...base, id: `example-agent-${suffix}`, name: `Example Agent ${suffix}` };
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-limit-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const catalog = yield* resolver.search({ query: "", limit: ACP_REGISTRY_MAX_AGENTS });
+      const unlimited = yield* resolver.search({ query: "" });
+      const matches = yield* resolver.search({ query: "example" });
+
+      expect(catalog.agents).toHaveLength(25);
+      expect(unlimited.agents).toHaveLength(20);
+      expect(matches.agents).toHaveLength(20);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ version: "1.0.0", agents })),
+            ),
+          ),
         ),
       ),
     );

@@ -1,5 +1,10 @@
 import type { ReactElement } from "react";
-import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import {
+  ACP_REGISTRY_MAX_AGENTS,
+  EnvironmentId,
+  ProviderDriverKind,
+  type AcpRegistrySearchAgent,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { visitElements } from "../../test/reactElementTree";
@@ -152,7 +157,7 @@ describe("AcpRegistrySearchStep", () => {
     const initial = render();
     expect(state.search).toHaveBeenLastCalledWith({
       environmentId,
-      input: { query: "" },
+      input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
     });
 
     const input = findByAriaLabel(initial, "Search ACP Registry");
@@ -162,7 +167,10 @@ describe("AcpRegistrySearchStep", () => {
     );
     vi.advanceTimersByTime(200);
     render();
-    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
+    expect(state.search).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
+    });
     (input.props.onChange as ((event: { currentTarget: { value: string } }) => void) | undefined)?.(
       {
         currentTarget: { value: "  Gemini CLI  " },
@@ -170,7 +178,10 @@ describe("AcpRegistrySearchStep", () => {
     );
     vi.advanceTimersByTime(299);
     render();
-    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
+    expect(state.search).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
+    });
     vi.advanceTimersByTime(1);
     render();
     expect(state.search).toHaveBeenLastCalledWith({
@@ -184,7 +195,10 @@ describe("AcpRegistrySearchStep", () => {
     );
     vi.advanceTimersByTime(300);
     render();
-    expect(state.search).toHaveBeenLastCalledWith({ environmentId, input: { query: "" } });
+    expect(state.search).toHaveBeenLastCalledWith({
+      environmentId,
+      input: { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
+    });
   });
 
   it("renders deterministic loading, error, and empty states", () => {
