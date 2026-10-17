@@ -7,7 +7,6 @@ import {
 import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import {
@@ -44,12 +43,8 @@ export function useEnvironments() {
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
 
-  const environments = useMemo(
-    () =>
-      [...presentationById.entries()].map(([environmentId, presentation]) =>
-        projectEnvironmentPresentation(environmentId, presentation),
-      ),
-    [presentationById],
+  const environments = [...presentationById.entries()].map(([environmentId, presentation]) =>
+    projectEnvironmentPresentation(environmentId, presentation),
   );
 
   return {
@@ -68,13 +63,9 @@ export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {
   const { presentation } = useEnvironmentPresentation(environmentId);
-  return useMemo(
-    () =>
-      environmentId === null || presentation === null
-        ? null
-        : projectEnvironmentPresentation(environmentId, presentation),
-    [environmentId, presentation],
-  );
+  return environmentId === null || presentation === null
+    ? null
+    : projectEnvironmentPresentation(environmentId, presentation);
 }
 
 export function usePrimaryEnvironment(): EnvironmentPresentation | null {
