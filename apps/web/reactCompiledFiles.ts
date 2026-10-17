@@ -48,4 +48,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useThreadActions.ts",
   "apps/web/src/components/pullRequest/PullRequestCodeTab.tsx",
   "apps/web/src/hooks/useLocalStorage.ts",
+  "apps/web/src/hooks/useTheme.ts",
 ] as const;
