@@ -1827,6 +1827,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const pendingRootTurns = yield* Ref.make(
           new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>(),
         );
+        // `/compact` runs waiting for their native turn, by native thread. Codex
+        // can start another turn first (a goal it continues), so a compaction
+        // claims the turn that reports its contextCompaction item.
+        const pendingCompactions = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const subagentSelections = new Map<string, Omit<ModelSelection, "instanceId">>();
@@ -4435,6 +4439,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* Deferred.succeed(goalHold.next, next);
               return;
             }
+            // This may be the pending compaction's turn, which its item claims.
+            // Stopping it as an orphan goal turn would end the compaction.
+            if (pendingCompactions.has(payload.threadId)) return;
             // A goal turn with no run to own it (Codex continued after the run
             // settled, or raced a Stop): stop it and pause the goal rather than
             // work out of sight.
@@ -4612,6 +4619,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerNotification("item/started", (payload) =>
           Effect.gen(function* () {
+            const compaction = pendingCompactions.get(payload.threadId);
+            if (
+              payload.item.type === "contextCompaction" &&
+              compaction !== undefined &&
+              !(yield* Ref.get(activeTurns)).has(payload.turnId)
+            ) {
+              pendingCompactions.delete(payload.threadId);
+              yield* registerRootTurn({
+                turnInput: compaction,
+                nativeTurnId: payload.turnId,
+                startedAt: DateTime.makeUnsafe(payload.startedAtMs),
+              });
+            }
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
@@ -6552,20 +6572,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           compactThread: (turnInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
-              yield* Ref.update(pendingRootTurns, (current) =>
-                new Map(current).set(threadId, turnInput),
-              );
+              pendingCompactions.set(threadId, turnInput);
               // Cleared on interrupt too, as startTurn does: an interrupted start
-              // must not adopt the native turn that a late turn/started reports.
-              yield* client.request("thread/compact/start", { threadId }).pipe(
-                Effect.onError(() =>
-                  Ref.update(pendingRootTurns, (current) => {
-                    const next = new Map(current);
-                    next.delete(threadId);
-                    return next;
-                  }),
-                ),
-              );
+              // must not adopt the native turn that a late item/started reports.
+              yield* client
+                .request("thread/compact/start", { threadId })
+                .pipe(Effect.onError(() => Effect.sync(() => pendingCompactions.delete(threadId))));
             }).pipe(
               Effect.mapError(
                 (cause) =>
