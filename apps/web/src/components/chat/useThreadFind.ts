@@ -5,7 +5,8 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
@@ -49,7 +50,10 @@ export function useThreadFind({
   skills?: readonly InlineSkill[];
   content: Pick<OrchestrationV2ThreadProjection, "visibleTurnItems" | "runs"> | undefined;
 }) {
-  const findPositionReaderRef = useRef<ThreadFindPositionReader | null>(null);
+  // Held in state so the timeline props that carry it can be stored in state too.
+  const [positionReader] = useState<RefObject<ThreadFindPositionReader | null>>(() => ({
+    current: null,
+  }));
   const lastContentRef = useRef(content);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshAfterSearchRef = useRef(false);
@@ -58,7 +62,7 @@ export function useThreadFind({
   if (state.threadKey !== null && (!enabled || state.threadKey !== threadKey))
     setState(CLOSED_FIND);
   const isOpen = enabled && threadKey !== null && state.threadKey === threadKey;
-  const open = useCallback(() => {
+  const open = useStableCallback(() => {
     if (threadKey === null) return;
     if (!enabled) {
       toastManager.add({
@@ -70,7 +74,7 @@ export function useThreadFind({
     }
     const start =
       state.threadKey === threadKey && state.query.trim()
-        ? findPositionReaderRef.current?.(state.query.trim())
+        ? positionReader.current?.(state.query.trim())
         : undefined;
     setState((previous) => {
       const current = previous.threadKey === threadKey ? previous : CLOSED_FIND;
@@ -89,8 +93,8 @@ export function useThreadFind({
           : {}),
       };
     });
-  }, [enabled, state.query, state.threadKey, threadKey]);
-  const close = useCallback(() => setState(CLOSED_FIND), []);
+  });
+  const close = useStableCallback(() => setState(CLOSED_FIND));
   useEffect(() => subscribeThreadFindOpen(open), [open]);
 
   const remote = useServerResults(
@@ -118,16 +122,35 @@ export function useThreadFind({
   const entryId = selectedMatch?.entryId;
   const runId = selectedMatch?.runId;
   const occurrence = selectedMatch?.occurrence;
-  // Finishing the count must not rerender the timeline or request another jump.
-  const match = useMemo(
-    () =>
+  const counting = remote.data?.complete === false;
+  const navigationId = localSelection?.navigationId ?? remote.navigationId;
+  const findExpanded = isOpen && state.query.trim().length > 0;
+  const findQuery = isOpen && remote.data?.match ? state.query : "";
+  const nextTimeline = {
+    findOpen: isOpen,
+    findExpanded,
+    findQuery,
+    activeFindMatch:
       entryId !== undefined && occurrence !== undefined
         ? { entryId, runId: runId ?? null, occurrence }
         : null,
-    [entryId, runId, occurrence],
-  );
-  const counting = remote.data?.complete === false;
-  const navigationId = localSelection?.navigationId ?? remote.navigationId;
+    findNavigationId: navigationId,
+  };
+  // Finishing the count or a pending response must not rerender the timeline or
+  // request another jump, so these keep their identity until a field changes.
+  const [storedTimeline, setTimeline] = useState(() => ({
+    fields: nextTimeline,
+    props: { ...nextTimeline, findPositionReaderRef: positionReader },
+  }));
+  let timeline = storedTimeline;
+  if (!sameTimeline(timeline.fields, nextTimeline)) {
+    timeline = {
+      fields: nextTimeline,
+      props: { ...nextTimeline, findPositionReaderRef: positionReader },
+    };
+    setTimeline(timeline);
+  }
+  const match = timeline.fields.activeFindMatch;
   const step = (delta: number) => {
     if (count === 0 || counting) return;
     setState((previous) => {
@@ -241,20 +264,6 @@ export function useThreadFind({
     };
   }, [threadKey, isOpen, state.query]);
 
-  const findExpanded = isOpen && state.query.trim().length > 0;
-  const findQuery = isOpen && remote.data?.match ? state.query : "";
-  const timelineProps = useMemo(
-    () => ({
-      findOpen: isOpen,
-      findExpanded,
-      findPositionReaderRef,
-      findQuery,
-      activeFindMatch: match,
-      findNavigationId: navigationId,
-    }),
-    [isOpen, findExpanded, findQuery, match, navigationId],
-  );
-
   return {
     isOpen,
     open,
@@ -269,7 +278,7 @@ export function useThreadFind({
       focusRequestId: state.focusRequestId,
       onRetry: remote.refresh,
       onQueryChange: (query: string) => {
-        const start = findPositionReaderRef.current?.(query.trim());
+        const start = positionReader.current?.(query.trim());
         setState((previous) => ({
           ...previous,
           query,
@@ -284,8 +293,29 @@ export function useThreadFind({
       onPrevious: () => step(-1),
       onClose: close,
     },
-    timelineProps,
+    timelineProps: timeline.props,
   };
+}
+
+type TimelineFields = Omit<
+  ReturnType<typeof useThreadFind>["timelineProps"],
+  "findPositionReaderRef"
+>;
+
+function sameTimeline(a: TimelineFields, b: TimelineFields) {
+  const aMatch = a.activeFindMatch;
+  const bMatch = b.activeFindMatch;
+  return (
+    a.findOpen === b.findOpen &&
+    a.findExpanded === b.findExpanded &&
+    a.findQuery === b.findQuery &&
+    a.findNavigationId === b.findNavigationId &&
+    (aMatch === null || bMatch === null
+      ? aMatch === bMatch
+      : aMatch.entryId === bMatch.entryId &&
+        aMatch.runId === bMatch.runId &&
+        aMatch.occurrence === bMatch.occurrence)
+  );
 }
 
 function rebaseLocalSelection(
@@ -311,41 +341,36 @@ function useServerResults(
   skills: readonly InlineSkill[],
   progressive: boolean,
 ) {
-  const skillLabels = useMemo(
-    () => skills.map(({ name, displayName }) => ({ name, displayName })),
-    [skills],
-  );
+  const skillLabels = skills.map(({ name, displayName }) => ({ name, displayName }));
   const normalizedQuery = query.trim();
   const debouncedQuery = useDebouncedValue(normalizedQuery, 100);
   const environmentId = thread?.environmentId;
   const threadId = thread?.threadId;
-  const atom = useMemo(
-    () =>
-      environmentId && threadId && debouncedQuery && normalizedQuery === debouncedQuery
-        ? (progressive
-            ? orchestrationEnvironment.threadFindProgressive
-            : orchestrationEnvironment.threadFind)({
-            environmentId,
-            input: {
-              threadId,
-              query: debouncedQuery,
-              ...(start ? { start } : {}),
-              ...(offset !== 0 ? { offset } : {}),
-              skills: skillLabels,
-            },
-          })
-        : null,
-    [
-      environmentId,
-      threadId,
-      debouncedQuery,
-      normalizedQuery,
-      start,
-      offset,
-      skillLabels,
-      progressive,
-    ],
-  );
+  const target =
+    environmentId && threadId && debouncedQuery && normalizedQuery === debouncedQuery
+      ? {
+          environmentId,
+          input: {
+            threadId,
+            query: debouncedQuery,
+            ...(start ? { start } : {}),
+            ...(offset !== 0 ? { offset } : {}),
+            skills: skillLabels,
+          },
+        }
+      : null;
+  const targetKey = target ? JSON.stringify([progressive, target]) : null;
+  // Resolving the atom only when the request changes keeps unrelated renders from
+  // touching the atom family.
+  const [storedAtom, setStoredAtom] = useState(() => ({
+    key: targetKey,
+    atom: resolveThreadFindAtom(target, progressive),
+  }));
+  let atom = storedAtom.atom;
+  if (storedAtom.key !== targetKey) {
+    atom = resolveThreadFindAtom(target, progressive);
+    setStoredAtom({ key: targetKey, atom });
+  }
   const result = useEnvironmentQuery(atom);
   const key = thread
     ? JSON.stringify([thread.environmentId, thread.threadId, normalizedQuery, skillLabels])
@@ -377,4 +402,14 @@ function useServerResults(
       normalizedQuery.length > 0 &&
       (normalizedQuery !== debouncedQuery || result.isPending),
   };
+}
+
+function resolveThreadFindAtom(
+  target: Parameters<typeof orchestrationEnvironment.threadFind>[0] | null,
+  progressive: boolean,
+) {
+  if (!target) return null;
+  return progressive
+    ? orchestrationEnvironment.threadFindProgressive(target)
+    : orchestrationEnvironment.threadFind(target);
 }
