@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   ThreadId,
   type AuthSessionState,
+  type AssetCreateUrlResult,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -15,13 +16,15 @@ const state = vi.hoisted(() => ({
   assetAtom: {},
   mint: vi.fn(),
   assetQuery: vi.fn(),
+  assetResult: null as AsyncResult.AsyncResult<AssetCreateUrlResult, unknown> | null,
 }));
 
 vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === state.assetAtom
-      ? AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 })
+      ? (state.assetResult ??
+        AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }))
       : AsyncResult.initial(false),
 }));
 vi.mock("~/state/session", () => ({
@@ -53,11 +56,40 @@ const resource = { _tag: "media-file", threadId, path: "/repo/image.png" } as co
 beforeEach(() => {
   state.session = null;
   state.phase = "connected";
+  state.assetResult = null;
   state.assetQuery.mockReset().mockReturnValue(state.assetAtom);
   state.mint
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
 });
+
+it.each(["Success", "Failure"] as const)(
+  "exposes a refresh in progress while preserving a cached %s result",
+  (outcome) => {
+    state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+    state.assetResult =
+      outcome === "Success"
+        ? AsyncResult.success(
+            { relativeUrl: "/api/assets/image.png", expiresAt: 1 },
+            { waiting: true },
+          )
+        : AsyncResult.failure(Cause.fail(new Error("Image missing")), { waiting: true });
+    expect(useAssetUrlState(environmentId, resource)).toMatchObject({
+      _tag: outcome,
+      waiting: true,
+    });
+    if (outcome === "Success") {
+      expect(useAssetUrlState(environmentId, resource)).toMatchObject({
+        url: "https://host.test/api/assets/image.png",
+      });
+    }
+    state.assetResult = AsyncResult.success({
+      relativeUrl: "/api/assets/updated.png",
+      expiresAt: 2,
+    });
+    expect(useAssetUrlState(environmentId, resource).waiting).toBeUndefined();
+  },
+);
 
 it.each(["workspace-file", "media-file"] as const)(
   "keeps %s loading until its file grant resolves",

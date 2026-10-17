@@ -903,6 +903,7 @@ function RenderedMarkdownSurface({
   relativePath,
   contents,
   threadRef,
+  workspaceMutationId,
   readOnly,
   onPendingChange,
 }: Omit<
@@ -916,6 +917,7 @@ function RenderedMarkdownSurface({
 > & {
   threadRef: ScopedThreadRef;
   readOnly: boolean;
+  workspaceMutationId: string | null;
 }) {
   const saveCoordinator = useFileSaveCoordinator({
     environmentId,
@@ -931,6 +933,7 @@ function RenderedMarkdownSurface({
         cwd={cwd}
         relativePath={relativePath}
         threadRef={threadRef}
+        workspaceMutationId={workspaceMutationId}
         onTaskListChange={
           readOnly
             ? undefined
@@ -1390,6 +1393,7 @@ export default function FilePreviewPanel({
                 relativePath={relativePath}
                 threadRef={threadRef}
                 contents={file.data.contents}
+                workspaceMutationId={workspaceMutationId}
                 readOnly={isHostFile || !canWriteFiles}
                 onPendingChange={onPendingChange}
               />
