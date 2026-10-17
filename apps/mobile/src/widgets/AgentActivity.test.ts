@@ -206,6 +206,48 @@ describe("AgentActivity widget layout", () => {
     );
   });
 
+  it("deep links the compact and minimal island to the row that needs attention", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activeCount: 2,
+        activities: [
+          makeRow({}),
+          makeRow({
+            threadId: "thread-2",
+            phase: "waiting_for_approval",
+            status: "Approval",
+            deepLink: "/threads/env-1/thread-2",
+          }),
+        ],
+      },
+      environment as never,
+    );
+    for (const region of [layout.compactLeading, layout.compactTrailing, layout.minimal]) {
+      const serialized = JSON.stringify(region);
+      expect(serialized).toContain('"widgetURL":"t3code://threads/env-1/thread-2"');
+      expect(serialized.match(/widgetURL/g)).toHaveLength(1);
+    }
+  });
+
+  it("deep links the compact and minimal island to the lead row when nothing needs attention", () => {
+    const layout = AgentActivity(
+      {
+        ...props,
+        activities: [
+          makeRow({ phase: "completed", status: "Done" }),
+          makeRow({ threadId: "thread-2", deepLink: "/threads/env-1/thread-2" }),
+        ],
+      },
+      environment as never,
+    );
+    for (const region of [layout.compactLeading, layout.compactTrailing, layout.minimal]) {
+      const serialized = JSON.stringify(region);
+      expect(serialized).toContain('"widgetURL":"t3code://threads/env-1/thread-2"');
+      expect(serialized).not.toContain("thread-1");
+    }
+  });
+
   it("omits the deep link for unsafe paths and empty aggregates", () => {
     expect(JSON.stringify(AgentActivity(props, environment as never))).not.toContain("widgetURL");
     expect(
