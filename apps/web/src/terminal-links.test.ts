@@ -72,6 +72,20 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    "src/żółć.ts:12:7",
+    "żółć/main.ts:12",
+    "src/日本語.ts:12",
+    "src/cafe\u0301.ts:12",
+    "src/𐐀.ts:12",
+  ])("keeps the complete Unicode relative path in %s", (path) => {
+    const line = `see ${path} for details`;
+    const start = line.indexOf(path);
+    const matches = extractTerminalLinks(line);
+    expect(matches).toEqual([{ kind: "path", text: path, start, end: start + path.length }]);
+    expect(resolvePathLinkTarget(matches[0]!.text, "/tmp/project")).toBe(`/tmp/project/${path}`);
+  });
+
   it("finds Windows absolute paths with forward slashes", () => {
     const line = "see C:/Users/someone/project/src/file.ts:42 for details";
     const path = "C:/Users/someone/project/src/file.ts:42";
