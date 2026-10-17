@@ -25,6 +25,7 @@ import {
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -50,7 +51,6 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
-  AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthTerminalReadScope,
@@ -60,7 +60,6 @@ import {
   CommandId,
   DEFAULT_MODEL,
   isProviderNativeSubagentThread,
-  EnvironmentAuthorizationError,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -73,7 +72,6 @@ import {
   type ThreadId,
   type RunId,
   type RuntimeRequestId,
-  type KeybindingCommand,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
@@ -167,7 +165,6 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
@@ -292,18 +289,7 @@ import {
 import { cn, randomUUID } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import {
-  decodeProjectScriptKeybindingRule,
-  keybindingValueForCommand,
-} from "~/lib/projectScriptKeybindings";
-import { type NewProjectScriptInput } from "./ProjectScriptsControl";
-import {
-  buildProjectScript,
-  commandForProjectScript,
-  nextProjectScriptId,
-  projectScriptIdFromCommand,
-  releaseClaimedRoles,
-} from "~/projectScripts";
+import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import { getProviderModelCapabilities } from "../providerModels";
@@ -1101,15 +1087,6 @@ export default function ChatView(props: ChatViewProps) {
       currentRouteThreadKeyRef.current = null;
     };
   }, [routeThreadKey]);
-  const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    reportFailure: false,
-  });
-  const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
-    reportFailure: false,
-  });
-  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
-    reportFailure: false,
-  });
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -3797,223 +3774,16 @@ export default function ChatView(props: ChatViewProps) {
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
 
-  const supportsProjectSettingsOverrides =
-    environmentById.get(environmentId)?.serverConfig?.environment.capabilities
-      .projectSettingsOverrides === true;
-  const persistProjectScripts = async (input: {
-    projectId: ProjectId;
-    projectCwd: string;
-    previousScripts: ReadonlyArray<ProjectScript>;
-    nextScripts: ReadonlyArray<ProjectScript>;
-    keybinding: NewProjectScriptInput["keybinding"];
-    keybindingCommand: KeybindingCommand | null;
-  }): Promise<AtomCommandResult<void, unknown>> => {
-    const previousKeybinding = keybindingValueForCommand(
-      appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.keybindings ?? [],
-      input.keybindingCommand,
-    );
-    const isDeletingScript = !input.nextScripts.some(
-      (script) => commandForProjectScript(script.id) === input.keybindingCommand,
-    );
-    const changesKeybinding =
-      input.keybinding !== undefined &&
-      (input.keybinding?.trim() || null) !== previousKeybinding &&
-      (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
-    if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthSettingsWriteScope,
-            message: "This connection cannot change keyboard shortcuts.",
-          }),
-        ),
-      );
-    }
-    const keybindingRule = changesKeybinding
-      ? decodeProjectScriptKeybindingRule({
-          keybinding: input.keybinding,
-          command: input.keybindingCommand,
-        })
-      : null;
-    const updateResult = mapAtomCommandResult(
-      await updateProjectScriptSettings({
-        environmentId,
-        input: {
-          patch: supportsProjectSettingsOverrides
-            ? {
-                projectSettingsOverrides: {
-                  [input.projectId]: {
-                    ...settings.projectSettingsOverrides[input.projectId],
-                    defaultProjectScripts: input.nextScripts,
-                  },
-                },
-              }
-            : {
-                projectScriptOverrides: {
-                  [input.projectId]: input.nextScripts,
-                },
-              },
-        },
-      }),
-      () => undefined,
-    );
-    if (updateResult._tag === "Failure") {
-      return updateResult;
-    }
-
-    if (!changesKeybinding) return updateResult;
-    if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new EnvironmentAuthorizationError({
-            requiredScope: AuthSettingsWriteScope,
-            message: isDeletingScript
-              ? "The script was deleted, but its keyboard shortcut could not be removed because permission changed."
-              : "The script was saved, but this connection can no longer change keyboard shortcuts.",
-          }),
-        ),
-      );
-    }
-
-    const scriptId = input.keybindingCommand
-      ? projectScriptIdFromCommand(input.keybindingCommand)
-      : null;
-    if (!keybindingRule && !input.previousScripts.some((script) => script.id === scriptId)) {
-      return updateResult;
-    }
-    const retainedElsewhere =
-      !input.nextScripts.some((script) => script.id === scriptId) &&
-      (settings.defaultProjectScripts.some((script) => script.id === scriptId) ||
-        Object.entries(settings.projectSettingsOverrides).some(
-          ([projectId, entry]) =>
-            projectId !== input.projectId &&
-            entry.defaultProjectScripts?.some((script) => script.id === scriptId),
-        ) ||
-        allProjects.some(
-          (other) =>
-            other.environmentId === environmentId &&
-            other.id !== input.projectId &&
-            resolveProjectScripts(settings, other).some((script) => script.id === scriptId),
-        ));
-    if (!keybindingRule && retainedElsewhere) return updateResult;
-
-    const previousRules = (
-      environmentById.get(environmentId)?.serverConfig?.keybindings ?? []
-    ).flatMap((binding) => {
-      if (binding.command !== input.keybindingCommand || binding.whenAst) return [];
-      const previous = decodeProjectScriptKeybindingRule({
-        keybinding: keybindingValueForCommand([binding], input.keybindingCommand),
-        command: input.keybindingCommand,
-      });
-      return previous ? [previous] : [];
-    });
-    const previous = previousRules.at(-1);
-    for (const rule of keybindingRule ? previousRules.slice(0, -1) : previousRules) {
-      const result = await removeKeybinding({ environmentId, input: rule });
-      if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
-    }
-    return keybindingRule
-      ? mapAtomCommandResult(
-          await upsertKeybinding({
-            environmentId,
-            input:
-              previous && previous.key !== keybindingRule.key
-                ? { ...keybindingRule, replace: previous }
-                : keybindingRule,
-          }),
-          () => undefined,
-        )
-      : updateResult;
-  };
-  const saveProjectScript = async (
-    input: NewProjectScriptInput,
-  ): Promise<AtomCommandResult<void, unknown>> => {
-    if (!activeProject) {
-      return AsyncResult.success(undefined);
-    }
-    const nextId = nextProjectScriptId(
-      input.name,
-      activeProjectScripts.map((script) => script.id),
-    );
-    const nextScript = buildProjectScript(nextId, input);
-    const nextScripts = [
-      ...activeProjectScripts.map((script) => releaseClaimedRoles(script, input)),
-      nextScript,
-    ];
-
-    return persistProjectScripts({
-      projectId: activeProject.id,
-      projectCwd: activeProject.workspaceRoot,
-      previousScripts: activeProjectScripts,
-      nextScripts,
-      keybinding: input.keybinding,
-      keybindingCommand: commandForProjectScript(nextId),
-    });
-  };
-  const saveProjectScriptStable = useStableCallback(saveProjectScript);
-  const updateProjectScript = async (
-    scriptId: string,
-    input: NewProjectScriptInput,
-  ): Promise<AtomCommandResult<void, unknown>> => {
-    if (!activeProject) {
-      return AsyncResult.success(undefined);
-    }
-    const existingScript = activeProjectScripts.find((script) => script.id === scriptId);
-    if (!existingScript) {
-      return AsyncResult.failure(Cause.fail(new Error("Script not found.")));
-    }
-
-    const updatedScript = buildProjectScript(existingScript.id, input);
-    const nextScripts = activeProjectScripts.map((script) =>
-      script.id === scriptId ? updatedScript : releaseClaimedRoles(script, input),
-    );
-
-    return persistProjectScripts({
-      projectId: activeProject.id,
-      projectCwd: activeProject.workspaceRoot,
-      previousScripts: activeProjectScripts,
-      nextScripts,
-      keybinding: input.keybinding,
-      keybindingCommand: commandForProjectScript(scriptId),
-    });
-  };
-  const updateProjectScriptStable = useStableCallback(updateProjectScript);
-  const deleteProjectScript = async (
-    scriptId: string,
-  ): Promise<AtomCommandResult<void, unknown>> => {
-    if (!activeProject) {
-      return AsyncResult.success(undefined);
-    }
-    const nextScripts = activeProjectScripts.filter((script) => script.id !== scriptId);
-
-    const deletedName = activeProjectScripts.find((s) => s.id === scriptId)?.name;
-
-    const result = await persistProjectScripts({
-      projectId: activeProject.id,
-      projectCwd: activeProject.workspaceRoot,
-      previousScripts: activeProjectScripts,
-      nextScripts,
-      keybinding: null,
-      keybindingCommand: commandForProjectScript(scriptId),
-    });
-    if (result._tag === "Success") {
-      toastManager.add({
-        type: "success",
-        title: `Deleted action "${deletedName ?? "Unknown"}"`,
-      });
-    } else if (!isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not delete action",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        }),
-      );
-    }
-    return result;
-  };
-  const deleteProjectScriptStable = useStableCallback(deleteProjectScript);
+  const {
+    saveProjectScript: saveProjectScriptStable,
+    updateProjectScript: updateProjectScriptStable,
+    deleteProjectScript: deleteProjectScriptStable,
+  } = useProjectScriptEditing({
+    environmentId,
+    project: activeProject,
+    scripts: activeProjectScripts,
+    settings,
+  });
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
