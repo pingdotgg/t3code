@@ -113,12 +113,6 @@ interface ProviderModelsSectionProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
-/** CustomModelEditor keys its option list on this array. */
-function useBuiltInModels(models: ReadonlyArray<ServerProviderModel>) {
-  "use memo";
-  return models.filter((model) => !model.isCustom);
-}
-
 export function ProviderModelsSection({
   instanceId,
   driverKind,
@@ -153,9 +147,6 @@ export function ProviderModelsSection({
   const hiddenCount = displayModels.filter(
     (model) => !model.isCustom && hiddenModelSet.has(model.slug),
   ).length;
-  const builtInModels = useBuiltInModels(models);
-  const allBuiltInModelsHidden =
-    builtInModels.length > 0 && builtInModels.every((model) => hiddenModelSet.has(model.slug));
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
   const isFiltering = showFilter && normalizedFilter.length > 0;
@@ -178,6 +169,12 @@ export function ProviderModelsSection({
     scrollToSlugRef.current = null;
     row.scrollIntoView({ block: "nearest" });
   });
+
+  // CustomModelEditor keys its option list on this array. Derived after the effect and
+  // checked against `hiddenModels` rather than the set built above it, so it stays cached.
+  const builtInModels = models.filter((model) => !model.isCustom);
+  const allBuiltInModelsHidden =
+    builtInModels.length > 0 && builtInModels.every((model) => hiddenModels.includes(model.slug));
 
   const handleAdd = () => {
     if (!canManageCustomModels || driverKind === "antigravity") return;
