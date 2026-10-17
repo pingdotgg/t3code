@@ -1,9 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodeHttp from "node:http";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -36,6 +41,8 @@ import {
   parseGitCheckoutProgressLine,
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
+  isStaleGitStatusFetchDirectory,
+  statusRemoteRefreshFailureKey,
 } from "./GitVcsDriverCore.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
@@ -299,6 +306,40 @@ it.effect.each(["root", "nested", "worktree"] as const)(
       assert.include(yield* fs.readFileString(runsPath), "clean");
     }).pipe(Effect.provide(layerTest)),
 );
+
+describe("isStaleGitStatusFetchDirectory", () => {
+  it("keeps active fetch directories past the cleanup grace period", () => {
+    const input = {
+      modifiedAtMs: 1_000,
+      nowMs: 10_000,
+      staleAfterMs: 1_000,
+    };
+
+    assert.isTrue(isStaleGitStatusFetchDirectory({ ...input, isActive: false }));
+    assert.isFalse(isStaleGitStatusFetchDirectory({ ...input, isActive: true }));
+  });
+});
+
+describe("statusRemoteRefreshFailureKey", () => {
+  it("isolates failure backoff across branch refreshes", () => {
+    const baseKey = {
+      gitCommonDir: "/repo/.git",
+      remoteName: "origin",
+      branchName: "main",
+      remoteRef: "refs/heads/main",
+      defaultBranchName: "main",
+    };
+
+    assert.notEqual(
+      statusRemoteRefreshFailureKey(baseKey),
+      statusRemoteRefreshFailureKey({
+        ...baseKey,
+        branchName: "feature",
+        remoteRef: "refs/heads/feature",
+      }),
+    );
+  });
+});
 
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
@@ -2602,6 +2643,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("treats a deleted upstream tracking ref as no upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/deleted-upstream"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/deleted-upstream"]);
+        yield* git(cwd, ["push", "origin", "--delete", "feature/deleted-upstream"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.upstreamRef, null);
+      }),
+    );
+
     it.effect("reports remote status on unborn HEAD without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -2616,6 +2678,463 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.hasUpstream, false);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.behindCount, 0);
+      }),
+    );
+
+    it.effect.each(["sha1", "sha256"] as const)(
+      "keeps isolated fetch refs outside the shared repository (%s)",
+      (objectFormat) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const cwd = yield* makeTmpDir();
+            const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+            const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+            yield* git(cwd, ["init", `--object-format=${objectFormat}`]);
+            const { initialBranch } = yield* initRepoWithCommit(cwd);
+            yield* git(remote, ["init", "--bare", `--object-format=${objectFormat}`]);
+            yield* git(cwd, ["remote", "add", "origin", remote]);
+            yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+            yield* git(updater, ["clone", remote, "."]);
+            yield* git(updater, ["config", "user.email", "test@test.com"]);
+            yield* git(updater, ["config", "user.name", "Test"]);
+            yield* writeTextFile(updater, "remote.txt", "remote\n");
+            yield* git(updater, ["add", "remote.txt"]);
+            yield* git(updater, ["commit", "-m", "remote commit"]);
+            yield* git(updater, ["push", "origin", initialBranch]);
+            const concurrentCommit = yield* git(cwd, [
+              "commit-tree",
+              "HEAD^{tree}",
+              "-p",
+              "HEAD",
+              "-m",
+              "concurrent ref update",
+            ]);
+
+            const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+            let isolatedFetchCount = 0;
+            const isolatedFetchExited = yield* Deferred.make<void>();
+            const releaseIsolatedFetch = yield* Deferred.make<void>();
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(releaseIsolatedFetch, undefined).pipe(Effect.asVoid),
+            );
+            const blockingSpawner = ChildProcessSpawner.make((command) =>
+              Effect.gen(function* () {
+                const handle = yield* delegate.spawn(command);
+                if (
+                  !ChildProcess.isStandardCommand(command) ||
+                  !command.args.includes("--no-write-fetch-head") ||
+                  command.options.env?.GIT_OBJECT_DIRECTORY === undefined
+                ) {
+                  return handle;
+                }
+                isolatedFetchCount += 1;
+                return ChildProcessSpawner.makeHandle({
+                  pid: handle.pid,
+                  exitCode: handle.exitCode.pipe(
+                    Effect.tap(() => Deferred.succeed(isolatedFetchExited, undefined)),
+                    Effect.tap(() => Deferred.await(releaseIsolatedFetch)),
+                  ),
+                  isRunning: handle.isRunning,
+                  kill: handle.kill,
+                  unref: handle.unref,
+                  stdin: handle.stdin,
+                  stdout: handle.stdout,
+                  stderr: handle.stderr,
+                  all: handle.all,
+                  getInputFd: handle.getInputFd,
+                  getOutputFd: handle.getOutputFd,
+                });
+              }),
+            );
+            const driver = yield* makeGitVcsDriverCore().pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, blockingSpawner),
+              Effect.provide(layerServerConfig),
+            );
+            const refresh = yield* driver
+              .statusDetailsRemote(cwd)
+              .pipe(Effect.forkChild({ startImmediately: true }));
+
+            yield* Deferred.await(isolatedFetchExited);
+            const sharedTemporaryRefs = yield* git(cwd, [
+              "for-each-ref",
+              "--format=%(refname)",
+              "refs/t3-status-fetch",
+            ]);
+            const fileSystem = yield* FileSystem.FileSystem;
+            const pathService = yield* Path.Path;
+            const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
+            const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
+              ? gitCommonDirRaw
+              : pathService.resolve(cwd, gitCommonDirRaw);
+            const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
+            const [isolatedGitDir] = yield* fileSystem.readDirectory(isolatedFetchRoot, {
+              recursive: false,
+            });
+            if (isolatedGitDir === undefined) {
+              return yield* Effect.die("expected an isolated Git status fetch directory");
+            }
+            const privateTemporaryRefs = yield* git(cwd, [
+              "--git-dir",
+              pathService.join(isolatedFetchRoot, isolatedGitDir),
+              "for-each-ref",
+              "--format=%(refname)",
+              "refs/t3-status-fetch",
+            ]);
+
+            assert.equal(sharedTemporaryRefs, "");
+            assert.match(privateTemporaryRefs, /\/upstream$/u);
+
+            yield* git(cwd, [
+              "update-ref",
+              `refs/remotes/origin/${initialBranch}`,
+              concurrentCommit,
+            ]);
+            yield* Deferred.succeed(releaseIsolatedFetch, undefined);
+            const refreshedStatus = yield* Fiber.join(refresh);
+            assert.equal(refreshedStatus.behindCount, 1);
+
+            yield* TestClock.adjust("16 seconds");
+            yield* driver.statusDetailsRemote(cwd);
+            assert.equal(isolatedFetchCount, 2);
+          }),
+        ),
+    );
+
+    it.effect("refreshes status without a second upload-pack process", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+        const remoteCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const blockedPromotion = yield* Deferred.make<void>();
+        const releasePromotion = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("--no-write-fetch-head") &&
+              command.options.env?.GIT_OBJECT_DIRECTORY === undefined
+            ) {
+              yield* Deferred.succeed(blockedPromotion, undefined);
+              yield* Deferred.await(releasePromotion);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const refresh = yield* driver.statusDetailsRemote(cwd).pipe(
+          Effect.tap(() => Deferred.succeed(finished, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.race(Deferred.await(blockedPromotion), Deferred.await(finished));
+        yield* TestClock.adjust("30 seconds");
+        const completedWithoutPromotion = yield* Deferred.isDone(finished);
+        // Release the injected stall before asserting so a red run cannot leak a blocked fiber.
+        yield* Deferred.succeed(releasePromotion, undefined);
+        const status = yield* Fiber.join(refresh);
+        assert.isTrue(completedWithoutPromotion);
+        assert.equal(status.behindCount, 1);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          remoteCommit,
+        );
+        yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+      }),
+    );
+
+    it.effect.each(["cancel", "failure", "already published"] as const)(
+      "preserves repository integrity during pack publication (%s)",
+      (outcome) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+          const originalCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(updater, ["clone", remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          yield* writeTextFile(updater, "remote.txt", "remote\n");
+          yield* git(updater, ["add", "remote.txt"]);
+          yield* git(updater, ["commit", "-m", "remote commit"]);
+          yield* git(updater, ["push", "origin", initialBranch]);
+          const remoteCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const commonDir = yield* fs.realPath(
+            path.resolve(cwd, yield* git(cwd, ["rev-parse", "--git-common-dir"])),
+          );
+          const packDirectory = path.join(commonDir, "objects", "pack");
+          const publishedPack = yield* Deferred.make<string>();
+          const releasePublication = yield* Deferred.make<void>();
+          yield* Effect.addFinalizer(() => Deferred.succeed(releasePublication, undefined));
+          const publicationFileSystem = FileSystem.FileSystem.of({
+            ...fs,
+            rename: (source, destination) =>
+              Effect.gen(function* () {
+                if (path.dirname(destination) !== packDirectory || !destination.endsWith(".pack")) {
+                  return yield* fs.rename(source, destination);
+                }
+                if (outcome === "failure") {
+                  return yield* PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "rename",
+                    pathOrDescriptor: destination,
+                  });
+                }
+                yield* fs.rename(source, destination);
+                if (outcome === "already published") {
+                  return yield* PlatformError.systemError({
+                    _tag: "AlreadyExists",
+                    module: "FileSystem",
+                    method: "rename",
+                    pathOrDescriptor: destination,
+                  });
+                }
+                yield* Deferred.succeed(publishedPack, destination);
+                yield* Deferred.await(releasePublication);
+              }),
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(FileSystem.FileSystem, publicationFileSystem),
+            Effect.provide(layerServerConfig),
+          );
+          if (outcome === "cancel") {
+            const refresh = yield* driver
+              .statusDetailsRemote(cwd)
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            const pack = yield* Deferred.await(publishedPack);
+            const interruption = yield* Fiber.interrupt(refresh).pipe(
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.succeed(releasePublication, undefined);
+            yield* Fiber.join(interruption);
+            assert.isTrue(yield* fs.exists(pack.replace(/\.pack$/u, ".idx")));
+            yield* git(cwd, ["cat-file", "-e", remoteCommit]);
+          } else {
+            const status = yield* driver.statusDetailsRemote(cwd);
+            assert.equal(status.behindCount, outcome === "failure" ? 0 : 1);
+          }
+          assert.equal(
+            yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+            outcome === "already published" ? remoteCommit : originalCommit,
+          );
+          assert.deepStrictEqual(
+            yield* fs.readDirectory(path.join(commonDir, "objects", "t3-status-fetch")),
+            [],
+          );
+          if (outcome === "failure")
+            assert.deepStrictEqual(yield* fs.readDirectory(packDirectory), []);
+          yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+        }),
+    );
+
+    it.effect("cleans partial packs after repeated status fetch timeouts", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const originalUpstream = yield* git(cwd, [
+          "rev-parse",
+          `refs/remotes/origin/${initialBranch}`,
+        ]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFile(path.join(updater, "large.bin"), NodeCrypto.randomBytes(1024 * 1024));
+        yield* git(updater, ["add", "large.bin"]);
+        yield* git(updater, ["commit", "-m", "large remote object"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+
+        // Serve real upload-pack output but withhold its tail so Git's index-pack stays in progress.
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.method === "GET") {
+            response.setHeader("Content-Type", "application/x-git-upload-pack-advertisement");
+            response.end(
+              Buffer.concat([
+                Buffer.from("001e# service=git-upload-pack\n0000"),
+                NodeChildProcess.execFileSync("git", [
+                  "upload-pack",
+                  "--stateless-rpc",
+                  "--advertise-refs",
+                  remote,
+                ]),
+              ]),
+            );
+            return;
+          }
+          const chunks: Buffer[] = [];
+          request.on("data", (chunk: Buffer) => chunks.push(chunk));
+          request.on("end", () => {
+            const pack = NodeChildProcess.execFileSync(
+              "git",
+              ["upload-pack", "--stateless-rpc", remote],
+              {
+                input: Buffer.concat(chunks),
+                maxBuffer: 4 * 1024 * 1024,
+              },
+            );
+            response.setHeader("Content-Type", "application/x-git-upload-pack-result");
+            response.write(pack.subarray(0, pack.length - 64 * 1024));
+          });
+        });
+        yield* Effect.acquireRelease(
+          Effect.promise(
+            () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+          ),
+          () =>
+            Effect.sync(() => {
+              server.closeAllConnections();
+              server.close();
+            }),
+        );
+        const address = server.address();
+        assert.isNotNull(address);
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("expected TCP listener");
+        yield* git(cwd, ["remote", "set-url", "origin", `http://127.0.0.1:${address.port}/repo`]);
+        const commonDir = path.resolve(cwd, yield* git(cwd, ["rev-parse", "--git-common-dir"]));
+        const isolatedRoot = path.join(commonDir, "objects", "t3-status-fetch");
+        const otherPack = path.join(commonDir, "objects", "pack", "tmp_pack_other_operation");
+        yield* fs.makeDirectory(path.dirname(otherPack), { recursive: true });
+        yield* fs.writeFileString(otherPack, "another operation's data");
+        const oldTime = DateTime.toDateUtc(
+          DateTime.subtractDuration(yield* DateTime.now, Duration.hours(2)),
+        );
+        yield* fs.utimes(otherPack, oldTime, oldTime);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const partialPackWritten = yield* Deferred.make<string>();
+          const handles: ChildProcessSpawner.ChildProcessHandle[] = [];
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const objectDirectory = ChildProcess.isStandardCommand(command)
+                ? command.options.env?.GIT_OBJECT_DIRECTORY
+                : undefined;
+              if (objectDirectory !== undefined) {
+                yield* Effect.callback<string>((resume) => {
+                  const watcher = NodeFS.watch(
+                    path.join(objectDirectory, "pack"),
+                    (_event, filename) => {
+                      if (!filename?.startsWith("tmp_pack_")) return;
+                      const partialPack = path.join(objectDirectory, "pack", filename);
+                      if (
+                        (NodeFS.statSync(partialPack, { throwIfNoEntry: false })?.size ?? 0) > 0
+                      ) {
+                        resume(Effect.succeed(partialPack));
+                      }
+                    },
+                  );
+                  return Effect.sync(() => watcher.close());
+                }).pipe(
+                  Effect.flatMap((partialPack) =>
+                    Deferred.succeed(partialPackWritten, partialPack),
+                  ),
+                  Effect.forkScoped({ startImmediately: true }),
+                );
+              }
+              const handle = yield* delegate.spawn(command);
+              if (objectDirectory !== undefined) handles.push(handle);
+              return handle;
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const refresh = yield* driver
+            .statusDetailsRemote(cwd)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const partialPack = yield* Deferred.await(partialPackWritten);
+          assert.isAbove(Number((yield* fs.stat(partialPack)).size), 0);
+          assert.equal(handles.length, 1);
+          assert.isTrue(yield* handles[0]!.isRunning);
+          yield* TestClock.adjust("5 seconds");
+          const status = yield* Fiber.join(refresh);
+          assert.isFalse(yield* handles[0]!.isRunning);
+          assert.isFalse(yield* fs.exists(partialPack));
+          assert.deepStrictEqual(yield* fs.readDirectory(isolatedRoot), []);
+          assert.equal(yield* fs.readFileString(otherPack), "another operation's data");
+          assert.equal(
+            yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+            originalUpstream,
+          );
+          assert.equal(status.behindCount, 0);
+        }
+      }),
+    );
+
+    it.effect("cleans the isolated repository when alternate setup fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const alternatesSuffix = pathService.join("objects", "info", "alternates");
+        const writeFailure = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "writeFileString",
+          pathOrDescriptor: alternatesSuffix,
+        });
+        const failingFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          writeFileString: (filePath, data, options) =>
+            filePath.endsWith(alternatesSuffix)
+              ? Effect.fail(writeFailure)
+              : fileSystem.writeFileString(filePath, data, options),
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(FileSystem.FileSystem, failingFileSystem),
+          Effect.provide(layerServerConfig),
+        );
+
+        yield* driver.statusDetailsRemote(cwd).pipe(Effect.ignore);
+
+        const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
+        const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
+          ? gitCommonDirRaw
+          : pathService.resolve(cwd, gitCommonDirRaw);
+        const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
+        const isolatedFetchEntries = (yield* fileSystem.exists(isolatedFetchRoot))
+          ? yield* fileSystem.readDirectory(isolatedFetchRoot, { recursive: false })
+          : [];
+
+        assert.deepStrictEqual(isolatedFetchEntries, []);
       }),
     );
 
@@ -2641,10 +3160,370 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
           refreshUpstream: false,
         });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
+        const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
+          ? gitCommonDirRaw
+          : pathService.resolve(cwd, gitCommonDirRaw);
+        const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
+        const staleFetchRoot = pathService.join(isolatedFetchRoot, "stale-fetch");
+        yield* fileSystem.makeDirectory(pathService.join(staleFetchRoot, "objects"), {
+          recursive: true,
+        });
+        const now = yield* DateTime.now;
+        const staleTime = DateTime.toDateUtc(DateTime.subtractDuration(now, Duration.hours(2)));
+        yield* fileSystem.utimes(staleFetchRoot, staleTime, staleTime);
+
+        const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
+        const isolatedFetchEntries = (yield* fileSystem.exists(isolatedFetchRoot))
+          ? yield* fileSystem.readDirectory(isolatedFetchRoot, { recursive: false })
+          : [];
+        const temporaryRefs = yield* git(cwd, [
+          "for-each-ref",
+          "--format=%(refname)",
+          "refs/t3-status-fetch",
+        ]);
+
+        assert.equal(cachedStatus.behindCount, 0);
+        assert.equal(refreshedStatus.behindCount, 1);
+        assert.deepStrictEqual(isolatedFetchEntries, []);
+        assert.equal(temporaryRefs, "");
+      }),
+    );
+
+    it.effect("honors custom upstream fetch refspecs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["checkout", "-b", "feature/custom-upstream"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "origin", "HEAD:refs/pull/123/head"]);
+        yield* git(cwd, [
+          "config",
+          "remote.origin.fetch",
+          "+refs/pull/*/head:refs/remotes/origin/pr/*",
+        ]);
+        yield* git(cwd, ["fetch", "origin"]);
+        yield* git(cwd, ["config", "branch.feature/custom-upstream.remote", "origin"]);
+        yield* git(cwd, ["config", "branch.feature/custom-upstream.merge", "refs/pull/123/head"]);
+
+        yield* git(updater, ["init"]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["remote", "add", "origin", remote]);
+        yield* git(updater, ["fetch", "origin", "refs/pull/123/head"]);
+        yield* git(updater, ["checkout", "-b", "custom-upstream", "FETCH_HEAD"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", "HEAD:refs/pull/123/head"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
+        const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
+
+        assert.equal(cachedStatus.behindCount, 0);
+        assert.equal(refreshedStatus.upstreamRef, "origin/pr/123");
+        assert.equal(refreshedStatus.behindCount, 1);
+      }),
+    );
+
+    it.effect("refreshes the default branch with a feature upstream", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        yield* git(remote, ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        yield* git(cwd, ["checkout", "-b", "feature/default-refresh"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/default-refresh"]);
+
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", "main"]);
+        const remoteMain = yield* git(updater, ["rev-parse", "HEAD"]);
+
+        const localMainBefore = yield* git(cwd, ["rev-parse", "refs/remotes/origin/main"]);
+        yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+        const localMainAfter = yield* git(cwd, ["rev-parse", "refs/remotes/origin/main"]);
+
+        assert.notEqual(localMainBefore, remoteMain);
+        assert.equal(localMainAfter, remoteMain);
+      }),
+    );
+
+    it.effect("refreshes the upstream when the configured default branch is missing", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        yield* git(remote, ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(cwd, [
+          "symbolic-ref",
+          "refs/remotes/origin/HEAD",
+          "refs/remotes/origin/missing",
+        ]);
+        yield* git(cwd, ["checkout", "-b", "feature/missing-default"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/missing-default"]);
+
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["checkout", "feature/missing-default"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", "feature/missing-default"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
+          refreshUpstream: false,
+        });
         const refreshedStatus = yield* driver.statusDetailsRemote(cwd);
 
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
+      }),
+    );
+
+    it.effect("backs off default-branch failures without delaying upstream refreshes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/backoff"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/backoff"]);
+        yield* git(updater, ["clone", "--branch", "feature/backoff", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["commit", "--allow-empty", "-m", "first remote update"]);
+        yield* git(updater, ["push"]);
+
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        let defaultAttempts = 0;
+        let failDefault = true;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("fetch") &&
+              command.args.at(-1)?.startsWith(`+refs/heads/${initialBranch}:`)
+            ) {
+              defaultAttempts += 1;
+              if (failDefault) {
+                return ChildProcessSpawner.makeHandle({
+                  ...makeSuccessfulHandle(""),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                });
+              }
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        assert.equal((yield* driver.statusDetailsRemote(cwd)).behindCount, 1);
+        assert.equal(defaultAttempts, 1);
+
+        yield* git(updater, ["commit", "--allow-empty", "-m", "second remote update"]);
+        yield* git(updater, ["push"]);
+        yield* TestClock.adjust("16 seconds");
+        assert.equal((yield* driver.statusDetailsRemote(cwd)).behindCount, 2);
+        assert.equal(defaultAttempts, 1);
+        for (const expectedAttempts of [2, 2, 2, 2]) {
+          yield* TestClock.adjust("16 seconds");
+          yield* driver.statusDetailsRemote(cwd);
+          assert.equal(defaultAttempts, expectedAttempts);
+        }
+
+        failDefault = false;
+        yield* TestClock.adjust("16 seconds");
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(defaultAttempts, 3);
+        failDefault = true;
+        for (const expectedAttempts of [4, 4, 5]) {
+          yield* TestClock.adjust("16 seconds");
+          yield* driver.statusDetailsRemote(cwd);
+          assert.equal(defaultAttempts, expectedAttempts);
+        }
+      }),
+    );
+
+    it.effect.each(["gitdir", "onbranch", "global gitdir"] as const)(
+      "preserves conditional remote configuration during status fetches (%s)",
+      (conditionType) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote with spaces-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* initRepoWithCommit(cwd);
+          const branch = "feature/conditional-config";
+          yield* git(cwd, ["checkout", "-b", branch]);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", branch]);
+          yield* git(updater, ["clone", "--branch", branch, remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          yield* writeTextFile(updater, "remote.txt", "conditional remote update\n");
+          yield* git(updater, ["add", "remote.txt"]);
+          yield* git(updater, ["commit", "-m", "remote update"]);
+          yield* git(updater, ["push"]);
+
+          const configDirectory = yield* makeTmpDir("git-vcs-driver-config-");
+          const includedConfig = path.join(configDirectory, "transport.gitconfig");
+          yield* git(cwd, [
+            "config",
+            "--file",
+            includedConfig,
+            "remote.origin.url",
+            "conditional-remote:",
+          ]);
+          yield* git(cwd, [
+            "config",
+            "--file",
+            includedConfig,
+            `url.${remote}.insteadOf`,
+            "conditional-remote:",
+          ]);
+          const gitDirectory = yield* fs.realPath(path.join(cwd, ".git"));
+          const condition =
+            conditionType !== "onbranch"
+              ? `gitdir:${gitDirectory.replaceAll("\\", "/")}`
+              : `onbranch:${branch}`;
+          const globalConfig = path.join(configDirectory, "global.gitconfig");
+          const configEnvironment =
+            conditionType === "global gitdir" ? { GIT_CONFIG_GLOBAL: globalConfig } : undefined;
+          yield* git(cwd, [
+            "config",
+            ...(configEnvironment ? ["--file", globalConfig] : []),
+            `includeIf.${condition}.path`,
+            includedConfig,
+          ]);
+          yield* git(cwd, ["config", "--unset", "remote.origin.url"]);
+          assert.equal(yield* git(cwd, ["remote", "get-url", "origin"], configEnvironment), remote);
+
+          const fixtureDriver = yield* GitVcsDriver.GitVcsDriver;
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let checkedScope = false;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command)) return yield* delegate.spawn(command);
+              const objectDirectory = command.options.env?.GIT_OBJECT_DIRECTORY;
+              if (objectDirectory && command.args.includes("fetch")) {
+                const isolatedRoot = path.dirname(objectDirectory);
+                assert.equal(
+                  yield* git(
+                    cwd,
+                    [
+                      "--git-dir",
+                      isolatedRoot,
+                      "config",
+                      "--show-scope",
+                      "--get",
+                      "remote.origin.url",
+                    ],
+                    command.options.env,
+                  ).pipe(
+                    Effect.provideService(GitVcsDriver.GitVcsDriver, fixtureDriver),
+                    Effect.orDie,
+                  ),
+                  `${configEnvironment ? "global" : "local"}\tconditional-remote:`,
+                );
+                if (HostProcess.Platform.defaultValue() !== "win32") {
+                  assert.equal(
+                    (yield* fs.stat(
+                      path.join(isolatedRoot, configEnvironment ? "global-config" : "config"),
+                    )).mode & 0o777,
+                    0o600,
+                  );
+                }
+                checkedScope = true;
+              }
+              return yield* delegate.spawn(
+                ChildProcess.make(command.command, command.args, {
+                  ...command.options,
+                  env: { ...command.options.env, ...(objectDirectory ? {} : configEnvironment) },
+                }),
+              );
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const status = yield* driver.statusDetailsRemote(cwd);
+          assert.equal(status.behindCount, 1);
+          assert.isTrue(checkedScope);
+          assert.equal(
+            yield* git(cwd, ["show", `origin/${branch}:remote.txt`]),
+            "conditional remote update",
+          );
+          yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+        }),
+    );
+
+    it.effect("refreshes a remote whose name starts with an option prefix", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "rename", "--", "origin", "--all"]);
+        yield* git(updater, ["clone", "--branch", initialBranch, remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["commit", "--allow-empty", "-m", "remote update"]);
+        yield* git(updater, ["push"]);
+        const expectedCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+        assert.equal(status.behindCount, 1);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/--all/${initialBranch}`]),
+          expectedCommit,
+        );
       }),
     );
 
