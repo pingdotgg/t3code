@@ -620,9 +620,34 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect.each([
-    { directory: "Caskroom", name: "package-tool", kind: "cask" },
-    { directory: "Cellar", name: "package-tool", kind: "formula" },
-    { directory: "Cellar", name: "package-tool@latest", kind: "formula" },
+    {
+      directory: "Caskroom",
+      name: "package-tool",
+      kind: "cask",
+      version: "0.148.0,42",
+      latestVersion: "0.148.0",
+    },
+    {
+      directory: "Cellar",
+      name: "package-tool",
+      kind: "formula",
+      version: "0.148.0",
+      latestVersion: "0.148.0",
+    },
+    {
+      directory: "Cellar",
+      name: "package-tool@latest",
+      kind: "formula",
+      version: "0.148.0",
+      latestVersion: "0.148.0",
+    },
+    {
+      directory: "Caskroom",
+      name: "versionless-package-tool",
+      kind: "cask",
+      version: "latest",
+      latestVersion: null,
+    },
   ] as const)(
     "upgrades the owning Homebrew $kind $name through an executable alias",
     (fixture) =>
@@ -635,7 +660,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           tempDir,
           fixture.directory,
           fixture.name,
-          "0.148.0",
+          fixture.latestVersion ?? "latest",
           "package-tool-0.148.0",
         );
         writeExecutable(ownedBinary);
@@ -660,8 +685,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
                 ? `${tempDir}\n`
                 : JSON.stringify(
                     fixture.kind === "cask"
-                      ? { casks: [{ version: "0.148.0,42" }] }
-                      : { formulae: [{ versions: { stable: "0.148.0" } }] },
+                      ? { casks: [{ version: fixture.version }] }
+                      : { formulae: [{ versions: { stable: fixture.version } }] },
                   );
             }),
           ),
@@ -674,7 +699,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(capabilities).toEqual({
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
-          latestVersion: "0.148.0",
+          latestVersion: fixture.latestVersion,
           update: {
             command:
               fixture.kind === "cask"
@@ -687,6 +712,26 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
                 : ["upgrade", fixture.name],
             lockKey: "homebrew",
           },
+        });
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          { ...installedPackageToolProvider, version: "0.148.0" },
+          capabilities,
+        ).pipe(
+          Effect.provide(ProviderLatestVersions.layer),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() =>
+              Effect.die("Homebrew version checks should not fall back to npm"),
+            ),
+          ),
+        );
+
+        expect(provider.versionAdvisory).toMatchObject({
+          status: fixture.latestVersion === null ? "unknown" : "current",
+          latestVersion: fixture.latestVersion,
+          canUpdate: true,
+          message: null,
         });
       }),
     { skip: !symlinksSupported },
@@ -733,6 +778,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     const formula = { kind: "formula", name: "claude-code", prefix: "/opt/homebrew" } as const;
     expect(parseHomebrewLatestVersion(info, formula)).toBe("2.1.5");
     expect(parseHomebrewLatestVersion("not json", formula)).toBeNull();
+  });
+
+  it("treats Homebrew's latest cask version as unknown", () => {
+    const info = JSON.stringify({ casks: [{ version: "latest" }] });
+    const cask = { kind: "cask", name: "package-tool", prefix: "/opt/homebrew" } as const;
+    expect(parseHomebrewLatestVersion(info, cask)).toBeNull();
   });
 
   it.effect.skipIf(windowsHost)(
