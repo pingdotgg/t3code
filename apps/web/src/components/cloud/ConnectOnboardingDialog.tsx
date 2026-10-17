@@ -2,7 +2,7 @@ import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthRelayReadScope, AuthRelayWriteScope, type AuthSessionState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
@@ -72,30 +72,36 @@ function ConfiguredConnectOnboardingDialog() {
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
-  const prefilledFromLinkStateRef = useRef(false);
-  const observedAccountRef = useRef<string | null | undefined>(undefined);
+  const [prefilledFromLinkState, setPrefilledFromLinkState] = useState(false);
+  // undefined until auth first settles, so the account already signed in at load
+  // never reads as a fresh sign-in.
+  const [observedAccount, setObservedAccount] = useState<string | null | undefined>(undefined);
 
-  useEffect(() => {
-    if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
-      setStep("devices");
-    }
-  }, [isApplying, sessionScopesKnown, showPublishStep, step]);
+  if (step === "publish" && sessionScopesKnown && !showPublishStep && !isApplying) {
+    setStep("devices");
+  }
 
   const optOutAccounts = optOutState.optOutAccounts;
 
-  useEffect(() => {
-    if (!isLoaded) return;
-    // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
-    // must not be recorded as signed-out — the next render would then look
-    // like a fresh sign-in on a cold load.
-    if (isSignedIn && !userId) return;
-    const previousAccount = observedAccountRef.current;
+  // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
+  // must not be recorded as signed-out — the next render would then look
+  // like a fresh sign-in on a cold load.
+  if (isLoaded && !(isSignedIn && !userId)) {
     const nextAccount = isSignedIn && userId ? userId : null;
-    observedAccountRef.current = nextAccount;
-    if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
-      setRequestedAccount(nextAccount);
+    if (nextAccount !== observedAccount) {
+      setObservedAccount(nextAccount);
+      if (observedAccount !== undefined && nextAccount !== null) {
+        setRequestedAccount(nextAccount);
+      }
     }
-  }, [isLoaded, isSignedIn, userId]);
+  }
+
+  if (openForAccount !== null && (!isSignedIn || userId !== openForAccount)) {
+    setOpenForAccount(null);
+  }
+  if (requestedAccount !== null && (!isSignedIn || userId !== requestedAccount)) {
+    setRequestedAccount(null);
+  }
 
   // A manageable session implies a primary environment, so when the scopes
   // allow publishing, wait for the connection target too — otherwise the
@@ -103,45 +109,23 @@ function ConfiguredConnectOnboardingDialog() {
   // becomes available and freeze there.
   const publishStepDecided = !canManageRelay || controller.linkState.target !== null;
 
-  useEffect(() => {
-    if (requestedAccount === null || openForAccount !== null) return;
+  if (requestedAccount !== null && openForAccount === null) {
     if (optOutAccounts.includes(requestedAccount)) {
       setRequestedAccount(null);
-      return;
-    }
-    if (!sessionScopesKnown || !publishStepDecided) return;
-    setRequestedAccount(null);
-    prefilledFromLinkStateRef.current = false;
-    setExposeEnvironment(true);
-    setPublishAgentActivity(true);
-    setDontShowAgain(false);
-    setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
-    setOpenForAccount(requestedAccount);
-  }, [
-    canManageRelay,
-    controller.linkState.target,
-    openForAccount,
-    optOutAccounts,
-    publishStepDecided,
-    requestedAccount,
-    sessionScopesKnown,
-  ]);
-
-  useEffect(() => {
-    if (openForAccount !== null && (!isSignedIn || userId !== openForAccount)) {
-      setOpenForAccount(null);
-    }
-    if (requestedAccount !== null && (!isSignedIn || userId !== requestedAccount)) {
+    } else if (sessionScopesKnown && publishStepDecided) {
       setRequestedAccount(null);
+      setPrefilledFromLinkState(false);
+      setExposeEnvironment(true);
+      setPublishAgentActivity(true);
+      setDontShowAgain(false);
+      setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
+      setOpenForAccount(requestedAccount);
     }
-  }, [isSignedIn, openForAccount, requestedAccount, userId]);
+  }
 
   const linkStateData = controller.linkState.data;
-  useEffect(() => {
-    if (openForAccount === null || prefilledFromLinkStateRef.current || linkStateData === null) {
-      return;
-    }
-    prefilledFromLinkStateRef.current = true;
+  if (openForAccount !== null && !prefilledFromLinkState && linkStateData !== null) {
+    setPrefilledFromLinkState(true);
     if (
       linkStateData.linked &&
       linkStateData.linkRevoked !== true &&
@@ -150,7 +134,7 @@ function ConfiguredConnectOnboardingDialog() {
       setExposeEnvironment(linkStateData.managedTunnelActive ?? linkStateData.linked);
       setPublishAgentActivity(linkStateData.publishAgentActivity);
     }
-  }, [linkStateData, openForAccount]);
+  }
 
   const complete = () => {
     if (isApplying) return;
