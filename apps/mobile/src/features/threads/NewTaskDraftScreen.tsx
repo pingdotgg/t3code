@@ -805,6 +805,14 @@ export function NewTaskDraftScreen(props: {
   const showBranchLoading =
     environmentConnected && flow.branchesLoading && flow.availableBranches.length === 0;
 
+  // An attachment is checked against the machine on screen and keeps the
+  // draft there, so auto balance must not move it while one is on its way.
+  const keepMachineForAttachment = () => {
+    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+      flow.pinEnvironment();
+    }
+  };
+
   const {
     onPickDraftMedia: handlePickMedia,
     onPickDraftFiles: handlePickFiles,
@@ -814,6 +822,7 @@ export function NewTaskDraftScreen(props: {
     draftKey: flow.draftKey,
     serverConfig: selectedEnvironmentServerConfig,
     locked: isComposerInteractionLocked,
+    onAttachmentStart: keepMachineForAttachment,
   });
 
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
