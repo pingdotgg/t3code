@@ -6,6 +6,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceId,
   OrchestrationV2Subagent,
+  EnvironmentId,
 } from "@t3tools/contracts";
 import {
   resolveSubagentMetadata,
@@ -29,9 +30,11 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
+import { useVcsTerminology } from "../../state/vcs";
 
 /** Geometry and preview limits stay identical in lineage and timeline tooltips. */
 export function SubagentTooltipContent(props: {
+  environmentId?: EnvironmentId | undefined;
   title: string;
   model: string | null;
   providerInstanceId: ProviderInstanceId;
@@ -51,7 +54,17 @@ export function SubagentTooltipContent(props: {
   result?: string | null | undefined;
   progress?: string | null | undefined;
 }) {
-  const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
+  const parentWorkspace = props.parentThread?.worktreePath ?? props.parentProject?.workspaceRoot;
+  const childWorkspace = props.childThread?.worktreePath ?? props.childProject?.workspaceRoot;
+  const terminology = useVcsTerminology(
+    props.environmentId ?? null,
+    parentWorkspace &&
+      childWorkspace !== parentWorkspace &&
+      (props.childThread?.branch || props.childThread?.worktreePath)
+      ? (childWorkspace ?? null)
+      : null,
+  );
+  const { modelLabel, workspace: metadata } = resolveSubagentMetadata({ ...props, terminology });
   const preview = subagentDetailPreview(props);
   const model = props.model?.trim();
   const modelSlug = props.provider
@@ -169,10 +182,10 @@ export function SubagentTooltipContent(props: {
         </span>
         {props.elapsed}
       </div>
-      {metadata.map(({ label, value }) => {
-        const Icon = label === "Branch" ? GitBranchIcon : FolderIcon;
+      {metadata.map(({ kind, label, value }) => {
+        const Icon = kind === "ref" ? GitBranchIcon : FolderIcon;
         return (
-          <div key={label} className="flex min-w-0 items-center gap-2">
+          <div key={kind} className="flex min-w-0 items-center gap-2">
             <Icon aria-hidden className="size-3 shrink-0" />
             <span className="sr-only">{label}</span>
             <MiddleTruncate value={value} className="flex" showTitle={false} />

@@ -180,7 +180,7 @@ export function jjUnsupportedReason(input: {
     return `Jujutsu ${input.availability.version} is older than the supported minimum ${JJ_MINIMUM_VERSION}. Upgrade jj to use this repository in T3 Code.`;
   }
   if (!input.colocated) {
-    return "T3 Code supports colocated Jujutsu repositories. Run `jj git init --colocate` in this repository, or open its Git checkout instead.";
+    return "T3 Code supports colocated Jujutsu repositories. Run `jj git colocation enable` in this repository, or open its Git checkout instead.";
   }
   return null;
 }

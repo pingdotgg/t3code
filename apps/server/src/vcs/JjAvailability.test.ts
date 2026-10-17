@@ -166,8 +166,9 @@ describe("makeJjAvailability", () => {
     }).pipe(Effect.provide(versionProcess("jj 0.46.0\n", calls)));
   });
 
-  for (const first of ["missing", "timeout", "unsupported", "invalid", "failed"] as const) {
-    it.effect(`caches a ${first} result briefly, then re-probes and caches recovery`, () => {
+  it.effect.each(["missing", "timeout", "unsupported", "invalid", "failed"] as const)(
+    "caches a %s result briefly, then re-probes and caches recovery",
+    (first) => {
       let calls = 0;
       const process = Layer.mock(VcsProcess.VcsProcess)({
         run: (input) =>
@@ -230,8 +231,8 @@ describe("makeJjAvailability", () => {
         yield* availability("/repo");
         assert.equal(calls, 2);
       }).pipe(Effect.provide(process));
-    });
-  }
+    },
+  );
 
   it.effect("invalidates cached probes immediately for the rescanned process only", () => {
     const calls = { count: 0 };
@@ -301,6 +302,15 @@ describe("makeJjAvailability", () => {
 });
 
 describe("jjUnsupportedReason", () => {
+  it("recommends enabling colocation in an existing Jujutsu repository", () => {
+    const reason = JjAvailability.jjUnsupportedReason({
+      availability: { _tag: "available", version: "0.46.0" },
+      colocated: false,
+    });
+    assert.include(reason, "jj git colocation enable");
+    assert.notInclude(reason, "jj git init");
+  });
+
   it("reports a reason for every unusable repository and stays silent for a usable one", () => {
     const reasonFor = (input: Parameters<typeof JjAvailability.jjUnsupportedReason>[0]) =>
       JjAvailability.jjUnsupportedReason(input) !== null;

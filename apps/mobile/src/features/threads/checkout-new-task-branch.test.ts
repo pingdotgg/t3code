@@ -6,9 +6,234 @@ import * as NodeUtil from "node:util";
 import { EnvironmentId, VcsListRefsInput } from "@t3tools/contracts";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { AsyncResult } from "effect/reactivity";
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { GIT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
+
+const picker = vi.hoisted(() => {
+  const branch: { name: string; current: boolean; worktreePath: string | null } = {
+    name: "feature/a",
+    current: false,
+    worktreePath: null,
+  };
+  const additionalBranches: Array<typeof branch> = [];
+  return {
+    supported: true,
+    workspaceMode: "local",
+    branch,
+    additionalBranches,
+    unsupportedWorkspace: null as string | null,
+    readRefs: vi.fn(),
+    switchRef: vi.fn(),
+    selectBranch: vi.fn(),
+    goBack: vi.fn(),
+    statusProbes: vi.fn(),
+  };
+});
+vi.mock("../../components/ui/Toolbar", () => ({ Toolbar: () => null }));
+vi.mock("../../components/ui/SearchField", () => ({ SearchField: () => null }));
+vi.mock("../../components/ui/Button", () => ({
+  Button: (props: { label: string; disabled?: boolean; onPress: () => void }) =>
+    createElement("button", { disabled: props.disabled, onClick: props.onPress }, props.label),
+}));
+vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
+vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
+vi.mock("../../components/ui/NavigationRow", () => ({
+  NavigationRow: (props: { title: string; disabled?: boolean; onPress: () => void }) =>
+    createElement("button", { disabled: props.disabled, onClick: props.onPress }, props.title),
+}));
+vi.mock("../../components/ui/AndroidScreenHeader", () => ({ AndroidScreenHeader: () => null }));
+vi.mock("../../components/ui/ScreenContent", () => ({ ScreenContent: "div" }));
+vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "span" }));
+vi.mock("../../components/EnvironmentMachineSymbol", () => ({
+  EnvironmentMachineSymbol: () => null,
+}));
+vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: () => null }));
+vi.mock("../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
+vi.mock("../../native/use-native-mail-search-toolbar", () => ({
+  useNativeMailSearchToolbar: () => false,
+}));
+vi.mock("../layout/native-mail-search-toolbar", () => ({
+  createNativeMailSearchToolbarItem: () => null,
+  NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET: 0,
+}));
+vi.mock("react-native", () => ({
+  Platform: { OS: "android" },
+  Pressable: "button",
+  ScrollView: "div",
+  TextInput: () => null,
+  View: "div",
+}));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
+vi.mock("expo-haptics", () => ({ selectionAsync: async () => {} }));
+vi.mock("@react-navigation/native", () => ({
+  useNavigation: () => ({
+    goBack: picker.goBack,
+    isFocused: () => true,
+    addListener: () => () => {},
+  }),
+}));
+vi.mock("@legendapp/list/react-native", () => ({
+  LegendList: (props: { data: readonly unknown[]; renderItem: (input: unknown) => unknown }) =>
+    props.data.map((item, index) => props.renderItem({ item, index })),
+}));
+vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
+vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: (atom: unknown) => (atom === "readRefs" ? picker.readRefs : picker.switchRef),
+}));
+vi.mock("../../state/vcs", () => ({
+  vcsEnvironment: { readRefs: "readRefs", switchRef: "switchRef" },
+  useVcsTerminology: () => GIT_VCS_TERMINOLOGY,
+  useVcsActionSupport: (_environmentId: unknown, cwd: string | null) => {
+    picker.statusProbes(cwd);
+    const supported = picker.supported && (cwd === null || cwd !== picker.unsupportedWorkspace);
+    return {
+      supported,
+      unsupportedReason: supported ? null : "This repository is unsupported",
+    };
+  },
+}));
+vi.mock("./new-task-flow-provider", () => ({
+  branchBadgeLabel: () => null,
+  useNewTaskFlow: () => ({
+    selectedProject: { environmentId: "branch-test-environment", workspaceRoot: "/repo" },
+    workspaceMode: picker.workspaceMode,
+    vcsActionsSupported: picker.supported,
+    canUseVcsActions: (worktreePath?: string | null) =>
+      picker.supported && (worktreePath == null || worktreePath !== picker.unsupportedWorkspace),
+    vcsUnsupportedReason: picker.supported ? null : "This repository is unsupported",
+    vcsTerminology: GIT_VCS_TERMINOLOGY,
+    filteredBranches: [picker.branch, ...picker.additionalBranches],
+    availableBranches: [],
+    setBranchQuery: () => {},
+    selectBranch: picker.selectBranch,
+  }),
+}));
+
+import { NewTaskBranchPickerRouteScreen } from "./NewTaskContextPickerScreens";
+
+describe("new-task branch picker capability guards", () => {
+  beforeEach(() => {
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+    picker.supported = true;
+    picker.workspaceMode = "local";
+    picker.unsupportedWorkspace = null;
+    picker.branch = { name: "feature/a", current: false, worktreePath: null };
+    picker.additionalBranches = [];
+    picker.readRefs.mockReset().mockImplementation(() =>
+      settlePromise(async () => ({
+        refs: [{ ...picker.branch, isDefault: false }],
+        isRepo: true,
+        hasPrimaryRemote: false,
+        nextCursor: null,
+        totalCount: 1,
+        isAtRepositoryRoot: true,
+      })),
+    );
+    picker.switchRef.mockReset().mockResolvedValue(AsyncResult.success({ refName: "feature/a" }));
+    picker.selectBranch.mockClear();
+    picker.goBack.mockClear();
+    picker.statusProbes.mockClear();
+  });
+
+  it("does not add status subscriptions for plain Git branch rows", async () => {
+    picker.branch.worktreePath = "/worktrees/feature-a";
+    picker.additionalBranches = [
+      { name: "feature/b", current: false, worktreePath: "/worktrees/feature-b" },
+      { name: "feature/c", current: false, worktreePath: "/worktrees/feature-c" },
+    ];
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(createElement(NewTaskBranchPickerRouteScreen)));
+      expect(
+        Array.from(container.querySelectorAll("button"), (button) => button.textContent),
+      ).toEqual(["feature/a", "feature/b", "feature/c"]);
+      expect(picker.statusProbes.mock.calls.map(([cwd]) => cwd)).toEqual(["/repo"]);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it.each([
+    { mode: "local", current: false, worktreePath: null },
+    { mode: "local", current: true, worktreePath: null },
+    { mode: "local", current: false, worktreePath: "/existing-worktree" },
+    { mode: "worktree", current: false, worktreePath: null },
+  ])("keeps supported Git selection behavior for $mode at $worktreePath", async (input) => {
+    picker.workspaceMode = input.mode;
+    picker.branch = { ...picker.branch, current: input.current, worktreePath: input.worktreePath };
+    picker.switchRef.mockImplementation(() =>
+      settlePromise(async () => ({ refName: "feature/a" })),
+    );
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(createElement(NewTaskBranchPickerRouteScreen)));
+      expect(container.querySelector("button")?.disabled).toBe(false);
+      await act(async () => container.querySelector("button")!.click());
+      expect(picker.switchRef).toHaveBeenCalledTimes(
+        input.mode === "local" && !input.current && input.worktreePath === null ? 1 : 0,
+      );
+      expect(picker.selectBranch).toHaveBeenCalledOnce();
+      expect(picker.goBack).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it.each(["local", "worktree"])(
+    "checks an existing workspace only when %s selection will actually reuse it",
+    async (mode) => {
+      picker.workspaceMode = mode;
+      picker.branch = { ...picker.branch, worktreePath: "/existing-worktree" };
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      try {
+        await act(async () => root.render(createElement(NewTaskBranchPickerRouteScreen)));
+        picker.unsupportedWorkspace = "/existing-worktree";
+        await act(async () => container.querySelector("button")!.click());
+        expect(picker.switchRef).not.toHaveBeenCalled();
+        expect(picker.selectBranch).toHaveBeenCalledTimes(mode === "local" ? 0 : 1);
+      } finally {
+        await act(async () => root.unmount());
+      }
+    },
+  );
+
+  it.each(["local", "worktree"])(
+    "refuses an already-open %s selection after unsupported metadata arrives",
+    async (mode) => {
+      picker.workspaceMode = mode;
+      picker.supported = true;
+      picker.switchRef.mockClear();
+      picker.selectBranch.mockClear();
+      const container = document.createElement("div");
+      const root = createRoot(container);
+      try {
+        await act(async () => root.render(createElement(NewTaskBranchPickerRouteScreen)));
+        const button = container.querySelector("button");
+        expect(button).not.toBeNull();
+        picker.supported = false;
+        await act(async () => button!.click());
+        expect(picker.switchRef).not.toHaveBeenCalled();
+        expect(picker.selectBranch).not.toHaveBeenCalled();
+        await act(async () => root.render(createElement(NewTaskBranchPickerRouteScreen)));
+        expect(container.querySelector("button")?.disabled).toBe(true);
+        expect(container.textContent).toContain("This repository is unsupported");
+      } finally {
+        await act(async () => root.unmount());
+        picker.supported = true;
+      }
+    },
+  );
+});
 
 const exec = NodeUtil.promisify(NodeChildProcess.execFile);
 let directory: string;

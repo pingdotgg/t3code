@@ -144,6 +144,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {props.activeProjectScripts ? (
                 <ProjectScriptsControl
                   environmentId={props.environmentId}
+                  workspaceRoot={props.gitCwd}
                   displayMode="panel"
                   scripts={props.activeProjectScripts}
                   fileScripts={fileScripts}

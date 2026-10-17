@@ -14,6 +14,7 @@ import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts"
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketSourceControlProvider from "@t3tools/source-control-bitbucket/server/BitbucketSourceControlProvider";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -77,6 +78,18 @@ function layer(input: {
       }),
     ),
     Layer.provide(Layer.mock(JjWorkflow.JjWorkflow)(input.jj ?? {})),
+    Layer.provide(
+      Layer.mock(JjVcsDriver.JjVcsDriver)({
+        capabilities: {
+          kind: "jj",
+          supportsWorktrees: true,
+          supportsBookmarks: true,
+          supportsAtomicSnapshot: true,
+          supportsPushDefaultRemote: false,
+          ignoreClassifier: "git-compatible-fallback",
+        },
+      }),
+    ),
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         resolveLink: () => undefined,
@@ -582,12 +595,14 @@ it.effect("clones directly under an existing filesystem root without recreating 
 
 it.effect("publishes by creating the repository, adding a remote, and pushing upstream", () => {
   let detections = 0;
+  const order: Array<string> = [];
   const createCalls: Array<{ cwd: string; repository: string; visibility: string }> = [];
   const remoteCalls: Array<{ cwd: string; preferredName: string; url: string }> = [];
   const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];
   const provider = makeProvider({
     createRepository: (input) =>
       Effect.sync(() => {
+        order.push("create");
         createCalls.push({
           cwd: input.cwd,
           repository: input.repository,
@@ -624,6 +639,12 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
     ]);
     assert.deepStrictEqual(pushCalls, [{ cwd: "/workspace", remoteName: "origin" }]);
     assert.equal(detections, JJ_REPOSITORY_DETECTION_ENABLED ? 1 : 0);
+    assert.deepStrictEqual(
+      order,
+      JJ_REPOSITORY_DETECTION_ENABLED
+        ? ["detect", "create", "remote", "push"]
+        : ["create", "remote", "push"],
+    );
   }).pipe(
     Effect.provide(
       layer({
@@ -631,17 +652,20 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
         detect: () =>
           Effect.sync(() => {
             detections += 1;
+            order.push("detect");
             return null;
           }),
         git: {
           ensureRemote: (input) =>
             Effect.sync(() => {
               remoteCalls.push(input);
+              order.push("remote");
               return "origin";
             }),
           pushCurrentBranch: (cwd, _fallbackBranch, options) =>
             Effect.sync(() => {
               pushCalls.push({ cwd, remoteName: options?.remoteName });
+              order.push("push");
               return {
                 status: "pushed" as const,
                 branch: "feature/remote-v1",
@@ -688,7 +712,11 @@ it.effect.skipIf(!JJ_REPOSITORY_DETECTION_ENABLED)(
             publishRepository: (input) =>
               Effect.sync(() => {
                 assert.isFunction(input.pushFailureDetail);
-                publishCalls.push({ cwd: input.cwd, remoteName: input.remoteName, remoteUrl: input.remoteUrl });
+                publishCalls.push({
+                  cwd: input.cwd,
+                  remoteName: input.remoteName,
+                  remoteUrl: input.remoteUrl,
+                });
                 return { refName: "main", remoteName: "upstream-1", status: "pushed" as const };
               }),
           },

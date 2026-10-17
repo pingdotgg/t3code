@@ -5,6 +5,7 @@ import type {
   ProjectId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
+import type { VcsTerminology } from "@t3tools/shared/vcs";
 import * as Schema from "effect/Schema";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { toSortableTimestamp } from "../lib/threadSort";
@@ -93,8 +94,10 @@ export function resolveContextStripLabelsCompact(input: {
     : input.neededWidth > input.availableWidth;
 }
 
-export function resolveEnvModeLabel(mode: EnvMode): string {
-  return mode === "worktree" ? "New worktree" : "Current checkout";
+export function resolveEnvModeLabel(mode: EnvMode, terminology: VcsTerminology): string {
+  return mode === "worktree"
+    ? `New ${terminology.workspaceNoun}`
+    : `Current ${terminology.currentRefFallback}`;
 }
 
 export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
@@ -103,16 +106,24 @@ export const WORKTREE_SUBMODULES_LABELS: Record<WorktreeSubmodules, string> = {
   none: "Skip",
 };
 
-export function resolveCurrentWorkspaceLabel(activeWorktreePath: string | null): string {
-  return activeWorktreePath ? "Current worktree" : resolveEnvModeLabel("local");
+export function resolveCurrentWorkspaceLabel(
+  activeWorktreePath: string | null,
+  terminology: VcsTerminology,
+): string {
+  return activeWorktreePath
+    ? `Current ${terminology.workspaceNoun}`
+    : resolveEnvModeLabel("local", terminology);
 }
 
 export function resolveLockedWorkspaceLabel(
   activeWorktreePath: string | null,
   effectiveEnvMode: EnvMode,
+  terminology: VcsTerminology,
 ): string {
-  if (activeWorktreePath) return "Worktree";
-  return effectiveEnvMode === "worktree" ? resolveEnvModeLabel("worktree") : "Local checkout";
+  if (activeWorktreePath) return terminology.workspaceNounTitle;
+  return effectiveEnvMode === "worktree"
+    ? resolveEnvModeLabel("worktree", terminology)
+    : `Local ${terminology.currentRefFallback}`;
 }
 
 export interface PreviousWorktreeSeed {
@@ -153,8 +164,13 @@ export function resolvePreviousWorktreeSeed(input: {
   return latest === null ? null : { branch: latest.branch, worktreePath: latest.worktreePath };
 }
 
-export function resolvePreviousWorktreeLabel(seed: PreviousWorktreeSeed): string {
-  return seed.branch ? `Previous worktree (${seed.branch})` : "Previous worktree";
+export function resolvePreviousWorktreeLabel(
+  seed: PreviousWorktreeSeed,
+  terminology: VcsTerminology,
+): string {
+  return seed.branch
+    ? `Previous ${terminology.workspaceNoun} (${seed.branch})`
+    : `Previous ${terminology.workspaceNoun}`;
 }
 
 export function resolveEffectiveEnvMode(input: {
@@ -207,6 +223,7 @@ export function resolveBranchTriggerLabel(input: {
   resolvedActiveBranch: string | null;
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
+  terminology: VcsTerminology;
 }): string {
   const {
     activeWorktreePath,
@@ -214,9 +231,10 @@ export function resolveBranchTriggerLabel(input: {
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
     startFromOrigin,
+    terminology,
   } = input;
   if (!resolvedActiveBranch) {
-    return "Select ref";
+    return `Select ${terminology.genericRefNoun}`;
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     // Only the server can determine a local branch's configured remote.

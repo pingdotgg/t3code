@@ -83,6 +83,11 @@ import {
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
+import {
+  resolveVcsTerminology,
+  resolveVcsUnsupportedReason,
+  supportsVcsActions,
+} from "@t3tools/shared/vcs";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
@@ -255,6 +260,9 @@ export default function DiffPanel({
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const vcsTerminology = resolveVcsTerminology(gitStatusQuery.data);
+  const vcsActionsSupported = supportsVcsActions(gitStatusQuery.data);
+  const vcsUnsupportedReason = resolveVcsUnsupportedReason(gitStatusQuery.data);
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
     if (left.checkpointTurnCount !== right.checkpointTurnCount) {
@@ -287,7 +295,7 @@ export default function DiffPanel({
   const selectedScopeLabel =
     selectedRunId === null
       ? selectedGitScope === "unstaged"
-        ? "Uncommitted"
+        ? vcsTerminology.workingTreeDiffLabel
         : "Changes"
       : selectedTurn?.runId === latestTurn?.runId
         ? "Latest turn"
@@ -300,7 +308,7 @@ export default function DiffPanel({
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : selectedGitScope === "unstaged"
-      ? "Uncommitted"
+      ? vcsTerminology.workingTreeDiffLabel
       : "Changes";
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
@@ -318,10 +326,10 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.runId}` : null,
     },
-    { enabled: isGitRepo && selectedTurn !== undefined },
+    { enabled: vcsActionsSupported && isGitRepo && selectedTurn !== undefined },
   );
   const branchDiffPreview = useEnvironmentQuery(
-    canReadFiles && selectedRunId === null && activeThread && activeCwd
+    vcsActionsSupported && canReadFiles && selectedRunId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
           input: {
@@ -333,7 +341,11 @@ export default function DiffPanel({
       : null,
   );
   const canRefreshGitDiff =
-    isGitRepo && selectedRunId === null && activeThread != null && activeCwd != null;
+    vcsActionsSupported &&
+    isGitRepo &&
+    selectedRunId === null &&
+    activeThread != null &&
+    activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
@@ -342,7 +354,9 @@ export default function DiffPanel({
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const refreshDiffFromUserAction = useStableCallback(() => {
+    if (vcsActionsSupported) refreshPreviewQuery();
+  });
 
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
@@ -355,7 +369,7 @@ export default function DiffPanel({
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const lazySource =
-    !selectedTurn && selectedGitSource?.truncated && selectedGitSource.files
+    vcsActionsSupported && !selectedTurn && selectedGitSource?.truncated && selectedGitSource.files
       ? selectedGitSource
       : null;
   const renderablePatch = getRenderablePatch(
@@ -375,7 +389,12 @@ export default function DiffPanel({
         )
       : null;
   const currentLoadDiffFiles =
-    selectedRunId === null && activeThread && preview && selectedGitSource && canReadFiles
+    vcsActionsSupported &&
+    selectedRunId === null &&
+    activeThread &&
+    preview &&
+    selectedGitSource &&
+    canReadFiles
       ? createGitDiffFileContentsLoader(getDiffFileContents, {
           environmentId: activeThread.environmentId,
           cwd: preview.cwd,
@@ -387,13 +406,14 @@ export default function DiffPanel({
       : undefined;
   // The code view keeps one loader for its lifetime; a new identity would remount it.
   const loadDiffFiles: FileDiffContentsLoader = useStableCallback(async (fileDiff) => {
-    if (!currentLoadDiffFiles) {
+    if (!vcsActionsSupported || !currentLoadDiffFiles) {
       throw new Error("Diff file contents are unavailable for this selection.");
     }
     return currentLoadDiffFiles(fileDiff);
   });
   const localBranchRefs = useEnvironmentQuery(
-    selectedRunId === null &&
+    vcsActionsSupported &&
+      selectedRunId === null &&
       selectedGitScope === "branch" &&
       activeThread &&
       branchDiffPreview.data?.cwd
@@ -410,7 +430,8 @@ export default function DiffPanel({
       : null,
   );
   const remoteBranchRefs = useEnvironmentQuery(
-    selectedRunId === null &&
+    vcsActionsSupported &&
+      selectedRunId === null &&
       selectedGitScope === "branch" &&
       activeThread &&
       branchDiffPreview.data?.cwd
@@ -460,7 +481,13 @@ export default function DiffPanel({
     revision: branchDiffPreview.data
       ? DateTime.formatIso(branchDiffPreview.data.generatedAt)
       : undefined,
-    preview: renderablePatch,
+    preview: vcsActionsSupported ? renderablePatch : null,
+  });
+  const retryFileFromUserAction = useStableCallback((path: string) => {
+    if (vcsActionsSupported) retry(path);
+  });
+  const loadNextFilesFromUserAction = useStableCallback(() => {
+    if (vcsActionsSupported) loadNextFiles();
   });
   const refreshBranchDiffPreview = refreshPreviewQuery;
   const previewOpenHandledRef = useRef(false);
@@ -524,7 +551,7 @@ export default function DiffPanel({
   const renderLoadingBoundary = () =>
     settledFileCount < renderableFiles.length ? (
       <DiffFileLoadingBoundary
-        load={loadNextFiles}
+        load={loadNextFilesFromUserAction}
         count={renderableFiles.length - settledFileCount}
       />
     ) : null;
@@ -549,6 +576,7 @@ export default function DiffPanel({
   const treeRevealScope = { collapseScopeKey, diffSelection };
   const requestTreeReveal = useCodeViewFileReveal(codeView, treeRevealScope, codeViewFileKeys);
   const revealDiffFile = (filePath: string) => {
+    if (!vcsActionsSupported) return;
     const index = renderableFileEntries.findIndex(
       (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
     );
@@ -580,6 +608,7 @@ export default function DiffPanel({
   }, [collapseScopeKey, selectedFilePath, selectedFileRevealRequestId, revealDiffFile]);
 
   const openDiffFile = (filePath: string) => {
+    if (!vcsActionsSupported) return;
     openDiffFilePrimaryAction({
       threadRef: routeThreadRef,
       filePath,
@@ -631,18 +660,18 @@ export default function DiffPanel({
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(diffFileKeys, current));
   };
 
-  const selectTurn = (runId: RunId) => {
-    if (!routeThreadRef) return;
+  const selectTurn = useStableCallback((runId: RunId) => {
+    if (!vcsActionsSupported || !routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
-  };
-  const selectGitScope = (scope: "branch" | "unstaged") => {
-    if (!routeThreadRef) return;
+  });
+  const selectGitScope = useStableCallback((scope: "branch" | "unstaged") => {
+    if (!vcsActionsSupported || !routeThreadRef) return;
     useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
-  };
-  const selectBranchBaseRef = (baseRef: string | null) => {
-    if (!routeThreadRef) return;
+  });
+  const selectBranchBaseRef = useStableCallback((baseRef: string | null) => {
+    if (!vcsActionsSupported || !routeThreadRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
-  };
+  });
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedScopeValue =
     selectedRunId === null
@@ -651,6 +680,7 @@ export default function DiffPanel({
         ? "latest"
         : selectedTurnValue;
   const selectScopeValue = (value: string) => {
+    if (!vcsActionsSupported) return;
     if (value === "unstaged" || value === "branch") {
       selectGitScope(value);
     } else if (value === "latest") {
@@ -667,6 +697,7 @@ export default function DiffPanel({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="xs" variant="secondary" />}
+            disabled={!vcsActionsSupported}
             className="max-w-full"
             aria-label={`Diff scope: ${selectedScopeLabel}`}
           >
@@ -679,7 +710,7 @@ export default function DiffPanel({
                 <span>Changes</span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
-                <span>Uncommitted</span>
+                <span>{vcsTerminology.workingTreeDiffLabel}</span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="latest" closeOnClick>
                 <span>Latest turn</span>
@@ -747,6 +778,7 @@ export default function DiffPanel({
             >
               <ComboboxTrigger
                 render={<Button variant="ghost-muted" size="xs" />}
+                disabled={!vcsActionsSupported}
                 className="min-w-9 max-w-48 shrink"
                 aria-label={`Change comparison target. Currently ${selectedGitSource.baseRef}`}
               >
@@ -758,18 +790,18 @@ export default function DiffPanel({
                 className="w-72 min-w-0 max-w-[calc(100vw-1rem)] overflow-hidden"
               >
                 <ComboboxSearchInput
-                  placeholder="Search refs..."
+                  placeholder={`Search ${vcsTerminology.genericRefNounPlural}...`}
                   value={baseRefQuery}
                   onChange={(event) => setBaseRefQuery(event.target.value)}
                 />
                 <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border/70 ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
                   <span aria-hidden="true" />
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
-                    <span>Branch</span>
+                    <span>{vcsTerminology.refNounTitle}</span>
                     <span className="text-right">Remote</span>
                   </div>
                 </div>
-                <ComboboxEmpty>No matching refs.</ComboboxEmpty>
+                <ComboboxEmpty>No matching {vcsTerminology.genericRefNounPlural}.</ComboboxEmpty>
                 <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
                   <ComboboxItem
                     className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
@@ -971,14 +1003,21 @@ export default function DiffPanel({
   );
 
   return (
-    <DiffPanelShell mode={mode} header={headerRow}>
-      {!activeThread ? (
+    <DiffPanelShell mode={mode} header={vcsActionsSupported ? headerRow : null}>
+      {!vcsActionsSupported ? (
+        <div
+          role="alert"
+          className="flex flex-1 items-center justify-center px-5 text-center text-xs text-warning"
+        >
+          {vcsUnsupportedReason}
+        </div>
+      ) : !activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
+          {`Turn diffs are unavailable because this project is not a ${vcsTerminology.repositoryAdjective} repository.`}
         </div>
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
@@ -1013,7 +1052,7 @@ export default function DiffPanel({
                     selectedTurn
                       ? "Loading checkpoint diff..."
                       : selectedGitScope === "unstaged"
-                        ? "Loading uncommitted changes..."
+                        ? `Loading ${vcsTerminology.workingTreeDiffLabel.toLowerCase()} changes...`
                         : "Loading changes..."
                   }
                 />
@@ -1100,7 +1139,7 @@ export default function DiffPanel({
                           hasStat={fileStats.has(path)}
                           error={state?.error ?? false}
                           truncated={state?.truncated ?? false}
-                          onRetry={retry}
+                          onRetry={retryFileFromUserAction}
                         />
                       );
                     }}

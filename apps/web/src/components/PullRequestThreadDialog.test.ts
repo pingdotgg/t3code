@@ -2,9 +2,11 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentId,
+  GitCommandError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { isValidElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -12,12 +14,14 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   canOperate: false,
   canWriteSourceControl: true,
+  vcsStatus: ((): { vcs: { kind: "git"; unsupportedReason: string } } | null => null)(),
   hookValues: [] as unknown[],
   hookIndex: 0,
   tracks: 0,
   resets: 0,
   manager: { operation: null as string | null, error: null, isRunning: false },
   interrupted: false,
+  preparationError: null as unknown,
   pendingResponse: undefined as Promise<void> | undefined,
   openChanges: [] as boolean[],
   checkouts: [] as string[],
@@ -79,6 +83,7 @@ vi.mock("~/state/git", () => ({
       if (mode === "worktree" && threadId) state.setupScripts += 1;
       await state.pendingResponse;
       if (state.interrupted) return AsyncResult.failure(Cause.interrupt());
+      if (state.preparationError) return AsyncResult.failure(Cause.fail(state.preparationError));
       return AsyncResult.success({
         branch: "feature/pr",
         worktreePath: mode === "worktree" ? "/worktree" : null,
@@ -88,7 +93,7 @@ vi.mock("~/state/git", () => ({
   },
 }));
 vi.mock("~/lib/utils", () => ({ cn: () => "" }));
-vi.mock("~/state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
+vi.mock("~/state/query", () => ({ useEnvironmentQuery: () => ({ data: state.vcsStatus }) }));
 vi.mock("~/state/vcs", () => ({
   vcsEnvironment: { status: () => null },
   vcsActionManager: {
@@ -166,6 +171,7 @@ function deferred<T>() {
 
 describe("pull request worktree permissions", () => {
   beforeEach(() => {
+    state.vcsStatus = null;
     state.canOperate = false;
     state.canWriteSourceControl = true;
     state.hookValues = [];
@@ -174,6 +180,7 @@ describe("pull request worktree permissions", () => {
     state.resets = 0;
     state.manager = { operation: null, error: null, isRunning: false };
     state.interrupted = false;
+    state.preparationError = null;
     state.pendingResponse = undefined;
     state.openChanges = [];
     state.checkouts = [];
@@ -207,6 +214,44 @@ describe("pull request worktree permissions", () => {
     expect(state.checkouts).toEqual([]);
     expect(state.setupScripts).toBe(0);
   });
+
+  const unsupportedPreparationModes: ("Local" | "Worktree")[] = ["Local", "Worktree"];
+  it.each(unsupportedPreparationModes)(
+    "refuses direct %s preparation when the checkout is unsupported",
+    async (label) => {
+      state.canOperate = true;
+      state.vcsStatus = { vcs: { kind: "git", unsupportedReason: "Checkout is unavailable." } };
+      await prepareAction(label)();
+      expect(visibleText(renderDialog())).toContain("Checkout is unavailable.");
+      expect(state.checkouts).toEqual([]);
+      expect(state.setupScripts).toBe(0);
+      expect(state.prepared).toEqual([]);
+    },
+  );
+
+  it.each(["unsupported_repository", "path_already_exists"] as const)(
+    "shows the serialized %s workspace preparation error",
+    async (reason) => {
+      state.canOperate = true;
+      const codec = Schema.toCodecJson(GitCommandError);
+      const error = new GitCommandError({
+        operation: "preparePullRequestThread",
+        command: "jj",
+        cwd: "/repo",
+        reason,
+        detail: "Enable colocation with jj git colocation enable.",
+      });
+      state.preparationError = Schema.decodeSync(codec)(Schema.encodeSync(codec)(error));
+
+      await prepareAction("Worktree")();
+
+      expect(visibleText(renderDialog())).toContain(
+        reason === "unsupported_repository" ? error.detail : error.message,
+      );
+      expect(state.prepared).toEqual([]);
+      expect(state.openChanges).toEqual([]);
+    },
+  );
 
   it("keeps local checkout available without task permission", async () => {
     await prepareAction("Local")();

@@ -14,8 +14,9 @@ import {
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import type { LegendListRef } from "@legendapp/list/react";
+import { getVcsTerminology } from "@t3tools/shared/vcs";
 import { createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
@@ -30,6 +31,14 @@ import { readTimelinePosition } from "./timelineScrollAnchoring";
 import { useComposerFocusState } from "./useComposerFocusState";
 
 const pullRequestQuery = vi.hoisted(() => ({ error: "Pull request not found" }));
+const vcsState = vi.hoisted(() => ({ kind: "git" as "git" | "jj", lookup: vi.fn() }));
+vi.mock(import("../../state/vcs"), async (original) => ({
+  ...(await original()),
+  useVcsTerminology: (environmentId, workspaceRoot) => {
+    vcsState.lookup(environmentId, workspaceRoot);
+    return getVcsTerminology(vcsState.kind);
+  },
+}));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: (() => ({
@@ -149,6 +158,11 @@ function longText(tail = "deep hidden detail only after expand") {
   ).join("\n");
 }
 
+beforeEach(() => {
+  vcsState.kind = "git";
+  vcsState.lookup.mockReset();
+});
+
 async function renderElement(element: ReactElement) {
   const container = document.createElement("div");
   container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
@@ -190,6 +204,23 @@ async function copyRange(range: Range) {
     selection.removeAllRanges();
   }
 }
+
+describe("MessagesTimeline checkout terminology", () => {
+  it.each([
+    ["git", "worktree"],
+    ["jj", "workspace"],
+  ] as const)("uses %s setup terminology", async (kind, noun) => {
+    vcsState.kind = kind;
+    await using screen = await renderTimeline([], {
+      workspaceRoot: "/checkout",
+      isWorking: true,
+      activeTurnInProgress: true,
+      isPreparingWorktree: true,
+    });
+    expect(screen.text()).toContain(`Setting up ${noun}…`);
+    expect(vcsState.lookup).toHaveBeenCalledWith(ENVIRONMENT_ID, "/checkout");
+  });
+});
 
 async function click(element: HTMLElement) {
   await act(async () => element.click());

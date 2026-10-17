@@ -18,6 +18,9 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/reactivity";
+import { resolveVcsTerminology, type VcsTerminology } from "@t3tools/shared/vcs";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   DndContext,
   useSensor,
@@ -1578,7 +1581,11 @@ type SidebarThreadRowProps = {
   onCancelRename: () => void;
   isRenaming: boolean;
   renamingTitle: string;
-  onContextMenu: (threadRef: ScopedThreadRef, position: { x: number; y: number }) => void;
+  onContextMenu: (
+    threadRef: ScopedThreadRef,
+    position: { x: number; y: number },
+    terminology: VcsTerminology,
+  ) => void;
   onSettle: (threadRef: ScopedThreadRef) => void;
   onActionSweepStart: (
     threadRef: ScopedThreadRef,
@@ -1787,7 +1794,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+    onContextMenu(
+      threadRef,
+      { x: event.clientX, y: event.clientY },
+      resolveVcsTerminology(visibleGitStatus),
+    );
   };
   const handleKeyDown = (event: ReactKeyboardEvent) => {
     if (event.target !== event.currentTarget) return;
@@ -4158,12 +4169,25 @@ export default function Sidebar() {
         const workspacePath =
           session.worktreePath ??
           projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
+        const vcsStatus = workspacePath
+          ? Option.getOrNull(
+              AsyncResult.value(
+                appAtomRegistry.get(
+                  vcsEnvironment.status({
+                    environmentId: session.environmentId,
+                    input: { cwd: workspacePath, includeRemote: false },
+                  }),
+                ),
+              ),
+            )
+          : null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildDraftActionMenuItems({
               hasPath: Boolean(workspacePath),
               hasBranch: Boolean(session.branch),
               hasProject: projectGroup != null,
+              terminology: resolveVcsTerminology(vcsStatus),
             }),
             position,
           ),
@@ -4196,7 +4220,11 @@ export default function Sidebar() {
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (
+      threadRef: ScopedThreadRef,
+      position: { x: number; y: number },
+      terminology: VcsTerminology,
+    ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -4252,6 +4280,7 @@ export default function Sidebar() {
                     isActive: projectScopeKey === threadProjectGroup.projectKey,
                   }
                 : null,
+              terminology,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,

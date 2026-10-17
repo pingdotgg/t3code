@@ -29,6 +29,7 @@ import {
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { JJ_REPOSITORY_DETECTION_ENABLED } from "../vcs/JjRepo.ts";
@@ -194,6 +195,7 @@ export const make = Effect.gen(function* () {
   const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const jjWorkflow = yield* JjWorkflow.JjWorkflow;
+  const jjDriver = yield* JjVcsDriver.JjVcsDriver;
 
   const ensureConcreteProvider = (input: {
     readonly operation: string;
@@ -437,6 +439,28 @@ export const make = Effect.gen(function* () {
         provider: input.provider,
       });
       const provider = yield* providers.get(providerKind);
+      const kind = JJ_REPOSITORY_DETECTION_ENABLED
+        ? yield* Effect.gen(function* () {
+            const handle = yield* vcsRegistry.detect({ cwd: input.cwd });
+            if (handle?.kind === "jj") {
+              yield* jjDriver.ensureUsable(
+                "SourceControlRepositoryService.publishRepository",
+                input.cwd,
+              );
+            }
+            return handle?.kind ?? null;
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SourceControlRepositoryError({
+                  operation: "publishRepository",
+                  provider: providerKind,
+                  detail: "detail" in cause ? cause.detail : cause.message,
+                  cause,
+                }),
+            ),
+          )
+        : null;
       const urls = yield* provider.createRepository({
         cwd: input.cwd,
         repository: input.repository.trim(),
@@ -445,12 +469,6 @@ export const make = Effect.gen(function* () {
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const preferredRemoteName = input.remoteName?.trim() || "origin";
 
-      const kind = JJ_REPOSITORY_DETECTION_ENABLED
-        ? yield* vcsRegistry.detect({ cwd: input.cwd }).pipe(
-            Effect.map((handle) => handle?.kind ?? null),
-            Effect.orElseSucceed(() => null),
-          )
-        : null;
       // In a colocated Jujutsu repository Git's own HEAD is usually detached, so the Git path
       // either fails confusingly or publishes `@-`.
       if (kind === "jj") {

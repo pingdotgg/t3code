@@ -118,3 +118,36 @@ bounded hosting guidance as Git publishing, including the actual allocated remot
 preserves that guidance through the public repository-service error. Local jj preflight refusals,
 such as an undescribed change, retain their actionable explanation instead. The remote remains
 for retry. Git's error mapper and publishing implementation are unchanged.
+
+## Unusable is not Git
+
+Missing `jj`, older than 0.46.0 ([`JJ_MINIMUM_VERSION`](../../apps/server/src/vcs/JjAvailability.ts)), or not
+colocated: detection still says jj. Falling back to Git would write a Git worktree into a jj repo.
+Every op instead fails with a named reason that reaches clients as
+`VcsStatusLocalResult.vcs.unsupportedReason`. Web and mobile show the reason and disable
+source-control actions, Changes, bookmark/workspace selection and creation, and queued setup
+dispatch. Already-open dialogs recheck support before dispatch. Missing or loading status alone
+does not disable otherwise available controls. Mobile can leave an unsupported saved or default
+workspace selection for local chat; only entering workspace mode requires source-control support.
+
+Fresh drafts keep main's controls and subscription keys; they do not add a status stream to predict
+server support. Workspace creation refuses before allocating a workspace, and first send checks
+usability before creating a thread, claiming attachments, or allocating managed folders. Both clients
+show the existing unsupported reason from the refusal and retain the draft for correction. The
+first-send check uses the jj-only facade, so automatic refusal stays dormant until activation.
+
+For an existing non-colocated repository, run `jj git colocation enable` in its main workspace.
+Publishing checks detection and usability before allocating a hosted repository; while detection
+is dormant, Git publishing keeps its original order and performs no jj probe.
+
+Client action rules live in `packages/client-runtime/src/state/gitActions.ts`. The explicit surface
+policy preserves web publishing and dirty-tree push behavior and mobile's clean-tree push rule,
+View PR entry and no-publishing behavior. Shared terminology objects supply system-specific copy;
+the web terminology subscription selects their stable identities instead of every status refresh.
+Selected-thread mobile controls select stable terminology, kind and unsupported-reason values from
+the existing full-status stream rather than opening a second local-status stream for the same checkout.
+
+Checkpoints are the exception. `checkpointsUsable` answers `false` there so
+[`CheckpointStore.supportsCheckpoints`](../../apps/server/src/checkpointing/CheckpointStore.ts) skips
+capture silently, same as a directory with no repo, instead of writing a failed-capture activity into
+every turn.

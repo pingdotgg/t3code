@@ -36,3 +36,11 @@ export function useEnvironmentQuery<A, E>(
     refresh,
   };
 }
+
+/** Select a stable field so refetch timestamps and waiting state do not trigger renders. */
+export function useEnvironmentQuerySelector<A, E, B>(
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null,
+  select: (result: AsyncResult.AsyncResult<A, E>) => B,
+): B {
+  return useAtomValue(atom ?? EMPTY_ASYNC_RESULT_ATOM, select);
+}
