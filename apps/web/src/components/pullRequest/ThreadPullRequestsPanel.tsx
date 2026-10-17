@@ -334,17 +334,6 @@ function LinkRowImpl({
 /** Memoized so a modifier key or a sync of one link re-renders only the rows that changed. */
 const LinkRow = memo(LinkRowImpl);
 
-// LegendList re-renders its rows when `data` changes identity. Inline, the compiler
-// recomputes these lines whenever a modifier key or row input changes too.
-function usePullRequestLines(
-  pullRequests: Parameters<typeof visibleThreadPullRequests>[0] | undefined,
-) {
-  "use memo";
-  const links = visibleThreadPullRequests(pullRequests ?? []);
-  const lines = pullRequestListLines(resolveThreadPullRequestChains(links));
-  return { links, lines };
-}
-
 function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | null {
   let latest: string | null = null;
   for (const link of links) {
@@ -378,6 +367,17 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     .toSorted((left, right) =>
       left.id === thread?.projectId ? -1 : right.id === thread?.projectId ? 1 : 0,
     );
+  // LegendList re-renders its rows when `data` changes identity. `links` and values derived
+  // from it go through plain functions only here, before the next hook, so the compiler keeps
+  // `lines` in its own cache scope.
+  const links = visibleThreadPullRequests(thread?.pullRequests ?? []);
+  const lines = pullRequestListLines(resolveThreadPullRequestChains(links));
+  const openCount = links.filter(
+    (link) => link.snapshot === null || link.snapshot.state === "open",
+  ).length;
+  const lastSynced = latestSyncedAt(links);
+  const syncedLabel = lastSynced ? ` · synced ${formatRelativeTimeLabel(lastSynced)}` : "";
+  const linkCount = links.length;
   const modifiers = useShortcutModifierState(true);
   const speedMode =
     modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
@@ -386,7 +386,6 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
-  const { links, lines } = usePullRequestLines(thread?.pullRequests);
   const handleUnlink = (link: ThreadPullRequestLink) => {
     void unlink({
       environmentId: threadRef.environmentId,
@@ -410,16 +409,12 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
       },
     });
   };
-  const openCount = links.filter(
-    (link) => link.snapshot === null || link.snapshot.state === "open",
-  ).length;
-  const lastSynced = latestSyncedAt(links);
 
   // Legend re-renders visible rows only when data or extraData changes, so everything the rows
   // read from outside their line goes in here.
   const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
 
-  if (links.length === 0) {
+  if (linkCount === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
@@ -466,8 +461,8 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
       />
       <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
         <span>
-          {openCount} open · {links.length} linked
-          {lastSynced ? ` · synced ${formatRelativeTimeLabel(lastSynced)}` : ""}
+          {openCount} open · {linkCount} linked
+          {syncedLabel}
         </span>
         <Button size="xs" variant="ghost" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />
