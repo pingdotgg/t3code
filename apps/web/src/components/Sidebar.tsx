@@ -3465,11 +3465,16 @@ export default function Sidebar() {
   const sidebarListItemsKey = sidebarListItemsFresh
     .map((item) => (item.kind === "thread" ? item.section + ":" + item.key : item.marker))
     .join("\n");
-  const [sidebarListItems, setSidebarListItems] = useState(sidebarListItemsFresh);
+  const [sidebarListItemsState, setSidebarListItems] = useState(sidebarListItemsFresh);
   const [sidebarListItemsKeyState, setSidebarListItemsKeyState] = useState(sidebarListItemsKey);
+  let sidebarListItems = sidebarListItemsState;
   if (sidebarListItemsKeyState !== sidebarListItemsKey) {
     setSidebarListItemsKeyState(sidebarListItemsKey);
     setSidebarListItems(sidebarListItemsFresh);
+    // The rest of this render still runs before React applies the update, and
+    // threadByKey already lacks rows that just left, such as a thread settled
+    // into the collapsed Settled shelf.
+    sidebarListItems = sidebarListItemsFresh;
   }
   useEffect(() => {
     if (
