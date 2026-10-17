@@ -41,6 +41,7 @@ import {
   dynamicToolTitle,
 } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { isUncPath, isWindowsDrivePath } from "@t3tools/shared/path";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import type {
   ChatAttachment,
@@ -1095,6 +1096,45 @@ function parseCodexRetryProgress(
   return { attempt, maxAttempts };
 }
 
+/**
+ * Appends a Markdown image for each saved path the text does not already embed.
+ * Markdown reads the `\.` in `C:\Users\me\.codex` as an escape, and clients without
+ * Windows path handling, such as released mobile apps, would load the wrong file. Drive
+ * paths use forward slashes; UNC paths use `file:` URLs, since `//host` reads as a web URL.
+ */
+export function appendGeneratedImageEmbeds(text: string, savedPaths: Iterable<string>): string {
+  let result = text;
+  for (const savedPath of savedPaths) {
+    const embedPath = isWindowsDrivePath(savedPath)
+      ? savedPath.replaceAll("\\", "/")
+      : isUncPath(savedPath)
+        ? `file:${savedPath.replaceAll("\\", "/")}`
+        : savedPath;
+    const destination = `<${embedPath.replace(/[<>]/g, "\\$&")}>`;
+    let embedded = false;
+    for (const path of new Set([savedPath, embedPath])) {
+      // Code spans, fences, and escaped `\![` are skipped: they show text, not an image.
+      const pattern = new RegExp(
+        "(```[\\s\\S]*?(?:```|$)|~~~[\\s\\S]*?(?:~~~|$)|`[^`\\n]*`)|(?<!\\\\)(!\\[[^\\]]*\\]\\()<?" +
+          path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+          ">?(?=[\\s)])",
+        "g",
+      );
+      result = result.replace(pattern, (match, code?: string, prefix?: string) => {
+        if (code !== undefined || prefix === undefined) return match;
+        embedded = true;
+        // A raw Windows path would load the wrong file on some clients; point it at embedPath.
+        return path === embedPath ? match : prefix + destination;
+      });
+    }
+    // Only an existing image embed counts; a plain path mention or link still needs a preview.
+    if (!embedded) {
+      result += `${result.length > 0 ? "\n\n" : ""}![](${destination})`;
+    }
+  }
+  return result;
+}
+
 function codexErrorInfoCode(value: unknown): string | null {
   if (typeof value === "string") {
     return value;
@@ -1896,6 +1936,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        const lastFinalAnswerByTurn = yield* Ref.make(
+          new Map<string, { readonly id: string; readonly text: string }>(),
+        );
+        const generatedImagesByTurn = yield* Ref.make(new Map<string, Map<string, string>>());
+        // In-flight image generations keep a settled turn so their late completion can attach.
+        const runningImagesByTurn = yield* Ref.make(new Map<string, Set<string>>());
         // Native completion and the interrupt timeout share one finalization
         // path. Serialize the race so only one can publish terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
@@ -2159,6 +2205,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if ((yield* Ref.get(pendingMcpAppCaptures)).has(nativeTurnId)) {
               return true;
             }
+            if ((yield* Ref.get(runningImagesByTurn)).get(nativeTurnId)?.size) {
+              return true;
+            }
             const tools = (yield* Ref.get(runningDynamicToolsByTurn)).get(nativeTurnId);
             if (tools === undefined) {
               return false;
@@ -2193,6 +2242,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return updated;
             });
             yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(lastFinalAnswerByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(generatedImagesByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(runningImagesByTurn, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
               }
@@ -3390,6 +3463,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 turnItem: artifacts.turnItem,
               });
               if (finalAnswerItem && update.completed) {
+                yield* Ref.update(lastFinalAnswerByTurn, (current) =>
+                  new Map(current).set(update.turnId, { id: update.itemId, text: update.text }),
+                );
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
                   const updated = new Map(current);
                   const texts = new Set(updated.get(update.turnId) ?? []);
@@ -4667,6 +4743,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
+            if (payload.item.type === "imageGeneration") {
+              const { id } = payload.item;
+              yield* Ref.update(runningImagesByTurn, (current) =>
+                new Map(current).set(payload.turnId, new Set(current.get(payload.turnId)).add(id)),
+              );
+              return;
+            }
+
             if (payload.item.type === "commandExecution") {
               if (!codexItemStatus(payload.item.status).completed) {
                 yield* trackRunningCommandItem(payload.turnId, {
@@ -4933,6 +5017,35 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 context,
                 item: payload.item,
               });
+              return;
+            }
+
+            if (payload.item.type === "imageGeneration") {
+              const { id, savedPath, status, failure } = payload.item;
+              yield* Ref.update(runningImagesByTurn, (current) => {
+                if (!current.get(payload.turnId)?.has(id)) {
+                  return current;
+                }
+                const updated = new Map(current);
+                const images = new Set(updated.get(payload.turnId));
+                images.delete(id);
+                updated.set(payload.turnId, images);
+                return updated;
+              });
+              if (savedPath?.trim() && status !== "failed" && failure == null) {
+                yield* Ref.update(generatedImagesByTurn, (current) => {
+                  const updated = new Map(current);
+                  const images = new Map(updated.get(payload.turnId));
+                  images.set(id, savedPath);
+                  updated.set(payload.turnId, images);
+                  return updated;
+                });
+              }
+              // Work that outlives turn/completed, such as a backgrounded exec, can finish later.
+              if (settled) {
+                yield* projectGeneratedImages(context, payload.turnId);
+                yield* releaseSettledTurnIfIdle(payload.turnId);
+              }
               return;
             }
 
@@ -5725,6 +5838,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // Settled timelines retain the final assistant message, so generated images attach there.
+        const projectGeneratedImages = (context: ActiveCodexTurnContext, nativeTurnId: string) =>
+          Effect.gen(function* () {
+            const images = yield* Ref.modify(generatedImagesByTurn, (current) => {
+              const pending = current.get(nativeTurnId);
+              if (pending === undefined) return [undefined, current] as const;
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return [pending, updated] as const;
+            });
+            const firstImageItemId = images?.keys().next().value;
+            if (images === undefined || firstImageItemId === undefined) {
+              return;
+            }
+            const finalAnswer = (yield* Ref.get(lastFinalAnswerByTurn)).get(nativeTurnId);
+            const text = appendGeneratedImageEmbeds(finalAnswer?.text ?? "", images.values());
+            if (text === (finalAnswer?.text ?? "")) {
+              return;
+            }
+            const message = { id: finalAnswer?.id ?? firstImageItemId, text };
+            // A later image on a settled turn appends to this text instead of replacing it.
+            yield* Ref.update(lastFinalAnswerByTurn, (current) =>
+              new Map(current).set(nativeTurnId, message),
+            );
+            const artifacts = yield* buildAgentMessageArtifacts(context, message, true);
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "message.updated",
+              driver: CODEX_PROVIDER,
+              message: artifacts.message,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+          });
+
         const finalizeCodexTurn = (input: {
           readonly context: ActiveCodexTurnContext;
           readonly nativeTurnId: string;
@@ -5784,6 +5939,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               for (const [key, part] of reasoningParts) {
                 if (part.turnId === input.nativeTurnId) reasoningParts.delete(key);
               }
+              yield* projectGeneratedImages(input.context, input.nativeTurnId);
               const nativeThreadId = input.context.providerThread.nativeThreadRef?.nativeId;
               const activation =
                 nativeThreadId == null ? undefined : goalActivations.get(nativeThreadId);
@@ -5960,6 +6116,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               if (!retainSettledContext) {
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(lastFinalAnswerByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(generatedImagesByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(runningImagesByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
                   }

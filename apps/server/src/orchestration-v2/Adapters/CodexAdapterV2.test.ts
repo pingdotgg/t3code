@@ -100,6 +100,42 @@ describe("Codex context usage compatibility", () => {
   });
 });
 
+describe("appendGeneratedImageEmbeds", () => {
+  it("writes Windows paths in a form every Markdown parser keeps", () => {
+    assert.strictEqual(
+      CodexAdapterV2.appendGeneratedImageEmbeds("", ["\\\\host\\share\\.codex\\a.png"]),
+      "![](<file://host/share/.codex/a.png>)",
+    );
+  });
+
+  it("points a raw Windows embed at the forward-slash path instead of adding another", () => {
+    assert.strictEqual(
+      CodexAdapterV2.appendGeneratedImageEmbeds("Done ![Apple](C:\\me\\.codex\\a.png)", [
+        "C:\\me\\.codex\\a.png",
+      ]),
+      "Done ![Apple](<C:/me/.codex/a.png>)",
+    );
+  });
+
+  it.each([
+    "```md\n![](/tmp/a.png)\n```",
+    "Use `![](/tmp/a.png)` to embed it.",
+    "Escaped \\![](/tmp/a.png)",
+  ])("still previews an image that only appears as text: %s", (text) => {
+    assert.strictEqual(
+      CodexAdapterV2.appendGeneratedImageEmbeds(text, ["/tmp/a.png"]),
+      `${text}\n\n![](</tmp/a.png>)`,
+    );
+  });
+
+  it("appends each image once", () => {
+    assert.strictEqual(
+      CodexAdapterV2.appendGeneratedImageEmbeds("![](/tmp/a.png)", ["/tmp/a.png", "/tmp/b.png"]),
+      "![](/tmp/a.png)\n\n![](</tmp/b.png>)",
+    );
+  });
+});
+
 describe("CodexAdapterV2 file change approvals", () => {
   it("uses nonblank reasons before sorted file operations and renamed paths", () => {
     const fileChanges = {
@@ -4067,6 +4103,119 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  it.effect.each([
+    { name: "text-only final", reply: "Done.", image: {}, appends: true },
+    { name: "path mention", reply: "Saved to /tmp/generated image.png", image: {}, appends: true },
+    {
+      name: "ordinary link",
+      reply: "[Open](</tmp/generated image.png>)",
+      image: {},
+      appends: true,
+    },
+    {
+      name: "angle bracket path",
+      reply: "Done.",
+      image: { savedPath: "/tmp/a<b>.png" },
+      appends: true,
+      embed: "![](</tmp/a\\<b\\>.png>)",
+    },
+    {
+      name: "Windows path",
+      reply: "Done.",
+      image: { savedPath: "C:\\Users\\me\\.codex\\generated_images\\t\\exec-1.png" },
+      appends: true,
+      embed: "![](<C:/Users/me/.codex/generated_images/t/exec-1.png>)",
+    },
+    {
+      name: "existing forward-slash Windows image",
+      reply: "![Apple](C:/Users/me/.codex/generated_images/t/exec-1.png)",
+      image: { savedPath: "C:\\Users\\me\\.codex\\generated_images\\t\\exec-1.png" },
+    },
+    { name: "existing image", reply: "![Generated](</tmp/generated image.png>)", image: {} },
+    {
+      name: "existing plain image",
+      reply: "![Generated](/tmp/generated.png)",
+      image: { savedPath: "/tmp/generated.png" },
+    },
+    { name: "failed status", reply: "Done.", image: { status: "failed" } },
+    {
+      name: "failure detail",
+      reply: "Done.",
+      image: { failure: { type: "usageLimitExceeded", limitId: "image-generation" } },
+    },
+    { name: "missing path", reply: "Done.", image: { savedPath: null } },
+    { name: "empty path", reply: "Done.", image: { savedPath: "" } },
+    { name: "no assistant message", reply: null, image: {} },
+  ])("projects native image generation: $name", ({ reply, image, appends, embed }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-native-image";
+        const savedPath = "/tmp/generated image.png";
+        const result = "aW1hZ2UtYnl0ZXMtbXVzdC1uZXZlci1yZWFjaC1jbGllbnRz";
+        const base = finalAnswerTranscript(
+          scenario,
+          reply === null ? [] : [{ id: "image-answer", text: reply }],
+        );
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...base.entries.slice(0, -1),
+            ...(["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              frame: {
+                method,
+                params: {
+                  threadId: `native-${scenario}-thread`,
+                  turnId: `native-${scenario}-turn`,
+                  item: {
+                    type: "imageGeneration",
+                    id: "generated-image",
+                    status: "completed",
+                    savedPath,
+                    result,
+                    ...image,
+                  },
+                },
+              },
+            })),
+            ...base.entries.slice(-1),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-native-image"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.firstTerminal;
+
+        const messages = assistantMessages(harness.events);
+        const final = messages.at(-1)?.message;
+        const markdown = embed ?? `![](<${savedPath}>)`;
+        const expected = reply === null ? markdown : appends ? `${reply}\n\n${markdown}` : reply;
+        assert.strictEqual(final?.text, expected);
+        assert.strictEqual(final?.streaming, false);
+        assert.notInclude(encodeUnknownJson(harness.events), result);
+        if (appends) {
+          assert.lengthOf(messages, 2);
+          assert.strictEqual(final?.id, messages[0]?.message.id);
+          assert.strictEqual(final?.nodeId, messages[0]?.message.nodeId);
+        } else {
+          assert.lengthOf(messages, 1);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("suppresses a trailing empty final answer after a non-empty final answer", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -4603,6 +4752,133 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     ],
   });
+
+  it.effect("attaches an image that finishes after the turn settles to the final answer", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const savedPath = "/tmp/late image.png";
+        const lateImage = {
+          type: "emit_inbound" as const,
+          label: "item/completed/image-late",
+          afterMs: 10_000,
+          frame: {
+            method: "item/completed",
+            params: {
+              item: {
+                type: "imageGeneration",
+                id: "late-image",
+                status: "completed",
+                savedPath,
+                result: "aW1hZ2U=",
+              },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              completedAtMs: 1782622451000,
+            },
+          },
+        };
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `${BG_SCENARIO}-late-image`,
+            entries: [
+              ...backgroundExecTranscript.entries.slice(0, -1),
+              lateImage,
+              backgroundExecTranscript.entries.at(-1)!,
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-bg-image"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+
+        yield* TestClock.adjust("10 seconds");
+        const expected = `STARTED\n\n![](<${savedPath}>)`;
+        yield* awaitUntil(
+          () => assistantMessages(harness.events).at(-1)?.message.text === expected,
+          "late image projection",
+        );
+        const messages = assistantMessages(harness.events);
+        assert.strictEqual(messages.at(-1)?.message.id, messages[0]?.message.id);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps a turn whose image is still generating and attaches it when done", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const savedPath = "/tmp/slow image.png";
+        const imageEvent = (phase: "started" | "completed") => ({
+          type: "emit_inbound" as const,
+          label: `item/${phase}/image`,
+          ...(phase === "completed" ? { afterMs: 10_000 } : {}),
+          frame: {
+            method: `item/${phase}`,
+            params: {
+              item: {
+                type: "imageGeneration",
+                id: "slow-image",
+                status: phase === "started" ? "inProgress" : "completed",
+                result: "",
+                ...(phase === "completed" ? { savedPath } : {}),
+              },
+              threadId: BG_NATIVE_THREAD,
+              turnId: BG_NATIVE_TURN,
+              [`${phase}AtMs`]: 1782622440500,
+            },
+          },
+        });
+        // The root answer and turn/completed from the background exec transcript.
+        const settle = backgroundExecTranscript.entries.slice(-3, -1);
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `${BG_SCENARIO}-slow-image`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId: BG_NATIVE_THREAD,
+                nativeTurnId: BG_NATIVE_TURN,
+                prompt: BG_PROMPT,
+              }),
+              imageEvent("started"),
+              ...settle,
+              imageEvent("completed"),
+            ],
+          }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-slow-image"),
+            text: BG_PROMPT,
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+
+        yield* TestClock.adjust("10 seconds");
+        const expected = `STARTED\n\n![](<${savedPath}>)`;
+        yield* awaitUntil(
+          () => assistantMessages(harness.events).at(-1)?.message.text === expected,
+          "slow image projection",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect(
     "projects a post-settle background command completion and requests a continuation",
