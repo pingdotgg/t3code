@@ -8,8 +8,10 @@ import {
   PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
+  PullRequestProviderSummary,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
+  PullRequestViewerPermissions,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -20,6 +22,8 @@ const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerReques
 const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
 const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
+const decodeViewerPermissions = Schema.decodeUnknownSync(PullRequestViewerPermissions);
+const decodeProviderSummary = Schema.decodeUnknownSync(PullRequestProviderSummary);
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -273,6 +277,46 @@ describe("PullRequestCapabilities", () => {
   it("only offers branch deletion when the server advertises it", () => {
     expect(decodeCapabilities(base).deleteBranch).toBeUndefined();
     expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
+  });
+
+  it("drops actions and verdicts from a newer server instead of failing", () => {
+    const decoded = decodeCapabilities({
+      ...base,
+      actions: ["merge", "archive", "close"],
+      mergeMethods: ["squash", "fast-forward"],
+      updateMethods: ["rebase", "fast-forward"],
+      review: { ...base.review, verdicts: ["approve", "block"] },
+    });
+
+    expect(decoded.actions).toEqual(["merge", "close"]);
+    expect(decoded.mergeMethods).toEqual(["squash"]);
+    expect(decoded.updateMethods).toEqual(["rebase"]);
+    expect(decoded.review.verdicts).toEqual(["approve"]);
+  });
+
+  it("drops unknown values from viewer permissions and provider summaries", () => {
+    const permissions = decodeViewerPermissions({
+      actions: ["merge", "archive"],
+      comment: true,
+      resolve: true,
+      verdicts: ["approve", "block"],
+      requestReviewers: true,
+      updateMethods: ["rebase", "fast-forward"],
+    });
+    expect(permissions.actions).toEqual(["merge"]);
+    expect(permissions.verdicts).toEqual(["approve"]);
+    expect(permissions.updateMethods).toEqual(["rebase"]);
+
+    const provider = decodeProviderSummary({
+      host: "github.com",
+      kind: "github",
+      searchesOnHost: true,
+      actions: ["merge", "archive"],
+      projectCount: 1,
+      configured: true,
+      detail: null,
+    });
+    expect(provider.actions).toEqual(["merge"]);
   });
 });
 
