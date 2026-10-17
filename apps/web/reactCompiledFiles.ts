@@ -50,4 +50,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useLocalStorage.ts",
   "apps/web/src/hooks/useTheme.ts",
   "apps/web/src/hooks/useSettings.ts",
+  "apps/web/src/components/chat/QueuedRunsControl.tsx",
 ] as const;
