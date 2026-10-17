@@ -6,7 +6,6 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useMemo } from "react";
 
 import { previewEnvironment } from "./state/preview";
 import { useEnvironmentQuery } from "./state/query";
@@ -61,13 +60,10 @@ export function useDiscoveredPortsState(
           input: boundedConfiguredUrls.length ? { configuredUrls: boundedConfiguredUrls } : {},
         }),
   );
-  return useMemo(
-    () => ({
-      servers: query.data?.servers ?? EMPTY_PORTS,
-      configuredUrlProbing: query.data?.configuredUrlProbing === true,
-    }),
-    [query.data?.configuredUrlProbing, query.data?.servers],
-  );
+  return {
+    servers: query.data?.servers ?? EMPTY_PORTS,
+    configuredUrlProbing: query.data?.configuredUrlProbing === true,
+  };
 }
 
 export function useThreadDiscoveredPorts(input: {
@@ -75,11 +71,7 @@ export function useThreadDiscoveredPorts(input: {
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<DiscoveredLocalServer> {
   const ports = useDiscoveredPorts(input.environmentId);
-  return useMemo(
-    () =>
-      input.threadId
-        ? ports.filter((port) => port.terminal?.threadId === input.threadId)
-        : EMPTY_PORTS,
-    [input.threadId, ports],
-  );
+  return input.threadId
+    ? ports.filter((port) => port.terminal?.threadId === input.threadId)
+    : EMPTY_PORTS;
 }
