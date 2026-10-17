@@ -693,10 +693,13 @@ export function PullRequestDetailPanel({
   }));
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
+  // Holds the absolute scrollTop to restore after the fold commits: near the bottom the browser has
+  // already clamped scrollTop by the fold's height, and refunding a delta on top of that lands at
+  // the hard top and reopens it.
   const compensationRef = useRef<{
     tab: DetailTab;
     scroller: HTMLDivElement;
-    delta: number;
+    target: number;
   } | null>(null);
   useLayoutEffect(() => {
     const compensation = compensationRef.current;
@@ -708,10 +711,7 @@ export function PullRequestDetailPanel({
       scrollerByTab.current[tab] !== compensation.scroller
     )
       return;
-    compensation.scroller.scrollTop = Math.max(
-      0,
-      compensation.scroller.scrollTop + compensation.delta,
-    );
+    compensation.scroller.scrollTop = Math.max(0, compensation.target);
   }, [condensed, tab]);
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
@@ -2762,7 +2762,7 @@ export function PullRequestDetailPanel({
             if (top < 4 && foldHeight > 0) next = false;
           } else if (foldHeight > 0 && top > foldHeight + 32) {
             const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
-            compensationRef.current = { tab, scroller, delta: -chromeDelta };
+            compensationRef.current = { tab, scroller, target: top - chromeDelta };
             next = true;
           }
           if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
