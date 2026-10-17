@@ -306,6 +306,15 @@ describe("terminatePosixOwnedProcessTree", () => {
         },
       );
       expect(missingTargetResult.status, missingTargetResult.stderr).toBe(125);
+      // CI's /bin/sh is dash, which runs the EXIT trap after a failed exec. Bash does not,
+      // so run the same wrapper under bash too.
+      const missingTargetBash = NodeChildProcess.spawnSync("bash", missingTarget.args, {
+        encoding: "utf8",
+      });
+      if ((missingTargetBash.error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+        expect(missingTargetBash.status, missingTargetBash.stderr).toBe(125);
+        expect(missingTargetBash.stderr).toContain("/nonexistent-t3-probe");
+      }
     } finally {
       packagedExecPath.mockRestore();
       NodeFS.rmSync(scratch, { recursive: true, force: true });
