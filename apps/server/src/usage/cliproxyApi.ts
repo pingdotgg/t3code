@@ -12,6 +12,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { formatClaudeSubscriptionAuthLabel } from "../provider/ClaudeProvider.ts";
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
@@ -70,6 +71,16 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        organization_type: Schema.optional(Schema.NullOr(Schema.String)),
+        rate_limit_tier: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -86,6 +97,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 const decodeConsumeResponse = Schema.decodeUnknownEffect(
@@ -98,6 +110,20 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
+const CLAUDE_OAUTH_BASE = "https://api.anthropic.com/api/oauth";
+const CLAUDE_HUB_PLAN = "Claude Subscription";
+
+/**
+ * Names a hub Claude account's plan the way a native sign-in does. Max plans
+ * share one organization type; only the rate-limit tier
+ * (`default_claude_max_20x`) tells 5x from 20x.
+ */
+function claudeProfilePlanLabel(profile: typeof ClaudeProfile.Type): string {
+  const type = profile.organization?.organization_type?.trim();
+  if (!type) return CLAUDE_HUB_PLAN;
+  const multiplier = profile.organization?.rate_limit_tier?.match(/_(\d+)x$/i)?.[1];
+  return formatClaudeSubscriptionAuthLabel(multiplier ? `${type}_${multiplier}x` : type);
+}
 
 const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
   0x6f, 0x1c, 0x2a, 0x9e, 0x2d, 0x4b, 0x4c, 0x1e, 0x9a, 0x7f, 0x3b, 0x8d, 0x5e, 0x0c, 0x1a, 0x42,
@@ -220,7 +246,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const [body, plan] = yield* Effect.all(
+          [
+            apiCall(config, account, `${CLAUDE_OAUTH_BASE}/usage`),
+            // A profile outage must not hide successfully fetched quota windows.
+            apiCall(config, account, `${CLAUDE_OAUTH_BASE}/profile`).pipe(
+              Effect.flatMap(decodeClaudeProfile),
+              Effect.map(claudeProfilePlanLabel),
+              Effect.orElseSucceed(() => CLAUDE_HUB_PLAN),
+            ),
+          ],
+          { concurrency: 2 },
+        );
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -235,7 +272,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         );
         return {
           ...base,
-          plan: "Claude Subscription",
+          plan,
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
             response: {

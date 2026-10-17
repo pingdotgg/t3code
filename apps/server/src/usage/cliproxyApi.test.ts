@@ -213,6 +213,53 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("labels Claude accounts with the plan tier from their profile", () =>
+    Effect.gen(function* () {
+      const organizations: Record<string, { organization_type: string; rate_limit_tier: string }> =
+        {
+          a: { organization_type: "claude_max", rate_limit_tier: "default_claude_max_5x" },
+          b: { organization_type: "claude_max", rate_limit_tier: "default_claude_max_20x" },
+          c: { organization_type: "claude_pro", rate_limit_tier: "default_claude_ai" },
+        };
+      const test = fixture({
+        accounts: [
+          ...accounts,
+          { ...accounts[0]!, id: "third.json", auth_index: "c", email: "third@example.com" },
+        ].map((account) => ({ ...account, provider: "claude" })),
+        upstream: (request) => ({
+          status: 200,
+          body: request.url?.endsWith("/profile")
+            ? { organization: organizations[request.auth_index] }
+            : { seven_day: { utilization: 50, resets_at: null } },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.plan)).toEqual([
+        "Claude Max 5x Subscription",
+        "Claude Max 20x Subscription",
+        "Claude Pro Subscription",
+      ]);
+    }),
+  );
+
+  it.effect("keeps Claude usage when the profile cannot be read", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/profile")
+            ? { status: 503, body: { token: "do-not-publish" } }
+            : { status: 200, body: { seven_day: { utilization: 50, resets_at: null } } },
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.plan).toBe("Claude Subscription");
+      expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([50]);
+      expect(encodeJson(account)).not.toContain("do-not-publish");
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();
