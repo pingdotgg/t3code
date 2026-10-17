@@ -1,9 +1,10 @@
-import { useCallback, useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 /**
  * Only call it from event handlers and effects; during render it would see the
- * previous commit's `fn`. A `useCallback` result keeps the render scope it was
- * created in, and V8 shares one scope between all closures of a render.
+ * previous commit's `fn`. The forwarder is created once so its identity does not
+ * depend on the React Compiler, and it keeps no render scope alive: V8 shares one
+ * scope between all closures of a render.
  */
 export function useStableCallback<Args extends ReadonlyArray<unknown>, Result>(
   fn: (...args: Args) => Result,
@@ -12,5 +13,10 @@ export function useStableCallback<Args extends ReadonlyArray<unknown>, Result>(
   useLayoutEffect(() => {
     latest.current = fn;
   });
-  return useCallback((...args: Args) => latest.current(...args), []);
+  const [stable] = useState(
+    () =>
+      (...args: Args) =>
+        latest.current(...args),
+  );
+  return stable;
 }
