@@ -56,6 +56,8 @@ function makeProjection() {
         providerThreadId,
         activeAttemptId: attemptId,
         status: "running",
+        requestedAt: now,
+        completedAt: null,
       },
     ],
     providerThreads: [
@@ -945,6 +947,7 @@ const cutMidTurn = (extra: Record<string, unknown> = {}) => {
       {
         ...base.runs[0]!,
         status: "cancelled",
+        completedAt: now,
         userMessageId: MessageId.make("message:user"),
         ...extra,
       },
@@ -1142,7 +1145,7 @@ it.effect("prepares later threads' continuations when one thread fails", () =>
   }),
 );
 
-it.effect("stops continuing after three automatic restart continuations in a row", () =>
+it.effect("stops rapid restart loops but allows repeated restarts after normal work", () =>
   Effect.gen(function* () {
     const first = RunId.make("run:first-continuation");
     const second = RunId.make("run:second-continuation");
@@ -1164,6 +1167,28 @@ it.effect("stops continuing after three automatic restart continuations in a row
       ),
     } as unknown as OrchestrationV2ThreadProjection;
     assert.lengthOf(yield* continuationTexts(withThreeLinks), 0);
+    const atRequestCutoff = {
+      ...withThreeLinks,
+      runs: withThreeLinks.runs.map((run, index) => ({
+        ...run,
+        completedAt: null,
+        requestedAt: DateTime.subtract(now, { minutes: [1, 2, 6][index] ?? 0 }),
+      })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.lengthOf(yield* continuationTexts(atRequestCutoff), 0);
+    const afterRequestWindow = {
+      ...atRequestCutoff,
+      runs: atRequestCutoff.runs.map((run, index) => ({
+        ...run,
+        requestedAt: DateTime.subtract(now, { minutes: [1, 2, 7][index] ?? 0 }),
+      })),
+    } as unknown as OrchestrationV2ThreadProjection;
+    assert.lengthOf(yield* continuationTexts(afterRequestWindow), 1);
+    const afterNormalWork = {
+      ...atRequestCutoff,
+      runs: atRequestCutoff.runs.map((run) => ({ ...run, completedAt: now })),
+    };
+    assert.lengthOf(yield* continuationTexts(afterNormalWork), 1);
   }),
 );
 
