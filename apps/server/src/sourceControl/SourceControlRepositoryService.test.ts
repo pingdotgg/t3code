@@ -528,6 +528,46 @@ it.effect("preserves destination probe failures instead of treating them as miss
   );
 });
 
+it.effect("does not recreate an existing parent directory of the destination", () => {
+  const madeDirectories: Array<string> = [];
+  const cloneCalls: Array<string> = [];
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    yield* service.cloneRepository({
+      provider: SourceControlProviderKind.make("github"),
+      repository: "octocat/t3code",
+      destinationPath: "/drive-root/t3code",
+      protocol: "https",
+    });
+
+    assert.deepStrictEqual(
+      madeDirectories.filter((target) => target.startsWith("/drive-root")),
+      [],
+    );
+    assert.deepStrictEqual(cloneCalls, ["/drive-root"]);
+  }).pipe(
+    Effect.provide(
+      layer({
+        fileSystem: FileSystem.makeNoop({
+          exists: (target) => Effect.succeed(target === "/drive-root"),
+          makeDirectory: (target) =>
+            Effect.sync(() => {
+              madeDirectories.push(target);
+            }),
+        }),
+        git: {
+          execute: (input) =>
+            Effect.sync(() => {
+              cloneCalls.push(input.cwd);
+              return processOutput();
+            }),
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("publishes by creating the repository, adding a remote, and pushing upstream", () => {
   const createCalls: Array<{ cwd: string; repository: string; visibility: string }> = [];
   const remoteCalls: Array<{ cwd: string; preferredName: string; url: string }> = [];
