@@ -95,11 +95,14 @@ export function useLinkedThreadPullRequest(
   branchPullRequest?: ThreadLinkedPullRequest | null,
 ): LinkedThreadPullRequestStatus | null {
   const supportsLinks = useSupportsMultiplePullRequests(environmentId);
-  const { current, currentStatus } = useCurrentPullRequestLink(supportsLinks, pullRequests);
+  const current = supportsLinks ? resolveThreadCurrentPullRequestLink(pullRequests ?? []) : null;
+  // Callers key on the returned status, so it stays cached across the query hooks.
+  const currentStatus = current === null ? null : linkedPullRequestSnapshotStatus(current);
   const fallback =
     current === null ? ((!supportsLinks ? linkedPullRequest : null) ?? branchPullRequest) : null;
-  // A sidebar row must not touch the summary cache on every render.
-  const reference = useLinkedPullRequestReference(fallback);
+  // The query atom and shared summary effect key on this object, and a sidebar row
+  // must not touch the summary cache on every render.
+  const reference = fallback == null ? null : linkedPullRequestReference(fallback);
   const queried = useEnvironmentQuery(
     !enabled || environmentId === null || reference === null
       ? null
@@ -121,24 +124,7 @@ export function useLinkedThreadPullRequest(
       };
 }
 
-// Callers key on the returned status, so it stays stable across the query hooks.
-function useCurrentPullRequestLink(
-  supportsLinks: boolean,
-  pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
-) {
-  "use memo";
-  const current = supportsLinks ? resolveThreadCurrentPullRequestLink(pullRequests ?? []) : null;
-  return {
-    current,
-    currentStatus: current === null ? null : linkedPullRequestSnapshotStatus(current),
-  };
-}
-
-// The query atom and shared summary effect key on this object, so it stays
-// stable per link across the hooks that read it.
-function useLinkedPullRequestReference(fallback: ThreadLinkedPullRequest | null | undefined) {
-  "use memo";
-  if (fallback == null) return null;
+function linkedPullRequestReference(fallback: ThreadLinkedPullRequest) {
   const host = parseChangeRequestUrl(fallback.url)?.host;
   return { ...fallback, ...(host === undefined ? {} : { host }) };
 }
