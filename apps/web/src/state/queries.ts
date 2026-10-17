@@ -97,18 +97,21 @@ export function useThreadSearch(
   };
 }
 
-// A hook so its result is frozen: `refresh` hands a page atom to the registry,
-// which the compiler would treat as a mutation and leave pagesAtom uncached,
-// resubscribing every render.
-function useBranchPageAtoms(
-  environmentId: EnvironmentId | null,
-  cwd: string | null,
-  query: string,
-  cursors: ReadonlyArray<number | undefined>,
-  targetKey: string | null,
-) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
+export function usePaginatedBranches(target: VcsRefTarget) {
+  // Starts unkeyed: a key mismatch already resolves to the initial cursors, and seeding
+  // the key here would make every derivation below straddle this hook call.
+  const [pagination, setPagination] = useState<{
+    readonly targetKey: string | null;
+    readonly cursors: ReadonlyArray<number | undefined>;
+  }>({
+    targetKey: null,
+    cursors: INITIAL_BRANCH_CURSORS,
+  });
+  const { environmentId, cwd } = target;
+  const query = target.query?.trim() ?? "";
+  const targetKey =
+    environmentId !== null && cwd !== null ? JSON.stringify([environmentId, cwd, query]) : null;
+  const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
   const pageAtoms =
     environmentId !== null && cwd !== null
       ? cursors.map((cursor) =>
@@ -125,30 +128,6 @@ function useBranchPageAtoms(
       : [];
   const pagesAtom = Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
     Atom.withLabel(`web:vcs-ref-pages:${targetKey ?? "empty"}`),
-  );
-  return { pageAtoms, pagesAtom };
-}
-
-export function usePaginatedBranches(target: VcsRefTarget) {
-  const query = target.query?.trim() ?? "";
-  const targetKey =
-    target.environmentId !== null && target.cwd !== null
-      ? JSON.stringify([target.environmentId, target.cwd, query])
-      : null;
-  const [pagination, setPagination] = useState<{
-    readonly targetKey: string | null;
-    readonly cursors: ReadonlyArray<number | undefined>;
-  }>({
-    targetKey,
-    cursors: INITIAL_BRANCH_CURSORS,
-  });
-  const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
-  const { pageAtoms, pagesAtom } = useBranchPageAtoms(
-    target.environmentId,
-    target.cwd,
-    query,
-    cursors,
-    targetKey,
   );
   const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
