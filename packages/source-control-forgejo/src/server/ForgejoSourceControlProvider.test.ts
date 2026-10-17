@@ -136,7 +136,8 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
     });
     assert.strictEqual(result.state, "open");
     assert.strictEqual(result.checks[0]?.status, "failure");
-    assert.deepStrictEqual(paths, [
+    assert.deepStrictEqual(paths.toSorted(), [
+      "repos/acme/web/branches/main",
       "repos/acme/web/pulls/1",
       "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=1",
       "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=2",
@@ -146,16 +147,18 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
       Layer.mock(ForgejoCli.ForgejoCli)({
         api: (input) => {
           paths.push(input.path);
-          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head)/);
+          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head|branches\/main)/);
           return Effect.succeed(
             processOutput(
-              input.path.endsWith("pulls/1")
-                ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
+              input.path.endsWith("branches/main")
+                ? `{"name":"main","protected":false,"enable_status_check":false,"status_check_contexts":[]}`
+                : input.path.endsWith("pulls/1")
+                  ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
             "head":{"ref":"feature","sha":"head","repo":null},"base":{"ref":"main","sha":"base","repo":null},
             "created_at":"2026-09-16T00:00:00Z","updated_at":"2026-09-16T00:00:00Z","closed_at":null,"merged_at":null,"labels":[]}`
-                : input.path.endsWith("page=1")
-                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
-                  : "[]",
+                  : input.path.endsWith("page=1")
+                    ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
+                    : "[]",
             ),
           );
         },
@@ -163,6 +166,119 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
     ),
   );
 });
+
+const requiredChecksPullRequest = {
+  number: 7,
+  title: "Required checks",
+  body: "",
+  html_url: "https://forgejo.test/acme/web/pulls/7",
+  user: { login: "maria" },
+  state: "open",
+  merged: false,
+  head: { ref: "feature", sha: "head", repo: null },
+  base: { ref: "release/1.x", sha: "base", repo: null },
+  created_at: "2026-10-12T00:00:00Z",
+  updated_at: "2026-10-12T00:00:00Z",
+  closed_at: null,
+  merged_at: null,
+  labels: [],
+};
+const requiredChecksStatuses = [
+  ["ci/required-build", "success"],
+  ["ci/required-test", "success"],
+  ["ci/optional-lint", "failure"],
+].map(([context, status]) => ({
+  context,
+  status,
+  description: null,
+  target_url: null,
+  updated_at: "2026-10-12T00:00:00Z",
+}));
+
+it.effect.each([
+  [
+    "marks the statuses a readable base branch requires",
+    Effect.succeed({
+      name: "release/1.x",
+      protected: true,
+      enable_status_check: true,
+      status_check_contexts: ["ci/required-*"],
+    }),
+    [true, true, undefined],
+    [],
+  ],
+  [
+    "adds a required context with no status yet as a pending required check",
+    Effect.succeed({
+      name: "release/1.x",
+      protected: true,
+      enable_status_check: true,
+      status_check_contexts: ["ci/required-build", "ci/required-deploy"],
+    }),
+    [true, undefined, undefined],
+    [["ci/required-deploy", "pending", true]],
+  ],
+  [
+    "keeps every Forgejo status gating when the base branch cannot be read",
+    Effect.fail(
+      new ForgejoCli.ForgejoCliError({
+        command: "fj",
+        cwd: "/repo",
+        reason: "forbidden",
+        detail: "Forgejo API request failed with HTTP 403.",
+      }),
+    ),
+    [undefined, undefined, undefined],
+    [],
+  ],
+] as const)("%s", ([, branch, required, added]) =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const readChecks = provider.getChangeRequestChecks;
+    if (readChecks === undefined) return yield* Effect.die("checks read missing");
+    const input = { cwd: "/repo", repository: "acme/web", host: "forgejo.test", number: 7 };
+    const summary = yield* readChecks(input);
+    const detail = yield* provider.getChangeRequest(input);
+    for (const checks of [summary.checks, detail.checks]) {
+      assert.deepStrictEqual(
+        checks.map((check) => [check.name, check.status, check.required]),
+        [
+          ["ci/required-build", "success", required[0]],
+          ["ci/required-test", "success", required[1]],
+          ["ci/optional-lint", "failure", required[2]],
+          ...added.map((entry) => [...entry]),
+        ],
+      );
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const [path, query] = input.path.split("?");
+          const respond = (response: unknown) =>
+            encodeJsonEffect(response).pipe(Effect.orDie, Effect.map(processOutput));
+          switch (path) {
+            case "repos/acme/web/pulls/7":
+              return respond(requiredChecksPullRequest);
+            case "repos/acme/web/statuses/head":
+              return respond(
+                new URLSearchParams(query).get("page") === "1" ? requiredChecksStatuses : [],
+              );
+            // Branch names keep their slashes; each segment is encoded on its own.
+            case "repos/acme/web/branches/release/1.x":
+              return Effect.flatMap(branch, respond);
+            case "repos/acme/web":
+              return respond({ full_name: "acme/web", permissions: { push: true, admin: false } });
+            case "user":
+              return respond({ login: "maria" });
+            default:
+              return Effect.die(`Unexpected Forgejo request: ${input.path}`);
+          }
+        },
+      }),
+    ),
+  ),
+);
 
 it.effect.each([
   ["Ready", false, true, false, "mergeable"],
@@ -234,6 +350,9 @@ it.effect.each([
                 break;
               case "repos/maria/project/statuses/head":
                 response = [];
+                break;
+              case "repos/maria/project/branches/main":
+                response = { name: "main", protected: false };
                 break;
               default:
                 return Effect.die(`Unexpected Forgejo request: ${input.path}`);

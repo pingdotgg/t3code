@@ -255,6 +255,28 @@ describe("evaluatePullRequestWatch", () => {
     assert.isFalse(pushed.exhausted);
     assert.equal(pushed.next.wakes, 1);
   });
+
+  it("reports passed when the required checks pass and an optional one failed", () => {
+    const optional = check("ci/optional-lint", "failure");
+    const checks = [{ ...check("ci/required-test", "success"), required: true }, optional];
+    const result = evaluatePullRequestWatch(watch(), detail({ checks }), noRemarks);
+    assert.deepEqual(result.changes, [
+      { kind: "checks-failed", failed: [optional] },
+      { kind: "checks-passed", count: 1, required: true },
+    ]);
+    assert.isTrue(result.next.passed);
+  });
+
+  it("does not report passed while a required check has not reported yet", () => {
+    // Forgejo adds a required context with no status yet as a pending required check.
+    const checks = [
+      { ...check("ci/required-build", "success"), required: true },
+      { ...check("ci/required-test", "pending"), required: true },
+    ];
+    const result = evaluatePullRequestWatch(watch(), detail({ checks }), noRemarks);
+    assert.deepEqual(result.changes, []);
+    assert.isFalse(result.next.passed);
+  });
 });
 
 describe("pullRequestWatchMessage", () => {

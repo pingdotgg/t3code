@@ -1,6 +1,7 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -33,6 +34,7 @@ import {
   forgejoChecks,
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
+import { ForgejoBranchStatusChecks, markRequiredForgejoChecks } from "./forgejoRequiredChecks.ts";
 import { definition } from "../client/definition.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
@@ -202,6 +204,33 @@ export const make = Effect.gen(function* () {
     );
     return permissions(repo, pr, viewer);
   });
+  // Statuses on the head commit, with the ones the base branch requires marked. When the branch
+  // cannot be read (older server, missing access), no check is marked and every check gates.
+  const readChecks = (input: ProviderRepositoryRef, pr: typeof ForgejoPullRequest.Type) =>
+    Effect.all(
+      [
+        page(
+          {
+            ...input,
+            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
+          },
+          ForgejoStatus,
+        ),
+        read(
+          {
+            ...input,
+            path: `${repoPath(input)}/branches/${pr.base.ref.split("/").map(encodeURIComponent).join("/")}`,
+          },
+          ForgejoBranchStatusChecks,
+        ).pipe(Effect.option),
+      ],
+      { concurrency: 2 },
+    ).pipe(
+      Effect.map(([statuses, branch]) => {
+        const checks = forgejoChecks(statuses.items);
+        return Option.isSome(branch) ? markRequiredForgejoChecks(checks, branch.value) : checks;
+      }),
+    );
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
   const provider: PullRequestProviderApi = {
@@ -244,14 +273,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestChecks: Effect.fn("ForgejoPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
         const pr = yield* getPull(input);
-        const statuses = yield* page(
-          {
-            ...input,
-            path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-          },
-          ForgejoStatus,
-        );
-        return { state: forgejoChangeRequest(pr).state, checks: forgejoChecks(statuses.items) };
+        return { state: forgejoChangeRequest(pr).state, checks: yield* readChecks(input, pr) };
       },
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
@@ -259,13 +281,7 @@ export const make = Effect.gen(function* () {
         [getPull(input), getRepo(input), getViewer(input)],
         { concurrency: 3 },
       );
-      const statuses = yield* page(
-        {
-          ...input,
-          path: `${repoPath(input)}/statuses/${encodeURIComponent(pr.head.sha)}?sort=recentupdate`,
-        },
-        ForgejoStatus,
-      );
+      const checks = yield* readChecks(input, pr);
       return {
         ...forgejoChangeRequest(pr),
         headSha: pr.head.sha,
@@ -275,7 +291,7 @@ export const make = Effect.gen(function* () {
           const actor = forgejoActor(user);
           return actor ? [actor] : [];
         }),
-        checks: forgejoChecks(statuses.items),
+        checks,
         baseComparison: !pr.merge_base
           ? "unknown"
           : pr.merge_base === pr.base.sha
