@@ -129,7 +129,25 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
  * Pass every enabled login, read or not, so an unreadable workspace still
  * counts as one.
  */
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+function accountKeyResolver(reports: Iterable<AccountReport>, sources: UsageLimitSourceSnapshots) {
+  const ambiguous = new Set<string>();
+  for (const source of sources) {
+    const accounts = new Map<string, (typeof source.accounts)[number]>();
+    for (const account of source.accounts) {
+      if (!account.email?.trim()) continue;
+      const key = accountKey(account.driver, account.email, account.usageLimits);
+      if (!key) continue;
+      const previous = accounts.get(key);
+      if (
+        previous &&
+        previous.id !== account.id &&
+        (!previous.workspaceId || !account.workspaceId)
+      ) {
+        ambiguous.add(key);
+      }
+      accounts.set(key, account);
+    }
+  }
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
@@ -141,6 +159,7 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
+    if (ambiguous.has(key)) return null;
     const known = workspaces.get(key);
     if (!known) return key;
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
@@ -232,6 +251,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         .map(nativeReport),
       ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
     ]),
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
+    ),
   );
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
@@ -607,10 +629,13 @@ export function collectProviderUsageLimits(
   const native = providersWithLimits(providers).filter(
     (provider) => provider.driver === selected.driver,
   );
-  const resolveKey = accountKeyResolver([
-    ...providers.filter((provider) => provider.enabled).map(nativeReport),
-    ...sources.flatMap((source) => source.accounts),
-  ]);
+  const resolveKey = accountKeyResolver(
+    [
+      ...providers.filter((provider) => provider.enabled).map(nativeReport),
+      ...sources.flatMap((source) => source.accounts),
+    ],
+    sources,
+  );
   const nativeAccounts = new Set(
     native.flatMap((provider) => {
       const key = resolveKey(nativeReport(provider));
