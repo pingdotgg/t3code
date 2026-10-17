@@ -293,6 +293,10 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
         "relay.inbox.held_bytes": backlog.bytes,
       });
     });
+  const stillHeld = (seq: number) =>
+    sql<{ readonly seq: number }>`SELECT seq FROM held_hooks WHERE seq = ${seq}`.pipe(
+      Effect.map((rows) => rows.length > 0),
+    );
   // Pages run out only once every non-busy request has been tried, so a
   // backlog behind busy hooks never hides another hook's requests.
   pages: while (batch.length > 0) {
@@ -300,6 +304,11 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
       if (sent === DELIVERIES_PER_RUN) break pages;
 
       if (busyHooks.has(row.hook_key)) continue;
+      // Clear can discard this prefetched page while an upstream send is in flight.
+      if (!(yield* stillHeld(row.seq))) {
+        yield* annotateRun("cleared");
+        return null;
+      }
       const headers = decodeHeaders(row.headers);
       if (Option.isNone(headers)) {
         // Unreadable: it can never be delivered, and must not block the rest.
@@ -319,6 +328,11 @@ export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(
         headers: headers.value,
         body: row.body,
       });
+      // A cleared request must neither advance this run nor schedule a retry.
+      if (!(yield* stillHeld(row.seq))) {
+        yield* annotateRun("cleared");
+        return null;
+      }
       if (outcome === "unreachable") {
         failures = yield* countFailure;
         yield* annotateRun("unreachable");
