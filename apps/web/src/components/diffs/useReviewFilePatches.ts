@@ -3,15 +3,8 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Atom from "effect/reactivity/Atom";
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useContext, useEffect, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
@@ -19,6 +12,7 @@ const filePathCollator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
 });
+const DEFAULT_INDICES = [0, 1, 2, 3];
 
 export function useReviewFilePatches({
   environmentId,
@@ -48,45 +42,16 @@ export function useReviewFilePatches({
     baseRef,
     ignoreWhitespace,
   ]);
-  const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
-  const indices = useMemo(
-    () => (requested.scope === scope ? requested.indices : [0, 1, 2, 3]),
-    [requested, scope],
-  );
-  const files = useMemo(
-    () => source?.files?.toSorted((a, b) => filePathCollator.compare(a.path, b.path)) ?? [],
-    [source?.files],
-  );
-  const queries = useMemo(
-    () =>
-      !environmentId || !cwd || !source
-        ? []
-        : indices
-            .filter((index) => index < files.length)
-            .map((index) => {
-              const file = files[index]!;
-              return {
-                index,
-                query: reviewEnvironment.diffFilePatch({
-                  environmentId,
-                  input: {
-                    cacheKey: scope,
-                    request: {
-                      cwd,
-                      ...(baseRef ? { baseRef } : {}),
-                      ignoreWhitespace,
-                      file: {
-                        path: file.path,
-                        previousPath: file.previousPath,
-                        sourceKind: source.kind,
-                      },
-                    },
-                  },
-                }),
-              };
-            }),
-    [environmentId, cwd, source, files, indices, scope, baseRef, ignoreWhitespace],
-  );
+  const [requested, setRequested] = useState({ scope, indices: DEFAULT_INDICES });
+  const { files, queries } = useReviewFileQueries({
+    environmentId,
+    cwd,
+    source,
+    baseRef,
+    ignoreWhitespace,
+    scope,
+    requested,
+  });
   const previousPreview = useRef({ scope, revision, queries: [] as typeof queries });
   useEffect(() => {
     const previous = previousPreview.current;
@@ -100,37 +65,7 @@ export function useReviewFilePatches({
       if (changed || cached) registry.refresh(query);
     }
   }, [scope, revision, queries, registry]);
-  // Derived atoms parse each query result once, even when another file finishes loading.
-  const parsedQuery = useMemo(
-    () =>
-      Atom.family((query: ReturnType<typeof reviewEnvironment.diffFilePatch>) =>
-        Atom.map(query, (result) =>
-          AsyncResult.map(result, (source) => {
-            let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
-              compactPartialHunkOffsets: true,
-            });
-            if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
-              const stat = source.files[0]!;
-              const file = { ...patch.files[0]!, name: stat.path };
-              if (stat.previousPath !== null) file.prevName = stat.previousPath;
-              else delete file.prevName;
-              patch = { ...patch, files: [file] };
-            }
-            return { source, patch };
-          }),
-        ),
-      ),
-    [theme],
-  );
-  const patches = useAtomValue(
-    useMemo(
-      () =>
-        Atom.make(
-          (get) => new Map(queries.map(({ index, query }) => [index, get(parsedQuery(query))])),
-        ),
-      [queries, parsedQuery],
-    ),
-  );
+  const patches = useAtomValue(usePatchesAtom(queries, theme));
   const pendingIndex = files.findIndex((_, index) => {
     const patch = patches.get(index);
     return !patch || patch._tag === "Initial";
@@ -142,94 +77,69 @@ export function useReviewFilePatches({
     : preview?.kind === "files"
       ? preview.files.length
       : 0;
-  const requestFiles = useCallback(
-    (indices: number[]) =>
-      setRequested((current) => {
-        const previous = current.scope === scope ? current.indices : [0, 1, 2, 3];
-        const added = indices.filter((index) => !previous.includes(index));
-        return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
-      }),
-    [scope],
+  const requestFiles = (indices: number[]) =>
+    setRequested((current) => {
+      const previous = current.scope === scope ? current.indices : [0, 1, 2, 3];
+      const added = indices.filter((index) => !previous.includes(index));
+      return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
+    });
+  const loadNextFiles = () =>
+    requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
+  const requestFile = (index: number) => requestFiles([index]);
+  const retry = useStableCallback((path: string) => {
+    const query = queries.find(({ index }) => files[index]?.path === path)?.query;
+    if (query) registry.refresh(query);
+  });
+  const renderableFiles = source
+    ? files.map((file, index): FileDiffMetadata => {
+        const result = patches.get(index);
+        if (result?._tag === "Success" && result.value.patch?.kind === "files") {
+          const loaded = result.value.patch.files.find(
+            (candidate) => resolveFileDiffPath(candidate) === file.path,
+          );
+          if (loaded) return loaded;
+        }
+        return {
+          name: file.path,
+          ...(file.previousPath ? { prevName: file.previousPath } : {}),
+          type: file.previousPath ? "rename-changed" : "change",
+          hunks: [],
+          additionLines: [],
+          deletionLines: [],
+          splitLineCount: 0,
+          unifiedLineCount: 0,
+          isPartial: true,
+          cacheKey: `${scope}:${file.path}:pending`,
+        };
+      })
+    : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
+        filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
+      );
+  const fileStates = new Map(
+    files.map((file, index) => {
+      const patch = patches.get(index);
+      return [
+        file.path,
+        {
+          error:
+            patch?._tag === "Failure" ||
+            (patch?._tag === "Success" &&
+              (patch.value.patch?.kind !== "files" ||
+                !patch.value.patch.files.some(
+                  (candidate) => resolveFileDiffPath(candidate) === file.path,
+                ))),
+          truncated: patch?._tag === "Success" && patch.value.source.truncated,
+        },
+      ] as const;
+    }),
   );
-  const loadNextFiles = useCallback(
-    () => requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index)),
-    [requestFiles, settledFileCount],
-  );
-  const requestFile = useCallback((index: number) => requestFiles([index]), [requestFiles]);
-  const retryInputsRef = useRef({ queries, files });
-  useLayoutEffect(() => {
-    retryInputsRef.current = { queries, files };
-  }, [queries, files]);
-  const retry = useCallback(
-    (path: string) => {
-      const { queries, files } = retryInputsRef.current;
-      const query = queries.find(({ index }) => files[index]?.path === path)?.query;
-      if (query) registry.refresh(query);
-    },
-    [registry],
-  );
-  const renderableFiles = useMemo(
-    () =>
-      source
-        ? files.map((file, index): FileDiffMetadata => {
-            const result = patches.get(index);
-            if (result?._tag === "Success" && result.value.patch?.kind === "files") {
-              const loaded = result.value.patch.files.find(
-                (candidate) => resolveFileDiffPath(candidate) === file.path,
-              );
-              if (loaded) return loaded;
-            }
-            return {
-              name: file.path,
-              ...(file.previousPath ? { prevName: file.previousPath } : {}),
-              type: file.previousPath ? "rename-changed" : "change",
-              hunks: [],
-              additionLines: [],
-              deletionLines: [],
-              splitLineCount: 0,
-              unifiedLineCount: 0,
-              isPartial: true,
-              cacheKey: `${scope}:${file.path}:pending`,
-            };
-          })
-        : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
-            filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
-          ),
-    [source, files, patches, scope, preview],
-  );
-  const fileStates = useMemo(
-    () =>
-      new Map(
-        files.map((file, index) => {
-          const patch = patches.get(index);
-          return [
-            file.path,
-            {
-              error:
-                patch?._tag === "Failure" ||
-                (patch?._tag === "Success" &&
-                  (patch.value.patch?.kind !== "files" ||
-                    !patch.value.patch.files.some(
-                      (candidate) => resolveFileDiffPath(candidate) === file.path,
-                    ))),
-              truncated: patch?._tag === "Success" && patch.value.source.truncated,
-            },
-          ] as const;
-        }),
-      ),
-    [files, patches],
-  );
-  const readyFilePaths = useMemo(
-    () =>
-      new Set(
-        files
-          .filter((_, index) => {
-            const patch = patches.get(index);
-            return patch && patch._tag !== "Initial";
-          })
-          .map((file) => file.path),
-      ),
-    [files, patches],
+  const readyFilePaths = new Set(
+    files
+      .filter((_, index) => {
+        const patch = patches.get(index);
+        return patch && patch._tag !== "Initial";
+      })
+      .map((file) => file.path),
   );
   return {
     scope,
@@ -242,4 +152,87 @@ export function useReviewFilePatches({
     settledFileCount,
     loadNextFiles,
   };
+}
+
+// The caller runs more hooks after these values, so the compiler would rebuild them
+// every render there; the refresh effect and the patches atom key on their identity.
+function useReviewFileQueries({
+  environmentId,
+  cwd,
+  source,
+  baseRef,
+  ignoreWhitespace,
+  scope,
+  requested,
+}: {
+  environmentId: EnvironmentId | undefined;
+  cwd: string | undefined;
+  source: ReviewDiffPreviewSource | null;
+  baseRef: string | null;
+  ignoreWhitespace: boolean;
+  scope: string;
+  requested: { scope: string; indices: number[] };
+}) {
+  "use memo";
+  const indices = requested.scope === scope ? requested.indices : DEFAULT_INDICES;
+  const files = source?.files?.toSorted((a, b) => filePathCollator.compare(a.path, b.path)) ?? [];
+  const queries =
+    !environmentId || !cwd || !source
+      ? []
+      : indices
+          .filter((index) => index < files.length)
+          .map((index) => {
+            const file = files[index]!;
+            return {
+              index,
+              query: reviewEnvironment.diffFilePatch({
+                environmentId,
+                input: {
+                  cacheKey: scope,
+                  request: {
+                    cwd,
+                    ...(baseRef ? { baseRef } : {}),
+                    ignoreWhitespace,
+                    file: {
+                      path: file.path,
+                      previousPath: file.previousPath,
+                      sourceKind: source.kind,
+                    },
+                  },
+                },
+              }),
+            };
+          });
+  return { files, queries };
+}
+
+function usePatchesAtom(
+  queries: ReadonlyArray<{
+    index: number;
+    query: ReturnType<typeof reviewEnvironment.diffFilePatch>;
+  }>,
+  theme: "light" | "dark",
+) {
+  "use memo";
+  // Derived atoms parse each query result once, even when another file finishes loading.
+  const parsedQuery = Atom.family((query: ReturnType<typeof reviewEnvironment.diffFilePatch>) =>
+    Atom.map(query, (result) =>
+      AsyncResult.map(result, (source) => {
+        let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
+          compactPartialHunkOffsets: true,
+        });
+        if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
+          const stat = source.files[0]!;
+          const file = { ...patch.files[0]!, name: stat.path };
+          if (stat.previousPath !== null) file.prevName = stat.previousPath;
+          else delete file.prevName;
+          patch = { ...patch, files: [file] };
+        }
+        return { source, patch };
+      }),
+    ),
+  );
+  return Atom.make(
+    (get) => new Map(queries.map(({ index, query }) => [index, get(parsedQuery(query))])),
+  );
 }
