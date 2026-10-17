@@ -298,6 +298,19 @@ interface ThreadState {
       readonly text: string;
     }
   >;
+  /** Background shell jobs still running, by OpenCode's shell id. */
+  readonly shells: Set<string>;
+  /**
+   * Shell jobs whose end arrived before their launch result, by shell id.
+   * OpenCode reports a short job's end without waiting for its launch to return.
+   */
+  readonly endedShells: Set<string>;
+  /**
+   * Shell job ends OpenCode queued for this session and has not delivered
+   * yet, by inbox id. Like `reports`, each keeps the session until OpenCode
+   * delivers or cancels it; a follow-up execution starts before it delivers.
+   */
+  readonly queuedShells: Set<string>;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
   mcp:
@@ -766,6 +779,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       subagent,
       wakes: [],
       reports: new Map(),
+      shells: new Set(),
+      endedShells: new Set(),
+      queuedShells: new Set(),
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
       mcp: undefined,
@@ -816,6 +832,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const owesWork = (state: ThreadState) =>
       state.wakes.length > 0 ||
       state.reports.size > 0 ||
+      state.shells.size > 0 ||
+      state.queuedShells.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
       [...state.calls.values()].some((call) => call.background);
 
@@ -2189,6 +2207,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
+    /**
+     * Counts a session's background shell jobs from its live events, so a held
+     * execution's events count too even when no turn replays them. A shell
+     * returns at launch; OpenCode queues its end for the session that ran it.
+     */
+    const trackShells = (state: ThreadState, event: OpenCode2Client.OpenCode2StreamEvent) => {
+      if (event.type === "session.tool.success") {
+        const shellId = stringField(event.data.metadata, "shellID");
+        if (event.data.metadata?.["status"] !== "running" || shellId === undefined) return;
+        if (!state.endedShells.delete(shellId)) state.shells.add(shellId);
+      } else if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
+        const metadata = event.data.item.payload.metadata;
+        if (stringField(metadata, "source") !== "shell") return;
+        const shellId = stringField(metadata, "shellID");
+        if (shellId !== undefined && !state.shells.delete(shellId)) state.endedShells.add(shellId);
+        // Its end keeps the session until delivered, even for a job not tracked
+        // (a reconnect forgets running jobs).
+        state.queuedShells.add(event.data.inboxID);
+      } else if (
+        event.type === "session.inbox.delivered" ||
+        event.type === "session.inbox.cancelled"
+      ) {
+        state.queuedShells.delete(event.data.inboxID);
+      }
+    };
+
+    /** Events of a session not tracked yet when they arrived, counted when a replay reaches them. */
+    const untracked = new WeakSet<OpenCode2Client.OpenCode2StreamEvent>();
+
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
@@ -2222,6 +2269,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
           busy.delete(sessionId);
         }
+        const tracked = threads.get(sessionId);
+        if (tracked !== undefined) trackShells(tracked, event);
+        else untracked.add(event);
       }
       if (event.type === "session.created" && event.data.parentID !== undefined) {
         const strayCaller = strays.get(event.data.parentID);
@@ -2392,6 +2442,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         for (const call of runningCalls(state)) yield* settleCall(call, "failed");
         for (const wake of state.wakes.splice(0)) wake.dropped = true;
         state.reports.clear();
+        state.shells.clear();
+        state.endedShells.clear();
+        state.queuedShells.clear();
       }
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
@@ -2514,6 +2567,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         for (const session of sessionsOf(state)) {
           discardWakes(session, session.wakes.splice(0));
           session.reports.clear();
+          session.shells.clear();
+          session.endedShells.clear();
+          session.queuedShells.clear();
         }
       }
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.
@@ -3049,7 +3105,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
-      for (const event of wake.events) yield* route(event, sessionOfEvent(event), true);
+      for (const event of wake.events) {
+        const sessionId = sessionOfEvent(event);
+        // A subagent the held execution started is tracked once its replay names it.
+        const named = untracked.has(event) ? threads.get(sessionId ?? "") : undefined;
+        if (named !== undefined) trackShells(named, event);
+        yield* route(event, sessionId, true);
+      }
     });
 
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {

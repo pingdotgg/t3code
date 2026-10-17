@@ -934,6 +934,362 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  const SHELL_COMMAND = "sleep 2400; echo finished";
+  /** A tool's result (`session.tool.success` is at version 2). */
+  const toolSuccess = (id: string, data: Record<string, unknown>): ProviderReplayEntry => ({
+    type: "emit_inbound",
+    frame: {
+      type: "sdk.event",
+      event: {
+        id: `evt_toolsuccess_${id}`,
+        created: 1,
+        type: "session.tool.success",
+        data,
+        durable: { aggregateID: SESSION, seq: 1, version: 2 },
+      },
+    },
+  });
+  /** A `shell` call with `background: true`: OpenCode returns at launch with the job's shell id. */
+  const shellLaunch = (call: string, shellID: string): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: call };
+    return [
+      event("session.tool.input.started", { ...tool, name: "shell" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "shell",
+        input: { command: SHELL_COMMAND, background: true },
+        executed: false,
+      }),
+      toolSuccess(call, {
+        ...tool,
+        content: [
+          { type: "text", text: `Command moved to the background (shell ID: ${shellID}).` },
+        ],
+        metadata: { status: "running", truncated: false, shellID },
+        executed: false,
+      }),
+    ];
+  };
+  /** A turn whose model started background shell jobs and ended while they run. */
+  const shellTurn = (...shellIDs: ReadonlyArray<string>): ReadonlyArray<ProviderReplayEntry> => [
+    out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+    promptAccepted,
+    event("session.execution.started", { sessionID: SESSION }),
+    ...shellIDs.flatMap((shellID) => shellLaunch(`call-${shellID}`, shellID)),
+    event("session.execution.succeeded", { sessionID: SESSION }),
+  ];
+  /** A background shell job's end, as OpenCode queues it for the session that started it. */
+  const shellEnded = (inboxID: string, shellID: string) =>
+    event("session.inbox.enqueued", {
+      inboxID,
+      sessionID: SESSION,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: `<shell id="${shellID}" state="completed" command="${SHELL_COMMAND}">\nfinished\n</shell>`,
+          description: SHELL_COMMAND,
+          metadata: {
+            source: "shell",
+            shellID,
+            jobID: shellID,
+            state: "completed",
+            truncated: false,
+            exit: 0,
+          },
+        },
+        delivery: "steer",
+      },
+    });
+  /** A model change the thread reports: once it is seen, every event before it was read. */
+  const readMarker = (name: string) =>
+    event("session.model.selected", {
+      sessionID: SESSION,
+      model: { id: name, providerID: "opencode" },
+    });
+  /** The single reader of the runtime's events: counts ended turns and reported models. */
+  const watchShells = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
+    Effect.gen(function* () {
+      const seen = { ended: 0, models: new Set<string>() };
+      let wake = yield* Deferred.make<void>();
+      const reader = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (event.type === "turn.terminal") seen.ended += 1;
+            const model =
+              event.type === "provider_thread.updated"
+                ? event.providerThread.nativeMetadata?.modelSelection?.model
+                : undefined;
+            if (model !== undefined) seen.models.add(model);
+            yield* Deferred.succeed(wake, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const until = (check: () => boolean): Effect.Effect<void> =>
+        Effect.suspend(() => {
+          if (check()) return Effect.void;
+          return Effect.gen(function* () {
+            wake = yield* Deferred.make<void>();
+            if (check()) return;
+            yield* Deferred.await(wake);
+            yield* until(check);
+          });
+        });
+      return { seen, until, reader };
+    });
+
+  it.effect("keeps a running background shell as pending work after its turn ends", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(shellTurn("sh_1"));
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.seen.ended === 1);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the background shells still running when another one ends", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...shellTurn("sh_1", "sh_2"),
+        shellEnded("msg_shell_1", "sh_1"),
+        // Without its queued end, only the shell still running can hold the session.
+        event("session.inbox.cancelled", { sessionID: SESSION, inboxID: "msg_shell_1" }),
+        readMarker("after-end"),
+      ]);
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.seen.models.has("opencode/after-end"));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a background shell's queued end as pending work until its follow-up runs", () =>
+    Effect.gen(function* () {
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const gate = makeProviderReplayGate(["wake"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...shellTurn("sh_1"),
+          shellEnded("msg_shell", "sh_1"),
+          // Read before OpenCode starts the follow-up execution for the end.
+          readMarker("queued"),
+          event("session.execution.started", { sessionID: SESSION }, "wake"),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell" }),
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_followup",
+            ordinal: 0,
+            text: "The command finished.",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.seen.models.has("opencode/queued"));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      gate.release("wake");
+      // The follow-up started: it holds the session, and the delivery, until its continuation runs.
+      const offer = yield* Deferred.await(offered);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      yield* runtime.startTurn(continuationTurn(thread, offer));
+      yield* watch.until(() => watch.seen.ended === 2);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves nothing pending once a background shell's queued end is cancelled", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...shellTurn("sh_1"),
+        shellEnded("msg_shell", "sh_1"),
+        event("session.inbox.cancelled", { sessionID: SESSION, inboxID: "msg_shell" }),
+        readMarker("cancelled"),
+      ]);
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.seen.models.has("opencode/cancelled"));
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not keep a background shell whose end arrived before its launch result", () =>
+    Effect.gen(function* () {
+      const [inputStarted, called, launched] = shellLaunch("call-sh_1", "sh_1");
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        inputStarted!,
+        called!,
+        // A short job ends before OpenCode publishes its launch result.
+        shellEnded("msg_shell", "sh_1"),
+        launched!,
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell" }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.seen.ended === 1);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves nothing pending once a skipped follow-up held background shell ends", () =>
+    Effect.gen(function* () {
+      let offers = 0;
+      const second =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const { runtime, thread } = yield* resumed([
+        ...shellTurn("sh_1", "sh_2"),
+        shellEnded("msg_shell_1", "sh_1"),
+        // A follow-up whose continuation never runs: its held events are dropped.
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell_1" }),
+        shellEnded("msg_shell_2", "sh_2"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell_2" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_followup",
+          ordinal: 0,
+          text: "Both commands finished.",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.suspend(() =>
+              ++offers === 2 ? Deferred.succeed(second, request).pipe(Effect.asVoid) : Effect.void,
+            ),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* runtime.startTurn(continuationTurn(thread, yield* Deferred.await(second)));
+      yield* watch.until(() => watch.seen.ended === 2);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a background shell a subagent of a held follow-up started", () =>
+    Effect.gen(function* () {
+      const SUBAGENT = "ses_shellsub00000000000000000";
+      const spawn = { sessionID: SESSION, assistantMessageID: "msg_followup", id: "call-spawn" };
+      const child = { sessionID: SUBAGENT, assistantMessageID: "msg_child", id: "call-child" };
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const { runtime, thread } = yield* resumed([
+        ...shellTurn("sh_1"),
+        shellEnded("msg_shell", "sh_1"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell" }),
+        // The follow-up runs a subagent, named only by the held events, which
+        // starts a background shell and returns.
+        event("session.tool.input.started", { ...spawn, name: "subagent" }),
+        event("session.tool.called", {
+          ...spawn,
+          name: "subagent",
+          input: { description: "Sleep", prompt: "sleep" },
+          executed: false,
+        }),
+        event("session.created", childCreated(SUBAGENT)),
+        event("session.tool.progress", {
+          ...spawn,
+          metadata: { sessionID: SUBAGENT, status: "running" },
+        }),
+        event("session.execution.started", { sessionID: SUBAGENT }),
+        event("session.tool.input.started", { ...child, name: "shell" }),
+        event("session.tool.called", {
+          ...child,
+          name: "shell",
+          input: { command: SHELL_COMMAND, background: true },
+          executed: false,
+        }),
+        toolSuccess("child", {
+          ...child,
+          content: [{ type: "text", text: "Command moved to the background (shell ID: sh_2)." }],
+          metadata: { status: "running", truncated: false, shellID: "sh_2" },
+          executed: false,
+        }),
+        event("session.execution.succeeded", { sessionID: SUBAGENT }),
+        toolSuccess("spawn", {
+          ...spawn,
+          content: [{ type: "text", text: `<subagent sessionID="${SUBAGENT}" state="completed">` }],
+          metadata: { sessionID: SUBAGENT, status: "completed", truncated: false },
+          executed: false,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        // Read after the follow-up ended, so all of it was held.
+        readMarker("followed-up"),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(withLineage(thread));
+      const offer = yield* Deferred.await(offered);
+      yield* watch.until(() => watch.seen.models.has("opencode/followed-up"));
+      yield* runtime.startTurn(continuationTurn(thread, offer));
+      yield* watch.until(() => watch.seen.ended === 2);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("leaves no background shell pending once reconnecting has given up", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["drop"]);
+      const disconnected = yield* Deferred.make<void>();
+      const logger = Logger.make(({ message }) => {
+        if (JSON.stringify(message).includes("Lost the OpenCode event stream; reconnecting.")) {
+          Deferred.doneUnsafe(disconnected, Effect.void);
+        }
+      });
+      const { runtime, thread } = yield* resumed(
+        [
+          ...shellTurn("sh_1"),
+          // The server goes away while the shell runs, and never comes back.
+          event("session.usage.updated", { sessionID: SESSION }, "drop"),
+          { type: "runtime_exit", status: "success" } as const,
+        ],
+        { replayGate: gate },
+      ).pipe(Effect.provide(Logger.layer([logger])));
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.seen.ended === 1);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      gate.release("drop");
+      // The replay gate resumes a Promise; wait for the stream to close before advancing retries.
+      yield* Deferred.await(disconnected);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(watch.reader);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   const returnedRunning = (id: string): ProviderReplayEntry => ({
     type: "emit_inbound",
     frame: {
