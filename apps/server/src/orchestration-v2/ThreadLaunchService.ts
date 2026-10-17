@@ -455,6 +455,21 @@ const make = Effect.gen(function* () {
             },
           )
           .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        if (
+          !(yield* git
+            .validateWorkspace(project.workspaceRoot, worktree.worktree.path)
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
+        ) {
+          // An unverified path must not be removed as a failed workspace.
+          createdWorktreePath = null;
+          return yield* mapError(
+            input,
+            "provision-worktree",
+            threadId,
+          )(
+            "Jujutsu isolation requires a separate native workspace; no workspace was provisioned.",
+          );
+        }
         worktreePath = worktree.worktree.path;
         branch = worktree.worktree.refName;
         createdWorktreePath = worktreePath;

@@ -393,6 +393,11 @@ const make = Effect.gen(function* () {
         if (modified !== null && modified.getTime() > now - ORPHAN_WORKTREE_GRACE_MS) return;
         const gitPath = path.join(worktreePath, ".git");
         const linked = (yield* fs.exists(gitPath)) && (yield* fs.stat(gitPath)).type === "File";
+        const jjPath = path.join(worktreePath, ".jj");
+        const jjRepository = path.join(jjPath, "repo");
+        const hasJjRepository = yield* fs.exists(jjRepository);
+        const jjWorkspace = hasJjRepository && (yield* fs.stat(jjRepository)).type === "File";
+        if (hasJjRepository && !jjWorkspace) return;
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
         if (!orphanSizes.has(key) && (firstMeasurement || remaining > 0)) {
@@ -406,9 +411,10 @@ const make = Effect.gen(function* () {
         entries.push({
           kind: "worktree",
           outcome: "kept",
-          reason: linked
-            ? "No thread uses this worktree"
-            : "No thread uses this folder, and it isn't a git worktree",
+          reason:
+            linked || jjWorkspace
+              ? "No thread uses this worktree"
+              : "No thread uses this folder, and it isn't a git worktree",
           path: worktreePath,
           threadId: null,
           threadTitle: null,
@@ -423,6 +429,10 @@ const make = Effect.gen(function* () {
       for (const projectDirectory of yield* directories(root, root)) {
         yield* Effect.gen(function* () {
           if (referenced.has(pathKey(projectDirectory))) return;
+          if (yield* fs.exists(path.join(projectDirectory, ".jj"))) {
+            yield* report(projectDirectory);
+            return;
+          }
           const gitPath = path.join(projectDirectory, ".git");
           if (yield* fs.exists(gitPath)) {
             if ((yield* fs.stat(gitPath)).type === "File") yield* report(projectDirectory);
@@ -641,6 +651,8 @@ const make = Effect.gen(function* () {
           return keep("outside the managed worktree folder");
         if (yield* containsProjectRoot(worktreePath, [project, ...snapshot.projects]))
           return keep("contains a project checkout");
+        // Git cleanup cannot prove that jj changes are disposable.
+        if (yield* fs.exists(path.join(worktreePath, ".jj"))) return keep("Jujutsu workspace");
         if ((yield* fs.stat(path.join(worktreePath, ".git"))).type !== "File")
           return keep("not a linked worktree");
         if (yield* branchChanged(worktreePath, thread.branch))

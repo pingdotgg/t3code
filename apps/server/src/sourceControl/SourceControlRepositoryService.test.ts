@@ -17,6 +17,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketSourceControlProvider from "@t3tools/source-control-bitbucket/server/BitbucketSourceControlProvider";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
@@ -64,8 +65,14 @@ function layer(input: {
   readonly provider?: SourceControlProvider.SourceControlProvider["Service"];
   readonly git?: Partial<GitVcsDriver.GitVcsDriver["Service"]>;
   readonly fileSystem?: FileSystem.FileSystem;
+  readonly detect?: VcsDriverRegistry.VcsDriverRegistry["Service"]["detect"];
 }) {
   const layerService = SourceControlRepositoryService.layer.pipe(
+    Layer.provide(
+      Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+        detect: input.detect ?? (() => Effect.succeed(null)),
+      }),
+    ),
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         resolveLink: () => undefined,
@@ -590,6 +597,56 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
                 setUpstream: true,
               };
             }),
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("refuses Jujutsu publishing before creating a hosting repository or running Git", () => {
+  const calls: string[] = [];
+  const provider = makeProvider({
+    createRepository: () =>
+      Effect.sync(() => {
+        calls.push("createRepository");
+        return CLONE_URLS;
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const failure = yield* service
+      .publishRepository({
+        cwd: "/workspace",
+        provider: SourceControlProviderKind.make("github"),
+        repository: "octocat/t3code",
+        visibility: "private",
+      })
+      .pipe(Effect.flip);
+    assert.equal(failure.operation, "publishRepository");
+    assert.include(failure.detail, "Jujutsu");
+    assert.deepStrictEqual(calls, []);
+  }).pipe(
+    Effect.provide(
+      layer({
+        provider,
+        detect: () =>
+          Effect.succeed({ kind: "jj" } as unknown as VcsDriverRegistry.VcsDriverHandle),
+        git: {
+          execute: () =>
+            Effect.sync(() => {
+              calls.push("execute");
+              return processOutput();
+            }),
+          ensureRemote: () =>
+            Effect.sync(() => {
+              calls.push("ensureRemote");
+              return "origin";
+            }),
+          pushCurrentBranch: () =>
+            Effect.sync(() => calls.push("pushCurrentBranch")).pipe(
+              Effect.andThen(Effect.die("Jujutsu publishing must not reach Git")),
+            ),
         },
       }),
     ),
