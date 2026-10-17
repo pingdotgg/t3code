@@ -1922,6 +1922,17 @@ code {
   margin: 0.65rem 0;
 }
 
+/* Block spacing separates blocks, not the draft from the composer edge. A
+   leading list or quote would otherwise push the first line down, and the
+   one-line resting composer clips it. */
+.composer-tiptap > :first-child {
+  margin-top: 0;
+}
+
+.composer-tiptap > :last-child {
+  margin-bottom: 0;
+}
+
 /* A heading at the top of a draft should not push the first line down. */
 .composer-tiptap :is(h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
