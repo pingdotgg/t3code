@@ -3933,27 +3933,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { concurrency: "unbounded" },
       );
 
-      const localTrackingBranch = remoteExists
-        ? yield* executeGit(
-            "GitVcsDriver.switchRef.localTrackingBranch",
-            input.cwd,
-            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(
-            Effect.map((result) =>
-              result.exitCode === 0
-                ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
-                : null,
-            ),
-          )
-        : null;
+      const localTrackingBranch =
+        remoteExists && !localInputExists
+          ? yield* executeGit(
+              "GitVcsDriver.switchRef.localTrackingBranch",
+              input.cwd,
+              ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
+              {
+                timeoutMs: 5_000,
+                allowNonZeroExit: true,
+              },
+            ).pipe(
+              Effect.map((result) =>
+                result.exitCode === 0
+                  ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
+                  : null,
+              ),
+            )
+          : null;
 
       const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
       const localTrackedBranchTargetExists =
-        remoteExists && localTrackedBranchCandidate
+        remoteExists && !localInputExists && !localTrackingBranch && localTrackedBranchCandidate
           ? yield* executeGit(
               "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
               input.cwd,
