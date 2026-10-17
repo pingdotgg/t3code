@@ -1777,7 +1777,9 @@ function useComposerProviderSelection(
     readonly activeProjectId: ProjectId | null;
   },
 ) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
+  // Kept: `providerInstanceEntries` is read by plain functions on both sides of
+  // `useEffectiveComposerModelState` and `useProviderWorkspaceSnapshotRefresh` (the
+  // `hasProviderSetup` lookup before, the model picker's `.find` after), so inline it loses its cache.
   "use memo";
   const { providerStatuses, settings, activeProjectId, ...selection } = input;
   const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = sortProviderInstanceEntries(
@@ -1793,28 +1795,6 @@ function useComposerProviderSelection(
   };
 }
 
-function useModelOptionsByInstance(
-  settings: UnifiedSettings,
-  entries: ReadonlyArray<ProviderInstanceEntry>,
-  selectedInstanceId: ProviderInstanceId,
-  selectedModel: string | null,
-): ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>> {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
-  "use memo";
-  const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
-  for (const entry of entries) {
-    out.set(
-      entry.instanceId,
-      getAppModelOptionsForInstance(
-        settings,
-        entry,
-        entry.instanceId === selectedInstanceId ? selectedModel : null,
-      ),
-    );
-  }
-  return out;
-}
-
 /** Splits the draft's images into pending SnapShots and standalone images. */
 function useComposerImageGroups(
   pendingSnapShotAnimations: ReturnType<typeof getPendingSnapShotAnimations>,
@@ -1822,7 +1802,9 @@ function useComposerImageGroups(
   composerImages: ReadonlyArray<ComposerImageAttachment>,
   composerPreviewAnnotations: ReadonlyArray<{ readonly id: string }>,
 ) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
+  // Kept: these arrays go through plain functions here and again ~2,700 lines later
+  // (`.some`, `.filter`, `.slice` in the resting layout), past dozens of hook calls. Inline, the
+  // compiler gives them no cache scope, and moving every later use above those hooks is not possible.
   "use memo";
   const pendingSnapShotIds = pendingSnapShotAnimationIdsForTarget(
     pendingSnapShotAnimations,
@@ -1845,7 +1827,9 @@ const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 function useComposerProviderState(input: Parameters<typeof getComposerProviderState>[0]) {
-  // Calls no hooks, so the compiler needs the directive to memoize it.
+  // Kept: inline, `composerProviderState`, `selectedModelSelection` and `providerInputInputs` lose
+  // their cache scope. The inputs come from `useEffectiveComposerModelState`, and the results are
+  // read past later hooks such as `useProviderWorkspaceSnapshotRefresh`.
   "use memo";
   return getComposerProviderState(input);
 }
@@ -2345,12 +2329,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModelOptionsForDispatch,
   );
   const selectedModelForPicker = selectedModel;
-  const modelOptionsByInstance = useModelOptionsByInstance(
-    settings,
-    providerInstanceEntries,
-    selectedInstanceId,
-    selectedModelForPicker,
-  );
+  const modelOptionsByInstance = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
+  for (const entry of providerInstanceEntries) {
+    modelOptionsByInstance.set(
+      entry.instanceId,
+      getAppModelOptionsForInstance(
+        settings,
+        entry,
+        entry.instanceId === selectedInstanceId ? selectedModelForPicker : null,
+      ),
+    );
+  }
+
   const selectedModelForPickerWithCustomFallback = (() => {
     const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
