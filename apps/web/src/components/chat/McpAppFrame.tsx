@@ -60,18 +60,6 @@ function saveBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-// The host gets the tool call pushed by an effect keyed on it, so it stays
-// stable across the command hooks that follow.
-function useToolCall(
-  storedItem: NonNullable<ReturnType<typeof useTurnItemDetail>["data"]>["item"] | undefined,
-) {
-  "use memo";
-  if (storedItem?.type !== "dynamic_tool") return undefined;
-  const output = storedItem.output as { readonly result?: unknown } | undefined;
-  const result = output?.result as McpAppCallToolResult | undefined;
-  return { arguments: storedItem.input, result };
-}
-
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -142,7 +130,16 @@ export function McpAppFrame(props: {
     revision: props.revision,
   });
   const storedItem = detail.data?.item;
-  const toolCall = useToolCall(storedItem);
+  // The host gets the tool call pushed by an effect keyed on it, so it must stay cached.
+  const toolCall =
+    storedItem?.type === "dynamic_tool"
+      ? {
+          arguments: storedItem.input,
+          result: (storedItem.output as { readonly result?: unknown } | undefined)?.result as
+            | McpAppCallToolResult
+            | undefined,
+        }
+      : undefined;
 
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfo = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
