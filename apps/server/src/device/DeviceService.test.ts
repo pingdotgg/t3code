@@ -12,6 +12,7 @@ import {
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { SshCommandError } from "@t3tools/ssh/errors";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
@@ -691,6 +692,84 @@ it.effect("host retry exposes actionable failure without internal IDs or diagnos
       status: "failed",
       detail: "Could not connect to this host over SSH.",
     });
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  {
+    name: "missing Node among private diagnostic lines",
+    exitCode: 1,
+    stderr:
+      "private diagnostics\r\nNode is missing from the non-interactive SSH PATH\r\nprivate diagnostics",
+    expected:
+      "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+  },
+  {
+    name: "another remote command failure",
+    exitCode: 2,
+    stderr: "private diagnostics",
+    expected: "Connected over SSH, but the device host check failed (exit code 2).",
+  },
+  {
+    name: "an unrecognized exit-one diagnostic",
+    exitCode: 1,
+    stderr: "private diagnostics: Node is missing from the non-interactive SSH PATH",
+    expected: "Connected over SSH, but the device host check failed (exit code 1).",
+  },
+  {
+    name: "a connection failure",
+    exitCode: 255,
+    stderr: "Node is missing from the non-interactive SSH PATH",
+    expected: "Could not connect to this host over SSH.",
+  },
+  {
+    name: "a command that could not start",
+    exitCode: null,
+    stderr: "private diagnostics",
+    expected: "Could not connect to this host over SSH.",
+  },
+  {
+    name: "an untyped offline cause",
+    exitCode: undefined,
+    stderr: "private diagnostics",
+    expected: "Could not connect to this host over SSH.",
+  },
+])("reports $name through manual and agent host readiness", ({ exitCode, stderr, expected }) =>
+  Effect.gen(function* () {
+    const failure = new DeviceHost.DeviceHostError({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      step: "probe",
+      cause:
+        exitCode === undefined
+          ? "offline"
+          : new SshCommandError({
+              command: ["ssh", "private arguments"],
+              exitCode,
+              stderr,
+              stdout: "private output",
+              message: "private diagnostics",
+            }),
+    });
+    const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
+    yield* Ref.update(settings, (current) => ({
+      ...current,
+      enableDeviceSupport: true,
+      enableAgentDeviceAccess: true,
+    }));
+    for (const readiness of [service.readiness(), service.agentReadinessIfSupported()]) {
+      const error = yield* readiness.pipe(Effect.flip);
+      expect(error).toMatchObject({ reason: expected, cause: failure });
+      expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+        status: "failed",
+        detail: expected,
+      });
+    }
+    for (const state of [yield* service.list, yield* service.retryHost(LOCAL_DEVICE_HOST_ID)]) {
+      expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+        status: "failed",
+        detail: expected,
+      });
+    }
   }).pipe(Effect.scoped),
 );
 
