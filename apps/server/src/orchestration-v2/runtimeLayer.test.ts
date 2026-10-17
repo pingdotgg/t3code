@@ -5725,6 +5725,146 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       }
     }),
   );
+
+  it.effect.each(["snoozed", "settled"] as const)(
+    "holds background wakes behind a usage limit on a %s thread",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`recovery:held-wake:${scenario}`);
+        const projectId = ProjectId.make(`recovery:project:held-wake:${scenario}`);
+        yield* seedProject({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`recovery:create:held-wake:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:message:held-wake:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`recovery:message:held-wake:${scenario}`),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+        yield* events.write({
+          commandId: CommandId.make(`recovery:failure:held-wake:${scenario}`),
+          events: [
+            {
+              id: EventId.make(`recovery:run:held-wake:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`recovery:error:held-wake:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`recovery:error:held-wake:${scenario}`),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shellOf = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
+          snapshot.threads.find((thread) => thread.id === threadId),
+        );
+        yield* orchestrator.dispatch(
+          limitRecoveryCommand((yield* shellOf)!, true, DateTime.toEpochMillis(now), true)!,
+        );
+        if (scenario === "settled")
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make(`recovery:settle:held-wake:${scenario}`),
+            threadId,
+          });
+
+        // A subagent that died at the same limit reports back while the thread waits.
+        yield* TestClock.adjust("10 seconds");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery:wake:held-wake:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`recovery:wake:held-wake:${scenario}`),
+          text: "Agent terminated early due to an API error.",
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "failed",
+            summary: 'Subagent "Step 4" failed',
+          },
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "agent",
+          creationSource: "provider",
+        });
+        const held = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(held.runs[1]?.status, "queued");
+        if (scenario === "settled") assert.equal(held.thread.settledOverride, "settled");
+        else assert.equal(DateTime.toEpochMillis(held.thread.snoozedUntil!), Date.parse(resetAt));
+
+        yield* TestClock.adjust("1 minute");
+        const resume = limitRecoveryCommand(
+          (yield* shellOf)!,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        // Settling the thread opted out of the resume; a held wake keeps it that way.
+        if (scenario === "settled") {
+          assert.isNull(resume);
+          return;
+        }
+        assert.equal(resume?.type, "message.dispatch");
+        yield* orchestrator.dispatch(resume!);
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(resumed.runs[2]?.status, "starting");
+        assert.equal(resumed.runs[1]?.status, "queued");
+      }),
+  );
 });
 
 const queueResumeDisabledInstanceProjectId = ProjectId.make(

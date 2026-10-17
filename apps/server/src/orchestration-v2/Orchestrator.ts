@@ -520,6 +520,26 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
 }
 
 /**
+ * The usage-limited run the thread is waiting out, or null. Queued work waits
+ * behind it like it waits behind an active run, until the thread is continued.
+ */
+function limitBlockingRun(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "turnItems" | "providerSessions"
+  >,
+): OrchestrationV2Run | null {
+  const sessionError =
+    projection.providerSessions
+      .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0]?.lastError ?? null;
+  return usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError);
+}
+
+/**
  * A parent thread is "live" for wake purposes while a run is still producing
  * agent output. A run parked at "waiting" is post-terminal drain, so its agent
  * turn is over and a wake is still needed.
@@ -1279,14 +1299,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
       // The limit already stopped this thread. Starting the queue would send
       // every waiting message and drop it from the queue as each one fails.
-      const sessionError =
-        projection.providerSessions
-          .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
-          .toSorted(
-            (left, right) =>
-              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-          )[0]?.lastError ?? null;
-      if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
+      if (limitBlockingRun(projection) !== null) {
         return;
       }
       const queuedRun = nextQueuedRun(projection);
@@ -4600,7 +4613,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (run) => run.id === command.restartContinuationOfRunId,
       )?.delegatedTaskId;
 
-      if (projection.thread.settledOverride !== null) {
+      let dispatchMode = resolveMessageDispatchIntent(
+        projection,
+        command.dispatchMode,
+        command.deliveryIntent,
+      );
+      // Work that waits for the active run also waits out a usage limit, so a
+      // background wake cannot start a turn that hides the limit from recovery.
+      // It starts nothing yet, so it leaves the thread settled or snoozed.
+      const limitedRun =
+        dispatchMode.type === "queue_after_active" ? limitBlockingRun(projection) : null;
+      if (projection.thread.settledOverride !== null && limitedRun === null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
@@ -4624,7 +4647,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
-      if (projection.thread.snoozedUntil != null) {
+      if (projection.thread.snoozedUntil != null && limitedRun === null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
@@ -4682,11 +4705,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       }
       const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-      let dispatchMode = resolveMessageDispatchIntent(
-        projection,
-        command.dispatchMode,
-        command.deliveryIntent,
-      );
       if (dispatchMode.type === "steer_active") {
         const targetRunId = dispatchMode.targetRunId;
         const target = projection.runs.find((run) => run.id === targetRunId);
@@ -4899,7 +4917,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.worktreePath === null
           ? latestRun
           : undefined;
-      const queueBehindRun = activeRun ?? worktreeMissingRun;
+      const queueBehindRun = activeRun ?? worktreeMissingRun ?? limitedRun ?? undefined;
       const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
       const shouldQueue =
         queueBehindRun !== undefined &&
@@ -10827,16 +10845,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
-        const sessionError =
-          projection.providerSessions
-            .filter(
-              (session) => session.providerInstanceId === projection.thread.providerInstanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0]?.lastError ?? null;
-        if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
+        if (limitBlockingRun(projection) !== null) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
