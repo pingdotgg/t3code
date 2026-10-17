@@ -85,6 +85,8 @@ function createFileSaveSession({
       const coordinator = new FileSaveCoordinator({
         debounceMs: FILE_SAVE_DEBOUNCE_MS,
         canPersist: () => readEnvironmentScope(environmentId, AuthFilesystemWriteScope),
+        shouldRetryAfterClose: (contents) =>
+          getUnsavedProjectFileQueryData(environmentId, cwd, relativePath)?.contents === contents,
         onPendingChange: (pending) => onPendingChange(relativePath, pending),
         persist: (nextContents) =>
           writeFile({
