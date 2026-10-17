@@ -154,19 +154,20 @@ export function isModelSelectionUnavailable(
   );
 }
 
-/** Whether a new-task composer on this machine would block starting with the selection. */
+/** Whether this machine cannot start a new task with the selection, whether or not it is hidden. */
 export function isNewTaskModelSelectionBlocked(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
   projectId: ProjectId | null,
 ): boolean {
   if (!selection) return false;
-  const key = `${selection.instanceId}:${selection.model}`;
+  const provider = config?.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
   return (
     isModelSelectionUnavailable(config, selection, projectId) ||
-    buildModelOptions(config, selection, selection.instanceId, projectId).some(
-      (option) => option.key === key && option.isUnavailable === true,
-    )
+    (provider?.updateRequiredModels?.some((gated) => gated.slug === selection.model) === true &&
+      !provider.models.some((model) => model.slug === selection.model))
   );
 }
 

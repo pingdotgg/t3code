@@ -339,6 +339,14 @@ describe("mobile model options", () => {
     expect(isNewTaskModelSelectionBlocked(config, gated, null)).toBe(true);
     expect(isNewTaskModelSelectionBlocked(config, listed, null)).toBe(false);
     expect(isNewTaskModelSelectionBlocked(config, null, null)).toBe(false);
+    const hidingGated = {
+      ...config,
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerModelPreferences: { codex: { hiddenModels: [gated.model], modelOrder: [] } },
+      },
+    } as unknown as ServerConfig;
+    expect(isNewTaskModelSelectionBlocked(hidingGated, gated, null)).toBe(true);
   });
 
   describe("Antigravity selections", () => {

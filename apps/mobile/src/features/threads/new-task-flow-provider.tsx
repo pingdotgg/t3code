@@ -924,24 +924,20 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
 
   // Keeps the checkout-or-worktree choice while dropping the branch and path,
-  // which only mean something on the machine they were picked on. The branch
-  // effects below fill them in again for wherever the draft ends up.
+  // which only mean something on the machine they were picked on. A worktree
+  // gets its branch from the effects below; a checkout without one follows
+  // whatever the destination has checked out.
   const releaseWorkspaceSelectionFromMachine = useCallback(
     (draftKey: string, selection: ComposerDraftWorkspaceSelection | undefined) => {
       if (!selection) return;
+      pendingLocalBranchSyncDraftKeysRef.current.delete(draftKey);
       // A pull request draft names the PR and its head branch, which every
       // machine resolves for itself when the task is sent.
       if (selection.pullRequestReference !== undefined) {
-        pendingLocalBranchSyncDraftKeysRef.current.delete(draftKey);
         updateComposerDraftSettings(draftKey, {
           workspaceSelection: { ...selection, worktreePath: null },
         });
         return;
-      }
-      if (selection.mode === "local") {
-        pendingLocalBranchSyncDraftKeysRef.current.add(draftKey);
-      } else {
-        pendingLocalBranchSyncDraftKeysRef.current.delete(draftKey);
       }
       updateComposerDraftSettings(draftKey, {
         workspaceSelection: {
