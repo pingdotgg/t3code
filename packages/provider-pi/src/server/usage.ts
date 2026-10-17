@@ -15,7 +15,18 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { PiSettings } from "../settings.ts";
 
-const PiScanState = Schema.Struct({ sessionId: Schema.mutableKey(Schema.String) });
+const PiScanState = Schema.Struct({
+  sessionId: Schema.mutableKey(Schema.String),
+  /**
+   * Whether the session's current model is faux. Always written; optional only
+   * so states saved before faux was skipped still decode.
+   */
+  faux: Schema.mutableKey(Schema.optionalKey(Schema.Boolean)),
+});
+/** pi-ai's in-memory test provider. Its usage is scripted, never billed. */
+const FAUX_PROVIDER = "faux";
+/** Records Pi attributes to no model: tool calls and session summaries. */
+const UNATTRIBUTED_MODEL = "Tools/summaries";
 const Usage = Schema.Struct({
   input: Schema.optional(Schema.Unknown),
   output: Schema.optional(Schema.Unknown),
@@ -28,6 +39,7 @@ const Identity = { id: Schema.NonEmptyString, timestamp: Schema.String };
 const Model = { provider: Schema.NonEmptyString, model: Schema.NonEmptyString };
 const Entry = Schema.Union([
   Schema.Struct({ type: Schema.Literal("session"), id: Schema.NonEmptyString }),
+  Schema.Struct({ type: Schema.Literal("model_change"), provider: Schema.NonEmptyString }),
   Schema.Struct({
     ...Identity,
     type: Schema.Literal("message"),
@@ -56,11 +68,26 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
   const entry = decoded.value;
   if (entry.type === "session") {
     state.sessionId = entry.id;
+    state.faux = false;
+    return [];
+  }
+  // A selected model runs the summaries that follow, even before it answers.
+  if (entry.type === "model_change") {
+    state.faux = entry.provider === FAUX_PROVIDER;
+    return [];
+  }
+  const source = entry.type === "message" ? entry.message : entry;
+  if ("role" in source && source.role === "assistant") {
+    state.faux = source.provider === FAUX_PROVIDER;
+  }
+  if ("provider" in source && source.provider === FAUX_PROVIDER) return [];
+  // Summaries carry no provider but run on the session's model, so a faux
+  // session's are just as synthetic. Tool usage may come from any model.
+  if ((entry.type === "compaction" || entry.type === "branch_summary") && state.faux === true) {
     return [];
   }
   const timestampMs = parseTimestampMs(entry.timestamp);
   if (timestampMs === null) return [];
-  const source = entry.type === "message" ? entry.message : entry;
   const usage = source.usage;
   // Pi's auxiliary tool and summary records carry no model attribution. Match
   // Pi's own breakdown rather than assigning them to the conversation model.
@@ -70,7 +97,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
         ? (source.responseModel ?? source.model)
         : source.model
       : undefined;
-  const model = "provider" in source ? `${source.provider}/${rateModel}` : "Tools/summaries";
+  const model = "provider" in source ? `${source.provider}/${rateModel}` : UNATTRIBUTED_MODEL;
   const outputTokens = tokenCount(usage.output);
   const totals = {
     // Pi's input/cache counters are already disjoint.
@@ -114,7 +141,7 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     usage: true,
     message: { role: true, provider: true, model: true, responseModel: true, usage: true },
   },
-  usageMarkers: ['"usage"', '"session"'],
+  usageMarkers: ['"usage"', '"session"', '"model_change"'],
   parseLine: (line, state) => {
     let parsed: unknown;
     try {
@@ -125,7 +152,17 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
     return parseRecord(parsed, state);
   },
   parseProjected: parseRecord,
-  state: { initial: () => ({ sessionId: "" }), schema: PiScanState },
+  state: { initial: () => ({ sessionId: "", faux: false }), schema: PiScanState },
+  // States without `faux` were saved before faux usage was skipped. Their faux
+  // turns go, and so do unattributed rows, which a faux model may have written
+  // without leaving a faux turn. A live file re-parses and recovers real ones.
+  upgradeCachedRecords: ({ records, state }) =>
+    typeof state === "object" && state !== null && "faux" in state
+      ? undefined
+      : records.filter(
+          (record) =>
+            !record.model.startsWith(`${FAUX_PROVIDER}/`) && record.model !== UNATTRIBUTED_MODEL,
+        ),
 };
 
 export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {

@@ -297,14 +297,21 @@ export function decodeScanCache(
     const records = decodeRecords(entry.r, provider);
     const tailRecords = decodeRecords(entry.t, provider);
     if (records === null || tailRecords === null) continue;
+    // An entry an older parser saved replays like a legacy one, keeping only
+    // the records the format still trusts.
+    const upgraded = format.upgradeCachedRecords?.({
+      records: [...records, ...tailRecords],
+      state: legacy ? null : entry.cs,
+    });
+    const replay = legacy || upgraded !== undefined;
 
     cache.set(path, {
-      size: legacy ? -1 : entry.s,
+      size: replay ? -1 : entry.s,
       mtimeMs: entry.m,
       provider,
-      records,
-      tailRecords,
-      position: legacy
+      records: upgraded ?? records,
+      tailRecords: upgraded === undefined ? tailRecords : [],
+      position: replay
         ? { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null }
         : {
             resumeOffset: entry.o,

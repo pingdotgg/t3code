@@ -77,6 +77,17 @@ export interface TranscriptUsageFormat<State> {
    * records for cross-file de-duplication.
    */
   readonly sharedSessionsAcrossFiles?: true;
+  /**
+   * Upgrades a cache entry an older parser saved: returns the records still
+   * trusted, or `undefined` when the current parser saved it. The scan cache
+   * then re-parses a live file from the start, while a deleted file keeps only
+   * the returned records. `state` is `null` for entries migrated from a cache
+   * that predates persisted state.
+   */
+  readonly upgradeCachedRecords?: (entry: {
+    readonly records: readonly UsageRecord[];
+    readonly state: unknown;
+  }) => readonly UsageRecord[] | undefined;
 }
 
 export interface ProviderUsageInstance<Config> {
