@@ -7,7 +7,7 @@ import type {
 import { FileDiff } from "@pierre/diffs/react";
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import { useTheme } from "~/hooks/useTheme";
 import {
@@ -75,6 +75,52 @@ interface ExcerptDraft {
   readonly position: PullRequestReviewPosition;
 }
 
+function useExcerptSlice(file: FileDiffMetadata | null, excerpt: PullRequestReviewGuideExcerpt) {
+  "use memo";
+  if (file === null) return null;
+  const rows = fileDiffRows(file);
+  const shown = excerptRows(rows, excerpt);
+  if (shown.length === 0) return null;
+  const parsed = getRenderablePatch(
+    rowsToPatch(excerpt.path, resolveFileDiffPreviousPath(file), shown),
+    `pull-request-guide-excerpt:${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
+  );
+  const fileDiff = parsed?.kind === "files" ? parsed.files[0] : undefined;
+  if (fileDiff === undefined) return null;
+  const drawn = {
+    additions: new Set(shown.flatMap((row) => (row.newLine === null ? [] : [row.newLine]))),
+    deletions: new Set(shown.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]))),
+  };
+  return { fileDiff, rows: shown, shown: shown.length, total: rows.length, drawn };
+}
+
+// The excerpt expands against an old side of its own: the file's real old side differs from
+// the new one wherever another hunk changed it, and the renderer needs the two to agree around
+// the lines it shows. A slice across hunks has nothing consistent to expand into.
+function useExcerptLoader(
+  excerpt: PullRequestReviewGuideExcerpt,
+  sliceRows: ReturnType<typeof excerptRows> | null,
+  loadDiffFiles: FileDiffContentsLoader,
+): FileDiffContentsLoader | null {
+  "use memo";
+  if (sliceRows === null || sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)) {
+    return null;
+  }
+  return async (fileDiff) => {
+    const loaded = await loadDiffFiles(fileDiff);
+    const oldContents = excerptExpansionOldContents(loaded.newFile.contents, sliceRows);
+    if (oldContents === null) return loaded;
+    return {
+      newFile: loaded.newFile,
+      oldFile: {
+        name: loaded.oldFile?.name ?? loaded.newFile.name,
+        contents: oldContents,
+        cacheKey: `${loaded.newFile.cacheKey ?? loaded.newFile.name}:excerpt:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
+      },
+    };
+  };
+}
+
 export function GuideExcerpt({
   excerpt,
   file,
@@ -94,48 +140,10 @@ export function GuideExcerpt({
 }) {
   const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   const { resolvedTheme } = useTheme();
-  const slice = useMemo(() => {
-    if (file === null) return null;
-    const rows = fileDiffRows(file);
-    const shown = excerptRows(rows, excerpt);
-    if (shown.length === 0) return null;
-    const parsed = getRenderablePatch(
-      rowsToPatch(excerpt.path, resolveFileDiffPreviousPath(file), shown),
-      `pull-request-guide-excerpt:${excerpt.path}:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
-    );
-    const fileDiff = parsed?.kind === "files" ? parsed.files[0] : undefined;
-    if (fileDiff === undefined) return null;
-    const drawn = {
-      additions: new Set(shown.flatMap((row) => (row.newLine === null ? [] : [row.newLine]))),
-      deletions: new Set(shown.flatMap((row) => (row.oldLine === null ? [] : [row.oldLine]))),
-    };
-    return { fileDiff, rows: shown, shown: shown.length, total: rows.length, drawn };
-  }, [excerpt, file]);
+  const slice = useExcerptSlice(file, excerpt);
+  const loadExcerptFiles = useExcerptLoader(excerpt, slice?.rows ?? null, loadDiffFiles);
 
-  // The excerpt expands against an old side of its own: the file's real old side differs from
-  // the new one wherever another hunk changed it, and the renderer needs the two to agree around
-  // the lines it shows. A slice across hunks has nothing consistent to expand into.
-  const sliceRows = slice?.rows ?? null;
-  const loadExcerptFiles = useMemo<FileDiffContentsLoader | null>(() => {
-    if (sliceRows === null || sliceRows.some((row) => row.hunk !== sliceRows[0]?.hunk)) {
-      return null;
-    }
-    return async (fileDiff) => {
-      const loaded = await loadDiffFiles(fileDiff);
-      const oldContents = excerptExpansionOldContents(loaded.newFile.contents, sliceRows);
-      if (oldContents === null) return loaded;
-      return {
-        newFile: loaded.newFile,
-        oldFile: {
-          name: loaded.oldFile?.name ?? loaded.newFile.name,
-          contents: oldContents,
-          cacheKey: `${loaded.newFile.cacheKey ?? loaded.newFile.name}:excerpt:${excerpt.side}:${excerpt.start}-${excerpt.end}`,
-        },
-      };
-    };
-  }, [excerpt.end, excerpt.side, excerpt.start, loadDiffFiles, sliceRows]);
-
-  const annotations = useMemo(() => {
+  const annotations = (() => {
     const groups = new Map<string, DiffLineAnnotation<ExcerptAnnotation>>();
     const at = (side: "additions" | "deletions", line: number) => {
       const key = `${side}:${line}`;
@@ -179,17 +187,14 @@ export function GuideExcerpt({
       update(toViewerSide(anchor.side), anchor.line, (metadata) => ({ ...metadata, draft: true }));
     }
     return [...groups.values()];
-  }, [commenting?.pending, draft, excerpt.path, excerpt.side, notes, slice]);
+  })();
 
-  const beginComment = useCallback(
-    (range: SelectedLineRange | null) => {
-      if (range === null || file === null) return;
-      const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
-      if (position === null) return;
-      setDraft({ range, position });
-    },
-    [file],
-  );
+  const beginComment = (range: SelectedLineRange | null) => {
+    if (range === null || file === null) return;
+    const position = resolveDiffReviewPosition(file, range.end, range.endSide ?? range.side);
+    if (position === null) return;
+    setDraft({ range, position });
+  };
   const interactive = commenting !== null && draft === null;
   const onAskAgent = commenting?.onAskAgent ?? null;
   const askAgent = (request: string) => {
@@ -207,25 +212,22 @@ export function GuideExcerpt({
     if (comment !== null) onAskAgent(comment, request);
   };
 
-  const options = useMemo(
-    () => ({
-      diffStyle: "unified" as const,
-      lineDiffType: "none" as const,
-      overflow: "scroll" as const,
-      theme: resolveDiffThemeName(resolvedTheme),
-      themeType: resolvedTheme,
-      preferredHighlighter: PREFERRED_HIGHLIGHTER,
-      unsafeCSS: EXCERPT_UNSAFE_CSS,
-      enableGutterUtility: interactive,
-      enableLineSelection: interactive,
-      onGutterUtilityClick: beginComment,
-      onLineSelectionEnd: beginComment,
-      ...(loadExcerptFiles === null
-        ? { hunkSeparators: "simple" as const }
-        : { loadDiffFiles: loadExcerptFiles }),
-    }),
-    [resolvedTheme, interactive, beginComment, loadExcerptFiles],
-  );
+  const options = {
+    diffStyle: "unified" as const,
+    lineDiffType: "none" as const,
+    overflow: "scroll" as const,
+    theme: resolveDiffThemeName(resolvedTheme),
+    themeType: resolvedTheme,
+    preferredHighlighter: PREFERRED_HIGHLIGHTER,
+    unsafeCSS: EXCERPT_UNSAFE_CSS,
+    enableGutterUtility: interactive,
+    enableLineSelection: interactive,
+    onGutterUtilityClick: beginComment,
+    onLineSelectionEnd: beginComment,
+    ...(loadExcerptFiles === null
+      ? { hunkSeparators: "simple" as const }
+      : { loadDiffFiles: loadExcerptFiles }),
+  };
 
   return (
     <figure className="flex min-w-0 flex-col gap-1.5">
