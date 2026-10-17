@@ -22,6 +22,7 @@ import {
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
+  isPathSuggestionCurrent,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -47,6 +48,50 @@ const citation: AssistantCitation = {
   suffix: " 後",
 };
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
+
+describe("isPathSuggestionCurrent", () => {
+  const environmentId = EnvironmentId.make("local");
+  const target = { environmentId, cwd: "/repo", query: "alpha" };
+  const trigger = detectComposerTrigger("@alpha", 6)!;
+
+  it("accepts a suggestion for the current query, workspace, and environment", () => {
+    expect(isPathSuggestionCurrent(target, trigger, environmentId, target.cwd)).toBe(true);
+  });
+
+  it("matches the trimmed search query", () => {
+    expect(
+      isPathSuggestionCurrent(target, { ...trigger, query: " alpha " }, environmentId, target.cwd),
+    ).toBe(true);
+  });
+
+  it("rejects a suggestion from the previous query", () => {
+    const nextTrigger = detectComposerTrigger("@beta", 5);
+    expect(isPathSuggestionCurrent(target, nextTrigger, environmentId, target.cwd)).toBe(false);
+  });
+
+  it("rejects a suggestion from another workspace", () => {
+    expect(isPathSuggestionCurrent(target, trigger, environmentId, "/other-repo")).toBe(false);
+  });
+
+  it("rejects a suggestion from another environment", () => {
+    expect(isPathSuggestionCurrent(target, trigger, EnvironmentId.make("remote"), target.cwd)).toBe(
+      false,
+    );
+  });
+
+  it.each(["slash-command", "skill", "pull-request"] as const)(
+    "rejects a %s trigger even when its query matches",
+    (kind) => {
+      expect(isPathSuggestionCurrent(target, { ...trigger, kind }, environmentId, target.cwd)).toBe(
+        false,
+      );
+    },
+  );
+
+  it("rejects a suggestion after the trigger closes", () => {
+    expect(isPathSuggestionCurrent(target, null, environmentId, target.cwd)).toBe(false);
+  });
+});
 
 describe("formatAssistantCitationForComposer", () => {
   it.each([undefined, "", " \n\t "])(
