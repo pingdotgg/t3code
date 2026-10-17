@@ -1296,9 +1296,19 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           return handled;
         },
         handleTextInput: (view, from, to, text) => {
-          if (literalText || text.length !== 1) return false;
+          if (literalText || view.composing || text.length !== 1) return false;
           const closer = SURROUND_CLOSE[text];
-          if (!closer || from === to) return false;
+          const { selection } = view.state;
+          // Compose preedit updates replace a range even without a user selection.
+          if (
+            !closer ||
+            !(selection instanceof TextSelection) ||
+            selection.empty ||
+            selection.from !== from ||
+            selection.to !== to
+          ) {
+            return false;
+          }
           // Never wrap chips or other atoms, and never wrap styled text: the
           // default replace keeps marks intact, wrapping would drop them.
           let touchesSpecial = false;
