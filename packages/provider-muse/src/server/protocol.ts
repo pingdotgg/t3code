@@ -38,6 +38,8 @@ export const MuseItem = Schema.Struct({
   text: Schema.optional(Schema.String),
   summary: Schema.optional(Schema.Array(Schema.String)),
   tool: Schema.optional(Schema.String),
+  /** `toolCall`: true once Muse moved the call to the background. */
+  background: Schema.optional(Schema.Boolean),
   args: Schema.optional(Schema.String),
   visibleOutput: Schema.optional(Schema.String),
   truncated: Schema.optional(Schema.Boolean),
@@ -161,6 +163,16 @@ export const MuseTurnRetryScheduled = Schema.Struct({
   maxAttempts: Schema.Int.check(Schema.isGreaterThan(0)),
   reason: NonEmptyString,
   retryDelayMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+/** Muse's running background work, including registry tasks such as a `monitor` that have no item. */
+export const MuseTaskList = Schema.Struct({
+  tasks: Schema.Array(
+    Schema.Struct({
+      taskId: NonEmptyString,
+      kind: Schema.String,
+      tool: Schema.optional(Schema.String),
+    }),
+  ),
 });
 export const MuseCompactResult = Schema.Struct({
   status: Schema.String,

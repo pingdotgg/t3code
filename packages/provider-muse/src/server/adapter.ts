@@ -50,6 +50,7 @@ import {
   MuseDelta,
   MuseItemEvent,
   MuseSessionResult,
+  MuseTaskList,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseTurnRetryScheduled,
@@ -334,6 +335,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const pending = new Map<RuntimeRequestId, PendingRequest>();
       const seenTerminals = new Set<string>();
       const observedChildren = new Map<string, ActiveTurn>();
+      // Other running tasks from Muse's task list (a `monitor` has no item), by task id.
+      const registryTasks = new Map<string, string>();
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
       const finishedBackground: Array<BackgroundWorkReport> = [];
@@ -666,22 +669,57 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           }
         }
       });
+      // Later revisions can omit the flag; keep tracking the call until it settles.
+      const isBackgroundItem = (item: MuseItem) =>
+        observedChildren.has(item.itemId) ||
+        item.kind === "subagent" ||
+        item.kind === "workflow" ||
+        (item.kind === "toolCall" && item.background === true);
       const syncBackground = Effect.fnUntraced(function* () {
         yield* updateThread({
-          pendingBackgroundTasks: [...observedChildren].flatMap(([itemId, owner]) => {
-            const item = owner.items.get(itemId);
-            const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
-            return [
-              {
+          pendingBackgroundTasks: [
+            ...[...observedChildren].map(([itemId, owner]) => {
+              const item = owner.items.get(itemId);
+              const description =
+                item?.objective ?? item?.entryId ?? item?.fallbackText ?? item?.tool;
+              return {
                 taskId: itemId,
                 kind:
                   item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
                 ...(description ? { description } : {}),
-              },
-            ];
-          }),
+              };
+            }),
+            ...[...registryTasks].map(([taskId, description]) => ({
+              taskId,
+              kind: "background_task" as const,
+              description,
+            })),
+          ],
         });
       });
+      /**
+       * Muse sends no event when a registry task such as a `monitor` ends, so its task list is
+       * read when a turn completes and when idle release asks. Callers hold the event permit, so
+       * item events apply in order around the read. A failed read keeps the last rows.
+       */
+      const refreshTasks = Effect.tryPromise(() =>
+        host.connection.request("task/list", { sessionId: nativeSessionId }),
+      ).pipe(
+        Effect.timeout(options.requestTimeoutMs ?? 30_000),
+        Effect.flatMap((value) => decode(MuseTaskList, value)),
+        Effect.flatMap(({ tasks }) => {
+          registryTasks.clear();
+          for (const task of tasks)
+            if (!observedChildren.has(task.taskId))
+              registryTasks.set(task.taskId, task.tool ?? task.kind);
+          // Compares with the thread's rows, not the last list: a turn starts from the
+          // orchestrator's copy of the thread, which can predate the rows published since.
+          const listed = (thread?.pendingBackgroundTasks ?? []).map((task) => task.taskId);
+          const running = [...observedChildren.keys(), ...registryTasks.keys()];
+          return listed.join("\n") === running.join("\n") ? Effect.void : syncBackground();
+        }),
+        Effect.catch((cause) => Effect.logWarning("Could not read Muse's background tasks", cause)),
+      );
       const publishItem = Effect.fnUntraced(function* (
         turn: ActiveTurn,
         item: MuseItem,
@@ -698,13 +736,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           return;
         const time = yield* DateTime.now;
         const status = terminal ?? itemStatus(item);
-        if (item.kind === "subagent" || item.kind === "workflow") {
+        if (isBackgroundItem(item)) {
           const wasRunning = observedChildren.has(item.itemId);
           if (status === "running") observedChildren.set(item.itemId, turn);
           else if (observedChildren.delete(item.itemId) && active !== turn)
             finishedBackground.push({
               kind: item.kind === "subagent" ? "subagent" : "background_task",
-              label: item.objective ?? item.entryId ?? item.fallbackText,
+              label: item.objective ?? item.entryId ?? item.fallbackText ?? item.tool,
               outcome:
                 status === "completed"
                   ? "completed"
@@ -893,6 +931,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           if (item) yield* publishItem(owner, item, status);
         }
         observedChildren.clear();
+        registryTasks.clear();
         if (thread?.pendingBackgroundTasks?.length) yield* syncBackground();
         for (const entry of pending.values()) yield* resolvePending(entry, "cancelled");
       });
@@ -940,7 +979,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
           if (
-            (item.kind === "subagent" || item.kind === "workflow") &&
+            isBackgroundItem(item) &&
             item.status === "inProgress" &&
             status === "completed" &&
             disposition === "reusable"
@@ -1416,6 +1455,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "interrupted"
                     : "cancelled"
                   : "failed";
+            if (status === "completed") yield* refreshTasks;
             yield* finish(turn, status, result.error?.message ?? result.reason);
             break;
           }
@@ -2057,10 +2097,21 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         providerSession: session,
         events: Stream.fromQueue(events),
         backgroundTasksEndWithProcess: true,
-        // A running workflow or a held Muse turn keeps the host: idle release must wait.
-        hasPendingBackgroundWork: Effect.sync(
-          () => observedChildren.size > 0 || wake !== undefined,
-        ),
+        // Running background work or a held Muse turn keeps the host: idle release must wait.
+        hasPendingBackgroundWork: Effect.gen(function* () {
+          if (registryTasks.size > 0) yield* eventPermit.withPermits(1)(refreshTasks);
+          return observedChildren.size > 0 || wake !== undefined || registryTasks.size > 0;
+        }),
+        // Holds the run's event stream open until the run has read the update that clears the
+        // rows, even when the adapter cleared them first.
+        hasPendingBackgroundWorkForThread: (providerThread) =>
+          Effect.sync(
+            () =>
+              validateThread(providerThread) &&
+              (observedChildren.size > 0 ||
+                registryTasks.size > 0 ||
+                (providerThread.pendingBackgroundTasks?.length ?? 0) > 0),
+          ),
         ensureThread: (args) =>
           register(args).pipe(
             commands.withPermits(1),
