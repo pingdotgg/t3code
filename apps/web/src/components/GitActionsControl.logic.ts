@@ -1,11 +1,14 @@
 import type {
   GitRunStackedActionResult,
   GitStackedAction,
+  ReviewDiffPreviewResult,
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+
+import { getDiffLineStat, getRenderablePatch } from "../lib/diffRendering";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -481,3 +484,28 @@ export function resolveLiveThreadBranchUpdate(input: {
 }
 
 export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+
+export function resolveChangesTotals(input: {
+  readonly gitStatus: VcsStatusResult | null;
+  readonly useDiffPreview: boolean;
+  readonly diffPreview: ReviewDiffPreviewResult | null;
+}) {
+  // Older servers only report uncommitted totals.
+  const statusTotals = input.gitStatus?.branchChanges ?? input.gitStatus?.workingTree;
+  if (!input.useDiffPreview) return statusTotals;
+  const source = input.diffPreview?.sources.find((source) => source.kind === "branch-range");
+  // Keep the status totals on screen until the preview loads rather than showing zeros.
+  if (!source) return statusTotals;
+  if (source.files) {
+    return source.files.reduce(
+      (total, file) => ({
+        insertions: total.insertions + file.additions,
+        deletions: total.deletions + file.deletions,
+      }),
+      { insertions: 0, deletions: 0 },
+    );
+  }
+  const patch = getRenderablePatch(source.diff);
+  const totals = getDiffLineStat(patch?.kind === "files" ? patch.files : []);
+  return { insertions: totals.additions, deletions: totals.deletions };
+}

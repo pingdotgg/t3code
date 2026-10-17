@@ -2,7 +2,11 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, RunId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { selectThreadDiffPanelSelection, useDiffPanelStore } from "./diffPanelStore";
+import {
+  selectThreadDiffPanelBaseRef,
+  selectThreadDiffPanelSelection,
+  useDiffPanelStore,
+} from "./diffPanelStore";
 
 const THREAD_REF = scopeThreadRef(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
 
@@ -121,5 +125,45 @@ describe("diffPanelStore", () => {
       filePath: "src/app.ts",
       revealRequestId: 1,
     });
+  });
+});
+
+describe("selectThreadDiffPanelBaseRef", () => {
+  beforeEach(() => useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} }));
+
+  it("uses the remembered Changes base while viewing uncommitted edits or a turn", () => {
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(THREAD_REF, "origin/release");
+    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBe(
+      "origin/release",
+    );
+    store.selectGitScope(THREAD_REF, "unstaged");
+    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBe(
+      "origin/release",
+    );
+    store.selectTurn(THREAD_REF, RunId.make("turn-1"));
+    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBe(
+      "origin/release",
+    );
+  });
+
+  it("returns to automatic after clearing a custom base", () => {
+    const store = useDiffPanelStore.getState();
+    store.selectBranchBaseRef(THREAD_REF, "origin/release");
+    store.selectBranchBaseRef(THREAD_REF, null);
+    store.selectTurn(THREAD_REF, RunId.make("turn-1"));
+    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBeNull();
+  });
+
+  it("keeps bases scoped to their environment and thread", () => {
+    const otherEnvironmentRef = scopeThreadRef(
+      EnvironmentId.make("environment-2"),
+      THREAD_REF.threadId,
+    );
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/release");
+    expect(
+      selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), otherEnvironmentRef),
+    ).toBeNull();
+    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), null)).toBeNull();
   });
 });

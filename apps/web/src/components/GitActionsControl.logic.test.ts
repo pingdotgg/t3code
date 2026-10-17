@@ -1,5 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import type { VcsStatusResult } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import type {
+  ReviewDiffPreviewResult,
+  ReviewDiffPreviewSource,
+  VcsStatusResult,
+} from "@t3tools/contracts";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
@@ -12,6 +17,7 @@ import {
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
+  resolveChangesTotals,
   resolveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
 } from "./GitActionsControl.logic";
@@ -1243,5 +1249,115 @@ describe("resolveAutoFeatureBranchName", () => {
   it("falls back to feature/update when no preferred name is provided", () => {
     const ref = resolveAutoFeatureBranchName(["main"]);
     assert.equal(ref, "feature/update");
+  });
+});
+
+describe("resolveChangesTotals", () => {
+  const branchChanges = { baseRef: "main", insertions: 20, deletions: 10 };
+  const workingTree = { files: [], insertions: 3, deletions: 1 };
+  const gitStatus = status({ branchChanges, workingTree });
+  const patch = [
+    "diff --git a/a.txt b/a.txt",
+    "--- a/a.txt",
+    "+++ b/a.txt",
+    "@@ -1 +1,2 @@",
+    "-before",
+    "+after",
+    "+another",
+  ].join("\n");
+
+  function source(overrides: Partial<ReviewDiffPreviewSource> = {}): ReviewDiffPreviewSource {
+    return {
+      id: "branch",
+      kind: "branch-range",
+      title: "Changes",
+      baseRef: "origin/release",
+      headRef: "HEAD",
+      diff: patch,
+      diffHash: "hash",
+      truncated: false,
+      files: [{ path: "a.txt", previousPath: null, additions: 8, deletions: 4 }],
+      ...overrides,
+    };
+  }
+
+  function preview(sources: ReadonlyArray<ReviewDiffPreviewSource>): ReviewDiffPreviewResult {
+    return { cwd: "/repo", generatedAt: DateTime.nowUnsafe(), sources };
+  }
+
+  it("keeps git status totals for the automatic base even with a cached preview", () => {
+    assert.strictEqual(
+      resolveChangesTotals({ gitStatus, useDiffPreview: false, diffPreview: preview([source()]) }),
+      branchChanges,
+    );
+  });
+
+  it("keeps the working tree fallback for older status responses in the default comparison", () => {
+    assert.strictEqual(
+      resolveChangesTotals({
+        gitStatus: status({ workingTree }),
+        useDiffPreview: false,
+        diffPreview: null,
+      }),
+      workingTree,
+    );
+  });
+
+  it("uses the branch preview totals for an overridden comparison, ignoring uncommitted totals", () => {
+    assert.deepEqual(
+      resolveChangesTotals({
+        gitStatus,
+        useDiffPreview: true,
+        diffPreview: preview([source({ kind: "working-tree" }), source()]),
+      }),
+      { insertions: 8, deletions: 4 },
+    );
+  });
+
+  it("uses all file statistics when the patch is truncated", () => {
+    assert.deepEqual(
+      resolveChangesTotals({
+        gitStatus,
+        useDiffPreview: true,
+        diffPreview: preview([
+          source({
+            truncated: true,
+            files: [
+              { path: "a.txt", previousPath: null, additions: 8, deletions: 4 },
+              { path: "b.txt", previousPath: null, additions: 5, deletions: 2 },
+            ],
+          }),
+        ]),
+      }),
+      { insertions: 13, deletions: 6 },
+    );
+  });
+
+  it("keeps zero preview totals when the file stats are empty", () => {
+    assert.deepEqual(
+      resolveChangesTotals({
+        gitStatus,
+        useDiffPreview: true,
+        diffPreview: preview([source({ files: [] })]),
+      }),
+      { insertions: 0, deletions: 0 },
+    );
+  });
+
+  it("matches the panel's patch totals for older previews without file statistics", () => {
+    const { files: _files, ...oldSource } = source();
+    assert.deepEqual(
+      resolveChangesTotals({ gitStatus, useDiffPreview: true, diffPreview: preview([oldSource]) }),
+      { insertions: 2, deletions: 1 },
+    );
+  });
+
+  it("keeps the status totals while the requested preview is unavailable", () => {
+    for (const diffPreview of [null, preview([]), preview([source({ kind: "working-tree" })])]) {
+      assert.strictEqual(
+        resolveChangesTotals({ gitStatus, useDiffPreview: true, diffPreview }),
+        branchChanges,
+      );
+    }
   });
 });

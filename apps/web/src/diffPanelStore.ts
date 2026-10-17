@@ -137,3 +137,14 @@ export function selectThreadDiffPanelSelection(
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
 }
+
+export function selectThreadDiffPanelBaseRef(
+  state: Pick<DiffPanelStoreState, "byThreadKey" | "branchBaseRefByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  if (!ref) return null;
+  const selection = selectThreadDiffPanelSelection(state.byThreadKey, ref);
+  return selection.kind === "branch"
+    ? selection.baseRef
+    : (state.branchBaseRefByThreadKey[scopedThreadKey(ref)] ?? null);
+}
