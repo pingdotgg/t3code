@@ -1,5 +1,5 @@
 import { CheckIcon } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
@@ -160,12 +161,9 @@ export function ProviderUpdateEnvironmentRows({
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
-  const groupByEnvironment = useMemo(
-    () => new Map(groups.map((group) => [group.environmentId, group] as const)),
-    [groups],
-  );
+  const groupByEnvironment = new Map(groups.map((group) => [group.environmentId, group] as const));
 
-  const visibleAfterIsoRef = useRef<string>(new Date().toISOString());
+  const [visibleAfterIso] = useState(() => new Date().toISOString());
 
   // setPendingEnvironments is an async state update, and PENDING_EXPIRY_MS can
   // clear the spinner while a request is still in flight, so a rapid
@@ -191,7 +189,7 @@ export function ProviderUpdateEnvironmentRows({
     ReadonlyMap<EnvironmentId, ProviderUpdateToastView>
   >(() => new Map());
 
-  const clearPending = useCallback((environmentId: EnvironmentId) => {
+  const clearPending = (environmentId: EnvironmentId) => {
     setPendingEnvironments((previous) => {
       if (!previous.has(environmentId)) {
         return previous;
@@ -200,31 +198,81 @@ export function ProviderUpdateEnvironmentRows({
       next.delete(environmentId);
       return next;
     });
-  }, []);
+  };
 
-  const handleUpdate = useCallback(
-    async (environmentId: EnvironmentId) => {
-      if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-      const group = groupByEnvironment.get(environmentId);
-      if (!group || group.candidates.length === 0) {
+  const handleUpdate = async (environmentId: EnvironmentId) => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    const group = groupByEnvironment.get(environmentId);
+    if (!group || group.candidates.length === 0) {
+      return;
+    }
+    if (inFlightEnvironmentsRef.current.has(environmentId)) {
+      return;
+    }
+    inFlightEnvironmentsRef.current.add(environmentId);
+    const requestVersion = (requestVersionRef.current.get(environmentId) ?? 0) + 1;
+    requestVersionRef.current.set(environmentId, requestVersion);
+    const isCurrentRequest = () => requestVersionRef.current.get(environmentId) === requestVersion;
+    onInteract?.();
+    const providerCount = group.candidates.length;
+    const targets = group.candidates.map((candidate) => ({
+      driver: candidate.driver,
+      instanceId: candidate.instanceId,
+    }));
+
+    setPendingEnvironments((previous) => new Set(previous).add(environmentId));
+    setErrorByEnvironment((previous) => {
+      if (!previous.has(environmentId)) {
+        return previous;
+      }
+      const next = new Map(previous);
+      next.delete(environmentId);
+      return next;
+    });
+    setResultByEnvironment((previous) => {
+      if (!previous.has(environmentId)) {
+        return previous;
+      }
+      const next = new Map(previous);
+      next.delete(environmentId);
+      return next;
+    });
+
+    const expiry = setTimeout(() => {
+      if (!isCurrentRequest()) {
         return;
       }
-      if (inFlightEnvironmentsRef.current.has(environmentId)) {
+      inFlightEnvironmentsRef.current.delete(environmentId);
+      clearPending(environmentId);
+      setErrorByEnvironment((previous) =>
+        new Map(previous).set(environmentId, "Update timed out — try again."),
+      );
+    }, PENDING_EXPIRY_MS);
+    const settled = await settlePromise(async () => {
+      const results = await Promise.all(
+        targets.map(async (target): Promise<PromiseSettledResult<LocalProviderUpdateOutcome>> => {
+          try {
+            const result = await updateProvider({
+              environmentId,
+              input: { provider: target.driver, instanceId: target.instanceId },
+            });
+            return toProviderUpdateOutcome({
+              environmentId,
+              isPrimary: group.isPrimary,
+              target,
+              result,
+            });
+          } catch (error) {
+            return {
+              status: "rejected",
+              reason: error instanceof Error ? error : new Error("Provider update failed."),
+            };
+          }
+        }),
+      );
+      if (!isCurrentRequest()) {
         return;
       }
-      inFlightEnvironmentsRef.current.add(environmentId);
-      const requestVersion = (requestVersionRef.current.get(environmentId) ?? 0) + 1;
-      requestVersionRef.current.set(environmentId, requestVersion);
-      const isCurrentRequest = () =>
-        requestVersionRef.current.get(environmentId) === requestVersion;
-      onInteract?.();
-      const providerCount = group.candidates.length;
-      const targets = group.candidates.map((candidate) => ({
-        driver: candidate.driver,
-        instanceId: candidate.instanceId,
-      }));
-
-      setPendingEnvironments((previous) => new Set(previous).add(environmentId));
       setErrorByEnvironment((previous) => {
         if (!previous.has(environmentId)) {
           return previous;
@@ -233,104 +281,46 @@ export function ProviderUpdateEnvironmentRows({
         next.delete(environmentId);
         return next;
       });
-      setResultByEnvironment((previous) => {
-        if (!previous.has(environmentId)) {
-          return previous;
-        }
-        const next = new Map(previous);
-        next.delete(environmentId);
-        return next;
-      });
-
-      const expiry = setTimeout(() => {
-        if (!isCurrentRequest()) {
-          return;
-        }
-        inFlightEnvironmentsRef.current.delete(environmentId);
-        clearPending(environmentId);
+      if (results.length === 0) {
         setErrorByEnvironment((previous) =>
-          new Map(previous).set(environmentId, "Update timed out — try again."),
+          new Map(previous).set(
+            environmentId,
+            "This environment isn’t connected — try again once it reconnects.",
+          ),
         );
-      }, PENDING_EXPIRY_MS);
-      try {
-        const results = await Promise.all(
-          targets.map(async (target): Promise<PromiseSettledResult<LocalProviderUpdateOutcome>> => {
-            try {
-              const result = await updateProvider({
-                environmentId,
-                input: { provider: target.driver, instanceId: target.instanceId },
-              });
-              return toProviderUpdateOutcome({
-                environmentId,
-                isPrimary: group.isPrimary,
-                target,
-                result,
-              });
-            } catch (error) {
-              return {
-                status: "rejected",
-                reason: error instanceof Error ? error : new Error("Provider update failed."),
-              };
-            }
-          }),
-        );
-        if (!isCurrentRequest()) {
-          return;
-        }
-        setErrorByEnvironment((previous) => {
-          if (!previous.has(environmentId)) {
-            return previous;
-          }
-          const next = new Map(previous);
-          next.delete(environmentId);
-          return next;
-        });
-        if (results.length === 0) {
-          setErrorByEnvironment((previous) =>
-            new Map(previous).set(
-              environmentId,
-              "This environment isn’t connected — try again once it reconnects.",
-            ),
-          );
-          return;
-        }
-        const rejectedMessage = firstRejectedProviderUpdateMessage(results);
-        if (rejectedMessage) {
-          setErrorByEnvironment((previous) =>
-            new Map(previous).set(environmentId, rejectedMessage),
-          );
-          return;
-        }
-        const view = getProviderUpdateProgressToastView({
-          providers: collectProviderUpdateOutcomeSnapshots(results),
-          providerCount,
-        });
-        // A stored view never re-polls, so persisting it would pin the row's
-        // spinner forever once the pending flag expires. Drop it and let the
-        // live per-environment provider state (pill) plus the pending expiry
-        // drive the row, so it self-heals to whatever the backend actually did.
-        if (isTerminalProviderUpdatePhase(view.phase)) {
-          setResultByEnvironment((previous) => new Map(previous).set(environmentId, view));
-        }
-      } catch (error) {
-        if (isCurrentRequest()) {
-          setErrorByEnvironment((previous) =>
-            new Map(previous).set(
-              environmentId,
-              error instanceof Error ? error.message : "Provider update failed.",
-            ),
-          );
-        }
-      } finally {
-        clearTimeout(expiry);
-        if (isCurrentRequest()) {
-          clearPending(environmentId);
-          inFlightEnvironmentsRef.current.delete(environmentId);
-        }
+        return;
       }
-    },
-    [clearPending, groupByEnvironment, onInteract, updateProvider],
-  );
+      const rejectedMessage = firstRejectedProviderUpdateMessage(results);
+      if (rejectedMessage) {
+        setErrorByEnvironment((previous) => new Map(previous).set(environmentId, rejectedMessage));
+        return;
+      }
+      const view = getProviderUpdateProgressToastView({
+        providers: collectProviderUpdateOutcomeSnapshots(results),
+        providerCount,
+      });
+      // A stored view never re-polls, so persisting it would pin the row's
+      // spinner forever once the pending flag expires. Drop it and let the
+      // live per-environment provider state (pill) plus the pending expiry
+      // drive the row, so it self-heals to whatever the backend actually did.
+      if (isTerminalProviderUpdatePhase(view.phase)) {
+        setResultByEnvironment((previous) => new Map(previous).set(environmentId, view));
+      }
+    });
+    clearTimeout(expiry);
+    if (!isCurrentRequest()) return;
+    if (settled._tag === "Failure") {
+      const error = squashAtomCommandFailure(settled);
+      setErrorByEnvironment((previous) =>
+        new Map(previous).set(
+          environmentId,
+          error instanceof Error ? error.message : "Provider update failed.",
+        ),
+      );
+    }
+    clearPending(environmentId);
+    inFlightEnvironmentsRef.current.delete(environmentId);
+  };
 
   const rows = groups
     .map((group) => ({
@@ -340,7 +330,7 @@ export function ProviderUpdateEnvironmentRows({
         error: errorByEnvironment.get(group.environmentId),
         result: resultByEnvironment.get(group.environmentId),
         pill: getProviderUpdateSidebarPillView(group.candidates, {
-          visibleAfterIso: visibleAfterIsoRef.current,
+          visibleAfterIso,
         }),
         isPending: pendingEnvironments.has(group.environmentId),
       }),
