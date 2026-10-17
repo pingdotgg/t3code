@@ -1,5 +1,5 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3tools/contracts";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import { isEditableFocused } from "~/lib/editableFocus";
@@ -52,7 +52,7 @@ export function GuideTour({
   const position = Math.max(Math.min(tour.position, stopCount - 1), 0);
   const stop = guide.stops[position] ?? null;
 
-  const wantedPaths = useMemo(() => (stop === null ? [] : stopFilePaths(stop)), [stop]);
+  const wantedPaths = stop === null ? [] : stopFilePaths(stop);
   const diff = useGuideDiffFiles({
     environmentId,
     reference,
@@ -60,16 +60,12 @@ export function GuideTour({
     wantedPaths,
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
-  const loadDiffFiles = useMemo(
-    () =>
-      createPullRequestDiffFileContentsLoader(getDiffFileContents, {
-        environmentId,
-        reference,
-        commit: null,
-        cacheKey: `pull-request-guide:${key}`,
-      }),
-    [environmentId, getDiffFileContents, key, reference],
-  );
+  const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
+    environmentId,
+    reference,
+    commit: null,
+    cacheKey: `pull-request-guide:${key}`,
+  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const goTo = (next: number) => {
