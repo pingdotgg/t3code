@@ -81,6 +81,10 @@ export const MuseSessionResult = Schema.Struct({
     }),
   ),
 });
+export const MuseSkillList = Schema.Struct({
+  skills: Schema.Array(Schema.Struct({ selector: NonEmptyString })),
+});
+
 export const MuseTurnStartResult = Schema.Struct({ turnId: NonEmptyString });
 
 export const MuseApproval = Schema.Struct({

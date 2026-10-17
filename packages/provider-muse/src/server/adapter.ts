@@ -24,6 +24,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Cause from "effect/Cause";
@@ -50,6 +51,7 @@ import {
   MuseDelta,
   MuseItemEvent,
   MuseSessionResult,
+  MuseSkillList,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseTurnRetryScheduled,
@@ -88,6 +90,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import { museSkillSelectorsInPrompt } from "./skills.ts";
 import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
 
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
@@ -1823,6 +1826,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const prompt = Effect.fnUntraced(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+        runtimeInstructions?: string,
+        dispatchSkill = true,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
         const text = providerMessageTextWithAttachmentPaths({
@@ -1830,7 +1835,29 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           attachments: message.attachments,
           resolveAttachmentPath: providerHost.resolveAttachmentPath,
         });
-        if (text) parts.push({ type: "text", text });
+        if (!text && !message.attachments.some(isProviderNativeImageAttachment))
+          return yield* protocolError("Muse needs text or an image");
+        const selectors =
+          dispatchSkill && !message.text.matchAll(SKILL_MENTION_PATTERN).next().done
+            ? yield* request("skill/list", {}, false).pipe(
+                Effect.flatMap((value) => decode(MuseSkillList, value)),
+                Effect.map((value) => new Set(value.skills.map((skill) => skill.selector))),
+                Effect.timeout(5_000),
+                Effect.orElseSucceed(() => new Set<string>()),
+              )
+            : new Set<string>();
+        const [selector] = museSkillSelectorsInPrompt(message.text, selectors);
+        if (selector) {
+          // MSP permits one skill plus images, but rejects skill/text mixtures.
+          parts.push({
+            type: "skill",
+            selector,
+            arguments: [runtimeInstructions, text].filter(Boolean).join("\n\n"),
+          });
+        } else {
+          if (runtimeInstructions) parts.push({ type: "text", text: runtimeInstructions });
+          if (text) parts.push({ type: "text", text });
+        }
         for (const attachment of message.attachments)
           if (isProviderNativeImageAttachment(attachment)) {
             const path = providerHost.resolveAttachmentPath(attachment);
@@ -1844,7 +1871,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               mediaType: attachment.mimeType,
             });
           }
-        if (!parts.length) return yield* protocolError("Muse needs text or an image");
         return parts;
       });
       const validateThread = (candidate: OrchestrationV2ProviderThread) =>
@@ -1883,7 +1909,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           turnInput.message.creationSource === "provider";
         const adopted = continuation ? wake : undefined;
         const effort = continuation ? undefined : yield* selectionEffort(turnInput.modelSelection);
-        const parts = compact || continuation ? [] : yield* prompt(turnInput.message);
         const targetModel = continuation
           ? undefined
           : yield* resolveModel(turnInput.modelSelection);
@@ -1893,6 +1918,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           });
           session = { ...session, model: targetModel };
         }
+        const parts =
+          compact || continuation
+            ? []
+            : yield* prompt(
+                turnInput.message,
+                buildRuntimeInstructions({
+                  harness: "Muse Code",
+                  model: session.model ?? undefined,
+                  reasoningEffort: effort,
+                }),
+              );
         const nativeId = adopted?.nativeId ?? host.connection.mintCommandId();
         const startedAt = yield* DateTime.now;
         const providerTurn: OrchestrationV2ProviderTurn = {
@@ -1967,17 +2003,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const result = yield* request(
               "turn/start",
               {
-                input: [
-                  {
-                    type: "text",
-                    text: buildRuntimeInstructions({
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                    }),
-                  },
-                  ...parts,
-                ],
+                input: parts,
                 displayText: turnInput.message.text || "Image attachment",
                 // A resumed session keeps the root it was created with; pin it to
                 // this thread's current checkout so edits land where T3 tracks them.
@@ -2116,7 +2142,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               turn.compact
             )
               return yield* protocolError("This Muse turn cannot be steered");
-            const parts = yield* prompt(args.message);
+            const parts = yield* prompt(args.message, undefined, false);
             const result = yield* request("turn/steer", {
               expectedTurnId: turn.nativeId,
               input: parts,

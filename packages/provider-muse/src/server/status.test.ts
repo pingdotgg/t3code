@@ -110,6 +110,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         );
         expect(snapshot.status).toBe("ready");
         expect(snapshot.message).toBeUndefined();
+        expect(snapshot.skills).toEqual([]);
         expect(snapshot.slashCommands).toEqual([COMPACT_SLASH_COMMAND]);
         expect(snapshot.auth).toEqual({ status: "unknown" });
         expect(snapshot.version).toBe("1.0.3-R2198.1");
@@ -124,6 +125,43 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(host.connection.request).toHaveBeenCalledWith("model/list", {});
         expect(host.connection.command).not.toHaveBeenCalled();
         expect(host.close).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  it.effect("includes CLI skills even when model discovery fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = {
+          skills: [
+            {
+              name: "plugin:ai-ugc:ugc-mode",
+              path: "plugin://ai-ugc/skills/ugc-mode/SKILL.md",
+              scope: "plugin",
+              activation: "on",
+            },
+          ],
+        };
+        const binaryPath = yield* fakeCli(
+          `process.stdout.write(process.argv.includes("skills") ? ${JSON.stringify(JSON.stringify(fixture))} : "muse 1.4.6\\n");`,
+        );
+        for (const catalog of [metaCatalog, { providerId: "meta", models: [{ modelId: 1 }] }]) {
+          const snapshot = yield* checkMuseProviderStatus(
+            settings({ enabled: true, binaryPath }),
+            undefined,
+            undefined,
+            async () => makeHost(catalog),
+          );
+          expect(snapshot.skills).toEqual([
+            {
+              name: "ai-ugc:ugc-mode",
+              path: "plugin://ai-ugc/skills/ugc-mode/SKILL.md",
+              scope: "plugin",
+              enabled: true,
+            },
+          ]);
+          expect(snapshot.status).toBe(catalog === metaCatalog ? "ready" : "error");
+        }
       }),
     ),
   );
