@@ -565,14 +565,6 @@ export default function DiffPanel({
     return getDiffLineStat(renderableFiles);
   }, [renderableFiles, selectedGitSource, selectedTurn]);
   const fileTreeEntries = useMemo(() => diffFileTreeEntries(renderableFiles), [renderableFiles]);
-  const selectedDiffFileKey = selectedFilePath
-    ? (codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath)?.fileKey ?? null)
-    : null;
-
-  useEffect(() => {
-    if (!selectedDiffFileKey || !codeView?.getInstance()) return;
-    codeView.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
-  }, [codeView, codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
 
   const treeRevealScope = useMemo(
     () => ({ collapseScopeKey, diffSelection }),
@@ -589,7 +581,7 @@ export default function DiffPanel({
         (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
       );
       const file = renderableFileEntries[index];
-      if (!file) return;
+      if (!file) return false;
       setCollapsedDiffFiles((current) => {
         const next = new Set(
           current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
@@ -601,6 +593,7 @@ export default function DiffPanel({
         requestFile(index);
       }
       requestTreeReveal(file.fileKey);
+      return true;
     },
     [
       renderableFileEntries,
@@ -613,18 +606,23 @@ export default function DiffPanel({
     ],
   );
 
-  const externalRevealRef = useRef<{ cache: string; key: string } | null>(null);
+  const externalRevealRef = useRef<{ scope: string | null; key: string } | null>(null);
   useEffect(() => {
-    if (!lazySource || !selectedFilePath) return;
+    if (!selectedFilePath) return;
+    const scope = collapseScopeKey ?? filePatchScope;
     const key = `${selectedFilePath}:${selectedFileRevealRequestId}`;
-    if (
-      externalRevealRef.current?.cache === filePatchScope &&
-      externalRevealRef.current.key === key
-    )
-      return;
-    externalRevealRef.current = { cache: filePatchScope, key };
-    revealDiffFile(selectedFilePath);
-  }, [lazySource, selectedFilePath, selectedFileRevealRequestId, filePatchScope, revealDiffFile]);
+    if (externalRevealRef.current?.scope === scope && externalRevealRef.current.key === key) return;
+    const revealed = revealDiffFile(selectedFilePath);
+    if (revealed) {
+      externalRevealRef.current = { scope, key };
+    }
+  }, [
+    collapseScopeKey,
+    filePatchScope,
+    selectedFilePath,
+    selectedFileRevealRequestId,
+    revealDiffFile,
+  ]);
 
   const openDiffFile = useCallback(
     (filePath: string) => {
