@@ -16,3 +16,12 @@ To copy all retained output, choose Select all in the terminal's context menu,
 then copy. Cmd+A on macOS and Ctrl+Shift+A elsewhere select the same output.
 Ctrl+A still moves to the beginning of shell input on Windows and Linux.
 Jump to latest in the context menu returns to the current output.
+
+## fish
+
+T3 Code starts terminals with fish's `no-query-term` feature, so fish 4.1 and
+later start without waiting for terminal replies. This turns off fish features
+that need those replies. To keep them, add `query-term` to `fish_features` in
+the environment that starts T3 Code; fish can then pause at startup. T3 Code's
+`fish_features` value replaces your universal one, so export any other flags you
+use there too.

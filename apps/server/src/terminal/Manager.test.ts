@@ -2145,6 +2145,24 @@ it.layer(
       }),
   );
 
+  it.effect("turns off fish terminal queries unless the user chose query-term", () =>
+    Effect.gen(function* () {
+      for (const [parentFeatures, expected] of [
+        [undefined, "no-query-term"],
+        ["qmark-noglob", "qmark-noglob,no-query-term"],
+        ["query-term", "query-term"],
+        ["no-query-term", "no-query-term"],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/sh",
+          env: { fish_features: parentFeatures },
+        });
+        yield* manager.open(openInput());
+        expect(ptyAdapter.spawnInputs[0]?.env.fish_features).toBe(expected);
+      }
+    }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
