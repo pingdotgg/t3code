@@ -42,4 +42,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useLiveRefresh.ts",
   "apps/web/src/browser/useBrowserViewportResize.ts",
   "apps/web/src/components/desktop/SnapShotCoordinator.tsx",
+  "apps/web/src/components/BranchToolbar.tsx",
 ] as const;
