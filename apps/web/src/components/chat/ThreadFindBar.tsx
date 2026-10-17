@@ -30,7 +30,11 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
     if (!props.open) return;
     inputRef.current?.focus();
     inputRef.current?.select();
-  }, [props.focusRequestId, props.open]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each find shortcut bumps the request id, so an already-open bar refocuses and reselects its query.
+    props.focusRequestId,
+    props.open,
+  ]);
 
   if (!props.open) return null;
 
