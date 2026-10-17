@@ -1,6 +1,5 @@
 import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
 import type { ServerConfig } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
@@ -40,37 +39,33 @@ export function useLocalEnvironmentUpdateGroups(): {
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
 
-  return useMemo(() => {
-    const inputs: LocalEnvironmentProvidersInput[] = [];
+  const inputs: LocalEnvironmentProvidersInput[] = [];
 
-    for (const environment of environments) {
-      if (!isLocalConnectionTarget(environment.entry.target)) {
-        continue;
-      }
-
-      const isPrimary = environment.environmentId === primaryEnvironmentId;
-      const serverConfig: ServerConfig | null = environment.serverConfig;
-
-      inputs.push({
-        environmentId: environment.environmentId,
-        label: isPrimary
-          ? deriveEnvironmentDisplayLabel({
-              isWsl: false,
-              wslDistro: null,
-              platformOs: serverConfig?.environment.platform.os,
-              fallbackLabel: environment.label,
-            })
-          : environment.label,
-        isPrimary,
-        connectionState: isPrimary
-          ? "ready"
-          : normalizeConnectionState(environment.connection.phase),
-        providers: serverConfig?.providers ?? [],
-      });
+  for (const environment of environments) {
+    if (!isLocalConnectionTarget(environment.entry.target)) {
+      continue;
     }
 
-    inputs.sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary));
+    const isPrimary = environment.environmentId === primaryEnvironmentId;
+    const serverConfig: ServerConfig | null = environment.serverConfig;
 
-    return buildLocalEnvironmentUpdateGroups(inputs);
-  }, [environments, primaryEnvironmentId]);
+    inputs.push({
+      environmentId: environment.environmentId,
+      label: isPrimary
+        ? deriveEnvironmentDisplayLabel({
+            isWsl: false,
+            wslDistro: null,
+            platformOs: serverConfig?.environment.platform.os,
+            fallbackLabel: environment.label,
+          })
+        : environment.label,
+      isPrimary,
+      connectionState: isPrimary ? "ready" : normalizeConnectionState(environment.connection.phase),
+      providers: serverConfig?.providers ?? [],
+    });
+  }
+
+  inputs.sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary));
+
+  return buildLocalEnvironmentUpdateGroups(inputs);
 }
