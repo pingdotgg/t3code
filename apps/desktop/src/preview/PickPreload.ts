@@ -255,15 +255,13 @@ function unionRects(
   const top = Math.min(...rects.map((rect) => rect.y));
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-  const x = Math.max(0, left - padding);
-  const y = Math.max(0, top - padding);
-  const maxWidth = Math.max(1, window.innerWidth - x);
-  const maxHeight = Math.max(1, window.innerHeight - y);
+  // Keep offscreen bounds intact; main intersects them with the captured
+  // viewport instead of moving an invisible selection onto unrelated pixels.
   return {
-    x,
-    y,
-    width: Math.min(maxWidth, right - left + padding * 2),
-    height: Math.min(maxHeight, bottom - top + padding * 2),
+    x: left - padding,
+    y: top - padding,
+    width: right - left + padding * 2,
+    height: bottom - top + padding * 2,
   };
 }
 
@@ -1442,7 +1440,7 @@ function startAnnotation(sendEnabled: boolean): void {
           annotation,
           screenshotRect,
           submission === "send" && !sendEnabled ? "attach" : submission,
-          // Main crops a full-page capture, whose pixels are CSS px × this.
+          // Main crops a viewport capture, whose pixels are CSS px × this.
           window.devicePixelRatio,
         );
       })
