@@ -27,6 +27,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
+  type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
@@ -46,7 +47,7 @@ import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresen
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
-import { cursorSdkModelSelection } from "./sdkModel.ts";
+import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import {
   discoverCursorSkills,
   hasCursorSkillMention,
@@ -846,6 +847,7 @@ export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
 }
 
 export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
@@ -2382,6 +2384,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           driver: CursorAgentSdk.CURSOR_PROVIDER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          getModelContextWindow: (selection) =>
+            selection.instanceId === adapterOptions.instanceId
+              ? cursorContextWindowTokens(selection, adapterOptions.getModels?.() ?? [])
+              : undefined,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ensureThread: Effect.fn("CursorAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
@@ -2617,6 +2623,36 @@ export type CursorAdapterV2DriverEnv =
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
 
+export const createCursorAdapterV2 = Effect.fn("CursorAdapterV2Driver.create")(
+  function* (
+    input: ProviderAdapterDriverCreateInput<CursorSettings>,
+    hooks: Pick<CursorAdapterV2Options, "getModels"> = {},
+  ) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    return yield* makeCursorAdapterV2({
+      instanceId: input.instanceId,
+      settings: {
+        ...input.config,
+        enabled: input.enabled,
+      },
+      environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      ...hooks,
+    });
+  },
+  (effect, input, _hooks) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: CURSOR_DRIVER_KIND,
+            instanceId: input.instanceId,
+            detail: "Failed to create Cursor Agent SDK adapter.",
+            cause,
+          }),
+      ),
+    ),
+);
+
 export const CursorAdapterV2Driver: ProviderAdapterDriver<
   CursorSettings,
   CursorAdapterV2DriverEnv
@@ -2624,29 +2660,5 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
   driverKind: CURSOR_DRIVER_KIND,
   configSchema: CursorSettings,
   defaultConfig: (): CursorSettings => DEFAULT_CURSOR_SETTINGS,
-  create: Effect.fn("CursorAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
-      const hostEnvironment = yield* HostProcess.Environment;
-      return yield* makeCursorAdapterV2({
-        instanceId: input.instanceId,
-        settings: {
-          ...input.config,
-          enabled: input.enabled,
-        },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: CURSOR_DRIVER_KIND,
-              instanceId: input.instanceId,
-              detail: "Failed to create Cursor Agent SDK adapter.",
-              cause,
-            }),
-        ),
-      ),
-  ),
+  create: (input) => createCursorAdapterV2(input, {}),
 };
