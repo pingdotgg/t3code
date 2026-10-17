@@ -1,4 +1,5 @@
 import { EnvironmentId, type PullRequestCheck } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -13,34 +14,33 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useServerConfigs: (() => new Map()) as never,
 }));
+const queryData = () => ({
+  number: 1,
+  title: "Test PR",
+  state: "open",
+  isDraft: false,
+  mergeability: "mergeable",
+  headBranch: "feature",
+  baseBranch: "main",
+  changedFiles: 1,
+  additions: 1,
+  deletions: 0,
+  checks: [state.status, ...(state.extraStatus ? [state.extraStatus] : [])].map((status) => ({
+    name: `CI-${status}`,
+    status,
+    description: null,
+    url: null,
+  })),
+  capabilities: { actions: ["merge"], mergeMethods: ["merge"] },
+  viewerPermissions: { actions: ["merge"] },
+  mergeCapabilities: { merge: true, squash: false, rebase: false },
+});
 vi.mock(import("~/state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useEnvironmentQuery: (() => ({
-    data: {
-      number: 1,
-      title: "Test PR",
-      state: "open",
-      isDraft: false,
-      mergeability: "mergeable",
-      headBranch: "feature",
-      baseBranch: "main",
-      changedFiles: 1,
-      additions: 1,
-      deletions: 0,
-      checks: [state.status, ...(state.extraStatus ? [state.extraStatus] : [])].map((status) => ({
-        name: `CI-${status}`,
-        status,
-        description: null,
-        url: null,
-      })),
-      capabilities: { actions: ["merge"], mergeMethods: ["merge"] },
-      viewerPermissions: { actions: ["merge"] },
-      mergeCapabilities: { merge: true, squash: false, rebase: false },
-    },
-    dataUpdatedAt: 1,
-    isPending: false,
-    refresh: vi.fn(),
-  })) as never,
+  useEnvironmentQuerySelector: ((_atom: unknown, select: (result: unknown) => unknown) =>
+    select(AsyncResult.success(queryData()))) as never,
+  useEnvironmentQueryIsNewer: () => true,
+  useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
   ...(await importOriginal()),
