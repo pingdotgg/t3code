@@ -29,20 +29,6 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
  * Suspends while the grammar loads; wrap it in Suspense with the plain text as
  * the fallback.
  */
-function useHighlightedLines(
-  highlighter: Awaited<ReturnType<typeof getSyntaxHighlighterPromise>>,
-  code: string,
-  language: string,
-  embedded: ReadonlyArray<EmbeddedScript>,
-  theme: "light" | "dark",
-) {
-  "use memo";
-  const themeName = resolveDiffThemeName(theme);
-  const tokenize = (text: string, lang: string) =>
-    highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
-  return keyedLines(code, withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize));
-}
-
 export function HighlightedTokens({
   code,
   language,
@@ -58,32 +44,44 @@ export function HighlightedTokens({
 }) {
   const highlighter = use(getSyntaxHighlighterPromise(language));
   for (const script of embedded) use(getSyntaxHighlighterPromise(script.language));
-  const lines = useHighlightedLines(highlighter, code, language, embedded, theme);
+  const themeName = resolveDiffThemeName(theme);
+  const tokenize = (text: string, lang: string) =>
+    highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
+  const lines = keyedLines(
+    code,
+    withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
+  );
 
-  return lines.map(({ key, tokens, ending }) => (
-    <span key={key}>
-      {wordClassName
-        ? wordsOf(tokens).map((part) =>
-            typeof part === "string" ? (
-              part
-            ) : (
-              <span key={part.key} className={wordClassName}>
-                {part.pieces.map((piece) => (
-                  <span key={piece.key} style={syntaxTokenStyle(piece.token)}>
-                    {piece.text}
+  // A fragment, not the bare array: the compiler only treats this as a component when it
+  // returns JSX, since `use` alone does not count as a hook call for that inference.
+  return (
+    <>
+      {lines.map(({ key, tokens, ending }) => (
+        <span key={key}>
+          {wordClassName
+            ? wordsOf(tokens).map((part) =>
+                typeof part === "string" ? (
+                  part
+                ) : (
+                  <span key={part.key} className={wordClassName}>
+                    {part.pieces.map((piece) => (
+                      <span key={piece.key} style={syntaxTokenStyle(piece.token)}>
+                        {piece.text}
+                      </span>
+                    ))}
                   </span>
-                ))}
-              </span>
-            ),
-          )
-        : tokens.map((token) => (
-            <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
-              {token.content}
-            </span>
-          ))}
-      {ending}
-    </span>
-  ));
+                ),
+              )
+            : tokens.map((token) => (
+                <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
+                  {token.content}
+                </span>
+              ))}
+          {ending}
+        </span>
+      ))}
+    </>
+  );
 }
 
 export function withEmbeddedScripts(
