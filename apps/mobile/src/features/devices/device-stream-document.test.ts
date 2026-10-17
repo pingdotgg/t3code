@@ -1,7 +1,39 @@
 import * as NodeVM from "node:vm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { deviceStreamDocument, deviceStreamMessage } from "./device-stream-document";
+import {
+  deviceStreamBaseUrl,
+  deviceStreamDocument,
+  deviceStreamMessage,
+} from "./device-stream-document";
+
+describe("native device stream origin", () => {
+  it.each([
+    "http://100.64.0.1:3773/api/device-hub",
+    "http://192.168.1.10:3773/api/device-hub",
+    "https://environment.example/t3/api/device-hub",
+  ])("keeps iOS MJPEG on the environment origin in Android: %s", (httpBase) => {
+    const documentUrl = new URL(deviceStreamBaseUrl("android", "ios", httpBase));
+    const streamUrl = new URL(`${httpBase}/vendor/serve-sim/helper/device/stream.mjpeg`);
+    expect(documentUrl.origin).toBe(streamUrl.origin);
+    expect(documentUrl.pathname).toBe("/");
+  });
+
+  it.each(["http", "https"])(
+    "retains a secure WebCodecs document for Android targets over %s",
+    (scheme) => {
+      expect(
+        deviceStreamBaseUrl("android", "android", `${scheme}://environment.example/api/device-hub`),
+      ).toBe("https://localhost/");
+    },
+  );
+
+  it.each(["ios", "android"] as const)("retains the iOS viewer origin for %s targets", (target) => {
+    expect(deviceStreamBaseUrl("ios", target, "http://environment.example/api/device-hub")).toBe(
+      "file:///",
+    );
+  });
+});
 
 describe("native device stream document", () => {
   it("keeps ticket and device values from terminating the embedded script", () => {
