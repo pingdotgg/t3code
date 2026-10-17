@@ -11,6 +11,7 @@ import {
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
+  isZipPreviewFile,
   resolveFilePreviewPath,
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
@@ -117,6 +118,26 @@ describe("isMarkdownPreviewFile", () => {
   it("does not treat other text files as markdown", () => {
     expect(isMarkdownPreviewFile("docs/guide.txt")).toBe(false);
     expect(isMarkdownPreviewFile("docs/markdown.ts")).toBe(false);
+  });
+});
+
+describe("isZipPreviewFile", () => {
+  it("recognizes ZIP archives by MIME type or extension", () => {
+    expect(isZipPreviewFile({ name: "photos", mimeType: "application/zip; charset=binary" })).toBe(
+      true,
+    );
+    expect(isZipPreviewFile({ name: "photos", mimeType: "application/x-zip-compressed" })).toBe(
+      true,
+    );
+    expect(isZipPreviewFile({ name: "Photos.ZIP", mimeType: "application/octet-stream" })).toBe(
+      true,
+    );
+    expect(isZipPreviewFile({ name: "photos.zip", mimeType: "text/plain" })).toBe(true);
+  });
+
+  it("does not treat other archives or ZIP-based documents as ZIP previews", () => {
+    expect(isZipPreviewFile({ name: "photos.tar.gz", mimeType: "application/gzip" })).toBe(false);
+    expect(isZipPreviewFile({ name: "report.docx", mimeType: "" })).toBe(false);
   });
 });
 

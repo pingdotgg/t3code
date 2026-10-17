@@ -29,8 +29,10 @@ import {
   FileSurfaceLoading,
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
+import { isZipPreviewFile } from "./filePreviewMode";
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+const ZipArchivePreview = lazy(() => import("./ZipArchivePreview"));
 
 const STALE_URL_MS = 5 * 60_000;
 
@@ -60,8 +62,9 @@ export function AttachmentFilePreview(props: {
   onRemove?: () => void;
   onClose?: () => void;
 }) {
-  const kind = filePreviewKind(props);
-  const delimiter = filePreviewDelimiter(props);
+  const isZip = isZipPreviewFile(props);
+  const kind = isZip ? "unsupported" : filePreviewKind(props);
+  const delimiter = isZip ? null : filePreviewDelimiter(props);
   const renderedMode =
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
@@ -251,6 +254,16 @@ export function AttachmentFilePreview(props: {
         onError={() => setError("Unable to load image.")}
       />
     </div>
+  ) : isZip ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <ZipArchivePreview
+        key={`${url}:${revision}`}
+        name={props.name}
+        file={props.file ?? null}
+        url={url}
+        onRetry={() => setRevision((value) => value + 1)}
+      />
+    </Suspense>
   ) : (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
       <p className="text-sm font-medium">No preview for this file</p>
