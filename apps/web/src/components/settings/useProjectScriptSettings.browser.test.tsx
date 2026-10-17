@@ -6,7 +6,8 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { NewProjectScriptInput } from "../projectScriptEditor";
@@ -17,20 +18,30 @@ const commands = vi.hoisted(() => ({
   removeKeybinding: vi.fn(),
 }));
 
-vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("../../state/session", () => ({ readEnvironmentScope: () => true }));
-vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
-vi.mock("../../state/server", () => ({
-  serverEnvironment: {
-    updateSettings: "updateSettings",
-    upsertKeybinding: "upsertKeybinding",
-    removeKeybinding: "removeKeybinding",
-  },
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
 }));
-vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: keyof typeof commands) => commands[command],
+vi.mock(import("../../state/entities"), async (original) => ({
+  ...(await original()),
+  useProjects: () => [],
 }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      updateSettings: "updateSettings",
+      upsertKeybinding: "upsertKeybinding",
+      removeKeybinding: "removeKeybinding",
+    } as unknown as typeof actual.serverEnvironment,
+  };
+});
+vi.mock(import("../../state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: ((command: keyof typeof commands) => commands[command]) as never,
+}));
 
 import { useProjectScriptSettings } from "./useProjectScriptSettings";
 
@@ -86,13 +97,14 @@ function Probe(props: {
   return null;
 }
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
-function renderSettings(keybindings: ResolvedKeybindingsConfig) {
+async function renderSettings(keybindings: ResolvedKeybindingsConfig) {
   let settings: ProjectScriptSettings | undefined;
-  act(() => {
-    renderer = create(<Probe keybindings={keybindings} onResult={(next) => (settings = next)} />);
-  });
+  await act(async () =>
+    root.render(<Probe keybindings={keybindings} onResult={(next) => (settings = next)} />),
+  );
   return settings!;
 }
 
@@ -110,17 +122,20 @@ beforeEach(() => {
   for (const command of Object.values(commands)) {
     command.mockResolvedValue(AsyncResult.success(undefined));
   }
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
-afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
-describe("useProjectScriptSettings in a browser client", () => {
+describe("useProjectScriptSettings", () => {
   it("saves a recorded action shortcut", async () => {
-    const { submit } = renderSettings([]);
+    const { submit } = await renderSettings([]);
 
     const result = await submitInAct(submit, "mod+shift+k");
 
@@ -132,7 +147,7 @@ describe("useProjectScriptSettings in a browser client", () => {
   });
 
   it("removes a cleared action shortcut", async () => {
-    const { submit } = renderSettings(lintBinding);
+    const { submit } = await renderSettings(lintBinding);
 
     const result = await submitInAct(submit, null);
 
