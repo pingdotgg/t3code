@@ -1479,12 +1479,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
+    // Not getFocusedWebContents(): every guest of a focused window reports focus.
+    // An agent's keys reach a guest without a focused frame through GuestInput.
+    const holdsKeyboardFocus = (contents: Electron.WebContents) =>
+      contents.isFocused() && contents.focusedFrame !== null;
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
-      // Background automation must not edit whichever other renderer has focus.
       contents.setIgnoreMenuShortcuts(
-        !isPreviewEditingShortcut(input, hostPlatform) ||
-          webContents.getFocusedWebContents() !== contents,
+        !isPreviewEditingShortcut(input, hostPlatform) || !holdsKeyboardFocus(contents),
       );
     };
     // A popup opens with Electron's default handler, so the page inside it could
@@ -1505,7 +1507,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         !input.isComposing &&
         host &&
         !host.isDestroyed() &&
-        webContents.getFocusedWebContents() === wc &&
+        holdsKeyboardFocus(wc) &&
         !(
           hostPlatform !== "darwin" &&
           input.control &&
