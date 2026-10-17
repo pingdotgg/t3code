@@ -10,6 +10,17 @@ const state = vi.hoisted(() => ({
   error: null as string | null,
   readScope: vi.fn(),
   openFile: vi.fn(),
+  // The real query hands back the same result array until the search changes.
+  matches: [
+    {
+      resultIndex: 0,
+      path: "src/index.ts",
+      lineNumber: 3,
+      lineContent: "match",
+      matchRanges: [],
+    },
+  ],
+  noMatches: [],
 }));
 
 const target = {
@@ -37,18 +48,7 @@ vi.mock("~/state/queries", () => ({
     hasQuery: query.length > 0,
     truncated: false,
     invalidRegex: false,
-    matches:
-      state.canReadFiles && query.length > 0
-        ? [
-            {
-              resultIndex: 0,
-              path: "src/index.ts",
-              lineNumber: 3,
-              lineContent: "match",
-              matchRanges: [],
-            },
-          ]
-        : [],
+    matches: state.canReadFiles && query.length > 0 ? state.matches : state.noMatches,
   }),
 }));
 vi.mock("../CommandPaletteContent", () => ({ CommandPaletteContent: "section" }));
