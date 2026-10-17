@@ -49,6 +49,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Settings reads and writes these; without a primary, shortcuts follow the first one. */
+export function isConnectedWithConfig(
+  environment: Pick<ScopedSettingsEnvironment, "connection" | "serverConfig">,
+) {
+  return environment.connection.phase === "connected" && environment.serverConfig !== null;
+}
+
 /** The representative supplies display values, never the set of write targets. */
 export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnvironment>(
   scope: ResolvedSettingsScope,
@@ -59,10 +66,7 @@ export function selectScopedSettingsEnvironments<T extends ScopedSettingsEnviron
   const environments = available.filter((environment) =>
     selectedIds.has(environment.environmentId),
   );
-  const connectedEnvironments = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" && environment.serverConfig !== null,
-  );
+  const connectedEnvironments = environments.filter(isConnectedWithConfig);
   const environment =
     connectedEnvironments.find((candidate) => candidate.environmentId === primaryEnvironmentId) ??
     connectedEnvironments[0] ??
