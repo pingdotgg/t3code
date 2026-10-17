@@ -30,7 +30,7 @@ export function ComposerUsageLimits({
     </Pressable>
   );
   return (
-    <View className="overflow-hidden rounded-[20px] border-continuous bg-card">
+    <View className="shrink overflow-hidden rounded-[20px] border-continuous bg-card">
       <ScrollView
         bounces={false}
         showsVerticalScrollIndicator={false}

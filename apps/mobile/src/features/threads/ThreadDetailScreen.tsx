@@ -317,6 +317,8 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
   }, [threadId, feed]);
 }
 
+const USAGE_LIMITS_HEADER_GAP = 8;
+
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
   easing: Easing.out(Easing.cubic),
@@ -634,6 +636,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     navigationHeaderHeight,
     composerOverlapHeight: composerBottomInset,
   });
+  // The /usage-limits panel is the overlay's only shrinkable child, so capping the overlay keeps
+  // its top, and the panel's close button, below the nav header. Keyboard visibility and height
+  // both come from will-show and clear at did-hide, matching when the sticky view translates the
+  // overlay; quarantined Android state is ignored, as in the sticky view. An approval card can't
+  // shrink, so the cap is skipped while one shows rather than pushing it over the composer.
+  const usageLimitsOverlayMaxHeight =
+    usageLimitsReport && activeUserInputRequestId === null && !props.activePendingApproval
+      ? windowHeight -
+        navigationHeaderHeight -
+        (isKeyboardVisible && !keyboardStateSuspect ? liveKeyboardHeight : 0) -
+        controlInsets.bottom -
+        USAGE_LIMITS_HEADER_GAP
+      : undefined;
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -1156,7 +1171,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
-              <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+              <View
+                ref={composerOverlayRef}
+                onLayout={onComposerLayout}
+                className="w-full"
+                style={
+                  usageLimitsOverlayMaxHeight === undefined
+                    ? undefined
+                    : { maxHeight: usageLimitsOverlayMaxHeight }
+                }
+              >
                 <FloatingWorkingControl
                   colorScheme={isDarkMode ? "dark" : "light"}
                   status={floatingStatus}
@@ -1190,7 +1214,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     });
                   }}
                 />
-                <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                <View className="w-full shrink self-center" style={{ maxWidth: contentMaxWidth }}>
                   {props.queuedRunEdit !== null ? (
                     <Animated.View
                       className="shrink-0"
@@ -1232,7 +1256,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : null}
                   {usageLimitsReport && activeUserInputRequestId === null ? (
                     <Animated.View
-                      className="shrink-0 px-4 pb-3"
+                      className="shrink px-4 pb-3"
                       entering={FadeInDown.duration(220)}
                       exiting={FadeOut.duration(140)}
                     >
