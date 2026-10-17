@@ -41,6 +41,8 @@ export class PeerMcpClient extends Context.Service<
       readonly arguments: Record<string, unknown>;
       readonly limits: PeerCallLimits;
       readonly success: S;
+      /** Refuse a launch replay through a replacement OAuth grant. */
+      readonly expectedLinkIdentity?: string;
     }) => Effect.Effect<S["Type"], OrchestratorMcpFailure>;
   }
 >()("t3/peer/PeerMcpClient") {}
@@ -146,6 +148,16 @@ const make = Effect.gen(function* () {
       const resolved = yield* links
         .resolve(input.environmentId)
         .pipe(Effect.mapError(fromLinkError));
+      if (
+        input.expectedLinkIdentity !== undefined &&
+        resolved.link.launchIdentity !== input.expectedLinkIdentity
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "The destination was linked again. Its original launch identity cannot be replayed through the replacement link.",
+        });
+      }
       const limitHeader = {
         [McpInvocationContext.MODE_LIMIT_HEADER]: `${input.limits.runtimeMode}/${input.limits.interactionMode}`,
       };

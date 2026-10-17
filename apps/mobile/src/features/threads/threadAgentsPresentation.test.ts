@@ -84,6 +84,37 @@ describe("resolveSubagentRowPresentation", () => {
     });
   });
 
+  it("shows the destination while launch is pending without offering a nonexistent thread", () => {
+    const pending = {
+      ...base,
+      childThreadId: null,
+      remoteChild: { environmentId: "environment-box" as never, label: "Box" },
+    };
+    const row = resolveSubagentRowPresentation(pending, true);
+    expect(row.runsOn).toBe("Box");
+    expect(row.statusLabel).toBe("Launching");
+    expect(row.canOpenThread).toBe(false);
+    expect(subagentThreadTarget(pending, "environment-here" as never, () => true)).toBeNull();
+    expect(
+      resolveSubagentRowPresentation(
+        { ...pending, status: "cancelled", result: "Cancelled." },
+        true,
+      ).statusLabel,
+    ).toBe("Cancelled");
+    const launchError = "Launch unconfirmed; work may still be running on Box.";
+    expect(
+      resolveSubagentRowPresentation(
+        {
+          ...pending,
+          status: "cancelled",
+          result: "Cancelled.",
+          remoteChild: { ...pending.remoteChild, launchError },
+        },
+        true,
+      ),
+    ).toMatchObject({ statusLabel: "Cancelled", detail: launchError, canOpenThread: false });
+  });
+
   it("uses the status label when there is nothing to report yet", () => {
     const row = resolveSubagentRowPresentation({ ...base, status: "pending" });
 

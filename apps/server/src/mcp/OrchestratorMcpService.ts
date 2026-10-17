@@ -1491,7 +1491,20 @@ const make = Effect.gen(function* () {
       return {
         taskId: task.id,
         childThreadId: null,
-        ...(task.remoteChild === undefined ? {} : { remoteChild: task.remoteChild }),
+        ...(task.remoteChild === undefined
+          ? {}
+          : {
+              remoteChild: {
+                environmentId: task.remoteChild.environmentId,
+                label: task.remoteChild.label,
+                ...(task.remoteChild.launchError === undefined
+                  ? {}
+                  : { launchError: task.remoteChild.launchError }),
+                ...(task.remoteChild.threadId === undefined
+                  ? {}
+                  : { threadId: task.remoteChild.threadId }),
+              },
+            }),
         childRunId: null,
         childNodeId: task.id,
         status,

@@ -51,6 +51,7 @@ export class PeerForwarding extends Context.Service<
       tool: T,
       environmentId: EnvironmentId,
       params: Tool.Parameters<T>,
+      options?: { readonly expectedLinkIdentity: string },
     ) => Effect.Effect<Tool.Success<T>, OrchestratorMcpFailure>;
     /**
      * Runs `here` unless `params.environmentId` names a linked environment, in
@@ -131,6 +132,7 @@ const make = Effect.gen(function* () {
     success: Schema.Top,
     environmentId: EnvironmentId,
     params: unknown,
+    options?: { readonly expectedLinkIdentity: string },
   ) =>
     Effect.gen(function* () {
       const limits = yield* callerLimits(scope);
@@ -154,11 +156,20 @@ const make = Effect.gen(function* () {
         arguments: args,
         limits,
         success: success as Schema.Decoder<A>,
+        ...(options === undefined ? {} : options),
       });
     });
 
-  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) =>
-    forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, params);
+  const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params, options) =>
+    forward(
+      scope,
+      tool.name,
+      tool.parametersSchema,
+      tool.successSchema,
+      environmentId,
+      params,
+      options,
+    );
 
   const route: PeerForwarding["Service"]["route"] = (scope, tool, params, here) => {
     const target = remoteTarget(scope, params.environmentId);

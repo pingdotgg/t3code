@@ -34,7 +34,9 @@ export function subagentThreadTarget(
     return { environmentId, threadId: subagent.childThreadId };
   }
   const remote = subagent.remoteChild;
-  return remote !== undefined && isKnownEnvironment(remote.environmentId)
+  return remote !== undefined &&
+    remote.threadId !== undefined &&
+    isKnownEnvironment(remote.environmentId)
     ? { environmentId: remote.environmentId, threadId: remote.threadId }
     : null;
 }
@@ -86,12 +88,19 @@ export function resolveSubagentRowPresentation(
   const live = isActiveSubagentStatus(subagent.status);
   return {
     title: rowTitle(subagent),
-    detail: subagentDetailPreview(subagent),
-    statusLabel: rowStatusLabel(subagent.status),
+    detail: subagentDetailPreview({
+      ...subagent,
+      result: subagent.remoteChild?.launchError ?? subagent.result,
+    }),
+    statusLabel:
+      live && subagent.remoteChild !== undefined && subagent.remoteChild.threadId === undefined
+        ? "Launching"
+        : rowStatusLabel(subagent.status),
     tone: rowTone(subagent.status),
     live,
     canOpenThread:
-      subagent.childThreadId !== null || (subagent.remoteChild !== undefined && canOpenRemote),
+      subagent.childThreadId !== null ||
+      (subagent.remoteChild?.threadId !== undefined && canOpenRemote),
     runsOn: subagent.remoteChild?.label ?? null,
   };
 }

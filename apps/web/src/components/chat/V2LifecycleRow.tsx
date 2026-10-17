@@ -393,6 +393,7 @@ function SubagentTimelineLink(props: {
     (thread) => thread?.projection.subagents.find((agent) => agent.id === props.subagentId) ?? null,
   );
   const remote = props.remote ?? agent?.remoteChild;
+  const remoteThreadId = remote?.threadId;
   const remoteEnvironment = useEnvironment(remote?.environmentId ?? null);
   const navigate = useNavigate();
   const threadId = props.threadId;
@@ -400,20 +401,26 @@ function SubagentTimelineLink(props: {
   const open =
     threadId !== null
       ? () => props.onOpenThread(threadId)
-      : remote !== undefined && remoteEnvironment !== null
+      : remote !== undefined && remoteThreadId !== undefined && remoteEnvironment !== null
         ? () =>
             void navigate({
               to: "/$environmentId/$threadId",
-              params: buildThreadRouteParams(scopeThreadRef(remote.environmentId, remote.threadId)),
+              params: buildThreadRouteParams(scopeThreadRef(remote.environmentId, remoteThreadId)),
             })
         : null;
   const liveStatus = agent?.status ?? props.status;
   const status = props.event ? props.event.status : liveStatus;
-  const statusLabel = props.event?.label ?? subagentStatusVisual(liveStatus).label;
+  const statusLabel =
+    props.event?.label ??
+    (remote !== undefined &&
+    remoteThreadId === undefined &&
+    !SETTLED_SUBAGENT_STATUSES.has(liveStatus)
+      ? "Launching"
+      : subagentStatusVisual(liveStatus).label);
   const result = (agent?.result ?? props.result)?.trim();
   const progress = (agent?.progress ?? props.progress)?.trim();
   const settled = SETTLED_SUBAGENT_STATUSES.has(status ?? liveStatus);
-  const rawDetail = settled ? result || progress : progress || result;
+  const rawDetail = remote?.launchError ?? (settled ? result || progress : progress || result);
   const detail =
     rawDetail && !GENERIC_CHILD_END.test(rawDetail) ? plainDetail(rawDetail) || null : null;
   const failed = status === "failed";

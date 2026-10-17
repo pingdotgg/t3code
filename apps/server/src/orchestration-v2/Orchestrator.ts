@@ -474,6 +474,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
       return command.threadId;
     case "delegated_task.request":
     case "delegated_task.remote.request":
+    case "delegated_task.remote.launch":
+    case "delegated_task.remote.attach":
     case "delegated_task.remote.complete":
     case "delegated_task.remote.stop":
     case "delegated_task.wake-policy":
@@ -7107,6 +7109,147 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  /** Launch/attachment need the durable task, not a live parent provider run. */
+  const dispatchRemoteDelegatedTaskLaunch = Effect.fn(
+    "orchestrationV2.dispatch.remoteDelegatedTaskLaunch",
+  )(function* (
+    command: Extract<
+      OrchestrationV2InternalCommand,
+      {
+        readonly type: "delegated_task.remote.launch" | "delegated_task.remote.attach";
+      }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const parentProjection = yield* projectionStore
+      .getThreadRecords(command.parentThreadId, ["subagents", "turnItems", "nodes"], {
+        turnItemTypes: ["subagent"],
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.parentThreadId, cause }),
+        ),
+      );
+    const task = parentProjection.subagents.find(
+      (candidate) =>
+        candidate.id === command.taskId &&
+        candidate.origin === "app_owned" &&
+        candidate.remoteChild !== undefined,
+    );
+    if (task?.remoteChild === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The remote launch does not belong to this parent task.",
+      });
+    }
+    const remote = task.remoteChild;
+    if (command.type === "delegated_task.remote.launch") {
+      if (remote.threadId !== undefined || remote.launchStarted === true || task.result !== null)
+        return;
+      if (remote.launch === undefined) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The pending remote task has no launch inputs.",
+        });
+      }
+    } else {
+      if (
+        remote.environmentId !== command.environmentId ||
+        (remote.threadId !== undefined && remote.threadId !== command.threadId) ||
+        (remote.runId !== undefined && remote.runId !== command.runId) ||
+        (remote.threadId !== undefined && remote.runId === undefined && command.runId !== null)
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The accepted launch does not match this remote task.",
+        });
+      }
+      if (remote.threadId !== undefined) return;
+      if (remote.launchStarted !== true) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The remote task's launch has not been started.",
+        });
+      }
+    }
+    const now = yield* DateTime.now;
+    const remoteChild =
+      command.type === "delegated_task.remote.launch"
+        ? { ...remote, launchStarted: true }
+        : {
+            ...remote,
+            threadId: command.threadId,
+            ...(command.runId === null ? {} : { runId: command.runId }),
+          };
+    const status =
+      command.type === "delegated_task.remote.attach" && task.result === null
+        ? "running"
+        : task.status;
+    const emitEvent = emit(events, command);
+    yield* emitEvent({
+      type: "subagent.updated",
+      threadId: command.parentThreadId,
+      ...(task.runId === null ? {} : { runId: task.runId }),
+      nodeId: task.id,
+      driver: task.driver,
+      occurredAt: now,
+      payload: {
+        ...task,
+        remoteChild,
+        status,
+        ...(command.type === "delegated_task.remote.attach"
+          ? {
+              providerInstanceId: command.modelSelection.instanceId,
+              model: command.modelSelection.model,
+            }
+          : {}),
+        updatedAt: now,
+      },
+    });
+    const item = parentProjection.turnItems.find(
+      (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
+    );
+    if (item !== undefined && item.type === "subagent") {
+      yield* emitEvent({
+        type: "turn-item.updated",
+        threadId: command.parentThreadId,
+        ...(item.runId === null ? {} : { runId: item.runId }),
+        ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+        driver: task.driver,
+        occurredAt: now,
+        payload: {
+          ...item,
+          remoteChild,
+          status:
+            command.type === "delegated_task.remote.attach" && task.result === null
+              ? "running"
+              : item.status,
+          updatedAt: now,
+        },
+      });
+    }
+    const node = parentProjection.nodes.find((candidate) => candidate.id === task.id);
+    if (
+      node !== undefined &&
+      command.type === "delegated_task.remote.attach" &&
+      task.result === null
+    ) {
+      yield* emitEvent({
+        type: "node.updated",
+        threadId: command.parentThreadId,
+        ...(node.runId === null ? {} : { runId: node.runId }),
+        nodeId: node.id,
+        driver: task.driver,
+        occurredAt: now,
+        payload: { ...node, status: "running" },
+      });
+    }
+  });
+
   /**
    * Completes a task that ran in a linked environment: the parent half of
    * `finalizeAppOwnedSubagent`, with the result its thread there ended with.
@@ -7154,7 +7297,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const remoteChild =
       command.stoppedThere === undefined
         ? task.remoteChild
-        : { ...task.remoteChild!, stoppedThere: true };
+        : {
+            ...task.remoteChild!,
+            stoppedThere: true,
+            ...(command.launchError === undefined ? {} : { launchError: command.launchError }),
+          };
     // The follower may report a result twice; the first one stands, and the
     // repeat records nothing, which the dispatcher refuses. A stop there that
     // reached the thread after the result is still recorded, but a run that
@@ -11275,6 +11422,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "delegated_task.remote.request":
         yield* dispatchRemoteDelegatedTaskRequest(command, events);
         break;
+      case "delegated_task.remote.launch":
+      case "delegated_task.remote.attach":
+        yield* dispatchRemoteDelegatedTaskLaunch(command, events);
+        break;
       case "delegated_task.remote.complete":
         yield* dispatchRemoteDelegatedTaskComplete(command, events);
         break;
@@ -11381,7 +11532,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
-        command.type === "subagent.stop"
+        command.type === "subagent.stop" ||
+        command.type === "delegated_task.remote.launch" ||
+        command.type === "delegated_task.remote.attach"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

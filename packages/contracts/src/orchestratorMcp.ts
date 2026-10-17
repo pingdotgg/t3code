@@ -206,9 +206,14 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   /** Null for a task that runs in a linked environment; see `remoteChild`. */
   childThreadId: Schema.NullOr(ThreadId),
-  /** The linked environment and thread a remote task runs as. */
+  /** The destination environment; threadId is absent until its launch is attached. */
   remoteChild: Schema.optional(
-    Schema.Struct({ environmentId: EnvironmentId, threadId: ThreadId, label: Schema.String }),
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      threadId: Schema.optional(ThreadId),
+      label: Schema.String,
+      launchError: Schema.optional(Schema.String),
+    }),
   ),
   childRunId: Schema.NullOr(RunId),
   childNodeId: NodeId,

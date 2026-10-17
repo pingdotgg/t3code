@@ -650,6 +650,21 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
 });
 export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
 
+/** Durable launch inputs and the original retry identity. No credentials. */
+export const OrchestrationV2RemoteTaskLaunch = Schema.Struct({
+  requestNamespace: Schema.String,
+  clientRequestId: Schema.String,
+  /** Nonsecret grant-generation identity; relinking must not create a replacement child. */
+  linkIdentity: Schema.String,
+  projectId: ProjectId,
+  title: Schema.String,
+  modelSelection: ModelSelection,
+  runtimeMode: Schema.optional(RuntimeMode),
+  interactionMode: Schema.optional(ProviderInteractionMode),
+  delegatedFrom: OrchestrationV2DelegatedFrom,
+});
+export type OrchestrationV2RemoteTaskLaunch = typeof OrchestrationV2RemoteTaskLaunch.Type;
+
 /**
  * The plan grows while the run executes: a phase a script only reaches at runtime joins the list
  * when it starts, so a client must treat the list as append-only rather than as a fixed arc
@@ -711,8 +726,14 @@ export type OrchestrationV2SubagentWorkflow = typeof OrchestrationV2SubagentWork
  */
 export const OrchestrationV2RemoteTaskChild = Schema.Struct({
   environmentId: EnvironmentId,
-  threadId: ThreadId,
+  /** Unset until the accepted launch is attached to the durable source task. */
+  threadId: Schema.optional(ThreadId),
   label: Schema.String,
+  launch: Schema.optional(OrchestrationV2RemoteTaskLaunch),
+  /** Committed before network I/O: an absent receipt may now mean acceptance is unknown. */
+  launchStarted: Schema.optional(Schema.Boolean),
+  /** Recovery was refused; already-accepted work may still be running there. */
+  launchError: Schema.optional(Schema.String),
   /** The run there that carries the task; absent on tasks recorded before it was kept. */
   runId: Schema.optional(RunId),
   /**
@@ -3061,8 +3082,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
   /**
    * Records a delegated task that runs in a linked environment: the task, its
    * node and its turn item on the parent, as `delegated_task.request` does,
-   * without a child thread here. `remoteChild` is the thread already launched
-   * there. The ids derive from `commandId`, so a retry records nothing new.
+   * without a child thread here. Pending remote work retains its launch inputs
+   * before it is sent. The ids derive from `commandId`, so a retry records nothing new.
    */
   Schema.Struct({
     type: Schema.Literal("delegated_task.remote.request"),
@@ -3076,6 +3097,24 @@ const OrchestrationV2InternalCommand = Schema.Union([
     modelSelection: ModelSelection,
     remoteChild: OrchestrationV2RemoteTaskChild,
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
+  }),
+  /** Serializes starting a pending launch against cancellation before any network I/O. */
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.remote.launch"),
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+  }),
+  /** Attaches an accepted launch, including after the original parent run has ended. */
+  Schema.Struct({
+    type: Schema.Literal("delegated_task.remote.attach"),
+    commandId: CommandId,
+    parentThreadId: ThreadId,
+    taskId: NodeId,
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    runId: Schema.NullOr(RunId),
+    modelSelection: ModelSelection,
   }),
   /**
    * Completes a delegated task that ran in a linked environment, with what its
@@ -3097,6 +3136,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
      * a run that ended by itself leaves the stop owed for what may follow it.
      */
     stoppedThere: Schema.optional(Schema.Literals(["ran-out", "stopped"])),
+    /** Preserve launch uncertainty even when cancellation already supplied the task result. */
+    launchError: Schema.optional(Schema.String),
     /** The stop generation this report acknowledges; absent for the original unnumbered stop. */
     stopCount: Schema.optional(NonNegativeInt),
   }),
