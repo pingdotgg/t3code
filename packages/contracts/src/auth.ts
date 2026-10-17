@@ -146,6 +146,9 @@ export function sessionHasLegacyPermissions(session: SessionGrantInput): boolean
   );
 }
 
+// Access and relay management are included because terminal:operate and
+// orchestration:operate already reach that authority through a shell or a
+// full-access agent. Narrowing a grant means choosing explicit scopes.
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -160,9 +163,6 @@ export const AuthStandardClientScopes = [
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthRelayReadScope,
-] as const;
-export const AuthAdministrativeScopes = [
-  ...AuthStandardClientScopes,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayWriteScope,
