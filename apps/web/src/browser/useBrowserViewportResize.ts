@@ -2,7 +2,6 @@
 
 import type { PreviewViewportSetting, PreviewViewportSize } from "@t3tools/contracts";
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -10,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 
+import { useStableCallback } from "../hooks/useStableCallback";
 import { commitBrowserViewportChange } from "./browserViewportActions";
 import {
   browserViewportSettingKey,
@@ -43,8 +43,8 @@ export function useBrowserViewportResize(options: {
   const keyboardViewportRef = useRef<ViewportDrag | null>(null);
   const [dragViewport, setDragViewport] = useState<ViewportDrag | null>(null);
   const sourceViewportKey = browserViewportSettingKey(viewport);
-  const sourceViewportKeyRef = useRef(sourceViewportKey);
-  sourceViewportKeyRef.current = sourceViewportKey;
+  // Drag listeners and the keyboard commit timer outlive the render that started them.
+  const isCurrentSource = useStableCallback((key: string) => key === sourceViewportKey);
   const activeDrag = dragViewport?.sourceKey === sourceViewportKey ? dragViewport : null;
   const effectiveViewport = activeDrag
     ? ({
@@ -85,20 +85,17 @@ export function useBrowserViewportResize(options: {
     keyboardViewportRef.current = null;
   }, [sourceViewportKey]);
 
-  const commitViewportChange = useCallback(
-    (next: PreviewViewportSetting) => {
-      dragVersionRef.current += 1;
-      dragCleanupRef.current?.();
-      if (keyboardCommitTimerRef.current !== null) {
-        clearTimeout(keyboardCommitTimerRef.current);
-        keyboardCommitTimerRef.current = null;
-      }
-      keyboardViewportRef.current = null;
-      setDragViewport(null);
-      return commitBrowserViewportChange(tabId, next);
-    },
-    [tabId],
-  );
+  const commitViewportChange = (next: PreviewViewportSetting) => {
+    dragVersionRef.current += 1;
+    dragCleanupRef.current?.();
+    if (keyboardCommitTimerRef.current !== null) {
+      clearTimeout(keyboardCommitTimerRef.current);
+      keyboardCommitTimerRef.current = null;
+    }
+    keyboardViewportRef.current = null;
+    setDragViewport(null);
+    return commitBrowserViewportChange(tabId, next);
+  };
 
   const clearDrag = () => setDragViewport(null);
   const commitDrag = (next: PreviewViewportSetting) => {
@@ -149,7 +146,7 @@ export function useBrowserViewportResize(options: {
     keyboardCommitTimerRef.current = setTimeout(() => {
       keyboardCommitTimerRef.current = null;
       const latest = keyboardViewportRef.current;
-      if (!latest || latest.sourceKey !== sourceViewportKeyRef.current) return;
+      if (!latest || !isCurrentSource(latest.sourceKey)) return;
       keyboardViewportRef.current = null;
       commitDrag({ _tag: "freeform", width: latest.width, height: latest.height });
     }, KEYBOARD_RESIZE_COMMIT_DELAY_MS);
@@ -187,7 +184,7 @@ export function useBrowserViewportResize(options: {
       target.setPointerCapture(pointerId);
     } catch {}
 
-    const sourceChanged = () => sourceViewportKeyRef.current !== sourceViewportKey;
+    const sourceChanged = () => !isCurrentSource(sourceViewportKey);
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
       if (sourceChanged()) {
