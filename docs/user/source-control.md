@@ -255,7 +255,7 @@ T3 Code supports [Jujutsu](https://jj-vcs.github.io/jj/) repositories colocated 
 
 jj manages changes, bookmarks and workspaces. Hosting integrations use the colocated Git store and the same accounts, tokens and writing settings as Git projects. Adding or cloning a project does not automatically convert a Git repository to jj.
 
-Terms follow the repository: bookmarks instead of branches, workspaces instead of worktrees, changes instead of commits. New isolated thread environments use jj workspaces, with the same submodule initialization settings as Git worktrees. Existing Git worktrees remain Git checkouts.
+Terms follow the repository: bookmarks instead of branches, workspaces instead of worktrees, changes instead of commits. New isolated thread environments use jj workspaces, with the same submodule initialization settings as Git worktrees. Existing Git worktrees remain Git checkouts. Idle jj workspaces follow the same cleanup settings as Git worktrees, but are kept, with an explanation, while they hold anything you might want: uncommitted edits, a description, files jj hasn't snapshotted, conflicts, or commits not on a bookmark. They are also kept while jj is unavailable. Cleanup never moves your local bookmarks.
 
 Checkpoints snapshot the working-copy change without committing it or moving bookmarks. Restoring a turn restores the full saved workspace, not just the files shown in its diff. `jj undo` undoes an ordinary restore; if a restore had to recover a checkpoint jj no longer knew about, find that restore in `jj op log` to undo it.
 

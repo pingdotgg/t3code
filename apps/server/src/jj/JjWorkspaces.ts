@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -86,6 +87,9 @@ export type JjWorkspaceOps = Pick<
   VcsWorkflowOps,
   "createWorktree" | "removeWorktree" | "pruneWorktrees"
 >;
+
+// Cleanup temporarily moves workspace paths; repo-wide pruning must not observe that hold.
+export const workspacePruneLock = Semaphore.makeUnsafe(1);
 
 export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
   const { bookmarkTo, driver, fileSystem, path, process, worktreesDir } = deps;
@@ -242,7 +246,9 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
       yield* forgetWorkspace(operation, paths.mainWorkspaceRoot, workspaceName).pipe(Effect.ignore);
       yield* removeIfOnlyJjMetadata(existingRoot);
       // Forget cannot remove Git's registration when the directory was already deleted.
-      yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot);
+      yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot).pipe(
+        workspacePruneLock.withPermit,
+      );
     }
 
     const requestedPath =
@@ -520,7 +526,9 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
           .exists(input.path)
           .pipe(mapJjFailure(operation, input.cwd, `Could not inspect ${input.path}.`));
         if (!directoryExists) {
-          yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot);
+          yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot).pipe(
+            workspacePruneLock.withPermit,
+          );
           return;
         }
         return yield* Effect.fail(
@@ -546,7 +554,9 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
           Effect.ignore,
         );
         yield* driver.invalidateRepoCaches(paths.mainWorkspaceRoot);
-        yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot);
+        yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot).pipe(
+          workspacePruneLock.withPermit,
+        );
         return;
       }
 
@@ -632,6 +642,7 @@ export const makeJjWorkspaces = (deps: JjWorkspaceOpsDeps): JjWorkspaceOps => {
       // was enabled, and nothing else reclaims them once the project routes to the jj arm.
       yield* pruneGitWorktrees(operation, paths.gitDir, paths.mainWorkspaceRoot);
     },
+    workspacePruneLock.withPermit,
   );
 
   return { createWorktree, removeWorktree, pruneWorktrees };

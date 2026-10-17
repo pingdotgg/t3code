@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import type * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -8,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "./config.ts";
@@ -139,8 +141,6 @@ export const cleanupFixture = (
         "--colocate",
         "--name",
         workspaceNameForRef("feature"),
-        "-m",
-        "t3:feature",
         "-r",
         "feature",
         worktree,
@@ -159,6 +159,7 @@ export const cleanupFixture = (
     let openSessionCwd: string | null = null;
     let sessionLive = true;
     let fullStatusCalls = 0;
+    let gitExecuteCalls = 0;
     let snapshotReads = 0;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
@@ -167,6 +168,7 @@ export const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
+            gitExecuteCalls++;
             if (editBeforeRemoval && input.args.includes("remove"))
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
             return yield* git.execute(input);
@@ -314,6 +316,7 @@ export const cleanupFixture = (
         openSessionCwd = cwd;
       },
       fullStatusCalls: () => fullStatusCalls,
+      gitExecuteCalls: () => gitExecuteCalls,
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
@@ -385,5 +388,7 @@ export const runCleanupTest = <A, E>(
     | GitVcsDriver.GitVcsDriver
     | Path.Path
     | Scope.Scope
+    | ChildProcessSpawner.ChildProcessSpawner
+    | Crypto.Crypto
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);

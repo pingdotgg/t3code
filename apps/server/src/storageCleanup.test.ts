@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/process";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -32,6 +34,7 @@ import {
   storageCleanupThreadIdle,
 } from "./storageCleanup.ts";
 import { JJ_REPOSITORY_DETECTION_ENABLED } from "./vcs/JjRepo.ts";
+import { describeJj, runJj } from "./vcs/testing/JjTestSupport.ts";
 import {
   NOW_MS,
   DAY_MS,
@@ -46,6 +49,87 @@ import {
 } from "./storageCleanup.testkit.ts";
 
 const decodeCleanupReport = Schema.decodeSync(StorageCleanupReport);
+
+describeJj("Jujutsu worktree cleanup default discovery", () => {
+  it.live("keeps the workspace when the remote default is unavailable", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture(
+          {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeAfterDays: null,
+            worktreeSettledAfterDays: null,
+            worktreeUnchanged: true,
+          },
+          { runJj },
+        );
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-jj-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "trunk"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        // main exists, but the advertised default is unborn.
+        yield* command(repo, ["push", "origin", "main"]);
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Default branch is unavailable",
+        });
+        expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
+
+  for (const scenario of ["disabled", "age", "settled"] as const) {
+    it.live(`does not discover the remote default when merge rules are unnecessary (${scenario})`, () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let networkCalls = 0;
+          let stageInspections = 0;
+          const wrappedSpawner = ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand" && command.command === "git") {
+              if (command.args.includes("ls-remote") || command.args.includes("fetch"))
+                networkCalls++;
+              if (command.args.includes("ls-files") && command.args.includes("--stage"))
+                stageInspections++;
+            }
+            return spawner.spawn(command);
+          });
+          yield* Effect.gen(function* () {
+            const { service, fs, repo, worktree, command, setThreads } = yield* cleanupFixture(
+              {
+                ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+                worktreeAfterDays: scenario === "age" ? 8 : null,
+                worktreeSettledAfterDays: scenario === "settled" ? 1 : null,
+                worktreeOnDelete: true,
+                worktreeUnchanged: scenario !== "disabled",
+                worktreeOnMerge: scenario !== "disabled",
+              },
+              { runJj },
+            );
+            const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-jj-remote-" });
+            yield* command(remote, ["init", "--bare", "-b", "main"]);
+            yield* command(repo, ["remote", "add", "origin", remote]);
+            setThreads([
+              shell({
+                branch: "feature",
+                worktreePath: worktree,
+                ...(scenario === "settled" ? { settledAt: at(-3 * DAY_MS) } : {}),
+              }),
+            ]);
+            const report = yield* service.runNow;
+            expect(report.entries[0]?.outcome).toBe(scenario === "disabled" ? "kept" : "removed");
+            expect(yield* fs.exists(worktree)).toBe(scenario === "disabled");
+            expect(networkCalls).toBe(0);
+            expect(stageInspections).toBeGreaterThan(0);
+          }).pipe(
+            Effect.provide(Layer.empty, { local: true }),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, wrappedSpawner),
+          );
+        }),
+      ),
+    );
+  }
+});
 
 describe("V2 storage cleanup eligibility", () => {
   const candidate = () => shell({ branch: "feature", worktreePath: "/worktrees/feature" });
