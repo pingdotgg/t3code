@@ -330,6 +330,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getSubagentChildThreads: (
+    ...args: Parameters<ProjectionStoreV2["Service"]["getSubagentChildThreads"]>
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, OrchestratorV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
@@ -3283,6 +3286,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      const children = yield* projectionStore
+        .getSubagentChildThreads(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (children.length > 0) {
+        const cascade = yield* EffectOutbox.subagentLifecycleEffect(
+          command.commandId,
+          command.threadId,
+          command.type === "thread.archive" ? "archive" : "unarchive",
+        );
+        yield* Ref.update(effects, (existing) => [...existing, cascade]);
+      }
+    }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
@@ -10707,6 +10724,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planThreadDeletion({
             command,
             projection,
+            cascadeToSubagents:
+              (yield* projectionStore
+                .getSubagentChildThreads(command.threadId, { includeDeleted: true })
+                .pipe(mapDispatchError(command))).length > 0,
             attachmentIds: yield* projectionStore
               .getThreadAttachmentIds(command.threadId)
               .pipe(mapDispatchError(command)),
@@ -11405,6 +11426,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getThreadRecords(threadId, fields, filter)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getSubagentChildThreads: (threadId, options) =>
+      projectionStore
+        .getSubagentChildThreads(threadId, options)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadProjection: (threadId) =>
       projectionStore
         .getThreadProjection(threadId)
@@ -11531,6 +11556,8 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
     getMessageCount: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getTurnItem: ({ threadId }) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getThreadRecords: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
+    getSubagentChildThreads: (threadId) =>
+      Effect.fail(new OrchestratorProjectionError({ threadId })),
     getThreadProjection: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({
