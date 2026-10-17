@@ -16,8 +16,6 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
-  useCallback,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -566,7 +564,7 @@ function WhenExpressionBuilder({
 }) {
   const expression = whenAstToExpression(value);
   const [expressionDraft, setExpressionDraft] = useState(expression);
-  const parseResult = useMemo(() => parseWhenExpressionDraft(expressionDraft), [expressionDraft]);
+  const parseResult = parseWhenExpressionDraft(expressionDraft);
   const parseError = parseResult.ok ? null : parseResult.message;
   const unknownIdentifiers = parseResult.ok ? unknownWhenVariables(parseResult.value) : [];
 
@@ -1262,6 +1260,36 @@ function BrowserKeybindingNotice() {
   );
 }
 
+// The panel calls hooks after these, so they would lose their caches inline. Separate hooks
+// keep the command options from rebuilding on every search keystroke.
+function useKeybindings(
+  serverKeybindings: Parameters<typeof mergeWithDefaultKeybindings>[0] | undefined,
+) {
+  "use memo";
+  const keybindings = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  return { keybindings, commandOptions: buildKeybindingCommandOptions(keybindings) };
+}
+
+function useKeybindingRows(
+  keybindings: ReturnType<typeof mergeWithDefaultKeybindings>,
+  query: string,
+) {
+  "use memo";
+  const rows = buildKeybindingRows(keybindings, query);
+  return { rows, groups: groupKeybindingRows(rows), anchorIds: keybindingAnchorIds(rows) };
+}
+
+function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
+  const ids = new Map<string, string>();
+  const seen = new Set<KeybindingCommand>();
+  for (const row of rows) {
+    if (seen.has(row.command)) continue;
+    seen.add(row.command);
+    ids.set(row.id, keybindingSearchAnchorId(row.command));
+  }
+  return ids;
+}
+
 export function KeybindingsSettingsPanel() {
   const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
   const canOpenKeybindingsFile = useEnvironmentScope(
@@ -1272,10 +1300,8 @@ export function KeybindingsSettingsPanel() {
   const canWriteSettings =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every((target) => writableIds.has(target.environmentId));
-  const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
-  const keybindings = useMemo(
-    () => mergeWithDefaultKeybindings(serverKeybindings ?? []),
-    [serverKeybindings],
+  const { keybindings, commandOptions } = useKeybindings(
+    primaryEnvironment?.serverConfig?.keybindings,
   );
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
   const availableEditors = primaryEnvironment?.serverConfig?.availableEditors ?? [];
@@ -1293,18 +1319,7 @@ export function KeybindingsSettingsPanel() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
-  const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
-  const groups = useMemo(() => groupKeybindingRows(rows), [rows]);
-  const anchorIds = useMemo(() => {
-    const ids = new Map<string, string>();
-    const seen = new Set<KeybindingCommand>();
-    for (const row of rows) {
-      if (seen.has(row.command)) continue;
-      seen.add(row.command);
-      ids.set(row.id, keybindingSearchAnchorId(row.command));
-    }
-    return ids;
-  }, [rows]);
+  const { rows, groups, anchorIds } = useKeybindingRows(keybindings, query);
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
@@ -1312,10 +1327,9 @@ export function KeybindingsSettingsPanel() {
     setHandledSearchTargetId(searchTargetId);
     if (searchTargetId.startsWith("keybinding-")) setQuery("");
   }
-  const commandOptions = useMemo(() => buildKeybindingCommandOptions(keybindings), [keybindings]);
-  const whenVariables = useMemo(() => buildWhenVariableOptions(), []);
+  const whenVariables = buildWhenVariableOptions();
 
-  const openKeybindingsFile = useCallback(() => {
+  const openKeybindingsFile = () => {
     if (
       !keybindingsConfigPath ||
       !primaryEnvironment ||
@@ -1335,101 +1349,92 @@ export function KeybindingsSettingsPanel() {
         type: "error",
       });
     })();
-  }, [keybindingsConfigPath, openInPreferredEditor, primaryEnvironment]);
+  };
 
-  const saveKeybinding = useCallback(
-    (input: ServerUpsertKeybindingInput) => {
-      if (
-        !primaryEnvironment ||
-        !connectedEnvironments.every((target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-        )
+  const saveKeybinding = (input: ServerUpsertKeybindingInput) => {
+    if (
+      !primaryEnvironment ||
+      !connectedEnvironments.every((target) =>
+        readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
       )
+    )
+      return;
+    setSavingCommand(input.command);
+    const payload: ServerUpsertKeybindingInput = {
+      command: input.command,
+      key: input.key.trim(),
+      ...(input.when?.trim() ? { when: input.when.trim() } : {}),
+      ...(input.replace ? { replace: input.replace } : {}),
+    };
+    void (async () => {
+      const results = await Promise.all(
+        connectedEnvironments.map((target) =>
+          upsertKeybinding({ environmentId: target.environmentId, input: payload }),
+        ),
+      );
+      setSavingCommand(null);
+      const failed = results.find((result) => result._tag === "Failure");
+      if (!failed) {
+        setIsAddingBinding(false);
         return;
-      setSavingCommand(input.command);
-      const payload: ServerUpsertKeybindingInput = {
-        command: input.command,
-        key: input.key.trim(),
-        ...(input.when?.trim() ? { when: input.when.trim() } : {}),
-        ...(input.replace ? { replace: input.replace } : {}),
-      };
-      void (async () => {
-        const results = await Promise.all(
-          connectedEnvironments.map((target) =>
-            upsertKeybinding({ environmentId: target.environmentId, input: payload }),
-          ),
-        );
-        setSavingCommand(null);
-        const failed = results.find((result) => result._tag === "Failure");
-        if (!failed) {
-          setIsAddingBinding(false);
-          return;
-        }
-        if (!isAtomCommandInterrupted(failed)) {
-          const error = squashAtomCommandFailure(failed);
-          toastManager.add({
-            title: "Unable to save keybinding",
-            description: error instanceof Error ? error.message : "The keybinding was not saved.",
-            type: "error",
-          });
-        }
-      })();
-    },
-    [connectedEnvironments, primaryEnvironment, upsertKeybinding],
-  );
+      }
+      if (!isAtomCommandInterrupted(failed)) {
+        const error = squashAtomCommandFailure(failed);
+        toastManager.add({
+          title: "Unable to save keybinding",
+          description: error instanceof Error ? error.message : "The keybinding was not saved.",
+          type: "error",
+        });
+      }
+    })();
+  };
 
-  const removeKeybinding = useCallback(
-    (row: KeybindingRow) => {
-      if (
-        !primaryEnvironment ||
-        !connectedEnvironments.every((target) =>
-          readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
-        )
+  const removeKeybinding = (row: KeybindingRow) => {
+    if (
+      !primaryEnvironment ||
+      !connectedEnvironments.every((target) =>
+        readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
       )
-        return;
-      setSavingCommand(row.command);
-      void (async () => {
-        const results = await Promise.all(
-          connectedEnvironments.map((target) =>
-            removeKeybindingMutation({
-              environmentId: target.environmentId,
-              input: rowKeybindingTarget(row),
-            }),
-          ),
-        );
-        setSavingCommand(null);
-        const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
-        if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          toastManager.add({
-            title: "Unable to remove keybinding",
-            description: error instanceof Error ? error.message : "The keybinding was not removed.",
-            type: "error",
-          });
-        }
-      })();
-    },
-    [connectedEnvironments, primaryEnvironment, removeKeybindingMutation],
-  );
+    )
+      return;
+    setSavingCommand(row.command);
+    void (async () => {
+      const results = await Promise.all(
+        connectedEnvironments.map((target) =>
+          removeKeybindingMutation({
+            environmentId: target.environmentId,
+            input: rowKeybindingTarget(row),
+          }),
+        ),
+      );
+      setSavingCommand(null);
+      const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
+      if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          title: "Unable to remove keybinding",
+          description: error instanceof Error ? error.message : "The keybinding was not removed.",
+          type: "error",
+        });
+      }
+    })();
+  };
 
-  const resetKeybinding = useCallback(
-    (row: KeybindingRow) => {
-      if (!row.defaultKey) return;
-      saveKeybinding({
+  const resetKeybinding = (row: KeybindingRow) => {
+    if (!row.defaultKey) return;
+    saveKeybinding({
+      command: row.command,
+      key: row.defaultKey,
+      when: row.defaultWhen.trim().length > 0 ? row.defaultWhen : undefined,
+      replace: {
         command: row.command,
-        key: row.defaultKey,
-        when: row.defaultWhen.trim().length > 0 ? row.defaultWhen : undefined,
-        replace: {
-          command: row.command,
-          key: row.key,
-          ...(row.when.trim().length > 0 ? { when: row.when } : {}),
-        },
-      });
-    },
-    [saveKeybinding],
-  );
+        key: row.key,
+        ...(row.when.trim().length > 0 ? { when: row.when } : {}),
+      },
+    });
+  };
 
-  const cancelAdd = useCallback(() => setIsAddingBinding(false), []);
+  const cancelAdd = () => setIsAddingBinding(false);
 
   const rowActions: KeybindingRowActions = {
     allRows: rows,
