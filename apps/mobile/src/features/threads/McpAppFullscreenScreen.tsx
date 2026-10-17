@@ -11,7 +11,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useThreadShell, useThreadShells } from "../../state/entities";
+import { useQuietThreadShell, useThreadShells } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { ThreadMcpApp } from "./McpAppWebView";
 
@@ -101,7 +101,7 @@ export function McpAppFullscreenScreen({ route }: McpAppFullscreenScreenProps) {
   const derived = item?.type === "dynamic_tool" ? mcpAppFromToolItem(item) : undefined;
   const [app, setApp] = useState(derived);
   if (derived?.attachmentId !== app?.attachmentId) setApp(derived);
-  const conversation = useThreadShell(scopeThreadRef(environmentId, conversationThreadId));
+  const conversation = useQuietThreadShell(scopeThreadRef(environmentId, conversationThreadId));
   const awaitingUser =
     conversation?.hasPendingApprovals === true || conversation?.hasPendingUserInput === true;
   useEffect(() => {

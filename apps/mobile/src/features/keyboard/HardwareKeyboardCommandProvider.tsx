@@ -15,7 +15,7 @@ import {
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell } from "../../state/entities";
 import type { GitActionProgress } from "../../state/use-vcs-action-state";
 import { GitActionProgressOverlay } from "../threads/GitActionProgressOverlay";
 import { CommandPalette } from "./CommandPalette";
@@ -50,7 +50,7 @@ export function HardwareKeyboardCommandProvider({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const activeThreadRef = useMemo(() => parseActiveThreadPath(pathname), [pathname]);
-  const activeThread = useThreadShell(activeThreadRef);
+  const activeThread = useQuietThreadShell(activeThreadRef);
   const copyTarget = useMemo(
     () =>
       activeThreadRef === null

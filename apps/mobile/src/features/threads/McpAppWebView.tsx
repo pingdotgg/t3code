@@ -33,7 +33,7 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { uuidv4 } from "../../lib/uuid";
 import { useAssetUrlState } from "../../state/assets";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell } from "../../state/entities";
 import { mcpAppEnvironment } from "../../state/mcpApps";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -209,7 +209,7 @@ export function ThreadMcpApp(props: {
   const [toolDefinition, setToolDefinition] = useState<unknown>(undefined);
   // Read by the host on every message, so it always sees current values
   // without being rebuilt (which would drop the app's session).
-  const conversation = useThreadShell(
+  const conversation = useQuietThreadShell(
     scopeThreadRef(props.environmentId, props.conversationThreadId),
   );
   const awaitingUser =

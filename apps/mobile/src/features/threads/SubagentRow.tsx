@@ -9,7 +9,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
-import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
+import { useEnvironmentServerConfig, useProject, useQuietThreadShell } from "../../state/entities";
 import { subagentCardDetail } from "./subagent-card-presentation";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
@@ -96,8 +96,8 @@ function SubagentMetadata(props: {
   const provider = config?.providers.find(
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
-  const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
-  const child = useThreadShell(
+  const parent = useQuietThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
+  const child = useQuietThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
   )?.source;
   const parentProject = useProject(

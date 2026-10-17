@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useProjects, useServerConfigsWithProviders } from "../../state/entities";
 import {
   createDraft,
   scheduledTaskDefaultModel,
@@ -43,7 +43,7 @@ const ScheduledTaskEditorContext = createContext<{
 export function ScheduledTaskEditorProvider({ children }: { readonly children: ReactNode }) {
   const { selectedTargets, selectedProjectKey, projectGroups } = useSettingsEnvironmentFilter();
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
-  const configs = useServerConfigs();
+  const configs = useServerConfigsWithProviders();
   const projects = useProjects();
   const defaultTarget = settingsTargetsForProject(
     selectedTargets,

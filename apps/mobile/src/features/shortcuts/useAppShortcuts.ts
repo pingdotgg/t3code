@@ -8,7 +8,7 @@ import {
   saveRecentThreadShortcuts,
   type RecentThreadShortcut,
 } from "../../persistence/imperative";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell } from "../../state/entities";
 import {
   activeThreadRef,
   buildShortcutActions,
@@ -56,7 +56,7 @@ function useRecentThreadShortcutSync(state: NavigationState): void {
     () => (Platform.OS === "android" ? activeThreadRef(state) : null),
     [state],
   );
-  const threadShell = useThreadShell(threadRef);
+  const threadShell = useQuietThreadShell(threadRef);
   // null until the persisted list loads; recording waits on it so the first
   // thread opened after a cold start cannot clobber older entries.
   const [recents, setRecents] = useState<ReadonlyArray<RecentThreadShortcut> | null>(null);

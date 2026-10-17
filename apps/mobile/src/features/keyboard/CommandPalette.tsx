@@ -24,7 +24,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
-import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import { useProjects, useQuietThreadShell, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -144,7 +144,7 @@ export function CommandPalette(props: {
   const projects = useProjects();
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
-  const activeThread = useThreadShell(activeThreadRef);
+  const activeThread = useQuietThreadShell(activeThreadRef);
   const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");

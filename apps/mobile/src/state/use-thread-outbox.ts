@@ -13,7 +13,7 @@ const threadOutboxShellStatusesAtom = Atom.make(
     for (const queue of Object.values(get(threadOutboxManager.queuedMessagesByThreadKeyAtom))) {
       const environmentId = queue[0]?.environmentId;
       if (environmentId !== undefined && !statuses.has(environmentId)) {
-        statuses.set(environmentId, get(environmentShell.stateValueAtom(environmentId)).status);
+        statuses.set(environmentId, get(environmentShell.statusAtom(environmentId)));
       }
     }
     return statuses;

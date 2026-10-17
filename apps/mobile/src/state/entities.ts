@@ -18,6 +18,7 @@ import { hasThreadLinks, relabelThreadLinks } from "@t3tools/shared/threadLinks"
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
+import { environmentPresentations } from "./presentation";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -99,6 +100,13 @@ export function useThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadSh
   );
 }
 
+/** The shell without its streaming timestamps; see quietThreadShellAtom. */
+export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThreadShell | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_SHELL_ATOM : environmentThreadShells.quietThreadShellAtom(ref),
+  );
+}
+
 export function useChildThreadInputs(ref: ScopedThreadRef) {
   return useAtomValue(environmentThreadShells.childThreadInputsAtom(ref));
 }
@@ -126,7 +134,13 @@ export function useEnvironmentServerConfig(
   );
 }
 
-export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
+/** Providers are left out; read them with `useServerConfigsWithProviders()`. */
+export function useServerConfigs() {
+  return useAtomValue(environmentPresentations.serverConfigsAtom);
+}
+
+/** Rebuilds on every provider status push; only for readers of `providers`. */
+export function useServerConfigsWithProviders(): ReadonlyMap<EnvironmentId, ServerConfig> {
   return useAtomValue(environmentServerConfigsAtom);
 }
 

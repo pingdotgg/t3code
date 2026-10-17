@@ -20,7 +20,7 @@ import {
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { useProject, useThreadShell } from "../state/entities";
+import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
 import {
   resolvePendingThreadCreation,
@@ -130,7 +130,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     lastRouteThreadRef.current = routeThreadRef;
   }
   const selectedThreadRef = routeThreadRef ?? lastRouteThreadRef.current;
-  const selectedThreadShell = useThreadShell(selectedThreadRef);
+  const selectedThreadShell = useQuietThreadShell(selectedThreadRef);
   const selectedThreadKey =
     selectedThreadRef === null
       ? null

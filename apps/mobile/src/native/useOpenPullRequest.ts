@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import { CommonActions } from "@react-navigation/native";
 import { androidWorkspaceNavigationState } from "../lib/android-workspace-navigation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useThreadShell } from "../state/entities";
+import { useQuietThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 
 export function useOpenPullRequest(options?: {
@@ -27,7 +27,7 @@ export function useOpenPullRequest(options?: {
   };
   const environmentId = options?.context?.environmentId ?? first(routeContext?.environmentId);
   const threadId = first(routeContext?.threadId);
-  const thread = useThreadShell(
+  const thread = useQuietThreadShell(
     environmentId && threadId
       ? { environmentId: EnvironmentId.make(environmentId), threadId: ThreadId.make(threadId) }
       : null,

@@ -21,7 +21,7 @@ import {
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { scopedThreadKey } from "../../lib/scopedEntities";
-import { useServerConfigs, useThreadShells } from "../../state/entities";
+import { useServerConfigsWithProviders, useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -57,7 +57,7 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
   const flow = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
   const threads = useThreadShells();
-  const serverConfigs = useServerConfigs();
+  const serverConfigs = useServerConfigsWithProviders();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
   const loadPullRequest = useAtomQueryRunner(composerPullRequests.detail, {
