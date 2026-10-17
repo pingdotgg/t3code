@@ -28,6 +28,7 @@ import {
   SERVICE_STATE_FILE,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
+  SERVICE_UNIT_ENV,
 } from "./cloud/serviceProtocol.ts";
 
 const HANDOFF_DELAY_MS = 2_000;
@@ -66,6 +67,74 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   command: paths.entryPath,
   args: ["serve"],
 });
+
+/**
+ * The unit or launch agent that `t3 service install` wrote. Its program names
+ * the runtime that ran the install, and a remote update never replaces it, so
+ * after a commit the launcher points it at the committed runtime. Otherwise the
+ * next start lands on a runtime that nothing in the service state records.
+ */
+export interface ServiceUnit {
+  readonly path: string;
+  /** systemd keeps a loaded copy of the unit; launchd re-reads the plist at bootstrap. */
+  readonly reload: () => Promise<void>;
+}
+
+function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): ServiceUnit | undefined {
+  const unitName = env[SERVICE_UNIT_ENV]?.trim();
+  const home = env.HOME?.trim();
+  if (!unitName || !home) return undefined;
+  if (unitName.endsWith(".plist")) {
+    return {
+      path: NodePath.join(home, "Library", "LaunchAgents", unitName),
+      reload: () => Promise.resolve(),
+    };
+  }
+  return {
+    path: NodePath.join(home, ".config", "systemd", "user", unitName),
+    reload: () =>
+      new Promise((resolve, reject) => {
+        NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
+          stdio: "ignore",
+          timeout: 30_000,
+        })
+          .once("error", reject)
+          .once("exit", (code, signal) =>
+            code === 0
+              ? resolve()
+              : reject(new Error(`systemctl --user daemon-reload exited with ${code ?? signal}`)),
+          );
+      }),
+  };
+}
+
+// The executable the unit or launch agent starts: systemd's ExecStart value,
+// or the plist string that precedes the __service-launcher argument. Only the
+// version segment changes, so paths the renderer had to quote or escape stay
+// as they are. The launch agent's PATH names a versions directory without the
+// executable and is left alone.
+const SERVICE_UNIT_PROGRAMS = [
+  /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
+  /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
+] as const;
+
+/**
+ * The unit contents with their program pointed at `version`'s runtime. A unit
+ * already at that version or a newer one is returned unchanged: `t3 update`
+ * may have repointed it to a later version while this commit was in flight.
+ */
+export function repointServiceUnit(contents: string, version: string): string {
+  for (const program of SERVICE_UNIT_PROGRAMS) {
+    const match = program.exec(contents);
+    if (match === null) continue;
+    const [, prefix = "", current = "", suffix = ""] = match;
+    if (isExactServiceVersion(current) && compareExactServiceVersions(current, version) >= 0) {
+      return contents;
+    }
+    return contents.replace(program, () => `${prefix}${version}${suffix}`);
+  }
+  return contents;
+}
 
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
 const RESTORE_MARKER = ".restore-pending";
@@ -347,8 +416,12 @@ export async function readServiceState(filePath: string): Promise<ServiceState> 
 }
 
 export async function writeServiceState(filePath: string, state: ServiceState): Promise<void> {
+  await NodeFSP.mkdir(NodePath.dirname(filePath), { recursive: true, mode: 0o700 });
+  await replaceFileDurably(filePath, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+async function replaceFileDurably(filePath: string, contents: string): Promise<void> {
   const directory = NodePath.dirname(filePath);
-  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
   const tempPath = NodePath.join(
     directory,
     `.${NodePath.basename(filePath)}.${process.pid}.${NodeCrypto.randomUUID()}`,
@@ -356,7 +429,7 @@ export async function writeServiceState(filePath: string, state: ServiceState): 
   let handle: NodeFSP.FileHandle | undefined;
   try {
     handle = await NodeFSP.open(tempPath, "wx", 0o600);
-    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await handle.writeFile(contents, "utf8");
     await handle.sync();
     await handle.close();
     handle = undefined;
@@ -444,14 +517,19 @@ export class Launcher {
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
   readonly #backupSpaceProbe: Partial<BackupSpaceProbe> | undefined;
+  readonly #serviceUnit: ServiceUnit | undefined;
 
   constructor(
     baseDir: string,
     state: ServiceState,
-    options: { readonly backupSpaceProbe?: Partial<BackupSpaceProbe> } = {},
+    options: {
+      readonly backupSpaceProbe?: Partial<BackupSpaceProbe>;
+      readonly serviceUnit?: ServiceUnit;
+    } = {},
   ) {
     this.#baseDir = baseDir;
     this.#backupSpaceProbe = options.backupSpaceProbe;
+    this.#serviceUnit = options.serviceUnit;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -539,6 +617,7 @@ export class Launcher {
     if (update?.status !== "pending") {
       if (update !== undefined) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
+        await this.#repointServiceUnit(this.#state.activeVersion);
       }
       await this.#startChild(this.#state.activeVersion, "active", update);
       return;
@@ -730,7 +809,29 @@ export class Launcher {
     this.#state = next;
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
-    await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    try {
+      await sendMessage(child.process, { type: "committed", updateId: committed.id });
+    } finally {
+      await this.#repointServiceUnit(committed.targetVersion);
+    }
+  }
+
+  // The commit is durable before this runs: a unit that could not be rewritten
+  // leaves the service on the new version, pointed at the old runtime, as before.
+  async #repointServiceUnit(version: string): Promise<void> {
+    const unit = this.#serviceUnit;
+    if (unit === undefined) return;
+    try {
+      const contents = await NodeFSP.readFile(unit.path, "utf8");
+      const repointed = repointServiceUnit(contents, version);
+      if (repointed === contents) return;
+      await replaceFileDurably(unit.path, repointed);
+      await unit.reload();
+    } catch (error) {
+      process.stderr.write(
+        `[service-launcher] Could not point ${unit.path} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
   }
 
   async #handlePreparedTimeout(child: ManagedChild): Promise<void> {
@@ -832,5 +933,6 @@ export async function main(): Promise<void> {
   }
   const statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
   const state = await readServiceState(statePath);
-  await new Launcher(baseDir, state).run();
+  const serviceUnit = serviceUnitFromEnvironment();
+  await new Launcher(baseDir, state, serviceUnit === undefined ? {} : { serviceUnit }).run();
 }
