@@ -1,6 +1,7 @@
 import {
   NodeId,
   CommandId,
+  type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
@@ -517,6 +518,24 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    const subagentParentThreadId = (thread: OrchestrationV2AppThread) =>
+      thread.lineage.relationshipToParent === "subagent"
+        ? (thread.lineage.parentThreadId ?? undefined)
+        : undefined;
+
+    const inheritParentLifecycle = (thread: OrchestrationV2AppThread) => {
+      const parentThreadId = subagentParentThreadId(thread);
+      if (parentThreadId === undefined) return Effect.succeed(thread);
+      return projections.getThread(parentThreadId).pipe(
+        Effect.map((parent) => ({
+          ...thread,
+          archivedAt: parent.archivedAt,
+          deletedAt: thread.deletedAt ?? parent.deletedAt,
+        })),
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(thread) }),
+      );
+    };
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
       Effect.gen(function* () {
         switch (input.event.type) {
@@ -540,7 +559,7 @@ export const layer: Layer.Layer<
                 threadId: offered.id,
                 payload:
                   existing === null
-                    ? offered
+                    ? yield* inheritParentLifecycle(offered)
                     : {
                         ...existing,
                         title: offered.title,
@@ -850,6 +869,17 @@ export const layer: Layer.Layer<
             input.event.type === "app_thread.created"
               ? threadCommands.withLock(input.event.appThread.id, effect)
               : effect,
+          (write) => {
+            const parentThreadId =
+              input.event.type === "app_thread.created"
+                ? subagentParentThreadId(input.event.appThread)
+                : undefined;
+            // Serialize the lifecycle read and commit with parent commands.
+            // Parent before child matches orchestration's non-reentrant locks.
+            return parentThreadId === undefined
+              ? write
+              : threadCommands.withLock(parentThreadId, write);
+          },
         ),
     });
   }),
