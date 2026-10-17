@@ -4,6 +4,7 @@ import type {
   ProjectId,
   ProviderInteractionMode,
   ServerProvider,
+  ServerProviderSkill,
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -36,7 +37,9 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsByPath,
+  formatProviderSkillMention,
+  formatProviderSkillMenuDescription,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
   isProviderSkillUserInvocable,
@@ -133,6 +136,8 @@ export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
+  /** The provider's skills, to bind a pick to its file when another skill shares its name. */
+  readonly skills?: ReadonlyArray<ServerProviderSkill>;
   readonly allowInteractionMode: boolean;
 }): {
   readonly text: string;
@@ -155,7 +160,7 @@ export function resolveComposerCommandSelection(input: {
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
   } else if (item.type === "skill") {
-    replacement = `$${item.skill.name} `;
+    replacement = `${formatProviderSkillMention(item.skill, input.skills ?? [])} `;
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
@@ -402,29 +407,29 @@ export function useComposerCommandMenu({
       const skillItems = visibleSkills
         .filter((skill) => matchesSlashSkillQuery(skill, q))
         .map((skill) => ({
-          id: `skill:${skill.name}`,
+          id: `skill:${skill.path}`,
           type: "skill" as const,
           skill,
           label: `skill:${skill.name}`,
-          description: skill.shortDescription ?? skill.description ?? "",
+          description: formatProviderSkillMenuDescription(skill, skills),
         }));
 
       return [...commandItems, ...skillItems];
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+      const enabledSkills = dedupeProviderSkillsByPath(skills.filter(isProviderSkillUserInvocable));
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\p{Sc}+/u,
       });
 
       if (!normalizedQuery) {
         return enabledSkills.slice(0, 20).map((skill) => ({
-          id: `skill:${skill.name}`,
+          id: `skill:${skill.path}`,
           type: "skill" as const,
           skill,
           label: skill.displayName ?? skill.name,
-          description: skill.shortDescription ?? skill.description ?? "",
+          description: formatProviderSkillMenuDescription(skill, skills),
         }));
       }
 
@@ -487,11 +492,11 @@ export function useComposerCommandMenu({
       }
 
       return ranked.map(({ item: skill }) => ({
-        id: `skill:${skill.name}`,
+        id: `skill:${skill.path}`,
         type: "skill" as const,
         skill,
         label: skill.displayName ?? skill.name,
-        description: skill.shortDescription ?? skill.description ?? "",
+        description: formatProviderSkillMenuDescription(skill, skills),
       }));
     }
 
@@ -625,6 +630,7 @@ export function useComposerCommandMenu({
         draftMessage,
         trigger,
         item,
+        skills,
         allowInteractionMode:
           onUpdateInteractionMode !== undefined &&
           selectedProviderStatus?.showInteractionModeToggle !== false,
@@ -643,6 +649,7 @@ export function useComposerCommandMenu({
       onUpdateInteractionMode,
       onUsageLimits,
       selectedProviderStatus?.showInteractionModeToggle,
+      skills,
       threadShells,
       trigger,
     ],

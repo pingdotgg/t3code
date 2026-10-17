@@ -4,11 +4,13 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  dedupeProviderSkillsByName,
+  dedupeProviderSkillsByPath,
+  formatProviderSkillMention,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
@@ -59,8 +61,8 @@ describe("formatProviderSkillDisplayName", () => {
   });
 });
 
-describe("dedupeProviderSkillsByName", () => {
-  it("keeps the first resolved skill and preserves unrelated skill order", () => {
+describe("dedupeProviderSkillsByPath", () => {
+  it("keeps one row per file, including files that share a name", () => {
     const firstSkill = {
       name: "branch-audit",
       path: "/Users/matt/.codex/skills/branch-audit/SKILL.md",
@@ -77,10 +79,38 @@ describe("dedupeProviderSkillsByName", () => {
       enabled: true,
     };
 
-    expect(dedupeProviderSkillsByName([firstSkill, otherSkill, duplicateSkill])).toEqual([
+    const samePath = { ...firstSkill, path: firstSkill.path.replaceAll("/", "\\") };
+    expect(dedupeProviderSkillsByPath([firstSkill, otherSkill, duplicateSkill, samePath])).toEqual([
       firstSkill,
       otherSkill,
+      duplicateSkill,
     ]);
+  });
+});
+
+describe("formatProviderSkillMention", () => {
+  const user = { name: "review", path: "/home/me/.agents/skills/review/SKILL.md", enabled: true };
+  const project = { name: "review", path: "/repo/my skills/review/SKILL.md", enabled: true };
+
+  it("links a pick to its file only when another skill shares the name", () => {
+    expect(formatProviderSkillMention(user, [user])).toBe("$review");
+    expect(formatProviderSkillMention(user, [user, { ...project, enabled: false }])).toBe(
+      "$review",
+    );
+    const mention = formatProviderSkillMention(project, [user, project]);
+    expect(mention).toBe("[$review](/repo/my%20skills/review/SKILL.md)");
+    const [token] = collectComposerInlineTokens(`${mention} `);
+    expect(token).toMatchObject({
+      type: "skill",
+      value: "review",
+      path: project.path,
+      source: mention,
+    });
+    const dotted = [project, user].map((skill) => ({ ...skill, name: "review.v2" }));
+    const [dottedToken] = collectComposerInlineTokens(
+      `${formatProviderSkillMention(dotted[0]!, dotted)} `,
+    );
+    expect(dottedToken).toMatchObject({ value: "review.v2", path: project.path });
   });
 });
 
@@ -96,7 +126,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     ]);
   });
 
-  it("shows one row when enabled skills share a name", () => {
+  it("shows one row per file when enabled skills share a name", () => {
     const skills = [
       {
         name: "babysit-pr",
@@ -118,6 +148,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
       "babysit-pr",
       "browser",
+      "babysit-pr",
     ]);
   });
 

@@ -262,9 +262,10 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 });
 
 /**
- * Roots are listed highest precedence first and the first hit for a name wins,
- * matching Claude Code: verified against the CLI with the same skill name in
- * both scopes, the user copy is the one that runs.
+ * Roots are listed highest precedence first. A name in both scopes yields one
+ * skill per file: Claude Code runs only the user copy for `/name`, so the
+ * composer binds a pick to its file with a linked mention instead (see
+ * orchestration-v2/linkedSkillMentions.ts).
  */
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -281,7 +282,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     ...(cwd ? [{ directory: path.join(cwd, ".claude", "skills"), scope: "project" as const }] : []),
   ];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   for (const root of roots) {
     const entries = yield* fileSystem
       .readDirectory(root.directory)
@@ -312,7 +313,8 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      if (skillsByName.has(name)) {
+      // Both roots are the same directory when the workspace is the home dir.
+      if (skillsByPath.has(skillPath)) {
         continue;
       }
 
@@ -320,7 +322,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
-      skillsByName.set(name, {
+      skillsByPath.set(skillPath, {
         name,
         path: skillPath,
         enabled: override?.enabled ?? true,
@@ -336,5 +338,5 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
     }
   }
 
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

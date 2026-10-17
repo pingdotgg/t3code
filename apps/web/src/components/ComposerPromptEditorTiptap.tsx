@@ -301,6 +301,7 @@ const ComposerSkillExtension = Node.create({
   addAttributes() {
     return {
       skillName: { default: "" },
+      skillPath: { default: null },
       skillLabel: { default: "" },
       skillDescription: { default: null },
     };
@@ -322,7 +323,13 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillName = (node.attrs.skillName as string) ?? "";
   const skillLabel = (node.attrs.skillLabel as string) || skillName;
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
-  const skill = skills.find((candidate) => candidate.name === skillName);
+  const skillPath = (node.attrs.skillPath as string | null) ?? null;
+  // A linked mention names its SKILL.md; a plain `$name` takes the first skill with that name.
+  const skill = skillPath
+    ? skills.find((candidate) => candidate.path === skillPath)
+    : skills.find((candidate) => candidate.name === skillName);
+  // A linked file missing from the current skill list is still the one picked.
+  const instructionsPath = skill?.path ?? skillPath;
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
@@ -338,8 +345,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
               skillDescription ??
               "No description is available for this skill."}
           </p>
-          {skill?.path ? (
-            <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
+          {instructionsPath ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => actions.openMention(instructionsPath)}
+            >
               View instructions
             </Button>
           ) : null}

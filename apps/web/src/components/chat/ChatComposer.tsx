@@ -1086,6 +1086,8 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ContextWindowSnapshot } from "../../lib/contextWindow";
 import {
+  formatProviderSkillMention,
+  formatProviderSkillMenuDescription,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
@@ -2666,15 +2668,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
-        id: `skill:${selectedProvider}:${skill.name}`,
+        id: `skill:${selectedProvider}:${skill.path}`,
         type: "skill" as const,
         provider: selectedProvider,
         skill,
         label: `/skill:${skill.name}`,
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
+        description: formatProviderSkillMenuDescription(
+          skill,
+          selectedProviderSkills,
+          skill.scope ? `${skill.scope} skill` : "",
+        ),
       }));
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
@@ -2687,15 +2690,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
-        id: `skill:${selectedProvider}:${skill.name}`,
+        id: `skill:${selectedProvider}:${skill.path}`,
         type: "skill" as const,
         provider: selectedProvider,
         skill,
         label: formatProviderSkillDisplayName(skill),
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+        description: formatProviderSkillMenuDescription(
+          skill,
+          selectedProviderSkills,
+          skill.scope ? `${skill.scope} skill` : "Run provider skill",
+        ),
       }));
     }
     if (
@@ -3819,7 +3823,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "skill") {
-      const replacement = `$${item.skill.name} `;
+      const replacement = `${formatProviderSkillMention(item.skill, selectedProviderSkills)} `;
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,

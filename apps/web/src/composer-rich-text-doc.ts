@@ -17,6 +17,8 @@ import {
   type Transaction,
 } from "@tiptap/pm/state";
 
+import { formatLinkedSkillMention } from "@t3tools/shared/composerInlineTokens";
+
 import { splitPromptIntoComposerSegments } from "~/composer-editor-mentions";
 import { nextOrderedMarkerText } from "~/composer-list-continuation";
 import { parseInlineMarkdown, RICH_TEXT_DELIMITERS, type RichTextMark } from "~/composer-rich-text";
@@ -362,6 +364,7 @@ function atomJsonForSegment(
       type: "composer-skill",
       attrs: {
         skillName: segment.name,
+        skillPath: segment.path ?? null,
         skillLabel: meta.label,
         skillDescription: meta.description,
       },
@@ -705,7 +708,9 @@ function readAtomSource(node: ProseMirrorNode): string {
       return typeof attrs.source === "string" ? attrs.source : "";
     case "composer-skill": {
       const name = typeof attrs.skillName === "string" ? attrs.skillName : "";
-      return name ? `$${name}` : "";
+      if (!name) return "";
+      const path = typeof attrs.skillPath === "string" ? attrs.skillPath : "";
+      return path ? formatLinkedSkillMention({ name, path }) : `$${name}`;
     }
     default:
       return "";

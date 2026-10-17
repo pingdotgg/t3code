@@ -51,6 +51,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import { spellOutLinkedSkillMentions } from "./linkedSkillMentions.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -1850,7 +1851,9 @@ export const layerWithOptions = (
                     ),
                   ),
                   () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+                    runtime
+                      .startTurn(spellOutLinkedSkillMentions(runtime.driver, input))
+                      .pipe(turnMetrics("send", input.modelSelection.model)),
                   (_, exit) =>
                     Exit.isFailure(exit)
                       ? observeActivity(
@@ -1863,7 +1866,11 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              Effect.andThen(
+                runtime
+                  .steerTurn(spellOutLinkedSkillMentions(runtime.driver, input))
+                  .pipe(turnMetrics("steer")),
+              ),
             ),
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(

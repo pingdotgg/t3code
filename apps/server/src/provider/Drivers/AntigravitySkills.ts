@@ -175,7 +175,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     remainingBytes: MAX_SCAN_BYTES,
     remainingEntries: MAX_SCAN_ENTRIES,
   };
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
 
   const scanDirectory = Effect.fn("scanAntigravitySkillDirectory")(function* (
     directory: string,
@@ -202,8 +202,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       const contents = yield* readSkill(skillPath, budget);
       if (contents === undefined) return;
       const skill = parseSkillFrontmatter(contents, skillFileName);
-      if (!skill || skillsByName.has(skill.name)) return;
-      skillsByName.set(skill.name, {
+      if (!skill || skillsByPath.has(skillPath)) return;
+      skillsByPath.set(skillPath, {
         ...skill,
         path: skillPath,
         scope,
@@ -226,5 +226,5 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   for (const root of roots) {
     yield* scanDirectory(root.directory, root.scope, true);
   }
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
+  return [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
