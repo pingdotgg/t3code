@@ -19,7 +19,7 @@ import {
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
 import { Minimize2Icon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -60,6 +60,18 @@ function saveBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+// The host gets the tool call pushed by an effect keyed on it, so it stays
+// stable across the command hooks that follow.
+function useToolCall(
+  storedItem: NonNullable<ReturnType<typeof useTurnItemDetail>["data"]>["item"] | undefined,
+) {
+  "use memo";
+  if (storedItem?.type !== "dynamic_tool") return undefined;
+  const output = storedItem.output as { readonly result?: unknown } | undefined;
+  const result = output?.result as McpAppCallToolResult | undefined;
+  return { arguments: storedItem.input, result };
+}
+
 export function McpAppFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -91,17 +103,14 @@ export function McpAppFrame(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Closing and reopening replaces the box.
   }, [closed]);
 
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: app.attachmentId,
-      fileName: mcpAppFileName(app),
-      mimeType: "text/html",
-      disposition: "inline" as const,
-      renderIntent: "mcp-app" as const,
-    }),
-    [app],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: app.attachmentId,
+    fileName: mcpAppFileName(app),
+    mimeType: "text/html",
+    disposition: "inline" as const,
+    renderIntent: "mcp-app" as const,
+  };
   const asset = useAssetUrlState(props.environmentId, resource);
   const refreshAsset = useAssetUrlRefresh(props.environmentId, resource);
   // The frame keeps its first URL: a re-minted one would reload the app. A
@@ -133,12 +142,7 @@ export function McpAppFrame(props: {
     revision: props.revision,
   });
   const storedItem = detail.data?.item;
-  const toolCall = useMemo(() => {
-    if (storedItem?.type !== "dynamic_tool") return undefined;
-    const output = storedItem.output as { readonly result?: unknown } | undefined;
-    const result = output?.result as McpAppCallToolResult | undefined;
-    return { arguments: storedItem.input, result };
-  }, [storedItem]);
+  const toolCall = useToolCall(storedItem);
 
   const callTool = useAtomCommand(mcpAppEnvironment.callTool, { reportFailure: false });
   const toolInfo = useAtomCommand(mcpAppEnvironment.toolInfo, { reportFailure: false });
