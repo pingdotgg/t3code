@@ -3092,6 +3092,9 @@ function claudeSubagentModelSelection(
 
 const PENDING_CLAUDE_SUBAGENT_CAP = 64;
 const PENDING_CLAUDE_SUBAGENT_FRAME_CAP = 256;
+// Workflow progress frames arrive about every 12 seconds; a running member's
+// transcript is re-read at most this often to show its answer so far.
+const WORKFLOW_MEMBER_LIVE_TRANSCRIPT_READ_INTERVAL_MS = 10_000;
 
 function rememberPendingClaudeSubagentLaunch(
   pending: Map<string, PendingClaudeSubagentLaunch>,
@@ -3422,6 +3425,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               readonly attempt: number;
               readonly transcriptAnswerDigest: string | undefined;
               readonly transcriptReadAttempts: number;
+              readonly liveTranscriptReadAt: DateTime.Utc | null;
               readonly finalTranscriptRead: boolean;
               readonly result: string | undefined;
               readonly label: string;
@@ -4525,7 +4529,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (input.coordinator.task.status === "running"
                 ? (restarted ? 0 : (previous?.transcriptReadAttempts ?? 0)) < 3
                 : restarted || previous?.finalTranscriptRead !== true);
-            if (!changed && !readTranscript) continue;
+            // A running member streams nothing, so its transcript is the only
+            // way to show its answer so far. A restart shows "Retry in
+            // progress." and starts a fresh throttle window before the next read.
+            const liveTranscriptReadAt = previous?.liveTranscriptReadAt ?? null;
+            const readLiveTranscript =
+              status === "running" &&
+              !restarted &&
+              transcriptDir !== undefined &&
+              agentId !== undefined &&
+              (liveTranscriptReadAt === null ||
+                DateTime.toEpochMillis(now) - DateTime.toEpochMillis(liveTranscriptReadAt) >=
+                  WORKFLOW_MEMBER_LIVE_TRANSCRIPT_READ_INTERVAL_MS);
+            if (!changed && !readTranscript && !readLiveTranscript) continue;
 
             const nodeId = idAllocator.derive.nodeFromProviderItem({
               driver: CLAUDE_PROVIDER,
@@ -4651,21 +4667,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
             let transcriptAnswerDigest = restarted ? undefined : previous?.transcriptAnswerDigest;
             let transcript: ReadonlyArray<string> = [];
-            if (settled) {
-              transcript = readTranscript
-                ? yield* readWorkflowAgentAnswers({
-                    transcriptDir,
-                    agentId,
-                    ...(adapterOptions.environment.CLAUDE_CONFIG_DIR === undefined
-                      ? {}
-                      : {
-                          configDir: path.resolve(
-                            session.cwd,
-                            adapterOptions.environment.CLAUDE_CONFIG_DIR,
-                          ),
-                        }),
-                  }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
-                : [];
+            if (settled || readLiveTranscript) {
+              transcript =
+                readTranscript || readLiveTranscript
+                  ? yield* readWorkflowAgentAnswers({
+                      transcriptDir,
+                      agentId,
+                      ...(adapterOptions.environment.CLAUDE_CONFIG_DIR === undefined
+                        ? {}
+                        : {
+                            configDir: path.resolve(
+                              session.cwd,
+                              adapterOptions.environment.CLAUDE_CONFIG_DIR,
+                            ),
+                          }),
+                    }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []))
+                  : [];
               const transcriptAnswer = transcript.length > 0 ? transcript.join("\n\n") : undefined;
               const answerDigest =
                 transcriptAnswer === undefined
@@ -4677,11 +4694,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (answerDigest !== undefined) transcriptAnswerDigest = answerDigest;
               const answer =
                 transcriptAnswer ??
-                (member.result !== undefined && changed && previousDigest === undefined
-                  ? `Partial answer from workflow progress:\n\n${member.result}`
-                  : attempt > 1 && changed && previousDigest === undefined
-                    ? "No answer from this workflow attempt."
-                    : undefined);
+                (!settled
+                  ? undefined
+                  : member.result !== undefined && changed && previousDigest === undefined
+                    ? `Partial answer from workflow progress:\n\n${member.result}`
+                    : attempt > 1 && changed && previousDigest === undefined
+                      ? "No answer from this workflow attempt."
+                      : undefined);
               if (
                 answer !== undefined &&
                 (transcriptAnswer === undefined || restarted || answerDigest !== previousDigest)
@@ -4710,6 +4729,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 transcriptReadAttempts:
                   (restarted ? 0 : (previous?.transcriptReadAttempts ?? 0)) +
                   (readTranscript ? 1 : 0),
+                liveTranscriptReadAt: readLiveTranscript || restarted ? now : liveTranscriptReadAt,
                 finalTranscriptRead:
                   (!restarted && previous?.finalTranscriptRead === true) ||
                   (readTranscript &&

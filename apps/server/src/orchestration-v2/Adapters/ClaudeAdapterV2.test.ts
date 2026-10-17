@@ -12148,7 +12148,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(
           threadMessages(harness.events, member?.childThreadId).map((event) => event.message.text),
-          ["Reply with exactly: A1"],
+          ["Reply with exactly: A1", "A1 from the transcript"],
         );
         assert.isFalse(
           harness.events.some(
@@ -13727,6 +13727,86 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           "empty retry answer",
         );
         assert.deepEqual(currentAssistantAnswers(), ["No answer from this workflow attempt."]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("shows a running workflow member's answer so far from its transcript", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWorkflowHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-workflow-live-answer"),
+            text: "Run the alpha workflow.",
+            attachments: [],
+          }),
+        );
+        yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001360" });
+        const firstThreadId = workflowMemberEvents(harness.events, 1)[0]?.subagent.childThreadId;
+        const assistantEvents = () =>
+          threadMessages(harness.events, firstThreadId).filter(
+            (event) => event.message.role === "assistant",
+          );
+        const transcriptPath = NodePath.join(harness.transcriptDir, "agent-a1.jsonl");
+        const running = (uuid: string) => workflowSnapshot({ uuid, state: "start" });
+
+        yield* awaitUntil(
+          () => assistantEvents().at(-1)?.message.text === "A1 from the transcript",
+          "running workflow member answer so far",
+        );
+        assert.equal(workflowMemberEvents(harness.events, 1).at(-1)?.subagent.status, "running");
+
+        NodeFS.appendFileSync(
+          transcriptPath,
+          '{"type":"assistant","message":{"role":"assistant","id":"msg_a1_more","content":[{"type":"text","text":"A1 keeps going"}]}}\n',
+        );
+        yield* harness.offerAndWait(running("00000000-0000-4000-8000-000000001361"));
+        assert.lengthOf(assistantEvents(), 1, "a frame inside the throttle window reads nothing");
+
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.offerAndWait(running("00000000-0000-4000-8000-000000001362"));
+        assert.lengthOf(assistantEvents(), 2);
+        assert.equal(
+          assistantEvents().at(-1)?.message.text,
+          "A1 from the transcript\n\nA1 keeps going",
+        );
+
+        yield* TestClock.adjust("10 seconds");
+        yield* harness.offerAndWait(running("00000000-0000-4000-8000-000000001363"));
+        assert.lengthOf(assistantEvents(), 2, "an unchanged transcript emits nothing");
+
+        NodeFS.appendFileSync(
+          transcriptPath,
+          '{"type":"assistant","message":{"role":"assistant","id":"msg_a1_final","content":[{"type":"text","text":"A1 final"}]}}\n',
+        );
+        yield* harness.offerAndWait(
+          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001364", state: "done" }),
+        );
+        assert.equal(workflowMemberEvents(harness.events, 1).at(-1)?.subagent.status, "completed");
+        assert.equal(
+          assistantEvents().at(-1)?.message.text,
+          "A1 from the transcript\n\nA1 keeps going\n\nA1 final",
+        );
+        assert.lengthOf(
+          new Set(assistantEvents().map((event) => event.message.id)),
+          1,
+          "the settled answer replaces the running one in place",
+        );
+
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001365", result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
