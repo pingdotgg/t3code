@@ -212,12 +212,14 @@ export function resolveDefaultableModelSelection(
 }
 
 export function resolveNewTaskModelSelection(input: {
+  readonly submittedSelection?: ModelSelection | null;
   readonly draftSelection: ModelSelection | null;
   readonly projectDefaultSelection: ModelSelection | null;
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
   return (
+    input.submittedSelection ??
     input.draftSelection ??
     input.projectDefaultSelection ??
     input.stickySelection ??

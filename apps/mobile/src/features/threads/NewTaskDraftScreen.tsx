@@ -445,7 +445,10 @@ export function NewTaskDraftScreen(props: {
   const contextImports = useAtomValue(composerContextImportsAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
-    isIncomingShareTransferPending || flow.submitting || isImportingContext;
+    isIncomingShareTransferPending ||
+    flow.submitting ||
+    submitNavigationAction !== null ||
+    isImportingContext;
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = useCallback(() => {
     if (isComposerInteractionLocked) return true;
@@ -503,7 +506,11 @@ export function NewTaskDraftScreen(props: {
     readDraftMessage: () => (flow.draftKey ? getComposerDraftSnapshot(flow.draftKey).text : null),
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
-    disabled: isIncomingShareTransferPending || isImportingShare || flow.submitting,
+    disabled:
+      isIncomingShareTransferPending ||
+      isImportingShare ||
+      flow.submitting ||
+      submitNavigationAction !== null,
     onChangeDraftMessage: flow.setPrompt,
     onChangeSelection: composerMenu.onSelectionChange,
   });
@@ -527,6 +534,11 @@ export function NewTaskDraftScreen(props: {
     });
     return () => cancelAnimationFrame(frame);
   }, [navigation, preventRemove, submitNavigationAction]);
+  // The sent model stands in only while this draft leaves. If the screen goes
+  // before its closing navigation runs, the sheet's next draft resolves its
+  // model normally.
+  const { setSubmittedModelSelection } = flow;
+  useEffect(() => () => setSubmittedModelSelection(null), [setSubmittedModelSelection]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
     (consumedIncomingShareIdRef.current === props.incomingShareId ||
@@ -1187,6 +1199,7 @@ export function NewTaskDraftScreen(props: {
   );
 
   async function handleStart(): Promise<void> {
+    if (submitNavigationAction !== null) return;
     if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
@@ -1312,6 +1325,7 @@ export function NewTaskDraftScreen(props: {
       flow.setSubmitting(false);
     }
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
+    flow.setSubmittedModelSelection(message.modelSelection ?? modelSelection);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();
     } else {
@@ -1366,6 +1380,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    submitNavigationAction === null &&
     pendingPastedTextAttachmentCount === 0 &&
     !voiceInput.blocksSubmission &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
@@ -1408,7 +1423,9 @@ export function NewTaskDraftScreen(props: {
         }}
         ref={promptInputRef}
         autoFocus={false}
-        editable={!isIncomingShareTransferPending && !flow.submitting}
+        editable={
+          !isIncomingShareTransferPending && !flow.submitting && submitNavigationAction === null
+        }
         readOnly={voiceInput.freezesEditor}
         multiline
         scrollEnabled
@@ -1762,7 +1779,12 @@ export function NewTaskDraftScreen(props: {
                 state={voiceInput.state}
                 presentation={voicePresentation}
                 isAvailable={voiceInput.isAvailable}
-                disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+                disabled={
+                  isIncomingShareTransferPending ||
+                  isImportingShare ||
+                  flow.submitting ||
+                  submitNavigationAction !== null
+                }
                 onStart={voiceInput.start}
                 onConfirm={voiceInput.stop}
                 onCancel={voiceInput.cancel}
