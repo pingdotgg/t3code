@@ -227,6 +227,8 @@ interface PendingRequest {
   node: OrchestrationV2ExecutionNode;
   item: OrchestrationV2TurnItem;
   response?: Pick<OrchestrationV2RuntimeRequest, "decision" | "answers">;
+  /** False while T3 approves a workflow child's request for the user. */
+  shown: boolean;
 }
 
 /**
@@ -1049,6 +1051,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           choiceId: choice.choiceId,
         }).pipe(Effect.tapError(() => Effect.sync(() => delete entry.response)));
       });
+      const showRequest = Effect.fnUntraced(function* (entry: PendingRequest) {
+        entry.shown = true;
+        yield* emit({
+          type: "runtime_request.updated",
+          driver: MUSE_PROVIDER,
+          threadId: entry.node.threadId,
+          runtimeRequest: entry.request,
+        });
+        yield* emit({ type: "node.updated", driver: MUSE_PROVIDER, node: entry.node });
+        yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem: entry.item });
+        yield* updateSession("waiting");
+      });
       /**
        * A workflow child's approval is runless: the turn that started the workflow
        * may end long before the child asks, and T3 keeps a runless request on the
@@ -1179,21 +1193,33 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   required: true,
                 })),
               };
-        const entry: PendingRequest = { native, request: runtimeRequest, node, item };
-        pending.set(requestId, entry);
-        yield* emit({
-          type: "runtime_request.updated",
-          driver: MUSE_PROVIDER,
-          threadId,
-          runtimeRequest,
-        });
-        yield* emit({ type: "node.updated", driver: MUSE_PROVIDER, node });
-        yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem: item });
-        yield* updateSession("waiting");
         // Muse does not give workflow children the session's allowAll mode, so in full
-        // access T3 approves for them. If Muse rejects that, the request waits for the user.
-        if (child && input.runtimePolicy.runtimeMode === "full-access")
-          yield* decideApproval(entry, "accept").pipe(Effect.ignore, Effect.forkIn(scope));
+        // access T3 approves for them without showing the request. If Muse rejects that,
+        // the request is shown and waits for the user.
+        const autoApprove = child && input.runtimePolicy.runtimeMode === "full-access";
+        const entry: PendingRequest = {
+          native,
+          request: runtimeRequest,
+          node,
+          item,
+          // A request the user already sees stays visible when Muse updates it.
+          shown: !autoApprove || previous?.shown === true,
+        };
+        pending.set(requestId, entry);
+        if (entry.shown) yield* showRequest(entry);
+        if (autoApprove)
+          yield* decideApproval(entry, "accept").pipe(
+            Effect.catch(() =>
+              Effect.gen(function* () {
+                // Muse may have settled or replaced the request while T3 waited, or the
+                // session may be closing. Nothing is left to show then.
+                if (!closed && !broken && pending.get(requestId) === entry)
+                  yield* showRequest(entry);
+              }).pipe(eventPermit.withPermits(1)),
+            ),
+            Effect.ignore,
+            Effect.forkIn(scope),
+          );
       });
       const handleRequestEvent = Effect.fnUntraced(function* (
         method: string,
@@ -1239,7 +1265,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               if (!entry.response && native) entry.response = { decision: native };
               yield* resolvePending(entry, "resolved");
             }
-            if (!pending.size) yield* updateSession(active ? "running" : "ready");
+            // A request T3 is still approving for the user is hidden and does not keep
+            // the session waiting.
+            if (![...pending.values()].some((candidate) => candidate.shown))
+              yield* updateSession(active ? "running" : "ready");
           }
         }
       });
@@ -2046,7 +2075,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 ]
               : [],
           ),
-          runtimeRequests: [...pending.values()].map((entry) => entry.request),
+          runtimeRequests: [...pending.values()]
+            .filter((entry) => entry.shown)
+            .map((entry) => entry.request),
           providerPayload: items,
         };
       });
