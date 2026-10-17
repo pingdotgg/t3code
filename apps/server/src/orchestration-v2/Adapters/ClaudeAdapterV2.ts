@@ -8433,7 +8433,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return next;
                   });
                 }
-                const lastResult = resultMessages.at(-1);
+                // The CLI can append empty session-task lifecycle successes to
+                // a failed wake before this continuation starts. Those frames
+                // must not replace the result that explains why the turn ended.
+                // An all-empty wake still needs its final result to settle.
+                const lastResult =
+                  resultMessages.findLast(
+                    (entry) =>
+                      !(
+                        isClaudeTaskNotificationOriginResult(entry) &&
+                        entry.subtype === "success" &&
+                        !entry.is_error &&
+                        entry.num_turns === 0 &&
+                        entry.result.length === 0 &&
+                        terminalStatusFromResult(entry) === "completed"
+                      ),
+                  ) ?? resultMessages.at(-1);
                 if (lastResult !== undefined) {
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   return;
