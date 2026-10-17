@@ -7,7 +7,11 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
-import { projectWorkspaceEnvironment, projectWorkspaceState } from "./workspaceModel";
+import {
+  environmentIsUnreachable,
+  projectWorkspaceEnvironment,
+  projectWorkspaceState,
+} from "./workspaceModel";
 import type { EnvironmentPresentation } from "./environments";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -77,6 +81,7 @@ describe("mobile workspace projection", () => {
       networkStatus: "offline",
       environments,
       shellSummary: EMPTY_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.connectionState).toBe("offline");
@@ -94,6 +99,7 @@ describe("mobile workspace projection", () => {
       networkStatus: "online",
       environments,
       shellSummary: EMPTY_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.connectingEnvironments).toHaveLength(1);
@@ -109,11 +115,30 @@ describe("mobile workspace projection", () => {
       networkStatus: "online",
       environments,
       shellSummary: CACHED_SHELL_SUMMARY,
+      hasSyncingConnectedEnvironment: false,
     });
 
     expect(state.hasLoadedShellSnapshot).toBe(true);
     expect(state.hasPendingShellSnapshot).toBe(true);
     expect(state.hasReadyEnvironment).toBe(false);
     expect(state.connectionState).toBe("reconnecting");
+  });
+});
+
+describe("environmentIsUnreachable", () => {
+  const failed = {
+    isEnabled: true,
+    connectionState: "reconnecting",
+    connectionError: "Timed out",
+  } as const;
+
+  it("counts an environment still retrying after a failed attempt", () => {
+    expect(environmentIsUnreachable(failed)).toBe(true);
+    expect(environmentIsUnreachable({ ...failed, connectionState: "error" })).toBe(true);
+  });
+
+  it("ignores a first attempt and switched-off environments", () => {
+    expect(environmentIsUnreachable({ ...failed, connectionError: null })).toBe(false);
+    expect(environmentIsUnreachable({ ...failed, isEnabled: false })).toBe(false);
   });
 });

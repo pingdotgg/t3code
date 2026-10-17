@@ -14,7 +14,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useProjects } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
-import { useWorkspaceState } from "../../state/workspace";
+import { useUnreachableEnvironmentIds, useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -116,6 +116,7 @@ export function HomeRouteScreen() {
       Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
     );
   }, [savedConnectionsById, workspaceEnvironments]);
+  const unreachableIds = useUnreachableEnvironmentIds();
   const availableEnvironmentIds = useMemo(
     () => new Set(environments.map((environment) => environment.environmentId)),
     [environments],
@@ -254,6 +255,7 @@ export function HomeRouteScreen() {
         <HomeScreen
           catalogState={catalogState}
           environments={environments}
+          unreachableEnvironmentIds={unreachableIds}
           onAddConnection={() =>
             navigation.navigate("SettingsSheet", {
               screen: "SettingsContent",

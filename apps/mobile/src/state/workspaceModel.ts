@@ -25,7 +25,30 @@ export interface WorkspaceConnectionState {
 export interface WorkspaceState extends WorkspaceConnectionState {
   readonly hasLoadedShellSnapshot: boolean;
   readonly hasPendingShellSnapshot: boolean;
+  /** A connected environment is still catching up its thread list. Unlike
+      hasPendingShellSnapshot, a background connection retry does not count. */
+  readonly hasSyncingConnectedEnvironment: boolean;
   readonly shellSnapshotError: string | null;
+}
+
+/**
+ * True once an enabled environment has failed to connect and is only being
+ * retried in the background, such as a laptop that is asleep. A first attempt
+ * still in flight does not count.
+ */
+export function environmentIsUnreachable(
+  environment: Pick<WorkspaceEnvironment, "isEnabled" | "connectionState" | "connectionError">,
+): boolean {
+  if (!environment.isEnabled) return false;
+  switch (environment.connectionState) {
+    case "error":
+      return true;
+    case "connecting":
+    case "reconnecting":
+      return environment.connectionError !== null;
+    default:
+      return false;
+  }
 }
 
 function overallConnectionState(
@@ -92,11 +115,13 @@ export function projectWorkspaceState(input: {
   readonly networkStatus: NetworkStatus;
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
   readonly shellSummary: EnvironmentShellSummary;
+  readonly hasSyncingConnectedEnvironment: boolean;
 }): WorkspaceState {
   return {
     ...projectWorkspaceConnectionState(input),
     hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
     hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
+    hasSyncingConnectedEnvironment: input.hasSyncingConnectedEnvironment,
     shellSnapshotError: input.shellSummary.firstError,
   };
 }
