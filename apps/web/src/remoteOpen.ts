@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
@@ -82,28 +82,27 @@ export function resolveRemoteOpenState(input: {
 
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
   const { presentation } = useEnvironmentPresentation(environmentId);
-  // The presentation changes with every server config push. Memoize on the
-  // pieces read here so callers keep a stable result across provider updates.
+  // The presentation changes with every server config push. Read only the pieces
+  // used here so the compiler keys the result on them and callers keep a stable
+  // result across provider updates.
   const entry = presentation?.entry ?? null;
   const remoteOpenTargets = presentation?.serverConfig?.remoteOpenTargets;
 
-  return useMemo(() => {
-    if (entry === null) {
-      return UNRESOLVED_REMOTE_OPEN;
-    }
-    const profile = Option.getOrNull(entry.profile);
-    const sshAlias =
-      profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
-    return {
-      state: resolveRemoteOpenState({
-        target: entry.target,
-        sshAlias,
-        remoteOpenTargets,
-        isDesktopRenderer: window.desktopBridge !== undefined,
-      }),
-      isResolved: true,
-    };
-  }, [entry, remoteOpenTargets]);
+  if (entry === null) {
+    return UNRESOLVED_REMOTE_OPEN;
+  }
+  const profile = Option.getOrNull(entry.profile);
+  const sshAlias =
+    profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
+  return {
+    state: resolveRemoteOpenState({
+      target: entry.target,
+      sshAlias,
+      remoteOpenTargets,
+      isDesktopRenderer: window.desktopBridge !== undefined,
+    }),
+    isResolved: true,
+  };
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
