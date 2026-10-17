@@ -2,7 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
   SourceControlDiscoveryResult,
@@ -161,24 +161,31 @@ function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryIt
   return "bg-success";
 }
 
+function sourceControlItemIcon(
+  item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem,
+): ReactNode {
+  const host = isProviderDiscoveryItem(item) ? sourceControlClients.find(item.kind) : undefined;
+  const Icon = isProviderDiscoveryItem(item)
+    ? host && sourceControlIcon(host)
+    : VCS_ICONS[item.kind];
+  return Icon ? <Icon className="size-4.5 text-foreground/80" aria-hidden /> : null;
+}
+
 function SourceControlItemMark({
   item,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
 }) {
   const dotClassName = itemStatusDot(item);
-  const host = isProviderDiscoveryItem(item) ? sourceControlClients.find(item.kind) : undefined;
-  const Icon = isProviderDiscoveryItem(item)
-    ? host && sourceControlIcon(host)
-    : VCS_ICONS[item.kind];
+  const icon = sourceControlItemIcon(item);
 
-  if (!Icon) {
+  if (!icon) {
     return <span className={cn("size-2 shrink-0 rounded-full", dotClassName)} aria-hidden />;
   }
 
   return (
     <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-      <Icon className="size-4.5 text-foreground/80" aria-hidden />
+      {icon}
       <span
         className={cn(
           "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
@@ -269,16 +276,16 @@ function DiscoveryItemRow({
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
   const searchTargetId = useSettingsSearchTargetId();
-
-  useEffect(() => {
-    if (
-      (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
-      searchTargetId === sourceControlHostSettingsSearchId(item.kind) ||
-      (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id)
-    ) {
-      setIsExpanded(true);
-    }
-  }, [item.kind, searchTargetId]);
+  // A search jump to a setting inside this row opens it when the target arrives.
+  const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
+  const targetsThisRow =
+    (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) ||
+    searchTargetId === sourceControlHostSettingsSearchId(item.kind) ||
+    (item.kind === "github" && searchTargetId === searchableSetting("github-accounts").id);
+  if (targetsThisRow && !isExpanded && seenSearchTargetId !== searchTargetId) {
+    setIsExpanded(true);
+  }
+  if (seenSearchTargetId !== searchTargetId) setSeenSearchTargetId(searchTargetId);
 
   return (
     <div
