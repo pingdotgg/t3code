@@ -377,6 +377,8 @@ function ProviderSettingsFieldRow({
 
   if (variant === "settings") {
     const descriptionId = field.description ? `${inputId}-description` : undefined;
+    const secretConfigured =
+      field.secret === true && readProviderConfigString(value, field.key).length > 0;
     const control =
       field.control === "switch" ? (
         <Switch
@@ -409,15 +411,28 @@ function ProviderSettingsFieldRow({
           spellCheck={false}
         />
       ) : field.secret ? (
-        <SecretInput
-          id={inputId}
-          aria-describedby={descriptionId}
-          size="sm"
-          className="w-full max-w-full @min-[32rem]/settings-row:w-56"
-          configured={readProviderConfigString(value, field.key).length > 0}
-          value=""
-          onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
-        />
+        <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+          <SecretInput
+            id={inputId}
+            aria-describedby={descriptionId}
+            size="sm"
+            className="min-w-0 flex-1"
+            configured={secretConfigured}
+            value=""
+            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+          />
+          {secretConfigured ? (
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost-destructive"
+              onClick={() => onChange(nextProviderConfigWithFieldValue(value, field, ""))}
+              aria-label={`Clear ${field.label}`}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : null}
+        </div>
       ) : (
         <DraftInput
           id={inputId}

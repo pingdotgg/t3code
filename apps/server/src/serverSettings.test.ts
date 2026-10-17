@@ -1616,7 +1616,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
-  it.effect("moves a saved Antigravity key to the secret store when settings load", () =>
+  it.effect("moves saved provider credentials to the secret store when settings load", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
       const config = yield* ServerConfig.ServerConfig;
@@ -1626,20 +1626,44 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         JSON.stringify({
           providerInstances: {
             antigravity: { driver: "antigravity", config: { apiKey: "legacy-api-key" } },
+            opencode: {
+              driver: "opencode",
+              config: { serverUrl: "http://127.0.0.1:4096", serverPassword: "legacy-password" },
+            },
           },
         }),
       );
       const saved = yield* service.getSettings;
+      const opencode = ProviderInstanceId.make("opencode");
       assert.propertyVal(
         saved.providerInstances[ProviderInstanceId.make("antigravity")]?.config,
         "apiKey",
         "legacy-api-key",
       );
-      assert.notInclude(yield* fs.readFileString(config.settingsPath), "legacy-api-key");
-      assert.notInclude(
-        JSON.stringify(ServerSettingsModule.redactServerSettingsForClient(saved)),
-        "legacy-api-key",
+      assert.propertyVal(
+        saved.providerInstances[opencode]?.config,
+        "serverPassword",
+        "legacy-password",
       );
+      const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+      for (const value of ["legacy-api-key", "legacy-password"]) {
+        assert.notInclude(yield* fs.readFileString(config.settingsPath), value);
+        assert.notInclude(JSON.stringify(client), value);
+      }
+      // Editing another field from the client's copy keeps the saved password.
+      const clientConfig = client.providerInstances[opencode]?.config as Record<string, unknown>;
+      const edited = yield* service.updateProviderInstance({
+        operation: "upsert",
+        instanceId: opencode,
+        instance: {
+          ...client.providerInstances[opencode]!,
+          config: { ...clientConfig, serverUrl: "http://127.0.0.1:4097" },
+        },
+      });
+      assert.deepInclude(edited.providerInstances[opencode]?.config, {
+        serverUrl: "http://127.0.0.1:4097",
+        serverPassword: "legacy-password",
+      });
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

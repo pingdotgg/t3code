@@ -124,6 +124,60 @@ describe("server browser element refs", () => {
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
   });
 
+  it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
+    await page.setContent(`
+      <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
+      <input aria-label="Username" value="maria">
+      <input type="password" aria-label='saved" [ref=e2]: x' placeholder="hint" value="saved-pass">
+      <input type="password" role="combobox" aria-label="Code" value="role-pass">
+      <input aria-label="PIN" style="-webkit-text-security: disc" value="styled-pass">
+      <div contenteditable style="-webkit-text-security: disc">editable-pass</div>
+      <iframe srcdoc="<input type=password aria-label=child value=frame-pass>"></iframe>
+      <iframe id="blank" src="javascript:false"></iframe>
+      <p>Order styled-pass-2</p>
+      <script>
+        // A frame that never commits a document, filled by its parent.
+        blank.contentDocument.body.innerHTML = "<input type=password aria-label=blank value=blank-pass>";
+        // Page script can't change the value the snapshot sees.
+        Object.defineProperty(HTMLInputElement.prototype, "value", { get: () => "" });
+      </script>`);
+    await page.frameLocator("iframe[srcdoc]").getByRole("textbox").waitFor();
+    await ServerBrowserPage.type(page, { locator: "#pw", text: "typed-pass" });
+    const result = await takeSnapshot();
+    const tree = String(result.accessibilityTree);
+    expect(tree).toContain('textbox "blank"');
+    expect(tree).not.toMatch(
+      /typed-pass|saved-pass|role-pass|styled-pass|editable-pass|frame-pass|blank-pass/,
+    );
+    expect(result.visibleText).not.toContain("editable-pass");
+    // Page text masks the same values, so it can't be compared against the tree.
+    expect(result.visibleText).toContain("Order ••••••••-2");
+    expect(tree).toMatch(/row "password: •+"/);
+    expect(tree).toMatch(/textbox "Username" [^\n]*: maria$/m);
+    const line = tree.split("\n").find((line) => line.includes('textbox "Password"'));
+    expect(line).toMatch(/: •+$/);
+    await ServerBrowserPage.type(page, { locator: locators(line)[0]!, text: "next", clear: true });
+    expect(await page.locator("#pw").inputValue()).toBe("next");
+  });
+
+  it("masks dotted values in page text next to punctuation, with odd spaces, and at the cut", async () => {
+    await page.setContent(`
+      <input type="password" aria-label="PIN" value="123">
+      <input type="password" aria-label="Phrase" value="open&nbsp;sesame">
+      <p>PIN: 123. Code (123) id 1234</p>
+      <p>open&nbsp;sesame</p>`);
+    const text = (await takeSnapshot()).visibleText;
+    expect(text).toContain("PIN: ••••••••. Code (••••••••) id 1234");
+    expect(text).not.toMatch(/open|sesame/);
+    await page.setContent(`
+      <p>${"x".repeat(19_995)}long-secret</p>
+      <input type="password" aria-label="Long" value="long-secret">`);
+    const cut = (await takeSnapshot()).visibleText;
+    expect(cut.length).toBe(20_000);
+    // Masked before the cut, so no prefix of the value is left.
+    expect(cut.slice(-8)).toBe("xxx•••••");
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");
