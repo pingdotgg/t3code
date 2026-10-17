@@ -43,6 +43,7 @@ function PopoverPopup({
   tooltipStyle = false,
   keepMounted = false,
   anchor,
+  touchBackdrop = false,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
@@ -56,12 +57,22 @@ function PopoverPopup({
   keepMounted?: PopoverPrimitive.Portal.Props["keepMounted"];
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
   width?: keyof typeof popoverPopupWidthClassName;
+  touchBackdrop?: boolean;
 }) {
   // Viewport rekeys its children when the active trigger clears on close. Persistent
   // single-trigger forms need a stable container to retain drafts and submit guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
+      {touchBackdrop ? (
+        // A non-modal popover closes on an outside tap and lets that tap reach the
+        // control under the finger. On touch screens the backdrop takes the tap, so
+        // tapping away only closes the popover, as it does for modal menus and selects.
+        <PopoverPrimitive.Backdrop
+          className="fixed inset-0 z-[130] hidden pointer-coarse:block"
+          data-slot="popover-backdrop"
+        />
+      ) : null}
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
