@@ -16,6 +16,8 @@ const CONTEXT_CHIP_PRESENTATIONS = {
   "review-comment": { accent: "#8a70dd", symbol: "text.bubble" },
   "pull-request": { accent: "#7079e4", symbol: "git-pull-request" },
   skill: { accent: "#b261be", symbol: "cube" },
+  // A machine: the record carries only its identity, so every machine wears one glyph.
+  environment: { accent: "#3f9a4f", symbol: "server.rack" },
 } as const;
 
 export function composerChipSizeSuffix(record?: {
