@@ -33,7 +33,7 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { AnimatedHeight } from "~/components/AnimatedHeight";
@@ -188,6 +188,87 @@ export const importFailureReason = (cause: unknown): BrowserImportFailureReason 
     "readFailed"
   );
 };
+
+async function importBrowserCookiesIntoTarget(
+  bridge: NonNullable<typeof previewBridge>,
+  source: BrowserImportSource,
+  environmentId: EnvironmentId,
+  input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
+): Promise<ImportOutcome> {
+  try {
+    const result = await bridge.importBrowserCookies({
+      environmentId,
+      sourceId: source.id,
+      sourceProfileDirectory: input.sourceProfileDirectory,
+      targetProfileId: input.target.profileId,
+    });
+    if (
+      input.target.kind === "existing" &&
+      !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
+        (profile) => profile.id === input.target.profileId,
+      )
+    ) {
+      return { kind: "blocked", reason: "readFailed" };
+    }
+    let targetName: string;
+    if (input.target.kind === "new") {
+      if (result.imported > 0) {
+        try {
+          const persisted = await persistClientSettingsUpdate((current) => {
+            const existing = current.browserProfiles.find(
+              (profile) => profile.id === input.target.profileId,
+            );
+            if (existing) return current;
+            // The wizard refuses a new target at the cap, but the cap can be
+            // reached while the import runs; the updater sees the newest
+            // settings, so this is the check that holds.
+            if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) {
+              throw new ProfileLimitReachedError();
+            }
+            const taken = new Set(
+              resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
+            );
+            let name = source.name;
+            for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
+            return {
+              ...current,
+              browserProfiles: [
+                ...current.browserProfiles,
+                { id: input.target.profileId, name, kind: "persistent" as const },
+              ],
+            };
+          });
+          targetName =
+            persisted.browserProfiles.find((profile) => profile.id === input.target.profileId)
+              ?.name ?? source.name;
+        } catch (cause) {
+          // This target id belongs only to the attempted new profile. Clear
+          // its partition so a failed registration cannot strand imported
+          // cookies behind a profile that disappears on restart.
+          await clearBrowserProfileData(bridge, [environmentId], input.target.profileId).catch(
+            () => undefined,
+          );
+          const reason =
+            cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
+          throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
+        }
+      } else {
+        targetName = source.name;
+      }
+    } else {
+      targetName = input.target.name;
+    }
+    return {
+      kind: "imported",
+      imported: result.imported,
+      skipped: result.skipped,
+      skippedDomains: result.skippedDomains,
+      targetName,
+    };
+  } catch (cause) {
+    return { kind: "blocked", reason: importFailureReason(cause) };
+  }
+}
 
 const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
   if (viewport._tag === "fill") return FILL_VALUE;
@@ -690,34 +771,31 @@ function DeviceIntegrationControls({
   ) => {
     if (!environmentId || !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
-    try {
-      const results = await Promise.allSettled(
-        environments.map(async (environment) => {
-          if (environment.connection.phase !== "connected" || !environment.serverConfig) {
-            throw new Error("Environment disconnected");
-          }
-          if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
-            throw new Error("This connection cannot change device settings.");
-          }
-          return configure({
-            environmentId: environment.environmentId,
-            input: { ...input, ...(input.enabled ? { onboardingCompleted: true } : {}) },
-          });
-        }),
-      );
-      const failed = environments.filter((_, index) => {
-        const result = results[index];
-        return result?.status !== "fulfilled" || result.value._tag === "Failure";
-      });
-      if (failed.length > 0) {
-        toastManager.add({
-          type: "error",
-          title: "Device settings not saved on all environments",
-          description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+    const results = await Promise.allSettled(
+      environments.map(async (environment) => {
+        if (environment.connection.phase !== "connected" || !environment.serverConfig) {
+          throw new Error("Environment disconnected");
+        }
+        if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
+          throw new Error("This connection cannot change device settings.");
+        }
+        return configure({
+          environmentId: environment.environmentId,
+          input: { ...input, ...(input.enabled ? { onboardingCompleted: true } : {}) },
         });
-      }
-    } finally {
-      setPending(null);
+      }),
+    );
+    setPending(null);
+    const failed = environments.filter((_, index) => {
+      const result = results[index];
+      return result?.status !== "fulfilled" || result.value._tag === "Failure";
+    });
+    if (failed.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "Device settings not saved on all environments",
+        description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+      });
     }
   };
 
@@ -1065,13 +1143,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform",
   );
 
-  const loadSources = useCallback(() => {
+  const loadSources = () => {
     if (!previewBridge) return;
     void previewBridge
       .listBrowserImportSources()
       .then(setSources)
       .catch(() => setSources((previous) => previous ?? []));
-  }, []);
+  };
 
   const runWizardImport = async (
     source: BrowserImportSource,
@@ -1091,84 +1169,12 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     if (importInFlightRef.current) return { kind: "blocked", reason: "readFailed" };
     importInFlightRef.current = true;
     setImportInFlight(true);
-    try {
-      const result = await previewBridge.importBrowserCookies({
-        environmentId,
-        sourceId: source.id,
-        sourceProfileDirectory: input.sourceProfileDirectory,
-        targetProfileId: input.target.profileId,
-      });
-      if (
-        input.target.kind === "existing" &&
-        !resolveBrowserProfiles(getClientSettings().browserProfiles).some(
-          (profile) => profile.id === input.target.profileId,
-        )
-      ) {
-        return { kind: "blocked", reason: "readFailed" };
-      }
-      let targetName: string;
-      if (input.target.kind === "new") {
-        if (result.imported > 0) {
-          try {
-            const persisted = await persistClientSettingsUpdate((current) => {
-              const existing = current.browserProfiles.find(
-                (profile) => profile.id === input.target.profileId,
-              );
-              if (existing) return current;
-              // The wizard refuses a new target at the cap, but the cap can be
-              // reached while the import runs; the updater sees the newest
-              // settings, so this is the check that holds.
-              if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) {
-                throw new ProfileLimitReachedError();
-              }
-              const taken = new Set(
-                resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
-              );
-              let name = source.name;
-              for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
-              return {
-                ...current,
-                browserProfiles: [
-                  ...current.browserProfiles,
-                  { id: input.target.profileId, name, kind: "persistent" as const },
-                ],
-              };
-            });
-            targetName =
-              persisted.browserProfiles.find((profile) => profile.id === input.target.profileId)
-                ?.name ?? source.name;
-          } catch (cause) {
-            // This target id belongs only to the attempted new profile. Clear
-            // its partition so a failed registration cannot strand imported
-            // cookies behind a profile that disappears on restart.
-            await clearBrowserProfileData(
-              previewBridge,
-              [environmentId],
-              input.target.profileId,
-            ).catch(() => undefined);
-            const reason =
-              cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
-            throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
-          }
-        } else {
-          targetName = source.name;
-        }
-      } else {
-        targetName = input.target.name;
-      }
-      return {
-        kind: "imported",
-        imported: result.imported,
-        skipped: result.skipped,
-        skippedDomains: result.skippedDomains,
-        targetName,
-      };
-    } catch (cause) {
-      return { kind: "blocked", reason: importFailureReason(cause) };
-    } finally {
-      importInFlightRef.current = false;
-      setImportInFlight(false);
-    }
+    return importBrowserCookiesIntoTarget(previewBridge, source, environmentId, input).finally(
+      () => {
+        importInFlightRef.current = false;
+        setImportInFlight(false);
+      },
+    );
   };
 
   const refreshImportSource = async (
