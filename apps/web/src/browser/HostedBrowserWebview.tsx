@@ -13,12 +13,7 @@ import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn, isMacPlatform } from "~/lib/utils";
 
-import {
-  type BrowserSurfaceContentPresentation,
-  type BrowserSurfaceRect,
-  resolveBrowserSurfacePanelRect,
-  useBrowserSurfaceStore,
-} from "./browserSurfaceStore";
+import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
@@ -224,8 +219,23 @@ export function HostedBrowserWebview(props: {
   const handleAspectRatioChange = (aspectRatio: number | null) => {
     setAspectRatioLocked(aspectRatio !== null);
   };
-  const hiddenSize = useHiddenSize(viewport, normalizedZoomFactor, presentation.content, lastRect);
-  const containerSize = active && lastRect ? lastRect : hiddenSize;
+  const content = presentation.content;
+  const hiddenWidth =
+    viewport._tag !== "fill"
+      ? viewport.width * normalizedZoomFactor
+      : content
+        ? content.width / content.scale
+        : (lastRect?.width ?? 1280);
+  const hiddenHeight =
+    viewport._tag !== "fill"
+      ? viewport.height * normalizedZoomFactor
+      : content
+        ? content.height / content.scale
+        : (lastRect?.height ?? 800);
+  // Built from primitives on each side of the resize hook, so neither object is
+  // shared across it and both stay cached; the hook's layout keys the sync effect.
+  const containerSize =
+    active && lastRect ? lastRect : { width: hiddenWidth, height: hiddenHeight };
   const deviceToolbarVisible = active && viewport._tag !== "fill" && !presentation.fitSourceContent;
   const {
     activeDrag,
@@ -297,7 +307,7 @@ export function HostedBrowserWebview(props: {
     cornerRadius: presentation.cornerRadius,
     zIndex: presentation.zIndex,
     rect: lastRect,
-    hiddenSize,
+    hiddenSize: { width: hiddenWidth, height: hiddenHeight },
   });
 
   return (
@@ -313,7 +323,7 @@ export function HostedBrowserWebview(props: {
         {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
           <BrowserDeviceToolbar
             setting={effectiveViewport}
-            width={Math.max(1, Math.round(containerSize.width))}
+            width={Math.max(1, Math.round(active && lastRect ? lastRect.width : hiddenWidth))}
             aspectRatio={lockedAspectRatio}
             onAspectRatioChange={handleAspectRatioChange}
             onChange={commitViewportChange}
@@ -389,21 +399,4 @@ export function HostedBrowserWebview(props: {
       </div>
     </div>
   );
-}
-
-// The size feeds useBrowserViewportResize, whose layout keys the content sync effect.
-function useHiddenSize(
-  viewport: PreviewViewportSetting,
-  zoomFactor: number,
-  content: BrowserSurfaceContentPresentation | null,
-  lastRect: BrowserSurfaceRect | null,
-) {
-  "use memo";
-  if (viewport._tag !== "fill") {
-    return { width: viewport.width * zoomFactor, height: viewport.height * zoomFactor };
-  }
-  return {
-    width: content ? content.width / content.scale : (lastRect?.width ?? 1280),
-    height: content ? content.height / content.scale : (lastRect?.height ?? 800),
-  };
 }
