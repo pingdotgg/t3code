@@ -437,7 +437,7 @@ private final class ComposerTextView: UITextView {
   }
 }
 
-public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIGestureRecognizerDelegate {
+public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIDropInteractionDelegate, UIGestureRecognizerDelegate {
   private let textView = ComposerTextView()
   private let placeholderLabel = UILabel()
   private var value = ""
@@ -487,6 +487,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     clipsToBounds = false
     textView.delegate = self
     textView.textDropDelegate = self
+    textView.addInteraction(UIDropInteraction(delegate: self))
     textView.backgroundColor = .clear
     textView.textContainerInset = .zero
     textView.textContainer.lineFragmentPadding = 0
@@ -796,7 +797,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard !isReadOnly else {
       return UITextDropProposal(operation: .cancel)
     }
-    guard droppedImageProviders(in: drop) != nil else {
+    guard droppedImageProviders(in: drop.dropSession) != nil else {
       return drop.suggestedProposal
     }
 
@@ -815,14 +816,36 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard !isReadOnly else {
       return
     }
-    guard let imageProviders = droppedImageProviders(in: drop) else {
+    guard let imageProviders = droppedImageProviders(in: drop.dropSession) else {
       return
     }
     textView.loadImages(from: imageProviders)
   }
 
-  private func droppedImageProviders(in drop: UITextDropRequest) -> [NSItemProvider]? {
-    let providers = drop.dropSession.items.map(\.itemProvider)
+  // UITextView only hands text-like sessions to its text drop delegate, so an
+  // image-only drag (screenshot thumbnail, Photos) never reaches the methods
+  // above. This interaction accepts those; sessions the text view does take
+  // (e.g. image + file URL) still go through the text drop delegate.
+  public func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+    droppedImageProviders(in: session) != nil
+  }
+
+  public func dropInteraction(
+    _ interaction: UIDropInteraction,
+    sessionDidUpdate session: UIDropSession
+  ) -> UIDropProposal {
+    UIDropProposal(operation: isReadOnly ? .cancel : .copy)
+  }
+
+  public func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+    guard !isReadOnly, let imageProviders = droppedImageProviders(in: session) else {
+      return
+    }
+    textView.loadImages(from: imageProviders)
+  }
+
+  private func droppedImageProviders(in session: UIDropSession) -> [NSItemProvider]? {
+    let providers = session.items.map(\.itemProvider)
     guard !providers.isEmpty,
           providers.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) else {
       return nil
