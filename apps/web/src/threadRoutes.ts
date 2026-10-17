@@ -22,7 +22,7 @@ type DraftThreadRouteState = {
 export type ThreadRouteRenderState = "loading" | "ready" | "missing";
 
 export function isThreadRouteSnapshotAuthoritative(
-  status: EnvironmentShellStatus | undefined,
+  status: EnvironmentShellStatus | null | undefined,
 ): boolean {
   return status === "live";
 }

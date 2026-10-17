@@ -9,8 +9,19 @@ import {
   type EnvironmentThreadStatus,
   type ThreadHistoryMeta,
 } from "@t3tools/client-runtime/state/threads";
+import {
+  arrayElementsEqual,
+  parseThreadKey,
+  threadKey,
+} from "@t3tools/client-runtime/state/entities";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -311,4 +322,71 @@ export function readEnvironmentThreadRefs(
 
 export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
+}
+
+function shellParentThreadId(
+  thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage">,
+): ThreadId | null {
+  return thread.forkedFrom?.type === "run"
+    ? thread.forkedFrom.threadId
+    : thread.lineage.parentThreadId;
+}
+
+/**
+ * The live shells the panel's immediate relationships can reach: the thread,
+ * its parent, its children, and the threads its subagents, workflow members and
+ * context transfers name. Keeps its array while those shells are unchanged, so
+ * another thread streaming in the same environment does not re-render the panel.
+ */
+/** Exported for tests. */
+export function selectThreadRelationshipShells(
+  threadId: ThreadId,
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "subagents" | "contextTransfers"
+  > | null,
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+): ReadonlyArray<OrchestrationV2ThreadShell> {
+  const named = new Set<string>([threadId]);
+  if (projection !== null) {
+    const parentThreadId = shellParentThreadId(projection.thread);
+    if (parentThreadId !== null) named.add(parentThreadId);
+    for (const subagent of projection.subagents) {
+      if (subagent.childThreadId !== null) named.add(subagent.childThreadId);
+      for (const agent of subagent.workflow?.agents ?? []) {
+        if (agent.childThreadId !== undefined) named.add(agent.childThreadId);
+      }
+    }
+    for (const transfer of projection.contextTransfers) {
+      named.add(transfer.sourceThreadId);
+      named.add(transfer.targetThreadId);
+    }
+  }
+  const current = threads.find((thread) => thread.id === threadId);
+  const currentParentId = current === undefined ? null : shellParentThreadId(current);
+  if (currentParentId !== null) named.add(currentParentId);
+  return threads.filter(
+    (thread) => named.has(thread.id) || shellParentThreadId(thread) === threadId,
+  );
+}
+
+const relationshipShellsAtomFamily = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  let previous: ReadonlyArray<OrchestrationV2ThreadShell> = [];
+  return Atom.make((get) => {
+    const next = selectThreadRelationshipShells(
+      ref.threadId,
+      get(environmentThreadDetails.threadAtom(ref))?.projection ?? null,
+      get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
+    );
+    if (arrayElementsEqual(previous, next)) return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel(`web-thread-relationship-shells:${key}`));
+});
+
+export function useThreadRelationshipShells(
+  ref: ScopedThreadRef,
+): ReadonlyArray<OrchestrationV2ThreadShell> {
+  return useAtomValue(relationshipShellsAtomFamily(threadKey(ref)));
 }

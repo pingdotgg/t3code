@@ -25,7 +25,10 @@ const state = vi.hoisted(() => ({
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../state/entities", () => ({
   useThreadProjection: () => ({ projection: state.projection }),
-  useThreadShells: () => state.shells,
+  useThreadRelationshipShells: (ref: { readonly environmentId: string }) =>
+    (state.shells as ReadonlyArray<{ readonly environmentId: string; readonly source: unknown }>)
+      .filter((shell) => shell.environmentId === ref.environmentId)
+      .map((shell) => shell.source),
   useProjects: () => state.projects,
   useServerConfigs: () => state.configs,
 }));

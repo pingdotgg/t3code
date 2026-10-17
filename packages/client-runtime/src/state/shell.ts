@@ -522,6 +522,27 @@ export function createEnvironmentServerConfigsAtom(input: {
   }).pipe(Atom.withLabel("environment-server-configs"));
 }
 
+/**
+ * Every shell push replaces the state, so views that gate on load progress read these
+ * primitives instead and stay put while threads stream.
+ */
+export function createEnvironmentShellProgressAtoms(
+  stateValueAtom: (environmentId: EnvironmentId) => Atom.Atom<EnvironmentShellState>,
+) {
+  return {
+    statusAtom: Atom.family((environmentId: EnvironmentId) =>
+      Atom.make((get) => get(stateValueAtom(environmentId)).status).pipe(
+        Atom.withLabel(`environment-shell-status:${environmentId}`),
+      ),
+    ),
+    hasSnapshotAtom: Atom.family((environmentId: EnvironmentId) =>
+      Atom.make((get) => Option.isSome(get(stateValueAtom(environmentId)).snapshot)).pipe(
+        Atom.withLabel(`environment-shell-has-snapshot:${environmentId}`),
+      ),
+    ),
+  };
+}
+
 export function createEnvironmentShellAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     | EnvironmentRegistry.EnvironmentRegistry
@@ -543,9 +564,13 @@ export function createEnvironmentShellAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-shell-state-value:${environmentId}`)),
   );
 
+  const { statusAtom, hasSnapshotAtom } = createEnvironmentShellProgressAtoms(stateValueAtom);
+
   return {
     stateAtom,
     stateValueAtom,
+    statusAtom,
+    hasSnapshotAtom,
   };
 }
 

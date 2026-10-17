@@ -19,11 +19,7 @@ import {
   transitionFirstRunGateState,
   type FirstRunGateState,
 } from "../../onboarding/firstRun.logic";
-import {
-  useAllEnvironmentShellsBootstrapped,
-  useProjects,
-  useThreadShells,
-} from "../../state/entities";
+import { useAllEnvironmentShellsBootstrapped, useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { environmentProjects } from "../../state/projects";
 import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/server";
@@ -61,6 +57,18 @@ const workspaceEvidenceLiveAtom = Atom.make((get) => {
   return true;
 }).pipe(Atom.withLabel("web-onboarding-workspace-evidence-live"));
 
+// The gate only needs how many threads exist and, while there is at most one,
+// that thread; a shell update of any thread in a populated workspace must not
+// re-render the app root.
+const threadCountAtom = Atom.make(
+  (get) => get(environmentThreadShells.threadShellsAtom).length,
+).pipe(Atom.withLabel("web-onboarding-thread-count"));
+
+const soleThreadAtom = Atom.make((get) => {
+  const threads = get(environmentThreadShells.threadShellsAtom);
+  return threads.length === 1 ? threads[0]! : null;
+}).pipe(Atom.withLabel("web-onboarding-sole-thread"));
+
 export function FirstRunGate({
   enabled,
   hostedStatic,
@@ -79,7 +87,8 @@ export function FirstRunGate({
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady: environmentCatalogReady } = useEnvironments();
   const projects = useProjects();
-  const threads = useThreadShells();
+  const threadCount = useAtomValue(threadCountAtom);
+  const soleThread = useAtomValue(soleThreadAtom);
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const primaryShellLive = useAtomValue(primaryShellLiveAtom);
@@ -99,16 +108,18 @@ export function FirstRunGate({
   // would mean `npx t3` users never see the wizard.
   const serverCwd = serverConfig?.cwd ?? null;
   const primaryEnvironmentId = serverConfig?.environment.environmentId ?? null;
-  const workspaceFresh = isFreshFirstRunWorkspace({
-    primaryEnvironmentId,
-    serverCwd,
-    bootstrapProjectId: serverWelcome?.bootstrapProjectId,
-    bootstrapThreadId: serverWelcome?.bootstrapThreadId,
-    bootstrapProjectCreated: serverWelcome?.bootstrapProjectCreated,
-    bootstrapThreadCreated: serverWelcome?.bootstrapThreadCreated,
-    projects,
-    threads,
-  });
+  const workspaceFresh =
+    threadCount <= 1 &&
+    isFreshFirstRunWorkspace({
+      primaryEnvironmentId,
+      serverCwd,
+      bootstrapProjectId: serverWelcome?.bootstrapProjectId,
+      bootstrapThreadId: serverWelcome?.bootstrapThreadId,
+      bootstrapProjectCreated: serverWelcome?.bootstrapProjectCreated,
+      bootstrapThreadCreated: serverWelcome?.bootstrapThreadCreated,
+      projects,
+      threads: soleThread === null ? [] : [soleThread],
+    });
 
   const { decision: nextDecision, persistCompletion } = hostedStatic
     ? resolveHostedFirstRunDecision({
@@ -133,7 +144,7 @@ export function FirstRunGate({
         serverConfigAvailable: serverConfig !== null,
         workspaceFresh,
         projectCount: projects.length,
-        threadCount: threads.length,
+        threadCount,
       });
 
   if (decision !== "wizard" && hydrated) {
