@@ -81,6 +81,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
     Effect.gen(function* () {
       const repo = yield* setup;
       const completed = yield* cascadeRebaseStack({
+        cwd: "/repo",
         host: "github.com",
         repository: "acme/web",
         base: "main",
@@ -106,6 +107,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
       const stale = [repo.layers[0]!, { ...repo.layers[1]!, headSha: repo.layers[0]!.headSha }];
       const error = yield* Effect.flip(
         cascadeRebaseStack({
+          cwd: "/repo",
           host: "github.com",
           repository: "acme/web",
           base: "main",
@@ -144,6 +146,7 @@ it.layer(layer)("cascadeRebaseStack", (it) => {
 
       const error = yield* Effect.flip(
         cascadeRebaseStack({
+          cwd: "/repo",
           host: "github.com",
           repository: "acme/web",
           base: "main",

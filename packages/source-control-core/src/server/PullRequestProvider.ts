@@ -255,7 +255,12 @@ export interface PullRequestProviderApi {
     readonly cwd: string;
     readonly host: string;
   }) => Effect.Effect<
-    { readonly accountId: string; readonly viewer: string },
+    {
+      readonly accountId: string;
+      readonly viewer: string;
+      /** Which token answered, where the provider can tell; server-side only. */
+      readonly credentialFingerprint?: string;
+    },
     PullRequestProviderError
   >;
   readonly kind: SourceControlProviderKind;

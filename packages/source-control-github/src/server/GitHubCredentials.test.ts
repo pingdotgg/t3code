@@ -31,9 +31,11 @@ function harness(
   tokens: Record<string, string> = {},
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
+  const directories: Array<string | undefined> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
     Effect.sync(() => {
       calls.push(input.args);
+      directories.push(input.cwd);
       const user = input.args[input.args.indexOf("--user") + 1];
       if (input.args.includes("--user") && user !== undefined && signedOut.includes(user)) {
         return {
@@ -46,7 +48,11 @@ function harness(
       }
       return {
         exitCode: ChildProcessSpawner.ExitCode(0),
-        stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
+        stdout: input.args.includes("--user")
+          ? `token-for-${user}\n`
+          : input.cwd === "/work"
+            ? "work-token\n"
+            : "active-token\n",
         stderr: "",
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -63,7 +69,7 @@ function harness(
     ),
     Layer.provide(NodeCrypto.layer),
   );
-  return { layer, calls };
+  return { layer, calls, directories };
 }
 
 describe("GitHubCredentials", () => {
@@ -81,6 +87,22 @@ describe("GitHubCredentials", () => {
       const credential = yield* credentials.get("GitHub.com");
       expect(Redacted.value(credential.token)).toBe("active-token");
       expect(calls).toEqual([["auth", "token", "--hostname", "github.com"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("asks gh from each checkout, so a per-directory login answers for its project", () => {
+    const { layer, directories } = harness();
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const work = yield* credentials.get("github.com", "/work");
+      const personal = yield* credentials.get("github.com", "/personal");
+      expect(Redacted.value(work.token)).toBe("work-token");
+      expect(Redacted.value(personal.token)).toBe("active-token");
+      expect(work.fingerprint).not.toBe(personal.fingerprint);
+
+      // Each checkout's token is held on its own.
+      yield* credentials.get("github.com", "/work");
+      expect(directories).toEqual(["/work", "/personal"]);
     }).pipe(Effect.provide(layer));
   });
 

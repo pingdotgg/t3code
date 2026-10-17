@@ -419,6 +419,21 @@ function toPullRequestError(
         });
 }
 
+/**
+ * The credential a project's reads go out on, or its account where the provider cannot tell the
+ * token. A read batched across projects carries one credential, so projects on different ones
+ * are batched apart. A project whose credential cannot be told is kept apart from every other.
+ */
+const accountOf = (project: SupportedProject): Effect.Effect<string> =>
+  project.api.getRoutingIdentity === undefined
+    ? Effect.succeed("")
+    : project.api
+        .getRoutingIdentity({ cwd: project.project.workspaceRoot, host: project.host })
+        .pipe(
+          Effect.map((identity) => identity.credentialFingerprint ?? identity.accountId),
+          Effect.orElseSucceed(() => project.project.workspaceRoot),
+        );
+
 function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
@@ -1323,12 +1338,23 @@ export const make = Effect.gen(function* () {
 
       const together = new Map<string, Array<SupportedProject>>();
       const separate: Array<SupportedProject> = [];
+      const accounts = new Map(
+        yield* Effect.forEach(
+          readable.filter((project) => project.api.listChangeRequestsAcross !== undefined),
+          (project) => Effect.map(accountOf(project), (account) => [project, account] as const),
+          { concurrency: REPOSITORY_CONCURRENCY },
+        ),
+      );
       for (const project of readable) {
         if (project.api.listChangeRequestsAcross === undefined) {
           separate.push(project);
           continue;
         }
-        const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+        const key = [
+          project.host,
+          accounts.get(project),
+          cursorOf(project)?.updatedBefore ?? "",
+        ].join("\n");
         const group = together.get(key);
         if (group === undefined) together.set(key, [project]);
         else group.push(project);
@@ -1383,13 +1409,13 @@ export const make = Effect.gen(function* () {
     if (project === undefined || api?.getRoutingIdentity === undefined) {
       return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
     }
-    const identity = yield* api
+    const { accountId, viewer } = yield* api
       .getRoutingIdentity({
         cwd: project.project.workspaceRoot,
         host,
       })
       .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
-    return { ...identity, host, provider: "github" as const };
+    return { accountId, viewer, host, provider: "github" as const };
   });
 
   const withRoutingCredential: PullRequestService["Service"]["withRoutingCredential"] = (
@@ -1429,13 +1455,13 @@ export const make = Effect.gen(function* () {
     if (api?.getRoutingIdentity === undefined) {
       return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
     }
-    const identity = yield* api
+    const { accountId, viewer } = yield* api
       .getRoutingIdentity({
         cwd: project.project.workspaceRoot,
         host: project.host,
       })
       .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
-    if (!identity.viewer.trim() || !identity.accountId.trim()) {
+    if (!viewer.trim() || !accountId.trim()) {
       return yield* new PullRequestOperationError({
         operation: "routeIdentity",
         detail: "The signed-in account could not be verified.",
@@ -1444,7 +1470,8 @@ export const make = Effect.gen(function* () {
     return {
       host: project.host,
       provider: project.api.kind,
-      ...identity,
+      accountId,
+      viewer,
       projectTitle: project.project.title,
       workspaceRoot: project.project.workspaceRoot,
     };
@@ -2367,14 +2394,22 @@ export const make = Effect.gen(function* () {
         }
         wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
       }
-      const byHost = new Map<string, Array<{ project: SupportedProject; number: number }>>();
+      const accounts = new Map(
+        yield* Effect.forEach(
+          new Set([...wanted.values()].map((entry) => entry.project)),
+          (project) => Effect.map(accountOf(project), (account) => [project, account] as const),
+          { concurrency: REPOSITORY_CONCURRENCY },
+        ),
+      );
+      const byAccount = new Map<string, Array<{ project: SupportedProject; number: number }>>();
       for (const entry of wanted.values()) {
-        const held = byHost.get(entry.project.host);
-        if (held === undefined) byHost.set(entry.project.host, [entry]);
+        const key = `${entry.project.host}\n${accounts.get(entry.project)}`;
+        const held = byAccount.get(key);
+        if (held === undefined) byAccount.set(key, [entry]);
         else held.push(entry);
       }
       const stats = yield* Effect.forEach(
-        [...byHost.values()],
+        [...byAccount.values()],
         (entries) => {
           const first = entries[0]!;
           const readStats = first.project.api.listChangeRequestStats;

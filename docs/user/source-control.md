@@ -26,6 +26,8 @@ order of precedence:
 2. `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` with `GH_HOST` for GitHub Enterprise Server) in the
    server's environment.
 3. [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, signed in with `gh auth login`.
+   T3 Code runs `gh` in each project's folder, so a per-folder login, such as a `GH_CONFIG_DIR`
+   in a project's `mise.toml` with mise's shims on the server's `PATH`, applies to that project.
 
 If `gh` is signed in to several accounts or hosts, expand **GitHub** in the same place to pick
 the account each host uses or turn a host off. A saved token or `GH_TOKEN` takes precedence

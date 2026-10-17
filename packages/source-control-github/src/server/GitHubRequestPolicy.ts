@@ -200,6 +200,8 @@ export type GitHubAnswer<A> = {
 
 export interface GitHubRequest {
   readonly host: string;
+  /** The checkout the request acts for; its `gh` login supplies the token. */
+  readonly cwd?: string | undefined;
   readonly operation: string;
   /** The quota the request spends: `core` for REST, `graphql` for GraphQL. */
   readonly resource: string;
@@ -224,9 +226,10 @@ export class GitHubRequestPolicy extends Context.Service<
       input: GitHubRequest,
       send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
     ) => Effect.Effect<A, E | GitHubApiError, R>;
-    /** The credential a request to `host` would carry right now. */
+    /** The credential a request to `host` from checkout `cwd` would carry right now. */
     readonly credential: (
       host: string,
+      cwd?: string,
     ) => Effect.Effect<
       { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
       GitHubApiError
@@ -243,7 +246,7 @@ export const make = Effect.gen(function* () {
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = Effect.fn(
     "GitHubRest.credential",
-  )(function* (host) {
+  )(function* (host, cwd) {
     const normalized = normalizeHost(host);
     const pinned = yield* PinnedGitHubCredential;
     if (pinned !== null) {
@@ -256,7 +259,7 @@ export const make = Effect.gen(function* () {
       }
       return { token: pinned.token, fingerprint: pinned.credentialFingerprint };
     }
-    const held = yield* credentials.get(normalized);
+    const held = yield* credentials.get(normalized, cwd);
     return { token: held.token, fingerprint: held.fingerprint };
   });
 
@@ -271,7 +274,7 @@ export const make = Effect.gen(function* () {
         "github.host": host,
         "github.operation": input.operation,
       });
-      const { token, fingerprint } = yield* credential(host);
+      const { token, fingerprint } = yield* credential(host, input.cwd);
       const scope = yield* SourceControlRateLimit.CredentialScope;
       // A refusal pauses the whole host, whichever quota it spent: the key PullRequestService
       // records its own backoff under.
@@ -302,7 +305,7 @@ export const make = Effect.gen(function* () {
             }
             case "Unauthorized":
               // The source may hold a newer token than the one that was refused.
-              yield* credentials.invalidate(host);
+              yield* credentials.invalidate(host, input.cwd);
               return yield* new GitHubApiAuthenticationError(context);
             case "NotFound":
               return yield* new GitHubApiNotFoundError(context);

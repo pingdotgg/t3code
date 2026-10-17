@@ -28,14 +28,16 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
   const credentials = Layer.succeed(
     GitHubCredentials.GitHubCredentials,
     GitHubCredentials.GitHubCredentials.of({
-      get: (host) =>
+      get: (host, cwd) =>
         Effect.sync(() => {
           credentialReads++;
+          // A checkout with its own gh login, as a per-directory GH_CONFIG_DIR gives one.
+          const token = cwd === "/work" ? "work" : tokens[0]!;
           return {
             host,
-            token: Redacted.make(tokens[0]!),
+            token: Redacted.make(token),
             source: "gh" as const,
-            fingerprint: `${host}:${tokens[0]}`,
+            fingerprint: `${host}:${token}`,
           };
         }),
       invalidate: () =>
@@ -106,6 +108,19 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.effect("carries the token of the checkout a request acts for", () => {
+    const { layer, requests } = harness(() => json({ login: "julius" }));
+    return Effect.gen(function* () {
+      const api = yield* GitHubRest.GitHubRest;
+      yield* api.rest({ host: "github.com", cwd: "/work", operation: "user", path: "user" });
+      yield* api.rest({ host: "github.com", operation: "user", path: "user" });
+      expect(requests.map((request) => request.headers.authorization)).toEqual([
+        "Bearer work",
+        "Bearer first",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("traces the operation, path and quota, never the query string or the token", () => {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({
