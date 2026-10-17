@@ -3232,6 +3232,120 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([
+    {
+      name: "an error result",
+      isError: true,
+      result: "API Error: 400 Request rejected by a safeguard.",
+      expected: "API Error: 400 Request rejected by a safeguard.",
+    },
+    {
+      name: "an unflagged API error result",
+      isError: false,
+      result: "API Error: 400 Request rejected by a safeguard.",
+      expected: "API Error: 400 Request rejected by a safeguard.",
+    },
+    {
+      name: "surrounding whitespace",
+      isError: true,
+      result: "  API Error: 400 Request rejected.\n",
+      expected: "API Error: 400 Request rejected.",
+    },
+    {
+      name: "an overlong error",
+      isError: true,
+      result: `API Error: 400 ${"x".repeat(1_000)}`,
+      expected: `API Error: 400 ${"x".repeat(485)}`,
+    },
+    {
+      name: "a quoted secret crossing the error limit",
+      isError: true,
+      result: `API Error: 400 ${"x".repeat(440)} {"token":"${"synthetic-secret".repeat(100)}"}`,
+      expected: `API Error: 400 ${"x".repeat(440)} {"token":"[REDACTED]"}`,
+    },
+    {
+      name: "an empty error",
+      isError: true,
+      result: "",
+      expected: "Claude gave up after repeated API errors.",
+    },
+    {
+      name: "ordinary assistant text",
+      isError: true,
+      result: "I found three files.",
+      expected: "Claude gave up after repeated API errors.",
+    },
+    {
+      name: "a listed non-diagnostic error",
+      isError: true,
+      result: "API Error: 400 Request rejected.",
+      errors: ["[ede_diagnostic] internal detail", "Tool execution failed: EACCES"],
+      expected: "Tool execution failed: EACCES",
+    },
+    {
+      name: "an HTTP 529 overload",
+      isError: true,
+      result: "API Error: 529 Specific overload detail.",
+      apiErrorStatus: 529,
+      expected: "Claude API is overloaded (529). Try again shortly.",
+    },
+    {
+      name: "an HTTP 429 rate limit",
+      isError: true,
+      result: "API Error: 429 Specific rate limit detail.",
+      apiErrorStatus: 429,
+      expected: "Claude API rate limit reached. Try again later.",
+    },
+    {
+      name: "a different terminal reason",
+      isError: true,
+      result: "API Error: 400 Request rejected.",
+      terminalReason: "prompt_too_long" as const,
+      expected: "Claude stopped: the prompt exceeds the model's context window.",
+    },
+  ])("reports terminal API error text for $name", (input) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-specific-api-error"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const apiErrorStatus = input.apiErrorStatus ?? 400;
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000699",
+          result: input.result,
+          terminalReason: input.terminalReason ?? "api_error",
+          apiErrorStatus,
+          isError: input.isError,
+          ...(input.errors === undefined ? {} : { errors: input.errors }),
+        }),
+      );
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.message, input.expected);
+      assert.equal(terminal.failure.code, `api_error_${apiErrorStatus}`);
+      assert.equal(
+        terminal.failure.class,
+        apiErrorStatus === 429 ? "usage_limit" : "provider_error",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("names an expired Claude login instead of the terminal API error", () =>
     Effect.gen(function* () {
       const configDir = "/synthetic/Claude config";
@@ -3263,7 +3377,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000607",
-          result: "API Error",
+          result: "API Error: 401 Credentials expired.",
           terminalReason: "api_error",
         }),
       ]);
@@ -3367,7 +3481,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         harness.sdkMessages,
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000610",
-          result: "API Error",
+          result: recovered ? "API Error" : "API Error: 400 Specific provider detail.",
           terminalReason: "api_error",
         }),
       );
