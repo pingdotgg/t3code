@@ -2,6 +2,7 @@ import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/Th
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
+  mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
   shouldDockDraftHeroForSubmission,
@@ -758,6 +759,87 @@ const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
     uncertainSubmissions: { current: new Map<string, ThreadId>() },
   }).pipe(Atom.keepAlive),
 );
+
+/**
+ * Starts one thread of a multiple-model send. A request that may have
+ * reached the server before failing is remembered by `retryKey`, so sending
+ * again cannot silently create a duplicate thread; its failure toast offers
+ * to open that thread or to allow the retry.
+ */
+async function startFanoutThread(input: {
+  readonly retryKey: string;
+  readonly model: string;
+  readonly uncertainSubmissions: Map<string, ThreadId>;
+  readonly start: (threadId: ThreadId) => Promise<AtomCommandResult<unknown, unknown>>;
+  readonly openThread: (threadId: ThreadId) => void;
+}): Promise<boolean> {
+  const { retryKey, uncertainSubmissions } = input;
+  const uncertainThreadId = uncertainSubmissions.get(retryKey);
+  const targetThreadId = uncertainThreadId ?? newThreadId();
+  let requestMayHaveStarted = false;
+  try {
+    if (uncertainThreadId) {
+      throw new Error(
+        "The previous request may have started. Open its thread to check before sending again.",
+      );
+    }
+    requestMayHaveStarted = true;
+    const result = await input.start(targetThreadId);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
+        requestMayHaveStarted = false;
+      }
+      throw error;
+    }
+    return true;
+  } catch (error) {
+    if (requestMayHaveStarted && !uncertainSubmissions.has(retryKey)) {
+      uncertainSubmissions.set(retryKey, targetThreadId);
+    }
+    const retainedThreadId = uncertainSubmissions.get(retryKey);
+    const failureToastId = toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: `Could not start ${input.model}`,
+        description: error instanceof Error ? error.message : "Failed to send message.",
+        ...(retainedThreadId
+          ? {
+              timeout: 0,
+              data: {
+                secondaryActionProps: {
+                  children: "Allow retry",
+                  onClick: () => {
+                    void readLocalApi()
+                      ?.dialogs.confirm(
+                        "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
+                      )
+                      .then(
+                        (confirmed) => {
+                          if (
+                            confirmed &&
+                            uncertainSubmissions.get(retryKey) === retainedThreadId
+                          ) {
+                            uncertainSubmissions.delete(retryKey);
+                            toastManager.close(failureToastId);
+                          }
+                        },
+                        () => undefined,
+                      );
+                  },
+                },
+              },
+              actionProps: {
+                children: "Open thread",
+                onClick: () => input.openThread(retainedThreadId),
+              },
+            }
+          : {}),
+      }),
+    );
+    return false;
+  }
+}
 
 function formatOutgoingPrompt(params: {
   provider: ProviderDriverKind;
@@ -6823,36 +6905,13 @@ export default function ChatView(props: ChatViewProps) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
-    const annotationImageAlreadyAttached =
-      directAnnotation?.image !== undefined &&
-      sendContextImages.some((image) => image.id === directAnnotation.image?.id);
-    // A full composer (e.g. 8 files) cannot take the annotation screenshot;
-    // over the cap the server rejects the whole turn.
-    const annotationImageAppended =
-      directAnnotation?.image !== undefined &&
-      !annotationImageAlreadyAttached &&
-      sendContextImages.length + composerFiles.length < PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
-    const composerImages =
-      directAnnotation?.image && annotationImageAppended
-        ? [...sendContextImages, directAnnotation.image]
-        : sendContextImages;
-    const composerPreviewAnnotations =
-      directAnnotation &&
-      !sendContextPreviewAnnotations.some(
-        (annotation) => annotation.id === directAnnotation.annotation.id,
-      )
-        ? [
-            ...sendContextPreviewAnnotations,
-            {
-              ...directAnnotation.annotation,
-              screenshot:
-                directAnnotation.annotation.screenshot &&
-                (annotationImageAppended || annotationImageAlreadyAttached)
-                  ? { ...directAnnotation.annotation.screenshot, dataUrl: "" }
-                  : null,
-            },
-          ]
-        : sendContextPreviewAnnotations;
+    const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
+      mergeDirectPreviewAnnotation({
+        images: sendContextImages,
+        fileCount: composerFiles.length,
+        previewAnnotations: sendContextPreviewAnnotations,
+        direct: directAnnotation,
+      });
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
     const promptForSend = directAnnotation
@@ -7349,129 +7408,70 @@ export default function ChatView(props: ChatViewProps) {
         setThreadError(threadIdForSend, null);
         const starts = Promise.all(
           multipleTargets.map(async (target) => {
-            const retryKey = JSON.stringify([
-              routeThreadKey,
-              target.selection.instanceId,
-              target.selection.model,
-            ]);
-            const uncertainThreadId = uncertainMultipleSubmissionsRef.current.get(retryKey);
-            const targetThreadId = uncertainThreadId ?? newThreadId();
-            let requestMayHaveStarted = false;
-            try {
-              if (uncertainThreadId) {
-                throw new Error(
-                  "The previous request may have started. Open its thread to check before sending again.",
-                );
-              }
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
-              requestMayHaveStarted = true;
-              const result = await startThreadTurn({
-                environmentId,
-                input: {
-                  threadId: targetThreadId,
-                  message: {
-                    messageId: newMessageId(),
-                    role: "user",
-                    text:
-                      context && !supportsInlineMessageContext
-                        ? serializeLegacyContextMessage({
-                            text: target.text,
-                            records: context.records,
-                          })
-                        : target.text,
-                    attachments,
-                    ...(context && supportsInlineMessageContext ? { context } : {}),
-                  },
-                  modelSelection: target.selection,
-                  titleSeed: title,
-                  runtimeMode,
-                  interactionMode: target.interactionMode,
-                  bootstrap: {
-                    createThread: {
-                      projectId: activeProject.id,
-                      title,
-                      modelSelection: target.selection,
-                      runtimeMode,
-                      interactionMode: target.interactionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: null,
-                      createdAt: messageCreatedAt,
+            const started = await startFanoutThread({
+              retryKey: JSON.stringify([
+                routeThreadKey,
+                target.selection.instanceId,
+                target.selection.model,
+              ]),
+              model: target.selection.model,
+              uncertainSubmissions: uncertainMultipleSubmissionsRef.current,
+              start: (targetThreadId) => {
+                const supportsInlineMessageContext =
+                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                    .capabilities.inlineMessageContext === true;
+                return startThreadTurn({
+                  environmentId,
+                  input: {
+                    threadId: targetThreadId,
+                    message: {
+                      messageId: newMessageId(),
+                      role: "user",
+                      text:
+                        context && !supportsInlineMessageContext
+                          ? serializeLegacyContextMessage({
+                              text: target.text,
+                              records: context.records,
+                            })
+                          : target.text,
+                      attachments,
+                      ...(context && supportsInlineMessageContext ? { context } : {}),
                     },
-                    prepareWorktree: {
-                      projectCwd: activeProject.workspaceRoot,
-                      baseBranch: activeThreadBranch!,
-                      requireWorktree: true,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                    modelSelection: target.selection,
+                    titleSeed: title,
+                    runtimeMode,
+                    interactionMode: target.interactionMode,
+                    bootstrap: {
+                      createThread: {
+                        projectId: activeProject.id,
+                        title,
+                        modelSelection: target.selection,
+                        runtimeMode,
+                        interactionMode: target.interactionMode,
+                        branch: activeThreadBranch,
+                        worktreePath: null,
+                        createdAt: messageCreatedAt,
+                      },
+                      prepareWorktree: {
+                        projectCwd: activeProject.workspaceRoot,
+                        baseBranch: activeThreadBranch!,
+                        requireWorktree: true,
+                        ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      },
+                      runSetupScript: true,
                     },
-                    runSetupScript: true,
+                    createdAt: messageCreatedAt,
                   },
-                  createdAt: messageCreatedAt,
-                },
-              });
-              if (result._tag === "Failure") {
-                const error = squashAtomCommandFailure(result);
-                if (wasBootstrapThreadDeleted(error) || wasBootstrapThreadNotCreated(error)) {
-                  requestMayHaveStarted = false;
-                }
-                throw error;
-              }
-              startedCount += 1;
-            } catch (error) {
-              if (requestMayHaveStarted && !uncertainMultipleSubmissionsRef.current.has(retryKey)) {
-                uncertainMultipleSubmissionsRef.current.set(retryKey, targetThreadId);
-              }
-              failedSelections.push(target.selection);
-              const retainedThreadId = uncertainMultipleSubmissionsRef.current.get(retryKey);
-              const failureToastId = toastManager.add(
-                stackedThreadToast({
-                  type: "error",
-                  title: `Could not start ${target.selection.model}`,
-                  description: error instanceof Error ? error.message : "Failed to send message.",
-                  ...(retainedThreadId
-                    ? {
-                        timeout: 0,
-                        data: {
-                          secondaryActionProps: {
-                            children: "Allow retry",
-                            onClick: () => {
-                              void readLocalApi()
-                                ?.dialogs.confirm(
-                                  "The previous request may already be running. Check its thread first. Allow another send that could create a duplicate thread?",
-                                )
-                                .then(
-                                  (confirmed) => {
-                                    if (
-                                      confirmed &&
-                                      uncertainMultipleSubmissionsRef.current.get(retryKey) ===
-                                        retainedThreadId
-                                    ) {
-                                      uncertainMultipleSubmissionsRef.current.delete(retryKey);
-                                      toastManager.close(failureToastId);
-                                    }
-                                  },
-                                  () => undefined,
-                                );
-                            },
-                          },
-                        },
-                        actionProps: {
-                          children: "Open thread",
-                          onClick: () => {
-                            void navigate({
-                              to: "/$environmentId/$threadId",
-                              params: buildThreadRouteParams(
-                                scopeThreadRef(environmentId, retainedThreadId),
-                              ),
-                            });
-                          },
-                        },
-                      }
-                    : {}),
+                });
+              },
+              openThread: (threadId) =>
+                void navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
                 }),
-              );
-            }
+            });
+            if (started) startedCount += 1;
+            else failedSelections.push(target.selection);
           }),
         );
         sendInFlightRef.current = false;
