@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { Editor } from "@tiptap/core";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TextSelection } from "@tiptap/pm/state";

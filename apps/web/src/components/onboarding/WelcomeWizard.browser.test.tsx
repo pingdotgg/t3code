@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -52,7 +51,10 @@ vi.mock("../../state/server", () => ({
     refreshProviders: "refresh",
   },
 }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: (value: unknown) => value }));
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  useAtomValue: (value: unknown) => value,
+}));
 vi.mock("../../onboarding/useProjectScans", () => ({
   useProjectScans: () => [
     {

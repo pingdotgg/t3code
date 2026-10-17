@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { isEditableFocused } from "./editableFocus";

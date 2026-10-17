@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import * as Schema from "effect/Schema";
 import { act, createElement, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";

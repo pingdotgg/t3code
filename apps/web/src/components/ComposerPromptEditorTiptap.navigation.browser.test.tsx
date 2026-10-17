@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import type { Editor } from "@tiptap/core";
 import { TextSelection } from "@tiptap/pm/state";
 import { act, createRef } from "react";

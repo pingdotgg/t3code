@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import type { LegendListRef } from "@legendapp/list/react";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
