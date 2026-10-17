@@ -79,22 +79,29 @@ const testState = vi.hoisted(() => {
   };
 });
 
+const testServerConfigs = () =>
+  new Map([
+    [
+      "environment-primary",
+      {
+        settings: {
+          ...testState.targetSettings,
+          newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
+        },
+      },
+    ],
+    ["environment-ssh", { settings: testState.targetSettings }],
+  ]);
+
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => testServerConfigs() },
+}));
+
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === "primary-settings"
       ? { newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin }
-      : new Map([
-          [
-            "environment-primary",
-            {
-              settings: {
-                ...testState.targetSettings,
-                newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
-              },
-            },
-          ],
-          ["environment-ssh", { settings: testState.targetSettings }],
-        ]),
+      : testServerConfigs(),
 }));
 vi.mock("@t3tools/client-runtime/environment", () => ({
   scopedProjectKey: () => "remote-project",
