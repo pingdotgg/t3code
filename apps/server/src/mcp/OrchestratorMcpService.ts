@@ -926,14 +926,19 @@ const make = Effect.gen(function* () {
   const projectDefaultModelSelection = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
   ) =>
-    project.defaultModelSelection === null
-      ? Effect.fail(
-          failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          ),
-        )
-      : Effect.succeed(project.defaultModelSelection);
+    projects.getEffectiveDefaultModelSelection(project).pipe(
+      Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      Effect.flatMap((modelSelection) =>
+        modelSelection === null
+          ? Effect.fail(
+              failure(
+                "invalid_request",
+                `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
+              ),
+            )
+          : Effect.succeed(modelSelection),
+      ),
+    );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>

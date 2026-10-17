@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as Option from "effect/Option";
 import { expect, it } from "vite-plus/test";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -602,4 +603,147 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .pipe(Effect.flip);
     expect(stopped.code).toBe("parent_not_active");
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("scheduleTask inherits the environment default model for an external caller", async () => {
+  const environmentModel = {
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    model: "claude-sonnet",
+  };
+  const targetProjectId = ProjectId.make("project-mcp-external-default");
+  const scheduledTask = {
+    id: ScheduledTaskId.make("task-mcp-external-default"),
+    title: "Check later",
+    prompt: "Check the project",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: targetProjectId,
+    threadId: null,
+    workspaceStrategy: { type: "worktree", baseRef: "main", startFromOrigin: true },
+    modelSelection: environmentModel,
+    runtimeMode: "auto",
+    interactionMode: "default",
+    createdBy: "agent",
+    creationSource: "mcp",
+    createdAt: "2026-10-14T00:00:00.000Z",
+    updatedAt: "2026-10-14T00:00:00.000Z",
+    nextRunAt: "2026-10-14T01:00:00.000Z",
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  } as never;
+  const upserted: Array<unknown> = [];
+  const scope: McpInvocationContext.McpInvocationScope = {
+    environmentId,
+    requestNamespace: "provider-session-mcp-external-default",
+    thread: undefined,
+    client: { sessionId: "external-default", label: "MCP client", access: "auto" },
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        ServerSettings.layerTest({ defaultModelSelection: environmentModel }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({
+                id: targetProjectId,
+                workspaceRoot: "/projects/default",
+                defaultModelSelection: null,
+              } as never),
+            ),
+          getEffectiveDefaultModelSelection: () => Effect.succeed(environmentModel),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          upsert: (input) =>
+            Effect.sync(() => {
+              upserted.push(input);
+              return { task: scheduledTask };
+            }),
+        }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const result = yield* service.scheduleTask(scope, {
+      projectId: targetProjectId,
+      prompt: "Check the project",
+      schedule: { type: "interval", everyMs: 60_000 },
+    });
+    expect(result.projectId).toBe(targetProjectId);
+    expect(upserted).toHaveLength(1);
+    expect((upserted[0] as { modelSelection: unknown }).modelSelection).toEqual(environmentModel);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("bounds settings read failures for an external schedule caller", async () => {
+  const targetProjectId = ProjectId.make("project-mcp-settings-failure");
+  const scope: McpInvocationContext.McpInvocationScope = {
+    environmentId,
+    requestNamespace: "provider-session-mcp-settings-failure",
+    thread: undefined,
+    client: { sessionId: "settings-failure", label: "MCP client", access: "auto" },
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({
+                id: targetProjectId,
+                workspaceRoot: "/projects/settings-failure",
+                defaultModelSelection: null,
+              } as never),
+            ),
+          getEffectiveDefaultModelSelection: () =>
+            Effect.fail(
+              new ProjectService.ProjectOperationError({
+                operation: "read-project",
+                projectId: targetProjectId,
+                cause: new Error("path details must stay private"),
+              }),
+            ),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  const failure = await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    return yield* service
+      .scheduleTask(scope, {
+        projectId: targetProjectId,
+        prompt: "Check the project",
+        schedule: { type: "interval", everyMs: 60_000 },
+      })
+      .pipe(Effect.flip);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+
+  expect(failure.code).toBe("orchestration_error");
+  expect(failure.message).toBe("Unable to read server settings.");
+  expect(failure.message).not.toContain("path details must stay private");
 });

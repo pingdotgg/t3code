@@ -628,6 +628,38 @@ it.effect("keeps project snapshots available when optional metadata enrichment f
   }),
 );
 
+it.effect("resolves the effective default model from project then environment settings", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const projectId = ProjectId.make("project:effective-model");
+    const environmentModel = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4",
+    } as const;
+    const projectModel = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.4-mini",
+    } as const;
+
+    yield* serverSettings.updateSettings({ defaultModelSelection: environmentModel });
+    const project = yield* service.create({
+      commandId: CommandId.make("command:effective-model:create"),
+      projectId,
+      title: "Effective model",
+      workspaceRoot: "/work/effective-model",
+    });
+    assert.deepEqual(yield* service.getEffectiveDefaultModelSelection(project), environmentModel);
+
+    const overridden = yield* service.update({
+      commandId: CommandId.make("command:effective-model:update"),
+      projectId,
+      defaultModelSelection: projectModel,
+    });
+    assert.deepEqual(yield* service.getEffectiveDefaultModelSelection(overridden), projectModel);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("invalidates workspace-derived metadata when a project moves", () =>
   Effect.gen(function* () {
     const metadataVersion = yield* Ref.make(1);

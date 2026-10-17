@@ -304,14 +304,30 @@ const clientLaunchHarness = (input: {
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
+  readonly projectDefaultModelSelection?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly model: string;
+  } | null;
+  readonly environmentDefaultModelSelection?: {
+    readonly instanceId: ProviderInstanceId;
+    readonly model: string;
+  } | null;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
     model: "claude-opus",
   };
+  const projectDefaultModelSelection =
+    input.projectDefaultModelSelection === undefined
+      ? modelSelection
+      : input.projectDefaultModelSelection;
+  const effectiveDefaultModelSelection =
+    projectDefaultModelSelection ?? input.environmentDefaultModelSelection ?? null;
   const layerDependencies = Layer.mergeAll(
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest({
+      defaultModelSelection: input.environmentDefaultModelSelection ?? null,
+    }),
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
@@ -351,10 +367,11 @@ const clientLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection: projectDefaultModelSelection,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
+      getEffectiveDefaultModelSelection: () => Effect.succeed(effectiveDefaultModelSelection),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     NodeServices.layer,
@@ -399,6 +416,33 @@ it.effect("a client launches at its ceiling with the project's default model", (
     const untargeted = yield* handle({ title: "Fix" });
     expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("an external client inherits the environment's default model", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const environmentModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet",
+    };
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      projectDefaultModelSelection: null,
+      environmentDefaultModelSelection: environmentModel,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Inherited", projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection: environmentModel });
+    expect(launched[0]?.modelSelection).toEqual(environmentModel);
   }),
 );
 

@@ -122,11 +122,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
-        const modelSelection =
-          input.modelSelection ??
-          caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
-          undefined;
+        let modelSelection = input.modelSelection ?? caller?.modelSelection;
+        if (modelSelection === undefined) {
+          const project = yield* readProject;
+          if (project !== undefined) {
+            const projects = yield* Project.ProjectService;
+            modelSelection =
+              (yield* projects
+                .getEffectiveDefaultModelSelection(project)
+                .pipe(Effect.mapError(unavailable))) ?? undefined;
+          }
+        }
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",

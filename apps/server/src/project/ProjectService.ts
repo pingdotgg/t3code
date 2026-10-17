@@ -6,6 +6,7 @@ import {
   type ProjectCreatePayload,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
+  type ModelSelection,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -31,6 +32,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
@@ -89,6 +91,7 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
     operation: Schema.Literals([
       "normalize-workspace",
       "read-project",
+      "read-settings",
       "list-projects",
       "list-threads",
       "delete-thread",
@@ -126,6 +129,10 @@ export class ProjectService extends Context.Service<
       projectId: ProjectId,
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
+    /** Resolve the model default after applying environment and project overrides. */
+    readonly getEffectiveDefaultModelSelection: (
+      project: Project,
+    ) => Effect.Effect<ModelSelection | null, ProjectOperationError>;
     readonly getByWorkspaceRoot: (
       workspaceRoot: string,
       options?: { readonly includeDeleted?: boolean },
@@ -304,6 +311,17 @@ export const make = Effect.gen(function* () {
       return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
     },
   );
+
+  const getEffectiveDefaultModelSelection: ProjectService["Service"]["getEffectiveDefaultModelSelection"] =
+    Effect.fn("ProjectService.getEffectiveDefaultModelSelection")(function* (project) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({ operation: "read-settings", projectId: project.id, cause }),
+        ),
+      );
+      return resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection;
+    });
 
   const getByWorkspaceRoot: ProjectService["Service"]["getByWorkspaceRoot"] = Effect.fn(
     "ProjectService.getByWorkspaceRoot",
@@ -568,6 +586,7 @@ export const make = Effect.gen(function* () {
     update,
     delete: deleteProject,
     getById,
+    getEffectiveDefaultModelSelection,
     getByWorkspaceRoot,
     snapshot,
     getShell,
