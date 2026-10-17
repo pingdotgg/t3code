@@ -37,8 +37,9 @@ import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 /**
- * The routed workflow surface. Native implementations share these signatures for their supported
- * operations; unsupported operations fail at the routing boundary rather than falling back to Git.
+ * The workflow surface every VCS kind implements. `GitWorkflowService` routes by kind; the Git and
+ * Jujutsu implementations both satisfy this type, so a future change to a shared signature fails to
+ * compile in both lanes instead of silently drifting in one.
  */
 export interface VcsWorkflowOps {
   readonly hasCommit: (input: {
@@ -244,34 +245,6 @@ export const make = Effect.gen(function* () {
         cwd,
         detail: "Failed to resolve the VCS driver for this Git workflow.",
         cause: missingRepositoryCause(cwd),
-      }),
-    );
-
-  const unsupportedJjCause = (operation: string) =>
-    new VcsUnsupportedOperationError({
-      operation,
-      kind: "jj",
-      detail: "This operation is not supported for Jujutsu repositories.",
-    });
-
-  const unsupportedJjCommand = (operation: string, cwd: string) =>
-    Effect.fail(
-      new GitCommandError({
-        operation,
-        command: "vcs-route",
-        cwd,
-        detail: "This operation is not supported for Jujutsu repositories.",
-        cause: unsupportedJjCause(operation),
-      }),
-    );
-
-  const unsupportedJjWorkflow = (operation: string, cwd: string) =>
-    Effect.fail(
-      new GitManagerError({
-        operation,
-        cwd,
-        detail: "This operation is not supported for Jujutsu repositories.",
-        cause: unsupportedJjCause(operation),
       }),
     );
 
@@ -530,26 +503,25 @@ export const make = Effect.gen(function* () {
     pullCurrentBranch: (cwd) =>
       route("GitWorkflowService.pullCurrentBranch", commandRouting, {
         git: () => git.pullCurrentBranch(cwd),
-        jj: () => unsupportedJjCommand("GitWorkflowService.pullCurrentBranch", cwd),
+        jj: () => jjWorkflow.pullCurrentBranch(cwd),
       })({ cwd }),
     runStackedAction: (input, options) =>
       route("GitWorkflowService.runStackedAction", workflowRouting, {
         git: (actionInput: GitRunStackedActionInput) =>
           gitManager.runStackedAction(actionInput, options),
         jj: (actionInput: GitRunStackedActionInput) =>
-          unsupportedJjWorkflow("GitWorkflowService.runStackedAction", actionInput.cwd),
+          jjWorkflow.runStackedAction(actionInput, options),
       })(input),
     resolvePullRequest: route("GitWorkflowService.resolvePullRequest", workflowRouting, {
       git: gitManager.resolvePullRequest,
-      jj: (input) => unsupportedJjWorkflow("GitWorkflowService.resolvePullRequest", input.cwd),
+      jj: jjWorkflow.resolvePullRequest,
     }),
     preparePullRequestThread: route(
       "GitWorkflowService.preparePullRequestThread",
       workflowRouting,
       {
         git: gitManager.preparePullRequestThread,
-        jj: (input) =>
-          unsupportedJjWorkflow("GitWorkflowService.preparePullRequestThread", input.cwd),
+        jj: jjWorkflow.preparePullRequestThread,
       },
     ),
     listRefs: routeOr(
