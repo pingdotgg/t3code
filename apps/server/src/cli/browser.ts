@@ -96,6 +96,12 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       const fs = yield* FileSystem.FileSystem;
       const isRoot = (yield* HostProcess.UserId) === 0;
       const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
+      // Root, unless sudo came from another user, is likely the server's own account.
+      const env = yield* HostProcess.Environment;
+      const rootWarning =
+        isRoot && (env.SUDO_USER ?? "root") === "root" && !PreviewBrowserHost.sandboxDisabled(env)
+          ? new PreviewBrowserHost.PreviewBrowserRootError().message
+          : undefined;
 
       const needsProfile = yield* PreviewBrowserHost.sandboxBlocked;
       const browser = yield* installedBrowser(yield* setupBaseDir(baseDir));
@@ -106,9 +112,10 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
 
       if (!needsProfile && missing.length === 0) {
         return yield* Console.log(
-          Option.isSome(browser)
-            ? "This host is ready for T3's browser."
-            : "Chrome's sandbox is allowed here. T3's browser installs on first use; if it then reports missing libraries, run this again.",
+          rootWarning ??
+            (Option.isSome(browser)
+              ? "This host is ready for T3's browser."
+              : "Chrome's sandbox is allowed here. T3's browser installs on first use; if it then reports missing libraries, run this again."),
         );
       }
 
@@ -165,7 +172,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
         yield* Console.log("Installed the browser's libraries.");
       }
 
-      yield* Console.log("This host is ready for T3's browser.");
+      yield* Console.log(rootWarning ?? "This host is ready for T3's browser.");
     }),
   ),
 );
