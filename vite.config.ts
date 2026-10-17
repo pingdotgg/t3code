@@ -331,6 +331,8 @@ export default defineConfig({
           "react/globals": "error",
           "react/hooks": "error",
           "react/immutability": "error",
+          // The compiler memoizes context values; this rule would ask for useMemo.
+          "react/jsx-no-constructed-context-values": "off",
           "react/memo-dependencies": "error",
           "react/preserve-manual-memoization": "error",
           "react/purity": "error",

@@ -106,7 +106,7 @@ export async function resolveMarkdownMediaPreview(input: {
 
 export function buildAttachmentVideoAsset(
   environmentId: EnvironmentId,
-  attachment: ChatFileAttachment,
+  attachment: Pick<ChatFileAttachment, "id" | "name" | "mimeType">,
 ): NonNullable<MediaActionSource["asset"]> {
   return {
     environmentId,
