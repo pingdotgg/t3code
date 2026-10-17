@@ -6,9 +6,11 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
@@ -94,6 +96,39 @@ it.effect("collects planner statistics for an existing database on open", () => 
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });
+
+it.effect("refreshes planner statistics that went stale while the connection stayed open", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE walk_probe(node_id TEXT PRIMARY KEY, parent_node_id TEXT)`;
+    yield* sql`
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 3)
+      INSERT INTO walk_probe SELECT 'node-' || i, 'node-' || (i - 1) FROM n
+    `;
+    // Stats from a nearly empty table, as a server started on a fresh install has.
+    yield* sql`ANALYZE walk_probe`;
+    yield* sql`
+      WITH RECURSIVE n(i) AS (SELECT 4 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
+      INSERT INTO walk_probe SELECT 'node-' || i, 'node-' || (i - 1) FROM n
+    `;
+    const ancestorWalkPlan = sql<{ readonly detail: string }>`
+      EXPLAIN QUERY PLAN
+      WITH RECURSIVE retained(node_id) AS (
+        SELECT 'node-300'
+        UNION
+        SELECT parent.parent_node_id FROM walk_probe AS parent
+        INNER JOIN retained ON parent.node_id = retained.node_id
+      )
+      SELECT node_id FROM retained
+    `.pipe(Effect.map((rows) => rows.map((row) => row.detail)));
+    const parentLookup = "SEARCH parent USING INDEX sqlite_autoindex_walk_probe_1 (node_id=?)";
+
+    // The stale stats make every step of the walk scan the table.
+    assert.notInclude(yield* ancestorWalkPlan, parentLookup);
+    yield* TestClock.adjust(Duration.hours(1));
+    assert.include(yield* ancestorWalkPlan, parentLookup);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
 
 it.effect("only fsyncs the database file at WAL checkpoints", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-sync-"));

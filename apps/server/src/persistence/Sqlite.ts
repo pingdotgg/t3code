@@ -1,3 +1,4 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
@@ -8,6 +9,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
+import { forkParked } from "../serverActivation.ts";
 
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
@@ -38,6 +40,20 @@ const layerSetup = Layer.effectDiscard(
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
     yield* sql`PRAGMA optimize = 0x10012;`;
+    // A connection loads sqlite_stat1 only when it opens, so the server keeps
+    // planning with the table sizes it started on. Started on near-empty tables,
+    // it walked a large thread's node ancestors with a full table scan per step
+    // and froze for over a minute. Re-run hourly, the pragma re-analyzes only
+    // tables that queries used and whose row count changed 10x.
+    yield* forkParked(
+      sql`PRAGMA optimize;`.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to refresh planner statistics", { cause }),
+        ),
+        Effect.delay(Duration.hours(1)),
+        Effect.forever,
+      ),
+    );
   }),
 );
 
