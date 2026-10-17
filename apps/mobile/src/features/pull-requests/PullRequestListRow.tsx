@@ -19,6 +19,7 @@ import {
   type EnvironmentPullRequestListEntry,
 } from "./pullRequestList";
 import { pullRequestStatus } from "./pullRequestStatus";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 export const PullRequestListRow = memo(
   function PullRequestListRow(props: {
@@ -96,7 +97,7 @@ export const PullRequestListRow = memo(
                 {item.stack ? (
                   <View className="flex-row items-center gap-1">
                     <SymbolView
-                      name="square.3.layers.3d"
+                      name={PullRequestGlyph.stack}
                       size={12}
                       tintColorClassName={
                         props.selected

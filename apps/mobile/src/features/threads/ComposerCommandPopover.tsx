@@ -16,6 +16,7 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -99,7 +100,7 @@ const SKILL_SOURCE_SYMBOL_BY_KIND: Record<ProviderSkillSourceKind, AppSymbolName
 function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   switch (item.type) {
     case "pull-request":
-      return { ios: "arrow.triangle.pull", android: "merge" };
+      return PullRequestGlyph.pullRequest;
     case "slash-command":
     case "provider-slash-command":
       return "terminal";
