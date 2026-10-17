@@ -1492,11 +1492,11 @@ export function NewTaskDraftScreen(props: {
       <View className="flex-row flex-wrap items-center justify-center gap-x-1">
         <ComposerInlineControl
           accessibilityHint="Opens the project picker"
-          accessibilityLabel="Choose a project"
+          accessibilityLabel="No project"
           chevronDirection="right"
           disabled={isComposerInteractionLocked}
           icon="folder"
-          label="Choose a project"
+          label="No project"
           onPress={chooseProject}
         />
         {environmentControl}
