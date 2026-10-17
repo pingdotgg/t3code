@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   checkouts: [] as string[],
   setupScripts: 0,
   prepared: [] as { branch: string; worktreePath: string | null }[],
+  onPullRequestHead: true,
+  toasts: [] as { type: string; title: string }[],
 }));
 
 vi.mock("react", async (importOriginal) => ({
@@ -82,6 +84,7 @@ vi.mock("~/state/git", () => ({
       return AsyncResult.success({
         branch: "feature/pr",
         worktreePath: mode === "worktree" ? "/worktree" : null,
+        isOnPullRequestHead: state.onPullRequestHead,
       });
     },
   },
@@ -102,6 +105,9 @@ vi.mock("~/state/vcs", () => ({
 vi.mock("./ui/button", () => ({ Button: "Button" }));
 vi.mock("./ui/input", () => ({ Input: "Input" }));
 vi.mock("./ui/spinner", () => ({ Spinner: "Spinner" }));
+vi.mock("./ui/toast", () => ({
+  toastManager: { add: (toast: { type: string; title: string }) => state.toasts.push(toast) },
+}));
 vi.mock("./ui/dialog", () => ({
   Dialog: "Dialog",
   DialogDescription: "DialogDescription",
@@ -177,6 +183,8 @@ describe("pull request worktree permissions", () => {
     state.checkouts = [];
     state.setupScripts = 0;
     state.prepared = [];
+    state.onPullRequestHead = true;
+    state.toasts = [];
   });
 
   it("does not prepare a worktree or run setup with only source-control permission", async () => {
@@ -212,6 +220,17 @@ describe("pull request worktree permissions", () => {
     expect(state.checkouts).toEqual(["local"]);
     expect(state.setupScripts).toBe(0);
     expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
+    expect(state.toasts).toEqual([]);
+  });
+
+  it("warns when the checkout is kept off the pull request's head", async () => {
+    state.onPullRequestHead = false;
+    await prepareAction("Local")();
+
+    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
+    expect(state.toasts).toMatchObject([
+      { type: "warning", title: "Checked out, but not confirmed on the latest commit" },
+    ]);
   });
 
   it.each(["Local", "Worktree"] as const)(

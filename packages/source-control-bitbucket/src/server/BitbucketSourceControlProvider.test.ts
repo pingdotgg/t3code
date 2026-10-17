@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketSourceControlProvider from "./BitbucketSourceControlProvider.ts";
+import { normalizeBitbucketPullRequestRecord } from "./bitbucketPullRequests.ts";
 
 function makeProvider(bitbucket: Partial<BitbucketApi.BitbucketApi["Service"]>) {
   return BitbucketSourceControlProvider.make.pipe(
@@ -23,6 +24,7 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
           url: "https://bitbucket.org/pingdotgg/t3code/pull-requests/42",
           baseRefName: "main",
           headRefName: "feature/source-control",
+          headSha: "a".repeat(40),
           state: "open",
           updatedAt: Option.none(),
           isCrossRepository: true,
@@ -43,6 +45,7 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
       url: "https://bitbucket.org/pingdotgg/t3code/pull-requests/42",
       baseRefName: "main",
       headRefName: "feature/source-control",
+      headSha: "a".repeat(40),
       state: "open",
       updatedAt: Option.none(),
       isCrossRepository: true,
@@ -51,6 +54,27 @@ it.effect("maps Bitbucket PR summaries into provider-neutral change requests", (
     });
   }),
 );
+
+it("reads the head commit from a Bitbucket pull request's source", () => {
+  const raw = {
+    id: 42,
+    title: "Add Bitbucket provider",
+    state: "OPEN",
+    links: { html: { href: "https://bitbucket.org/pingdotgg/t3code/pull-requests/42" } },
+    destination: { branch: { name: "main" } },
+  };
+  const withCommit = normalizeBitbucketPullRequestRecord({
+    ...raw,
+    source: { branch: { name: "feature/source-control" }, commit: { hash: "a".repeat(40) } },
+  });
+  const withoutCommit = normalizeBitbucketPullRequestRecord({
+    ...raw,
+    source: { branch: { name: "feature/source-control" }, commit: null },
+  });
+
+  assert.strictEqual(withCommit.headSha, "a".repeat(40));
+  assert.strictEqual(withoutCommit.headSha, undefined);
+});
 
 it.effect("adds repository context while retaining Bitbucket API causes", () =>
   Effect.gen(function* () {

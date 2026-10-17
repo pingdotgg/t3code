@@ -13,6 +13,7 @@ export interface NormalizedGitLabMergeRequestRecord {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
+  readonly headSha?: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
   readonly closedAt?: string | null;
@@ -43,6 +44,7 @@ const GitLabMergeRequestSchema = Schema.Struct({
   web_url: TrimmedNonEmptyString,
   source_branch: TrimmedNonEmptyString,
   target_branch: TrimmedNonEmptyString,
+  sha: Schema.optional(Schema.NullOr(Schema.String)),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
@@ -107,6 +109,7 @@ function normalizeGitLabMergeRequestRecord(
         ? sourceProjectPath.toLowerCase() !== targetProjectPath.toLowerCase()
         : undefined;
   const headRepositoryOwnerLogin = ownerLoginFromPathWithNamespace(sourceProjectPath);
+  const headSha = trimOptionalString(raw.sha);
 
   return {
     number: raw.iid,
@@ -114,6 +117,7 @@ function normalizeGitLabMergeRequestRecord(
     url: raw.web_url,
     baseRefName: raw.target_branch,
     headRefName: raw.source_branch,
+    ...(headSha ? { headSha } : {}),
     state: normalizeGitLabMergeRequestState(raw.state),
     ...(raw.draft === true || raw.work_in_progress === true ? { isDraft: true } : {}),
     closedAt: raw.closed_at ?? null,
