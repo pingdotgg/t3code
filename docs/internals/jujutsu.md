@@ -59,3 +59,7 @@ Checkpoints are the exception. `checkpointsUsable` answers `false` there so
 [`CheckpointStore.supportsCheckpoints`](../../apps/server/src/checkpointing/CheckpointStore.ts) skips
 capture silently, same as a directory with no repo, instead of writing a failed-capture activity into
 every turn.
+
+## Workspace cleanup
+
+An existing Git worktree (`.git` file, no `.jj`) keeps resolving as Git even when its project becomes colocated. Workspace removal dispatches from the target path first, with the project kind as a fallback when that path is missing or unclassifiable. Pruning routes by project kind. Idle jj workspaces are automatically cleaned up under the shared storage cleanup rules, with stronger safety blockers: working-copy changes, untracked files, conflicts, and commits not reachable from a bookmark or remote bookmark prevent cleanup. Removal uses `jj workspace remove` so jj owns both workspace and colocated Git registration cleanup. The final idle-state inspection runs under the workspace lease. Native removal does not reject a workspace that becomes dirty afterward, so external processes racing removal are not serialized. A late native snapshot can save ordinary files as an unbookmarked commit, but ignored or oversized files may still be deleted; the lease does not eliminate external-process races. Pruning also forgets missing T3-created jj workspaces and runs `git worktree prune` for old Git worktree registrations.
