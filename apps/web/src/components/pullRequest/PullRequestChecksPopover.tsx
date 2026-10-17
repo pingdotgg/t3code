@@ -73,8 +73,8 @@ function ChecksBody({
   }
   return (
     <>
-      <ScrollArea className="max-h-64">
-        <ul className="flex flex-col gap-1">
+      <ScrollArea className="-me-3 w-auto max-h-64">
+        <ul className="flex flex-col gap-1 pe-3">
           {}
           {visibleChecks.map((check, index) => (
             <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
