@@ -9,7 +9,7 @@ import {
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme";
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -442,9 +442,7 @@ function CustomThemeCollectionCard({
   const safeIndex = Math.min(variantIndex, themes.length - 1);
   const theme = themes[safeIndex];
 
-  useEffect(() => {
-    if (variantIndex !== safeIndex) setVariantIndex(safeIndex);
-  }, [safeIndex, variantIndex]);
+  if (variantIndex !== safeIndex) setVariantIndex(safeIndex);
 
   if (!theme) return null;
   const collectionLabel = theme.collection?.label ?? theme.label;
@@ -537,7 +535,7 @@ export function ThemeLibrary({
   const removeDialogCollectionLabel =
     removeDialogTheme?.collection?.label ?? removeDialogTheme?.label;
 
-  const notifyThemeSaveFailure = useCallback(() => {
+  const notifyThemeSaveFailure = () => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -545,9 +543,9 @@ export function ThemeLibrary({
         description: "Try again.",
       }),
     );
-  }, []);
+  };
 
-  const notifyThemeRemovalFailure = useCallback(() => {
+  const notifyThemeRemovalFailure = () => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -555,27 +553,24 @@ export function ThemeLibrary({
         description: "Try again.",
       }),
     );
-  }, []);
+  };
 
-  const persistTheme = useCallback(
-    (nextTheme: string) => {
-      const didSave = setTheme(nextTheme);
-      if (!didSave) notifyThemeSaveFailure();
-      return didSave;
-    },
-    [notifyThemeSaveFailure, setTheme],
-  );
+  const persistTheme = (nextTheme: string) => {
+    const didSave = setTheme(nextTheme);
+    if (!didSave) notifyThemeSaveFailure();
+    return didSave;
+  };
 
-  const handleRemoveTheme = useCallback(
-    (customTheme: ThemeDefinition, collectionThemes: ReadonlyArray<ThemeDefinition>) => {
-      setThemeRemovalTarget({ theme: customTheme, collectionThemes });
-      setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
-      setIsThemeRemovalOpen(true);
-    },
-    [],
-  );
+  const handleRemoveTheme = (
+    customTheme: ThemeDefinition,
+    collectionThemes: ReadonlyArray<ThemeDefinition>,
+  ) => {
+    setThemeRemovalTarget({ theme: customTheme, collectionThemes });
+    setThemeIdsToRemove(collectionThemes.length > 1 ? [] : [customTheme.id]);
+    setIsThemeRemovalOpen(true);
+  };
 
-  const handleConfirmRemoveTheme = useCallback(() => {
+  const handleConfirmRemoveTheme = () => {
     if (!themeRemovalTarget) return;
     const removedIds = new Set(themeIdsToRemove);
     if (removedIds.size === 0) return;
@@ -603,52 +598,33 @@ export function ThemeLibrary({
       return;
     }
     setIsThemeRemovalOpen(false);
-  }, [
-    appearanceMode,
-    notifyThemeRemovalFailure,
-    persistTheme,
-    setThemeHalf,
-    theme,
-    themeIdsToRemove,
-    themeRemovalTarget,
-  ]);
+  };
 
   const baseCardId = getThemeDefinition(theme)?.id ?? null;
   const lightOwner = themeHalves?.light ?? baseCardId;
   const darkOwner = themeHalves?.dark ?? baseCardId;
 
-  const assignHalf = useCallback(
-    (appearance: ThemeAppearance, cardId: string | null) => {
-      const otherAppearance = appearance === "light" ? "dark" : "light";
-      // Picking the default over a themed base cannot be stored as a half:
-      // the base would still own that appearance. Convert the base into an
-      // explicit half on the other side so this side falls back to default.
-      if (cardId === null && baseCardId !== null) {
-        // Read raw, before persistTheme clears the mix: the other half may
-        // name a published theme that has not streamed in yet, and falling
-        // back to the base would silently rewrite it.
-        const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
-        if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
-        if (!setThemeHalf(otherAppearance, otherOwner)) {
-          setTheme(theme);
-          notifyThemeSaveFailure();
-        }
-        return;
-      }
-      if (!setThemeHalf(appearance, cardId)) {
+  const assignHalf = (appearance: ThemeAppearance, cardId: string | null) => {
+    const otherAppearance = appearance === "light" ? "dark" : "light";
+    // Picking the default over a themed base cannot be stored as a half:
+    // the base would still own that appearance. Convert the base into an
+    // explicit half on the other side so this side falls back to default.
+    if (cardId === null && baseCardId !== null) {
+      // Read raw, before persistTheme clears the mix: the other half may
+      // name a published theme that has not streamed in yet, and falling
+      // back to the base would silently rewrite it.
+      const otherOwner = readThemeHalvesRaw()[otherAppearance] ?? baseCardId;
+      if (!persistTheme(appearanceMode === "system" ? "system" : appearanceMode)) return;
+      if (!setThemeHalf(otherAppearance, otherOwner)) {
+        setTheme(theme);
         notifyThemeSaveFailure();
       }
-    },
-    [
-      appearanceMode,
-      baseCardId,
-      notifyThemeSaveFailure,
-      persistTheme,
-      setTheme,
-      setThemeHalf,
-      theme,
-    ],
-  );
+      return;
+    }
+    if (!setThemeHalf(appearance, cardId)) {
+      notifyThemeSaveFailure();
+    }
+  };
 
   const activeThemeForAppearance =
     getThemeDefinition((initialAppearance === "light" ? lightOwner : darkOwner) ?? "") ?? null;
