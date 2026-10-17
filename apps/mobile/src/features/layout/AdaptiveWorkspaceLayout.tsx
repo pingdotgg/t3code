@@ -23,6 +23,7 @@ import {
   type ReactNode,
 } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
+import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -95,6 +96,13 @@ interface AdaptiveWorkspaceContextValue {
   readonly toggleAuxiliaryPane: () => void;
   readonly togglePrimarySidebar: () => void;
   readonly setAuxiliaryPaneWidth: (width: number) => void;
+  /**
+   * Android split view while the thread composer has the soft keyboard: the
+   * sidebar and rail step aside and the thread header drops to one line.
+   */
+  readonly composerKeyboardActive: boolean;
+  /** The thread composer reports its focus so the layout can make room for typing. */
+  readonly setComposerEditing: (editing: boolean) => void;
 }
 
 const compactLayout = deriveLayout({ width: 0, height: 0 });
@@ -121,6 +129,8 @@ const AdaptiveWorkspaceContext = createContext<AdaptiveWorkspaceContextValue>({
   toggleAuxiliaryPane: () => undefined,
   togglePrimarySidebar: () => undefined,
   setAuxiliaryPaneWidth: () => undefined,
+  composerKeyboardActive: false,
+  setComposerEditing: () => undefined,
 });
 
 export function useAdaptiveWorkspaceLayout(): AdaptiveWorkspaceContextValue {
@@ -266,7 +276,14 @@ function AdaptiveWorkspaceLayoutContent(
     nativeWorkspace,
     usesSplitView: baseLayout.usesSplitView,
   });
-  const showPrimarySidebar = primarySidebarPinned || primarySidebarPreferredVisible;
+  const [composerEditing, setComposerEditing] = useState(false);
+  const softKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  // Keyed on the soft keyboard, not focus alone: a hardware keyboard leaves room
+  // for the sidebar, and Back closes the keyboard while the editor keeps focus.
+  const composerKeyboardActive =
+    Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible;
+  const showPrimarySidebar =
+    primarySidebarPinned || (primarySidebarPreferredVisible && !composerKeyboardActive);
   const shouldRenderNavigationRail = Platform.OS === "android" && baseLayout.usesSplitView;
   const navigationRailWidth =
     shouldRenderNavigationRail && showPrimarySidebar
@@ -387,6 +404,11 @@ function AdaptiveWorkspaceLayoutContent(
     if (primarySidebarPinned) {
       return;
     }
+    // The sidebar returns with the keyboard; the user's preference stays intact.
+    if (composerKeyboardActive) {
+      void KeyboardController.dismiss();
+      return;
+    }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
       setPrimarySidebarPreferredVisible(true);
@@ -394,16 +416,18 @@ function AdaptiveWorkspaceLayoutContent(
     }
     setPrimarySidebarPreferredVisible((current) => !current);
   }, [
+    composerKeyboardActive,
     panes.primarySidebarSuppressedByAuxiliary,
     panes.primarySidebarVisible,
     primarySidebarPinned,
   ]);
   const revealPrimarySidebar = useCallback(() => {
+    if (composerKeyboardActive) void KeyboardController.dismiss();
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
     setPrimarySidebarPreferredVisible(true);
-  }, [panes.primarySidebarSuppressedByAuxiliary]);
+  }, [composerKeyboardActive, panes.primarySidebarSuppressedByAuxiliary]);
   const handleToggleSidebarCommand = useCallback(() => {
     togglePrimarySidebar();
     return true;
@@ -700,9 +724,12 @@ function AdaptiveWorkspaceLayoutContent(
       toggleAuxiliaryPane,
       togglePrimarySidebar,
       setAuxiliaryPaneWidth,
+      composerKeyboardActive,
+      setComposerEditing,
     }),
     [
       activateAuxiliaryPaneRole,
+      composerKeyboardActive,
       fileInspector,
       handleSelectThread,
       layout,

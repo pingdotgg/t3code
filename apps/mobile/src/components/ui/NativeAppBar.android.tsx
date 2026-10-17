@@ -10,14 +10,19 @@ export function NativeAppBar(props: {
   readonly title: ReactElement;
   readonly navigationIcon?: ReactElement;
   readonly actions?: ReactElement;
+  /** Shorter bar for a one-row title; Compose centers the fixed-height bar inside it. */
+  readonly singleLine?: boolean;
 }) {
   const { colors } = useControlTheme();
-  const layout = useToolbarLayout();
+  const layout = useToolbarLayout(false, props.singleLine);
   return (
     <NativeThemeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
       <TopAppBar
         applyWindowInsets={false}
-        modifiers={[fillMaxWidth(), height(Math.max(64, layout.height))]}
+        modifiers={[
+          fillMaxWidth(),
+          height(props.singleLine ? layout.height : Math.max(64, layout.height)),
+        ]}
         colors={{
           containerColor: colors["--color-header"],
           titleContentColor: colors["--color-header-foreground"],

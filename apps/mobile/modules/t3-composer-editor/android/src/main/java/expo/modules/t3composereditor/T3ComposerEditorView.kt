@@ -57,6 +57,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private var applyingNativeValue = false
   private var desiredLineHeightPx = 0
   private var lastContentHeight = 0
+  private var lastContentWidth = 0
   private var contentInsetVertical = 0
   private var tokensJson = "[]"
   private var tokens: List<ComposerToken> = emptyList()
@@ -424,12 +425,19 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   private fun emitContentSizeIfNeeded() {
-    val height = editor.layout?.height ?: editor.measuredHeight
-    val contentHeight = height + contentInsetVertical * 2
-    if (contentHeight == lastContentHeight) return
+    // The laid-out text without insets. A one-line draft reports its natural width, so
+    // JS can tell whether it fits a narrower row than the one it is laid out in; past
+    // one line only the height matters. Trailing whitespace hangs past a line without
+    // wrapping it, so getLineMax leaves it out.
+    val layout = editor.layout
+    val contentHeight = layout?.height ?: editor.measuredHeight
+    val contentWidth = if (layout?.lineCount == 1) layout.getLineMax(0).toInt() else 0
+    if (contentHeight == lastContentHeight && contentWidth == lastContentWidth) return
     lastContentHeight = contentHeight
+    lastContentWidth = contentWidth
+    val density = resources.displayMetrics.density
     onComposerContentSizeChange(
-      mapOf("height" to contentHeight / resources.displayMetrics.density),
+      mapOf("width" to contentWidth / density, "height" to contentHeight / density),
     )
   }
 
