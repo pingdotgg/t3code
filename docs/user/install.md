@@ -45,6 +45,14 @@ for an independent server.
 To try T3 Code once without installing it, run `npx t3@latest` instead (needs
 Node.js for `npx`).
 
+## Install the Web App
+
+On Android, open the hosted T3 Code web client in Chrome and choose **Install app** from the
+browser menu. On desktop Chrome, choose **Install T3 Code** from the address bar or browser menu.
+Chrome installs it as a standalone app with its own window and app icon. Hosted and self-hosted
+web clients can be installed over HTTPS or on localhost; browsers do not offer installation from
+an insecure LAN HTTP address.
+
 ### Intel Macs
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To
