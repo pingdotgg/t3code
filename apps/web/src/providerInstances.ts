@@ -122,8 +122,15 @@ export function deriveProviderEntriesByEnvironment(
   for (const [environmentId, providers, settings] of providersByEnvironment) {
     const derived = deriveProviderInstanceEntries(providers);
     // One map per environment serves every project with a thread there, so
-    // there is no single project to scope `enabled` to; it stays machine-wide.
-    const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+    // there is no single project to scope `enabled` to. It keeps the snapshot's
+    // value, which is on when the machine or any project turns the instance on.
+    const entries = settings
+      ? applyProviderInstanceSettings(derived, settings, null).map((entry) =>
+          entry.enabled === entry.snapshot.enabled
+            ? entry
+            : { ...entry, enabled: entry.snapshot.enabled },
+        )
+      : derived;
     byEnvironment.set(
       environmentId,
       new Map(entries.map((entry) => [entry.instanceId as string, entry] as const)),

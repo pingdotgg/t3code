@@ -136,6 +136,7 @@ describe("thread list environment projection", () => {
   it.each([
     ["instanceId", ProviderInstanceId.make("other")],
     ["driver", ProviderDriverKind.make("claudeAgent")],
+    ["enabled", false],
     ["displayName", "Work account"],
     ["accentColor", "#123456"],
     ["iconUrl", "https://example.test/icon.png"],

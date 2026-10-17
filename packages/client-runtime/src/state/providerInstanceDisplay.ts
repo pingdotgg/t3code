@@ -42,21 +42,28 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
+/**
+ * Disabled instances can't be picked, so they never make another instance
+ * ambiguous, but a disabled entry itself (an old thread's row) still counts
+ * against the enabled ones.
+ */
 export function shouldShowInstanceBadge(
   entry: {
     readonly driverKind: ProviderDriverKind;
     readonly accentColor?: string | undefined;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   },
   entries: Iterable<{
     readonly driverKind: ProviderDriverKind;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   }>,
 ): boolean {
   if (entry.accentColor) return true;
-  let sharedProviderCount = 0;
+  let sharedProviderCount = entry.enabled ? 0 : 1;
   for (const candidate of entries) {
-    if (candidate.driverKind !== entry.driverKind) continue;
+    if (!candidate.enabled || candidate.driverKind !== entry.driverKind) continue;
     if (
       entry.driverKind === "acpRegistry" &&
       candidate.acpRegistryAgentId !== entry.acpRegistryAgentId
