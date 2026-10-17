@@ -292,6 +292,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        forceKillAfter: Duration.seconds(2),
       }),
     )
     .pipe(

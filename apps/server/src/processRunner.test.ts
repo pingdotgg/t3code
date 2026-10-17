@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -79,6 +80,71 @@ const runWith =
     );
 
 describe("runProcess", () => {
+  for (const timeoutBehavior of ["error", "timedOutResult"] as const) {
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      `reaps a real child that ignores SIGTERM before returning a ${timeoutBehavior} timeout`,
+      () =>
+        Effect.gen(function* () {
+          const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const ready = yield* Deferred.make<void>();
+          let childPid: number | undefined;
+          let safetyKillNeeded = false;
+          let safetyTimer: ReturnType<typeof setTimeout> | undefined;
+          const spawner = ChildProcessSpawner.make((command) =>
+            nativeSpawner.spawn(command).pipe(
+              Effect.tap((child) =>
+                Effect.sync(() => {
+                  childPid = child.pid;
+                }),
+              ),
+            ),
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              clearTimeout(safetyTimer);
+            }),
+          );
+          const fiber = yield* runWith(spawner)({
+            command: yield* HostProcess.ExecutablePath,
+            args: [
+              "-e",
+              'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); process.stdout.write("ready");',
+            ],
+            timeout: "1 second",
+            timeoutBehavior,
+            onStdoutChunk: () => {
+              Deferred.doneUnsafe(ready, Effect.void);
+            },
+          }).pipe(Effect.result, Effect.forkScoped);
+
+          yield* Deferred.await(ready);
+          // @effect-diagnostics-next-line globalTimersInEffect:off -- A native watchdog must reap the test child even while scoped timeout cleanup is stuck outside TestClock.
+          safetyTimer = setTimeout(() => {
+            safetyKillNeeded = true;
+            if (childPid !== undefined) process.kill(childPid, "SIGKILL");
+          }, 8_000);
+          yield* TestClock.adjust("1 second");
+          const result = yield* Fiber.join(fiber);
+          clearTimeout(safetyTimer);
+
+          expect(safetyKillNeeded).toBe(false);
+          expect(() => process.kill(childPid!, 0)).toThrow();
+          if (timeoutBehavior === "error") {
+            expect(result).toMatchObject({
+              _tag: "Failure",
+              failure: { _tag: "ProcessTimeoutError", timeoutMs: 1000 },
+            });
+          } else {
+            expect(result).toMatchObject({
+              _tag: "Success",
+              success: { timedOut: true, code: null },
+            });
+          }
+        }).pipe(Effect.provide(NodeServices.layer)),
+      { timeout: 15_000 },
+    );
+  }
+
   it.effect("collects stdout through an injected ChildProcessSpawner", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner((command) =>
