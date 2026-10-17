@@ -13,6 +13,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 prepareProviderAuthDelivery();
@@ -62,13 +63,16 @@ export const startup = Promise.all([
     // the lazy component and surfaces through the route error boundary.
     if (reloadScheduled) return;
     if (!chunkLoadFailed) clearChunkReloadGuard();
+    // Auth cleanup must update the same connection registry as the routed UI.
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
-        {ManagedAuthShell && clerkPublishableKey ? (
-          <ManagedAuthShell publishableKey={clerkPublishableKey}>{app}</ManagedAuthShell>
-        ) : (
-          app
-        )}
+        <AppAtomRegistryProvider>
+          {ManagedAuthShell && clerkPublishableKey ? (
+            <ManagedAuthShell publishableKey={clerkPublishableKey}>{app}</ManagedAuthShell>
+          ) : (
+            app
+          )}
+        </AppAtomRegistryProvider>
       </React.StrictMode>,
     );
   })
