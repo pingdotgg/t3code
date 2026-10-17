@@ -67,6 +67,69 @@ const FAKE_SESSION_FILE = "/fake/.pi/agent/sessions/--workspace--/0001_abc.jsonl
 /** Deliberately outside the valid pid range so a group-kill can never land. */
 const FAKE_PID = 999_999_999;
 
+const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1000);
+
+function sessionMessageEntry(
+  id: string,
+  parentId: string | null,
+  role: "user" | "assistant",
+  seconds: number,
+) {
+  return {
+    type: "message",
+    id,
+    parentId,
+    timestamp: DateTime.formatIso(at(seconds)),
+    message: { role, content: [] },
+  };
+}
+
+/** Turn 1 (u1, with a steer) completed at 50s; turn 2's prompt u2 landed at 110s. */
+const UNCAPTURED_TURN_TREE = {
+  entries: [
+    sessionMessageEntry("u1", null, "user", 10),
+    sessionMessageEntry("a1", "u1", "assistant", 20),
+    sessionMessageEntry("steer1", "a1", "user", 30),
+    sessionMessageEntry("a1b", "steer1", "assistant", 40),
+    sessionMessageEntry("u2", "a1b", "user", 110),
+    sessionMessageEntry("a2", "u2", "assistant", 150),
+  ],
+  leafId: "a2",
+};
+
+function uncapturedTurns(
+  providerThreadId: ProviderThreadId,
+  window: { startedAt: number; completedAt: number },
+): ReadonlyArray<OrchestrationV2ProviderTurn> {
+  const turn = (
+    ordinal: number,
+    nativeTurnRef: OrchestrationV2ProviderTurn["nativeTurnRef"],
+    status: OrchestrationV2ProviderTurn["status"],
+    startedAt: number,
+    completedAt: number,
+  ): OrchestrationV2ProviderTurn => ({
+    id: ProviderTurnId.make(`turn-${ordinal}`),
+    providerThreadId,
+    nodeId: NodeId.make(`node-${ordinal}`),
+    runAttemptId: null,
+    nativeTurnRef,
+    ordinal,
+    status,
+    startedAt: at(startedAt),
+    completedAt: at(completedAt),
+  });
+  return [
+    turn(1, { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" }, "completed", 0, 50),
+    turn(
+      2,
+      { driver: PI_PROVIDER, nativeId: "synthetic-turn-2", strength: "weak" },
+      "cancelled",
+      window.startedAt,
+      window.completedAt,
+    ),
+  ];
+}
+
 const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
   runtimeMode: "full-access",
   interactionMode: "default",
@@ -1858,6 +1921,38 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("natively forks before a turn whose start entry was never captured", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const forkFile = "/fake/forked.jsonl";
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turns = uncapturedTurns(source.id, { startedAt: 100, completedAt: 200 });
+      forkFake.queueEntries(UNCAPTURED_TURN_TREE);
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const forked = yield* runtime.forkThread({
+        sourceProviderThread: source,
+        sourceProviderTurns: turns,
+        providerTurnId: turns[0]!.id,
+        targetThreadId: ThreadId.make("fork-target"),
+      });
+      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+      assert.deepEqual(
+        forkFake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId),
+        ["u2"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("presents explicitly namespaced MCP extension tools", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -2650,6 +2745,58 @@ describe("PiAdapterV2", () => {
       assert.deepEqual(forkedEntries(), []);
       yield* rollBackToFirst([turn(1, "u1"), turn(2, null), turn(3, "u3")]);
       assert.deepEqual(forkedEntries(), ["u3"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("rolls back past a turn whose start entry was never captured", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const rollBackToFirst = (turns: ReadonlyArray<OrchestrationV2ProviderTurn>) =>
+        runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-1"),
+            appRunOrdinal: 1,
+            providerTurn: turns[0]!,
+          },
+          providerThreadTurns: turns,
+        });
+      const forkedEntries = () =>
+        fake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId);
+
+      // The cancelled turn's prompt is the earliest user entry stamped while it ran, not turn
+      // 1's steer.
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
+      yield* rollBackToFirst(
+        uncapturedTurns(providerThread.id, { startedAt: 100, completedAt: 200 }),
+      );
+      assert.deepEqual(forkedEntries(), ["u2"]);
+
+      // An adopted native wake's prompt predates the turn T3 opened for it; it still follows
+      // turn 1's end, so it is the boundary.
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
+      yield* rollBackToFirst(
+        uncapturedTurns(providerThread.id, { startedAt: 120, completedAt: 200 }),
+      );
+      assert.deepEqual(forkedEntries(), ["u2", "u2"]);
+
+      // The turn ended before any user entry landed, so rollback still refuses to guess.
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
+      const unresolved = yield* rollBackToFirst(
+        uncapturedTurns(providerThread.id, { startedAt: 60, completedAt: 100 }),
+      ).pipe(Effect.result);
+      assert.equal(unresolved._tag, "Failure");
+      assert.deepEqual(forkedEntries(), ["u2", "u2"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
