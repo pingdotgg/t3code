@@ -44,4 +44,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/desktop/SnapShotCoordinator.tsx",
   "apps/web/src/components/BranchToolbar.tsx",
   "apps/web/src/components/DiffPanel.tsx",
+  "apps/web/src/components/onboarding/WelcomeWizard.tsx",
 ] as const;
