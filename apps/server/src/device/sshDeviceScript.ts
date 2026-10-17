@@ -133,10 +133,22 @@ async function install(name, version, entry) {
 }
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
-  const android = run('adb', ['version']).status === 0;
+  // The device hub inherits this environment and encodes emulator video with the same ffmpeg.
+  const androidReason = () => {
+    if (run('adb', ['version']).status !== 0) return 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.';
+    const configured = process.env.SERVE_EMU_FFMPEG?.trim() || 'ffmpeg';
+    // The hub runs in the state directory, so a relative override resolves from there.
+    const ffmpeg = /[\\/]/.test(configured) ? path.resolve(state, configured) : configured;
+    const encoders = run(ffmpeg, ['-hide_banner', '-encoders'], { timeout: 10000 });
+    if (encoders.status !== 0) return 'ffmpeg is missing or unusable (tried "' + ffmpeg + '"). Android emulator video needs it; install ffmpeg on the non-interactive SSH PATH.';
+    if (!/\blibx264\b/.test(encoders.stdout + '\n' + encoders.stderr)) return 'ffmpeg at "' + ffmpeg + '" lacks the libx264 encoder that Android emulator video needs.';
+    return null;
+  };
+  const androidUnavailable = androidReason();
+  const android = androidUnavailable === null;
   const platforms = [
     { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
-    { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
+    { platform: 'android', available: android, ...(!android ? { reason: androidUnavailable } : {}) },
   ];
   if (mode === 'probe') {
     if (Number(process.versions.node.split('.')[0]) < 22) throw Error('Node 22 or newer is required on the device host.');
