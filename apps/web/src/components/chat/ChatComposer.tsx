@@ -83,6 +83,7 @@ import {
   type ComposerTrigger,
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  composerRequiresModifier,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
   detectComposerTrigger,
@@ -7301,6 +7302,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           composerFocus: true,
                           draftThreadRoute: routeKind === "draft",
                           turnRunning: true,
+                          composerRequiresModifier: composerRequiresModifier(
+                            settings.sendShortcut,
+                            prompt,
+                          ),
                         },
                       },
                     )}
