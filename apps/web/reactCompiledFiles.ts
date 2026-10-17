@@ -36,4 +36,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/ThemeEditorPanel.tsx",
   "apps/web/src/panelAnimations.ts",
   "apps/web/src/hooks/useCopyToClipboard.ts",
+  "apps/web/src/components/auth/PairingRouteSurface.tsx",
 ] as const;
