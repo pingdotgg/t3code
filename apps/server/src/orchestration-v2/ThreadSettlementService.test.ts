@@ -3,6 +3,8 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  SourceControlProviderError,
+  PullRequestOperationError,
   ProjectId,
   EventId,
   ProviderInstanceId,
@@ -24,6 +26,10 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
+import { SourceControlRateLimitPausedError } from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -713,6 +719,115 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect.each(
+    (["branch", "summary"] as const).flatMap((lookup) =>
+      (["pause", "unexpected", "interrupt"] as const).map((failure) => ({ lookup, failure })),
+    ),
+  )(
+    "keeps $failure $lookup settlement failures at the appropriate log level",
+    ({ lookup, failure }) => {
+      const logs: Array<{ level: string; parts: ReadonlyArray<unknown> }> = [];
+      const logger = Logger.make(({ logLevel, message }) => {
+        logs.push({ level: logLevel, parts: Array.isArray(message) ? message : [message] });
+      });
+      const retryAt = Date.parse(NOW) + 60_000;
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const thread = makeThread("paused", {
+            branch: "feature",
+            ...(lookup === "summary"
+              ? {
+                  linkedPullRequest: {
+                    projectId: PROJECT_ID,
+                    repository: "owner/repository",
+                    number: 42,
+                    url: "https://github.com/owner/repository/pull/42",
+                  },
+                }
+              : {}),
+          });
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([thread]),
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+            branchPullRequest: () =>
+              failure === "interrupt"
+                ? Effect.interrupt
+                : Effect.fail(
+                    new SourceControlProviderError({
+                      provider: SourceControlProviderKind.make("github"),
+                      operation: "listChangeRequests",
+                      cwd: "/workspace/project",
+                      detail: "paused",
+                      cause:
+                        failure === "unexpected"
+                          ? new Error("unexpected host failure")
+                          : new Error("provider wrapper", {
+                              cause: new SourceControlRateLimitPausedError({
+                                provider: SourceControlProviderKind.make("github"),
+                                host: "github.com",
+                                retryAt,
+                              }),
+                            }),
+                    }),
+                  ),
+            pullRequestSummary: () =>
+              failure === "interrupt"
+                ? Effect.interrupt
+                : Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "summary",
+                      detail: "paused",
+                      cause:
+                        failure === "unexpected"
+                          ? new Error("unexpected host failure")
+                          : new PullRequestProviderError({
+                              provider: SourceControlProviderKind.make("github"),
+                              operation: "getChangeRequestSummary",
+                              reason: "rate-limited",
+                              detail: "paused",
+                              retryAt,
+                            }),
+                    }),
+                  ),
+          });
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+            expect(yield* Ref.get(fixture.commands)).toEqual([]);
+            if (failure === "interrupt") {
+              expect(logs).toEqual([]);
+            } else if (failure === "pause") {
+              expect(logs).toEqual([
+                {
+                  level: "Debug",
+                  parts: [
+                    "automatic thread settlement skipped",
+                    { threadIds: [thread.id], retryAt },
+                  ],
+                },
+              ]);
+            } else {
+              expect(logs).toHaveLength(1);
+              expect(logs[0]?.level).toBe("Warn");
+              expect(logs[0]?.parts[0]).toBe("automatic thread settlement skipped");
+              expect(logs[0]?.parts[1]).toMatchObject({
+                threadIds: [thread.id],
+                cause: expect.stringContaining("unexpected host failure"),
+              });
+              expect(logs[0]?.parts[1]).toMatchObject({
+                cause: expect.stringContaining("ThreadSettlementService.test.ts:"),
+              });
+            }
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ).pipe(
+        Effect.provide(Logger.layer([logger])),
+        Effect.provideService(References.MinimumLogLevel, "Debug"),
+      );
+    },
+  );
+
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
