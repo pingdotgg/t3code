@@ -66,7 +66,14 @@ describe("resolvePathLinkTarget", () => {
   it.each([
     ["C:\\Users\\julius\\project", "C:\\Users\\julius\\notes.md:3"],
     ["C:/Users/julius/project", "C:/Users/julius\\notes.md:3"],
+    ["C:\\users\\alice\\project", "C:\\users\\alice\\notes.md:3"],
+    ["C:/uSeRs/alice/project", "C:/uSeRs/alice\\notes.md:3"],
   ])("resolves home paths against the Windows cwd %s", (cwd, expected) => {
     expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe(expected);
+  });
+  it("keeps home paths unchanged when no supported home can be inferred", () => {
+    for (const cwd of ["C:/work/project", "/Home/alice/project", "/users/alice/project"]) {
+      expect(resolvePathLinkTarget("~/notes.md:3", cwd)).toBe("~/notes.md:3");
+    }
   });
 });
