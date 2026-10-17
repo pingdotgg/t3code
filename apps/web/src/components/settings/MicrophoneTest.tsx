@@ -1,8 +1,9 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   isMicrophonePermissionError,
   MICROPHONE_PERMISSION_ERROR,
 } from "@t3tools/client-runtime/voice-input";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MicIcon, CheckIcon, XIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -37,7 +38,7 @@ export function MicrophoneTest({
   } | null>(null);
   const url = useRef<string | null>(null);
 
-  const releaseCapture = useCallback(() => {
+  const releaseCapture = useStableCallback(() => {
     const current = session.current;
     if (!current) return;
     session.current = null;
@@ -46,7 +47,7 @@ export function MicrophoneTest({
     if (current.recorder && current.recorder.state !== "inactive") current.recorder.stop();
     current.stream?.getTracks().forEach((track) => track.stop());
     void current.context?.close().catch(() => {});
-  }, []);
+  });
 
   function discard() {
     if (url.current) URL.revokeObjectURL(url.current);

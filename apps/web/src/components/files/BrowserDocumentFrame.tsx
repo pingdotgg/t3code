@@ -1,3 +1,4 @@
+import { normalizeEventKey } from "@t3tools/shared/keybindingMatching";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KeybindingCommand,

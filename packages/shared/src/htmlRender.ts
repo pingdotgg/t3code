@@ -4,7 +4,7 @@ import {
   type ThemeAppearance,
   type ThemeColors,
 } from "./themePalettes.ts";
-import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindings.ts";
+import { EVENT_CODE_SHORTCUT_KEYS } from "./keybindingMatching.ts";
 
 export const HTML_RENDER_TOOL_NAME = "html_render";
 export const HTML_RENDER_MIN_HEIGHT = 80;

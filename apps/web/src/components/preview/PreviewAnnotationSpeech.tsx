@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type {
   DesktopPreviewAnnotationVoiceConfig,
   DesktopPreviewAnnotationVoiceEvent,
@@ -5,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useEnvironmentSpeechInput } from "~/speech/useEnvironmentSpeechInput";
 import { useDictationShortcut, type DictationKeyHandlers } from "~/speech/useDictationShortcut";
@@ -68,12 +69,12 @@ export function PreviewAnnotationSpeech({
   useEffect(() => {
     current.current = speech;
   });
-  const subscribeKeys = useCallback((handlers: DictationKeyHandlers) => {
+  const subscribeKeys = useStableCallback((handlers: DictationKeyHandlers) => {
     keys.current = handlers;
     return () => {
       keys.current = null;
     };
-  }, []);
+  });
   const shortcutLabel = useDictationShortcut({
     keybindings: config.keybindings,
     speech,
@@ -86,46 +87,31 @@ export function PreviewAnnotationSpeech({
   });
   const { available, state, preview, freezesEditor, blocksSubmission, cancel, level, progress } =
     speech;
-  const publish = useCallback(
-    async (nextDraft: { text: string; cursor: number } | null = null) => {
-      try {
-        await previewBridge?.annotationVoice.update({
-          tabId,
-          sessionId: config.sessionId,
-          available: available,
-          phase: state.phase,
-          errorAction: state.errorAction,
-          status: resolveSpeechPresentation(state, progress).status,
-          preview: preview ? preview.committed + preview.tentative : null,
-          level,
-          shortcutLabel,
-          freezesEditor: freezesEditor,
-          blocksSubmission: blocksSubmission,
-          draft: nextDraft,
-        });
-      } catch (error) {
-        cancel();
-        toastManager.add({
-          type: "error",
-          title: "Could not update annotation voice input",
-          description: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    [
-      tabId,
-      config.sessionId,
-      available,
-      state,
-      preview,
-      freezesEditor,
-      blocksSubmission,
-      cancel,
-      level,
-      shortcutLabel,
-      progress,
-    ],
-  );
+  const publish = async (nextDraft: { text: string; cursor: number } | null = null) => {
+    try {
+      await previewBridge?.annotationVoice.update({
+        tabId,
+        sessionId: config.sessionId,
+        available: available,
+        phase: state.phase,
+        errorAction: state.errorAction,
+        status: resolveSpeechPresentation(state, progress).status,
+        preview: preview ? preview.committed + preview.tentative : null,
+        level,
+        shortcutLabel,
+        freezesEditor: freezesEditor,
+        blocksSubmission: blocksSubmission,
+        draft: nextDraft,
+      });
+    } catch (error) {
+      cancel();
+      toastManager.add({
+        type: "error",
+        title: "Could not update annotation voice input",
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
   useEffect(() => {
     void publish();
   }, [publish]);

@@ -7,7 +7,6 @@ import {
   globalIdleCompaction,
   type IdleCompactionMode,
   DEFAULT_SPEECH_POST_PROCESSING_MODELS,
-  isProviderDriverKind,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,

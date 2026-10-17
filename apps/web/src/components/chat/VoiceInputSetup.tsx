@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
@@ -5,7 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { RefreshCwIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { useEnvironment } from "../../state/environments";
@@ -34,7 +35,7 @@ export function VoiceInputSetup(props: {
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [microphoneError, setMicrophoneError] = useState<string | null>(null);
-  const refreshMicrophones = useCallback(async () => {
+  const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     setLoadingMicrophones(true);
     try {
@@ -46,7 +47,7 @@ export function VoiceInputSetup(props: {
     } finally {
       setLoadingMicrophones(false);
     }
-  }, []);
+  });
   useEffect(() => {
     if (!props.open || props.step !== 1) return;
     queueMicrotask(() => void refreshMicrophones());

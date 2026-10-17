@@ -483,18 +483,21 @@ it("uses the primary environment for transcription by default", async () => {
   await act(() => root!.render(<Probe />));
   expect(mocks.preparedEnvironmentIds).toContain(mocks.transcriptionEnvironmentId);
 });
-it("clears the previous connection's recording error when replacing the controller", async () => {
-  await mountProbe();
-  await act(() => voice.start());
-  expect(voice.state.phase).toBe("error");
-  const previousConnection = mocks.prepared;
-  mocks.prepared = {} as PreparedConnection;
-  await act(() => root!.render(<Probe />));
-  expect(voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
-  mocks.prepared = previousConnection;
-  await act(() => root!.render(<Probe />));
-  expect(voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
-});
+it.each(["prepared", "originPrepared"] as const)(
+  "clears the previous connection's recording error when replacing %s",
+  async (connection) => {
+    await mountProbe();
+    await act(() => voice.start());
+    expect(voice.state.phase).toBe("error");
+    const previousConnection = mocks[connection];
+    mocks[connection] = {} as PreparedConnection;
+    await act(() => root!.render(<Probe />));
+    expect(voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
+    mocks[connection] = previousConnection;
+    await act(() => root!.render(<Probe />));
+    expect(voice.state).toEqual({ phase: "idle", error: null, errorAction: null });
+  },
+);
 
 it(" replacing post-processing settings does not strand recording state", async () => {
   mocks.microphoneFailure = false;

@@ -182,31 +182,31 @@ export function PullRequestReviewForm({
         </div>
         <div className="ml-auto flex items-center gap-2">
           {offered.length > 1 ? (
-          <Select
-            value={selectedVerdict?.value ?? null}
-            disabled={pending}
-            onValueChange={(value) => {
-              if (value !== null) setRequestedVerdict(value);
-            }}
-          >
-            <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
-              <span className="flex items-center gap-1.5">
-                {selectedVerdict?.icon}
-                {selectedVerdict?.label}
-              </span>
-            </SelectTrigger>
-            <SelectPopup side="top" alignItemWithTrigger={false}>
-              {offered.map((verdict) => (
-                <SelectItem key={verdict.value} value={verdict.value}>
-                  <span className="flex items-center gap-1.5">
-                    {verdict.icon}
-                    {verdict.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        ) : null}
+            <Select
+              value={selectedVerdict?.value ?? null}
+              disabled={pending}
+              onValueChange={(value) => {
+                if (value !== null) setRequestedVerdict(value);
+              }}
+            >
+              <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
+                <span className="flex items-center gap-1.5">
+                  {selectedVerdict?.icon}
+                  {selectedVerdict?.label}
+                </span>
+              </SelectTrigger>
+              <SelectPopup side="top" alignItemWithTrigger={false}>
+                {offered.map((verdict) => (
+                  <SelectItem key={verdict.value} value={verdict.value}>
+                    <span className="flex items-center gap-1.5">
+                      {verdict.icon}
+                      {verdict.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          ) : null}
           <Button
             size="xs"
             disabled={

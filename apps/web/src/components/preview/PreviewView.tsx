@@ -161,7 +161,7 @@ export function PreviewView({
     useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
-  const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
+  const pickActiveRef = useRef<{ cancelled: boolean; ownerKey: string } | null>(null);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
     threadRef,
@@ -743,7 +743,7 @@ export function PreviewView({
     // Capture app focus before main moves it into guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-    const pickRequest = { cancelled: false };
+    const pickRequest = { cancelled: false, ownerKey: scopedThreadKey(threadRef) };
     let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
@@ -833,10 +833,11 @@ export function PreviewView({
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  const pickOwnerKey = scopedThreadKey(threadRef);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-progress element pick on the preview bridge when the tab changes or on unmount
   useEffect(() => {
     return () => {
-      if (!pickActiveRef.current) return;
+      if (!pickActiveRef.current || pickActiveRef.current.ownerKey !== pickOwnerKey) return;
       pickActiveRef.current.cancelled = true;
       pickActiveRef.current = null;
       if (previewBridge && runtimeTabId) {
@@ -845,7 +846,7 @@ export function PreviewView({
       setPickActive(false);
       setAnnotationVoice(null);
     };
-  }, [runtimeTabId, threadRef.environmentId, threadRef.threadId]);
+  }, [runtimeTabId, pickOwnerKey]);
 
   // Subscribe only while visible; ChatView always owns URL-aware toggle-panel handling.
   const onPreviewAction = useEffectEvent(

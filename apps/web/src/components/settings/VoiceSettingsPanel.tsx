@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -36,7 +37,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import {
   useClientSettings,
@@ -362,7 +363,7 @@ export function VoiceSettingsPanel() {
     readonly code: string;
   } | null>(null);
 
-  const refreshMicrophones = useCallback(async () => {
+  const refreshMicrophones = useStableCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     setLoadingMicrophones(true);
     try {
@@ -377,7 +378,7 @@ export function VoiceSettingsPanel() {
     } finally {
       setLoadingMicrophones(false);
     }
-  }, []);
+  });
 
   const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);
   useLayoutEffect(() => {
@@ -387,7 +388,7 @@ export function VoiceSettingsPanel() {
     };
   }, [prepared]);
 
-  const refreshModels = useCallback(async () => {
+  const refreshModels = useStableCallback(async () => {
     if (!prepared) return;
     const epoch = connectionEpoch.current;
     if (epoch?.prepared !== prepared) return;
@@ -403,10 +404,10 @@ export function VoiceSettingsPanel() {
       if (connectionEpoch.current !== epoch) return;
       throw error;
     }
-  }, [prepared]);
+  });
 
   useEffect(() => {
-    void refreshMicrophones();
+    queueMicrotask(() => void refreshMicrophones());
     const mediaDevices = navigator.mediaDevices;
     if (!mediaDevices) return;
     const handleDeviceChange = () => void refreshMicrophones();
@@ -415,11 +416,14 @@ export function VoiceSettingsPanel() {
   }, [refreshMicrophones]);
 
   useEffect(() => {
-    void refreshModels().catch(() => {
-      setStatus(null);
-      setModels([]);
+    if (!prepared) return;
+    queueMicrotask(() => {
+      void refreshModels().catch(() => {
+        setStatus(null);
+        setModels([]);
+      });
     });
-  }, [refreshModels]);
+  }, [prepared, refreshModels]);
   useEffect(() => {
     if (!operation) return;
     let refreshInFlight = false;

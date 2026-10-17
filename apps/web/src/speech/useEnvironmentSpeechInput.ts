@@ -1,3 +1,4 @@
+import { useStableCallback } from "~/hooks/useStableCallback";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -25,7 +26,7 @@ import { mergeSpeechCustomWords } from "@t3tools/shared/speech";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
 import { usePreparedConnection } from "../state/session";
@@ -91,18 +92,20 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly prepared: NonNullable<typeof prepared>;
     readonly value: EnvironmentSpeechStatus;
   } | null>(null);
-  const [controllerState, setControllerState] = useState({ prepared, value: INITIAL_STATE });
+  const [controllerState, setControllerState] = useState({
+    prepared,
+    postProcessingPrepared,
+    value: INITIAL_STATE,
+  });
   const [queuedStart, setQueuedStart] = useState<{
     readonly prepared: NonNullable<typeof prepared>;
     readonly request: number;
   } | null>(null);
-  if (controllerState.prepared !== prepared) {
-    setControllerState({ prepared, value: INITIAL_STATE });
-  }
   const state: VoiceInputState<true> =
     queuedStart?.prepared === prepared
       ? WAITING_STATE
-      : controllerState.prepared === prepared
+      : controllerState.prepared === prepared &&
+          controllerState.postProcessingPrepared === postProcessingPrepared
         ? controllerState.value
         : INITIAL_STATE;
   const [level, setLevel] = useState(0);
@@ -112,6 +115,23 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const [setupModel, setSetupModel] = useState<EnvironmentSpeechModel | null>(null);
   const [setupDownloading, setSetupDownloading] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [previousOwner, setPreviousOwner] = useState({
+    key: input.ownerKey,
+    disabled: input.disabled,
+  });
+  if (
+    controllerState.prepared !== prepared ||
+    controllerState.postProcessingPrepared !== postProcessingPrepared
+  ) {
+    setControllerState({ prepared, postProcessingPrepared, value: INITIAL_STATE });
+    setPreview(null);
+    setLevel(0);
+  }
+  if (previousOwner.key !== input.ownerKey || previousOwner.disabled !== input.disabled) {
+    setPreviousOwner({ key: input.ownerKey, disabled: input.disabled });
+    setQueuedStart(null);
+    setSetupOpen(false);
+  }
   const setupCancelledRef = useRef(false);
   const controllerRef = useRef<VoiceInputController<true> | null>(null);
   const startRequestRef = useRef(0);
@@ -162,6 +182,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       };
     };
 
+    const cleanupPrepared = postProcessingPrepared;
     let disposed = false;
     let controller: VoiceInputController<true>;
     let recordingPreferences: SpeechPostProcessingOptions | undefined;
@@ -215,6 +236,25 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         if (!disposed) void controller.interruptRecording(message);
       },
     });
+    const postProcess: NonNullable<VoiceInputControllerDependencies<true>["postProcess"]> =
+      !cleanupPrepared
+        ? async () => {
+            throw new Error("The project environment is unavailable for transcript cleanup.");
+          }
+        : async (transcript, options) => {
+            const preferences = recordingPreferences;
+            if (!preferences) return transcript;
+            const result = await runtime.runPromise(
+              postProcessEnvironmentTranscript(
+                cleanupPrepared,
+                transcript,
+                { text: options.draft.text, selection: options.draft.selection },
+                preferences,
+              ),
+              options,
+            );
+            return result.text;
+          };
     controller = new VoiceInputController<true>({
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,
@@ -223,22 +263,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
       get postProcess(): VoiceInputControllerDependencies<true>["postProcess"] {
-        const preferences = recordingPreferences;
-        if (!preferences?.speechPostProcessingEnabled) return undefined;
-        return async (transcript, options) => {
-          if (!postProcessingPrepared)
-            throw new Error("The project environment is unavailable for transcript cleanup.");
-          const result = await runtime.runPromise(
-            postProcessEnvironmentTranscript(
-              postProcessingPrepared,
-              transcript,
-              { text: options.draft.text, selection: options.draft.selection },
-              preferences,
-            ),
-            options,
-          );
-          return result.text;
-        };
+        return recordingPreferences?.speechPostProcessingEnabled ? postProcess : undefined;
       },
       onPostProcessingError: () =>
         toastManager.add({
@@ -255,15 +280,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       onStateChange: (value) => {
         if (!disposed) {
           if (value.phase === "error") pendingSubmissionRef.current = null;
-          setControllerState({ prepared, value });
+          setControllerState({ prepared, postProcessingPrepared, value });
           if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
         }
       },
     });
     controllerRef.current = controller;
-    setControllerState({ prepared, value: INITIAL_STATE });
-    setPreview(null);
-    setLevel(0);
     return () => {
       disposed = true;
       pendingSubmissionRef.current = null;
@@ -324,9 +346,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     previousOwnerRef.current = input.ownerKey;
     pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
-    setQueuedStart(null);
     controllerRef.current?.ownerChanged();
-    setSetupOpen(false);
   }, [input.ownerKey, input.disabled]);
 
   useEffect(() => {
@@ -337,22 +357,19 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       pending.submit(pending.text);
   }, [state, input.ownerKey, input.disabled]);
 
-  const submitAfterDictation = useCallback(
-    (submit: (text: string) => void) => {
-      if (latestInputRef.current.disabled || state.phase === "preparing") return;
-      const controller = controllerRef.current;
-      if (!controller || !voiceInputBlocksSubmission(state)) {
-        submit(latestInputRef.current.readDraft().text);
-        return;
-      }
-      if (pendingSubmissionRef.current) return;
-      pendingSubmissionRef.current = { ownerKey: latestInputRef.current.ownerKey, submit };
-      if (controller.currentState.phase === "recording") void controller.stop();
-    },
-    [state],
-  );
+  const submitAfterDictation = useStableCallback((submit: (text: string) => void) => {
+    if (latestInputRef.current.disabled || state.phase === "preparing") return;
+    const controller = controllerRef.current;
+    if (!controller || !voiceInputBlocksSubmission(state)) {
+      submit(latestInputRef.current.readDraft().text);
+      return;
+    }
+    if (pendingSubmissionRef.current) return;
+    pendingSubmissionRef.current = { ownerKey: latestInputRef.current.ownerKey, submit };
+    if (controller.currentState.phase === "recording") void controller.stop();
+  });
 
-  const start = useCallback(async () => {
+  const start = useStableCallback(async () => {
     const request = ++startRequestRef.current;
     const expectedController = controllerRef.current;
     const expectedOwner = latestInputRef.current.ownerKey;
@@ -406,9 +423,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     if (!stillCurrent()) return;
     setLevel(0);
     await expectedController.start();
-  }, [currentStatus, prepared]);
+  });
 
-  const downloadSetupModel = useCallback(async () => {
+  const downloadSetupModel = useStableCallback(async () => {
     if (!prepared || !currentStatus?.supported || setupDownloading) return;
     setupCancelledRef.current = false;
     setSetupDownloading(true);
@@ -431,9 +448,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     } finally {
       setSetupDownloading(false);
     }
-  }, [currentStatus, prepared, setupDownloading]);
+  });
 
-  const cancelSetupDownload = useCallback(async () => {
+  const cancelSetupDownload = useStableCallback(async () => {
     if (!prepared || !currentStatus?.supported) return;
     setupCancelledRef.current = true;
     setSetupOpen(false);
@@ -444,12 +461,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     } catch (error) {
       setSetupError(error instanceof Error ? error.message : String(error));
     }
-  }, [currentStatus, prepared]);
+  });
 
-  const startAfterSetup = useCallback(async () => {
+  const startAfterSetup = useStableCallback(async () => {
     setSetupOpen(false);
     await start();
-  }, [start]);
+  });
 
   return {
     available:
@@ -479,13 +496,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     freezesEditor: voiceInputFreezesEditor(state),
     start,
     submitAfterDictation,
-    stop: useCallback(() => controllerRef.current?.stop() ?? Promise.resolve(), []),
-    cancel: useCallback(() => {
+    stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),
+    cancel: useStableCallback(() => {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       controllerRef.current?.cancel();
-    }, []),
-    skipPostProcessing: useCallback(() => controllerRef.current?.skipPostProcessing(), []),
+    }),
+    skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
   };
 }

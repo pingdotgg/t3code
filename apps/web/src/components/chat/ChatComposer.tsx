@@ -1876,7 +1876,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusEditorAfterReplace: false,
       });
       if (!applied) return;
-      const cursor = collapseExpandedComposerCursor(text, selection.start);
+      const cursor = collapseExpandedComposerCursor(text, selection.start, isLiteralPendingAnswer);
       setComposerCursor(cursor);
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
@@ -2126,7 +2126,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
   };
 
-  const submitComposerRef = useRef<(dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void>(() => {});
+  const submitComposerRef = useRef<
+    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
+  >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -3671,7 +3673,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       compactDisabledReason={resolvedCompactDisabledReason}
                       {...(compactCommandAvailable
-                        ? { onCompactContext: compactThreadContext }
+                        ? { onCompactContext: compactThreadContextStable }
                         : {})}
                     >
                       {speechInput.available ? (

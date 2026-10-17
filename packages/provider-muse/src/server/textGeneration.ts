@@ -361,5 +361,6 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateTranscriptionPostProcessing,
   } satisfies ProviderTextGeneration;
 });

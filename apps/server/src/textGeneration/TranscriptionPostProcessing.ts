@@ -1,8 +1,4 @@
-import * as Schema from "effect/Schema";
-
-export const TranscriptionPostProcessingOutput = Schema.Struct({
-  transcription: Schema.String,
-});
+import { TranscriptionPostProcessingOutput } from "@t3tools/provider-core/server/textGenerationOperations";
 
 export function buildTranscriptionPostProcessingPrompt(
   instructions: string,

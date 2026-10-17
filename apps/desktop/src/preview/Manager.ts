@@ -69,9 +69,9 @@ import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
-  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_VOICE_EVENT_CHANNEL,
   ANNOTATION_VOICE_STATE_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -2084,6 +2084,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  const setAnnotationSendEnabled = Effect.fn("PreviewManager.setAnnotationSendEnabled")(function* (
+    tabId: string,
+    enabled: boolean,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    yield* attempt({ operation: "setAnnotationSendEnabled", tabId, webContentsId: wc.id }, () => {
+      annotationSendEnabled.set(tabId, enabled);
+      wc.send(ANNOTATION_SEND_ENABLED_CHANNEL, enabled);
+    });
+  });
+
   const pickElement = Effect.fn("PreviewManager.pickElement")(function* (
     tabId: string,
     voice?: DesktopPreviewAnnotationVoiceConfig,
@@ -3346,8 +3357,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     openPictureInPicture,
     openDevTools,
     pickElement,
-    prepareWebview,
     updateAnnotationVoice,
+    prepareWebview,
     reapplyZoom,
     refresh,
     registerWebview,
