@@ -25,6 +25,8 @@ import {
   isSidebarSubagentThread,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
+  foldLaunchedSidebarThreads,
+  nestLaunchedSidebarThreads,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   reduceSidebarProjectScopeMenuState,
@@ -483,6 +485,128 @@ describe("sidebar thread lineage helpers", () => {
     expect(getSidebarForkParentThreadId(runFork)).toBe(parentId);
     expect(getSidebarForkParentThreadId(lineageFork)).toBe(fallbackParentId);
     expect(getSidebarForkParentThreadId(makeThreadFixture())).toBeNull();
+  });
+
+  it("nests agent-launched threads under their launcher without reordering levels", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const thread = (id: string, launchedBy: string | null = null) => ({
+      environmentId,
+      id: ThreadId.make(id),
+      launchedByThreadId: launchedBy === null ? null : ThreadId.make(launchedBy),
+    });
+
+    const nested = nestLaunchedSidebarThreads([
+      thread("child-b", "orchestrator"),
+      thread("solo"),
+      thread("orchestrator"),
+      thread("grandchild", "child-a"),
+      thread("child-a", "orchestrator"),
+      thread("orphan", "archived-launcher"),
+      { ...thread("other-env", "orchestrator"), environmentId: EnvironmentId.make("remote") },
+    ]);
+
+    expect(nested.map(({ thread, depth }) => `${thread.id}:${depth}`)).toEqual([
+      "solo:0",
+      "orchestrator:0",
+      "child-b:1",
+      "child-a:1",
+      "grandchild:2",
+      "orphan:0",
+      "other-env:0",
+    ]);
+  });
+
+  it("marks where each launched thread's connector line ends", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const thread = (id: string, launchedBy: string | null = null) => ({
+      environmentId,
+      id: ThreadId.make(id),
+      launchedByThreadId: launchedBy === null ? null : ThreadId.make(launchedBy),
+    });
+
+    const nested = nestLaunchedSidebarThreads([
+      thread("orchestrator"),
+      thread("first", "orchestrator"),
+      thread("first-child", "first"),
+      thread("last", "orchestrator"),
+      thread("last-child", "last"),
+    ]);
+
+    expect(
+      nested.map(
+        ({ thread, isFirstChild, isLastChild, continuingAncestorLines }) =>
+          `${thread.id}:${isFirstChild ? "first" : "after"}:${isLastChild ? "last" : "more"}:${continuingAncestorLines.join(",")}`,
+      ),
+    ).toEqual([
+      "orchestrator:first:last:",
+      "first:first:more:",
+      "first-child:first:last:true",
+      "last:after:last:",
+      "last-child:first:last:false",
+    ]);
+  });
+
+  it("folds subagents by default and follows the user's fold choice otherwise", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const thread = (id: string, launchedBy: string | null = null) => ({
+      environmentId,
+      id: ThreadId.make(id),
+      launchedByThreadId: launchedBy === null ? null : ThreadId.make(launchedBy),
+    });
+    const subagent = (id: string, parent: string, copiedLaunchedBy: string) => ({
+      ...thread(id, copiedLaunchedBy),
+      lineage: { parentThreadId: ThreadId.make(parent), relationshipToParent: "subagent" as const },
+    });
+    const nested = nestLaunchedSidebarThreads([
+      thread("orchestrator"),
+      thread("child", "orchestrator"),
+      thread("grandchild", "child"),
+      subagent("helper", "orchestrator", "solo"),
+      thread("sibling", "orchestrator"),
+      thread("solo"),
+    ]);
+    const summarize = (choices: Record<string, boolean>, open: string | null = null) =>
+      foldLaunchedSidebarThreads(
+        nested,
+        (entry) => choices[entry.id],
+        (entry) => "lineage" in entry,
+        (entry) => entry.id === open,
+      ).map(({ thread, childCount, hiddenCount }) => `${thread.id}:${childCount}/${hiddenCount}`);
+
+    expect(summarize({})).toEqual([
+      "orchestrator:4/1",
+      "child:1/0",
+      "grandchild:0/0",
+      "sibling:0/0",
+      "solo:0/0",
+    ]);
+    expect(summarize({ orchestrator: false })).toEqual([
+      "orchestrator:4/0",
+      "child:1/0",
+      "grandchild:0/0",
+      "helper:0/0",
+      "sibling:0/0",
+      "solo:0/0",
+    ]);
+    expect(summarize({ orchestrator: true })).toEqual(["orchestrator:4/4", "solo:0/0"]);
+    // The open thread's branch stays visible; its folded siblings stay folded.
+    expect(summarize({ orchestrator: true }, "grandchild")).toEqual([
+      "orchestrator:4/2",
+      "child:1/0",
+      "grandchild:0/0",
+      "solo:0/0",
+    ]);
+    expect(summarize({}, "helper")).toEqual(summarize({ orchestrator: false }));
+  });
+
+  it("keeps threads in a launch cycle visible", () => {
+    const environmentId = EnvironmentId.make("environment-local");
+    const nested = nestLaunchedSidebarThreads([
+      { environmentId, id: ThreadId.make("a"), launchedByThreadId: ThreadId.make("b") },
+      { environmentId, id: ThreadId.make("b"), launchedByThreadId: ThreadId.make("a") },
+    ]);
+
+    expect(nested.map(({ thread, depth }) => `${thread.id}:${depth}`)).toEqual(["a:0", "b:1"]);
   });
 });
 

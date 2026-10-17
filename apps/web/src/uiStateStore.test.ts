@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setLaunchGroupCollapsed,
   setProjectExpanded,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
@@ -25,6 +26,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     sidebarProjectScopeKey: null,
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    launchGroupCollapsedById: {},
     defaultAdvertisedEndpointKey: null,
     pullRequestMergeMethod: "merge",
     ...overrides,
@@ -32,6 +34,19 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("remembers both fold choices, since unfolded is not the default for subagents", () => {
+    const folded = setLaunchGroupCollapsed(makeUiState(), "env:thread-1", true);
+    expect(folded.launchGroupCollapsedById).toEqual({ "env:thread-1": true });
+    expect(setLaunchGroupCollapsed(folded, "env:thread-1", true)).toBe(folded);
+
+    const unfolded = setLaunchGroupCollapsed(folded, "env:thread-1", false);
+    expect(unfolded.launchGroupCollapsedById).toEqual({ "env:thread-1": false });
+    expect(
+      parsePersistedState({ launchGroupCollapsedById: unfolded.launchGroupCollapsedById })
+        .launchGroupCollapsedById,
+    ).toEqual({ "env:thread-1": false });
+  });
+
   it("stores server timestamps without moving visit state backwards", () => {
     const threadId = ThreadId.make("thread-1");
     const initialState = makeUiState();
@@ -203,6 +218,7 @@ describe("parsePersistedState", () => {
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
       pullRequestMergeMethod: "merge",
+      launchGroupCollapsedById: {},
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -324,6 +340,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      launchGroupCollapsedById: {},
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {

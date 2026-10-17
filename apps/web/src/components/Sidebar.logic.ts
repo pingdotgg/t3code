@@ -541,6 +541,116 @@ export function getSidebarForkParentThreadId(
     : thread.lineage.parentThreadId;
 }
 
+/**
+ * Places each agent-launched thread directly below the thread that launched
+ * it, keeping the incoming order within each level. A launcher missing from
+ * the list (archived, another project) leaves its threads at the top level.
+ */
+export function nestLaunchedSidebarThreads<
+  T extends Pick<SidebarThreadSummary, "environmentId" | "id" | "launchedByThreadId"> & {
+    readonly lineage?: Pick<
+      SidebarThreadSummary["lineage"],
+      "parentThreadId" | "relationshipToParent"
+    >;
+  },
+>(threads: readonly T[]): Array<NestedSidebarThread<T>> {
+  const keyOf = (environmentId: string, threadId: string) => `${environmentId}\u0000${threadId}`;
+  const presentKeys = new Set(threads.map((thread) => keyOf(thread.environmentId, thread.id)));
+  const childrenByLauncherKey = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const thread of threads) {
+    const launcherId =
+      thread.lineage?.relationshipToParent === "subagent"
+        ? thread.lineage.parentThreadId
+        : thread.launchedByThreadId;
+    const launcherKey = launcherId ? keyOf(thread.environmentId, launcherId) : null;
+    if (launcherKey === null || !presentKeys.has(launcherKey)) {
+      roots.push(thread);
+      continue;
+    }
+    const siblings = childrenByLauncherKey.get(launcherKey);
+    if (siblings) siblings.push(thread);
+    else childrenByLauncherKey.set(launcherKey, [thread]);
+  }
+
+  const ordered: Array<NestedSidebarThread<T>> = [];
+  const visited = new Set<string>();
+  const visit = (
+    thread: T,
+    depth: number,
+    isFirstChild: boolean,
+    isLastChild: boolean,
+    continuingAncestorLines: readonly boolean[],
+  ) => {
+    const key = keyOf(thread.environmentId, thread.id);
+    if (visited.has(key)) return;
+    visited.add(key);
+    ordered.push({ thread, depth, isFirstChild, isLastChild, continuingAncestorLines });
+    const children = (childrenByLauncherKey.get(key) ?? []).filter(
+      (child) => !visited.has(keyOf(child.environmentId, child.id)),
+    );
+    const childAncestorLines = depth === 0 ? [] : [...continuingAncestorLines, !isLastChild];
+    children.forEach((child, index) =>
+      visit(child, depth + 1, index === 0, index === children.length - 1, childAncestorLines),
+    );
+  };
+  for (const root of roots) visit(root, 0, true, true, []);
+  // A launch cycle has no root; keep those threads visible at the top level.
+  for (const thread of threads) visit(thread, 0, true, true, []);
+  return ordered;
+}
+
+/**
+ * Drops the threads folded under their launcher. `foldState` is the user's choice per launcher:
+ * true folds every child, false shows every child, and undefined (no choice yet) shows launched
+ * threads but folds subagents. A child branch holding a thread for which
+ * `keepVisible` holds (the open thread) always stays visible.
+ */
+export function foldLaunchedSidebarThreads<T>(
+  nested: ReadonlyArray<NestedSidebarThread<T>>,
+  foldState: (thread: T) => boolean | undefined,
+  isSubagent: (thread: T) => boolean,
+  keepVisible: (thread: T) => boolean,
+): Array<NestedSidebarThread<T> & { readonly childCount: number; readonly hiddenCount: number }> {
+  const subtreeEnd = (index: number) => {
+    let end = index + 1;
+    while (end < nested.length && nested[end]!.depth > nested[index]!.depth) end++;
+    return end;
+  };
+  const result: Array<
+    NestedSidebarThread<T> & { readonly childCount: number; readonly hiddenCount: number }
+  > = [];
+  const visit = (index: number) => {
+    const entry = nested[index]!;
+    const end = subtreeEnd(index);
+    const state = foldState(entry.thread);
+    const visibleChildren: number[] = [];
+    let hiddenCount = 0;
+    for (let child = index + 1; child < end; child = subtreeEnd(child)) {
+      const childEnd = subtreeEnd(child);
+      const foldable = state === true || (state === undefined && isSubagent(nested[child]!.thread));
+      const pinned = nested.slice(child, childEnd).some((branch) => keepVisible(branch.thread));
+      if (foldable && !pinned) hiddenCount += childEnd - child;
+      else visibleChildren.push(child);
+    }
+    result.push({ ...entry, childCount: end - index - 1, hiddenCount });
+    for (const child of visibleChildren) visit(child);
+  };
+  for (let index = 0; index < nested.length; index = subtreeEnd(index)) visit(index);
+  return result;
+}
+
+export interface NestedSidebarThread<T> {
+  readonly thread: T;
+  readonly depth: number;
+  /** Starts its launcher's connector line directly below the launcher row. */
+  readonly isFirstChild: boolean;
+  /** Ends its launcher's connector line instead of continuing it downward. */
+  readonly isLastChild: boolean;
+  /** Per ancestor level from the outermost: whether that level's line passes this row. */
+  readonly continuingAncestorLines: readonly boolean[];
+}
+
 export function buildBulkTitleRegenerationContextMenuItem(input: {
   supportedCount: number;
   actionableCount: number;
