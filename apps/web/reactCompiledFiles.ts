@@ -80,4 +80,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/useProjectScriptSettings.ts",
   "apps/web/src/components/settings/SnapShotSetupDialog.tsx",
   "apps/web/src/components/settings/NotificationSettings.tsx",
+  "apps/web/src/components/settings/ProviderSetupSection.tsx",
 ] as const;

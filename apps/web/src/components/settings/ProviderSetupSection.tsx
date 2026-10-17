@@ -1,5 +1,6 @@
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
@@ -155,23 +156,22 @@ function ProviderSetupActions({
     pendingRef.current = true;
     setPendingLabel(label);
     setError(null);
-    try {
-      const result = await request();
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const failure = squashAtomCommandFailure(result);
-          setError(failure instanceof Error ? failure.message : "Provider setup failed.");
-        }
-        return false;
-      }
-      return true;
-    } catch {
+    const settled = await settlePromise(request);
+    pendingRef.current = false;
+    setPendingLabel(null);
+    if (settled._tag === "Failure") {
       setError("Provider setup failed. Try again.");
       return false;
-    } finally {
-      pendingRef.current = false;
-      setPendingLabel(null);
     }
+    const result = settled.value;
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "Provider setup failed.");
+      }
+      return false;
+    }
+    return true;
   }
 
   async function removeRuntime() {
