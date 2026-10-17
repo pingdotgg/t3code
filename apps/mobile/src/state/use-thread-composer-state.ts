@@ -96,6 +96,7 @@ import { environmentThreadDetails } from "./threads";
 import {
   endQueuedRunEdit,
   getQueuedRunEdit,
+  recoverQueuedRunEdit,
   queuedEditDraftKey,
   removeQueuedRunEditAttachment,
   resolveQueuedEditPayload,
@@ -435,27 +436,15 @@ export function useThreadComposerState() {
       (run) => run.id === editedRunId && run.status === "queued",
     );
     if (stillQueued) return;
-    const editDraftKey = queuedEditDraftKey(selectedThreadKey, editedRunId);
-    const editDraft = getComposerDraftSnapshot(editDraftKey);
-    const threadDraft = getComposerDraftSnapshot(selectedThreadKey);
-    const keepable =
-      editDraft.text.trim().length > 0 &&
-      threadDraft.text.trim().length === 0 &&
-      threadDraft.attachments.length === 0;
-    if (keepable) {
-      void mergeComposerDraftContent(selectedThreadKey, {
-        text: editDraft.text,
-        attachments: editDraft.attachments,
-        ...(editDraft.context ? { context: editDraft.context } : {}),
-      });
+    const recovery = recoverQueuedRunEdit(selectedThreadKey, editedRunId);
+    if (recovery === "kept" || recovery === "discarded") {
+      setThreadComposerError(
+        selectedThreadKey,
+        recovery === "kept"
+          ? "That message already started. Your edit is back in the composer."
+          : "That message already started, so the edit was discarded.",
+      );
     }
-    endQueuedRunEdit(selectedThreadKey, { deferAttachmentCleanup: keepable });
-    setThreadComposerError(
-      selectedThreadKey,
-      keepable
-        ? "That message already started. Your edit is back in the composer."
-        : "That message already started, so the edit was discarded.",
-    );
   }, [editedRunId, selectedThreadKey, selectedThreadRuns]);
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);

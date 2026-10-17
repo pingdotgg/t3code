@@ -19,6 +19,8 @@ import { appAtomRegistry } from "./atom-registry";
 import { queuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   clearComposerDraft,
+  getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   setComposerDraftContext,
   setComposerDraftText,
 } from "./use-composer-drafts";
@@ -91,6 +93,41 @@ export function endQueuedRunEdit(
   if (edit === null) return;
   clearComposerDraft(queuedEditDraftKey(threadKey, edit.runId), options);
   setQueuedRunEdit(threadKey, null);
+}
+
+/**
+ * Leaves edit mode once the edited run is no longer queued (it started, was
+ * steered, or was removed elsewhere). A changed edit moves into the thread's
+ * own draft when that draft is empty and is otherwise discarded; an untouched
+ * edit is just the message that was sent, so it is dropped as "clean".
+ * Returns null when the composer is not editing `runId`.
+ */
+export function recoverQueuedRunEdit(
+  threadKey: string,
+  runId: RunId,
+): "kept" | "discarded" | "clean" | null {
+  const edit = getQueuedRunEdit(threadKey);
+  if (edit === null || edit.runId !== runId) return null;
+  const editDraft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, runId));
+  const dirty = editDraft.text !== edit.originalText || editDraft.attachments.length > 0;
+  if (!dirty) {
+    endQueuedRunEdit(threadKey);
+    return "clean";
+  }
+  const threadDraft = getComposerDraftSnapshot(threadKey);
+  const keepable =
+    editDraft.text.trim().length > 0 &&
+    threadDraft.text.trim().length === 0 &&
+    threadDraft.attachments.length === 0;
+  if (keepable) {
+    void mergeComposerDraftContent(threadKey, {
+      text: editDraft.text,
+      attachments: editDraft.attachments,
+      ...(editDraft.context ? { context: editDraft.context } : {}),
+    });
+  }
+  endQueuedRunEdit(threadKey, { deferAttachmentCleanup: keepable });
+  return keepable ? "kept" : "discarded";
 }
 
 /**
