@@ -1,7 +1,7 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
-import { type RefObject, useCallback, useState } from "react";
+import { type RefObject, useState } from "react";
 import { cn } from "~/lib/utils";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
@@ -96,7 +96,7 @@ interface CommandPaletteVirtualizedResultsProps extends Omit<CommandPaletteResul
 export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualizedResultsProps) {
   const { listRef } = props;
   const [scrollFade, setScrollFade] = useState({ top: false, bottom: false });
-  const updateScrollFade = useCallback(() => {
+  const updateScrollFade = () => {
     const scrollElement = listRef.current?.getScrollableNode?.();
     if (!(scrollElement instanceof HTMLElement)) return;
     const top = scrollElement.scrollTop > 1;
@@ -105,7 +105,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
     setScrollFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
-  }, [listRef]);
+  };
 
   if (props.rows.length === 0) {
     return <CommandPaletteEmptyState {...props} />;
