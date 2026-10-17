@@ -86,6 +86,61 @@ describe("DesktopLocalEnvironmentAuth", () => {
     }),
   );
 
+  it.effect("renews the bearer token before the session expires", () =>
+    Effect.gen(function* () {
+      const requestCount = yield* Ref.make(0);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  access_token: `desktop-bearer-token-${count}`,
+                  issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                  token_type: "Bearer",
+                  expires_in: 3600,
+                  scope: "orchestration:read",
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Windows"),
+            currentConfig: Effect.succeedSome(config),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+      );
+
+      assert.strictEqual(yield* auth.getBearerToken, "desktop-bearer-token-1");
+      yield* TestClock.adjust(Duration.minutes(58));
+      assert.strictEqual(yield* auth.getBearerToken, "desktop-bearer-token-1");
+      assert.strictEqual(yield* Ref.get(requestCount), 1);
+
+      // Within a minute of expiry the next read exchanges again, once.
+      yield* TestClock.adjust(Duration.seconds(61));
+      const [first, second] = yield* Effect.all([auth.getBearerToken, auth.getBearerToken], {
+        concurrency: "unbounded",
+      });
+      assert.strictEqual(first, "desktop-bearer-token-2");
+      assert.strictEqual(second, "desktop-bearer-token-2");
+      assert.strictEqual(yield* Ref.get(requestCount), 2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect(
     "exchanges the current window's token when the backend was launched with a secret",
     () =>
