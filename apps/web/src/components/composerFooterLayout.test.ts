@@ -140,6 +140,30 @@ describe("resolveComposerTimelineInset", () => {
       resolveComposerTimelineInset({ currentInset: 0, overlayHeight: 60, isResting: true }),
     ).toBe(60 + COMPOSER_RESTING_EXPANSION_MIN_PX);
   });
+
+  it("keeps the reservation while notices are expanded from the stack", () => {
+    const collapsed = resolveComposerTimelineInset({
+      currentInset: 0,
+      overlayHeight: 172,
+      isResting: false,
+    });
+    expect(
+      resolveComposerTimelineInset({
+        currentInset: collapsed,
+        overlayHeight: 532,
+        isResting: false,
+        expandedNoticesHeight: 360,
+      }),
+    ).toBe(collapsed);
+    expect(
+      resolveComposerTimelineInset({
+        currentInset: collapsed,
+        overlayHeight: 470,
+        isResting: true,
+        expandedNoticesHeight: 360,
+      }),
+    ).toBe(collapsed);
+  });
 });
 
 describe("shouldUseRestingComposerLayout", () => {

@@ -4740,11 +4740,25 @@ export default function ChatView(props: ChatViewProps) {
             modelStrip.offsetHeight + Number.parseFloat(getComputedStyle(modelStrip).marginTop),
           )
         : 0;
+    // Expanded notices grow the stack past the minimum height that holds its
+    // peek strip. Round once, after removing that growth, so the reservation
+    // matches the collapsed overlay exactly.
+    const noticeStack = composerOverlayElement?.querySelector<HTMLElement>(
+      '[data-composer-banner-stack="true"]',
+    );
+    const expandedNoticesGrowth = noticeStack
+      ? Math.max(
+          0,
+          noticeStack.getBoundingClientRect().height -
+            Number.parseFloat(getComputedStyle(noticeStack).minHeight),
+        )
+      : 0;
     const nextInset = resolveComposerTimelineInset({
       currentInset: composerTimelineInsetRef.current,
       overlayHeight: nextHeight,
       isResting,
       restingOnlyHeight,
+      expandedNoticesHeight: nextHeight - Math.ceil(height - expandedNoticesGrowth),
     });
     if (composerTimelineInsetRef.current !== nextInset) {
       composerTimelineInsetRef.current = nextInset;

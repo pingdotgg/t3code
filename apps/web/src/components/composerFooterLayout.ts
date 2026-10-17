@@ -52,23 +52,26 @@ export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
 /**
  * Reserving only the resting height lets a scroll to the end land flush against the short
  * composer, and the expansion that follows then covers the last rows because the timeline never
- * moves for footer growth.
+ * moves for footer growth. Notices expanded from the stack are left out: reserving them would
+ * scroll the thread by their height on the next row.
  */
 export function resolveComposerTimelineInset(input: {
   currentInset: number;
   overlayHeight: number;
   isResting: boolean;
   restingOnlyHeight?: number;
+  expandedNoticesHeight?: number;
 }): number {
+  const overlayHeight = input.overlayHeight - (input.expandedNoticesHeight ?? 0);
   return input.isResting
     ? Math.max(
         input.currentInset,
-        input.overlayHeight +
+        overlayHeight +
           (input.currentInset === 0
             ? COMPOSER_RESTING_EXPANSION_MIN_PX - (input.restingOnlyHeight ?? 0)
             : 0),
       )
-    : input.overlayHeight;
+    : overlayHeight;
 }
 
 export function overlayComposerIsResting(input: {
