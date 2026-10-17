@@ -369,3 +369,29 @@ describe("server browser drag", () => {
     }
   });
 });
+
+it("reads real snapshot metrics after page script reassigns the globals", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 1.5,
+    });
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    await page.setContent(
+      "<script>devicePixelRatio = -1.5; innerWidth = 99999; innerHeight = 1e7;</script>",
+    );
+    expect(await page.evaluate("[devicePixelRatio, innerWidth, innerHeight]")).toEqual([
+      -1.5, 99999, 1e7,
+    ]);
+    expect(await ServerBrowserPage.readPageMetrics?.(cdp)).toEqual({
+      ratio: 1.5,
+      width: 1280,
+      height: 800,
+      zoom: 1,
+    });
+  } finally {
+    await browser.close();
+  }
+});

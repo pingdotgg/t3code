@@ -373,19 +373,85 @@ const maskTree = (tree: string, dotted: RegExp) =>
     })
     .join("\n");
 
+/**
+ * Width and height from a PNG's header, so the reported size is the image's own. Null for data
+ * that is not a PNG.
+ */
+const pngSize = (base64: string) => {
+  const header = Buffer.from(base64.slice(0, 32), "base64");
+  return header.length >= 24 && header.toString("latin1", 12, 16) === "IHDR"
+    ? { width: header.readUInt32BE(16), height: header.readUInt32BE(20) }
+    : null;
+};
+
+/** A page's viewport in device-independent pixels, the units a capture clip is given in. */
+type Viewport = { readonly width: number; readonly height: number };
+
+/**
+ * A page's display ratio and CSS viewport, and its zoom. The ratio and viewport are read in an
+ * isolated world, since page script can reassign `devicePixelRatio`, `innerWidth`, and
+ * `innerHeight` in its own.
+ */
+export const readPageMetrics = async (cdp: CDPSession) => {
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    // Chromium reuses a named world; an unnamed one is created again on each call.
+    worldName: "t3-preview-metrics",
+  });
+  const readZoom = async () =>
+    (await cdp.send("Page.getLayoutMetrics")).cssVisualViewport.zoom ?? 1;
+  // The desktop applies a published zoom on its own schedule. Reading the zoom on both sides of
+  // the ratio and viewport read catches a change in between, which would pair old CSS sizes
+  // with the new zoom.
+  let zoom = await readZoom();
+  for (let attempt = 1; ; attempt += 1) {
+    const { result } = await cdp.send("Runtime.evaluate", {
+      expression: "({ ratio: devicePixelRatio, width: innerWidth, height: innerHeight })",
+      contextId: executionContextId,
+      returnByValue: true,
+    });
+    const zoomAfter = await readZoom();
+    if (zoomAfter === zoom) {
+      return {
+        ...(result.value as {
+          readonly ratio: number;
+          readonly width: number;
+          readonly height: number;
+        }),
+        zoom,
+      };
+    }
+    // A capture sized from a torn read is cropped and oversized, so fail instead.
+    if (attempt === 3) {
+      throw new Error(
+        "The page's zoom kept changing while the snapshot read its size. Try the snapshot again.",
+      );
+    }
+    zoom = zoomAfter;
+  }
+};
+
 // Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
 export const captureViewport = async (
   page: Page,
   cdp: CDPSession,
-  options: { readonly format: "png" | "jpeg"; readonly quality?: number; readonly scale: number },
+  options: {
+    readonly format: "png" | "jpeg";
+    readonly quality?: number;
+    readonly scale: number;
+    readonly viewport?: Viewport;
+  },
 ) => {
   let clip;
   if (options.scale < 1) {
-    const viewport = page.viewportSize() ?? { width: 1280, height: 800 };
+    const viewport = options.viewport ?? page.viewportSize() ?? { width: 1280, height: 800 };
     const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
+    // The offsets are CSS pixels; a clip is in device-independent pixels, which page zoom scales.
+    const zoom = cssVisualViewport.zoom ?? 1;
     clip = {
-      x: cssVisualViewport.pageX,
-      y: cssVisualViewport.pageY,
+      x: cssVisualViewport.pageX * zoom,
+      y: cssVisualViewport.pageY * zoom,
       ...viewport,
       scale: options.scale,
     };
@@ -402,6 +468,9 @@ type SnapshotInput = {
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly renderScale: number;
+  readonly rendering?: () => Promise<Pick<SnapshotInput, "renderScale" | "viewport">>;
+  /** For a page Playwright did not size, such as one the desktop draws. */
+  readonly viewport?: Viewport;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
@@ -411,7 +480,7 @@ const capture = async (
   input: SnapshotInput,
   deadline: number,
 ): Promise<PreviewAutomationSnapshot> => {
-  const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
+  const viewport = input.viewport ?? input.page.viewportSize() ?? { width: 1280, height: 800 };
   const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * input.renderScale));
   const state = refsFor(input.page);
   invalidateRefs(input.page);
@@ -427,7 +496,7 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
+    captureViewport(input.page, input.cdp, { format: "png", scale, viewport }),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -474,8 +543,10 @@ const capture = async (
     screenshot: {
       mimeType: "image/png",
       data,
-      width: Math.round(viewport.width * input.renderScale * scale),
-      height: Math.round(viewport.height * input.renderScale * scale),
+      ...(pngSize(data) ?? {
+        width: Math.round(viewport.width * input.renderScale * scale),
+        height: Math.round(viewport.height * input.renderScale * scale),
+      }),
     },
   };
 };
@@ -494,13 +565,20 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   // A page that changed mid-capture, like one rotating ads, has usually settled by a second
   // try. None starts late or after another snapshot began, since it would revoke the refs of
   // whichever snapshot came next.
-  const captured = capture(input, deadline).catch((cause: unknown) =>
-    Date.now() < deadline &&
-    snapshotTurns.get(input.page) === turn &&
-    !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline)
-      : Promise.reject(cause),
-  );
+  const captured = (async () => {
+    if (input.rendering) {
+      input = { ...input, ...(await input.rendering()) };
+      // A late metrics reply must not begin a capture after viewers have resumed.
+      if (Date.now() >= deadline) throw tooBusy();
+    }
+    return capture(input, deadline).catch((cause: unknown) =>
+      Date.now() < deadline &&
+      snapshotTurns.get(input.page) === turn &&
+      !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
+        ? capture(input, deadline)
+        : Promise.reject(cause),
+    );
+  })();
   try {
     return await Promise.race([captured, expired]);
   } catch (cause) {
