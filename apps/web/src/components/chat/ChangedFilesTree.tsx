@@ -1,5 +1,5 @@
 import { type RunId } from "@t3tools/contracts";
-import { type MouseEvent, memo, useCallback, useMemo, useState } from "react";
+import { type MouseEvent, memo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import {
   buildTurnDiffTree,
@@ -38,7 +38,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
     onOpenTurnDiff,
     onFileContextMenu,
   } = props;
-  const summaryStat = useMemo(() => summarizeTurnDiffStats(files), [files]);
+  const summaryStat = summarizeTurnDiffStats(files);
   const hasDirectories = files.some((file) => /[/\\]/.test(file.path));
 
   return (
@@ -122,6 +122,14 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   );
 });
 
+// Building the tree walks every file, and the compiler would redo it each render
+// because the expansion state hook runs after it.
+function useTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>) {
+  "use memo";
+  const treeNodes = buildTurnDiffTree(files);
+  return { treeNodes, directoryPathsKey: collectDirectoryPaths(treeNodes).join("\u0000") };
+}
+
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
@@ -132,11 +140,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
 }) {
   const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId, onFileContextMenu } =
     props;
-  const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
-  const directoryPathsKey = useMemo(
-    () => collectDirectoryPaths(treeNodes).join("\u0000"),
-    [treeNodes],
-  );
+  const { treeNodes, directoryPathsKey } = useTurnDiffTree(files);
   const hasDirectoryNodes = directoryPathsKey.length > 0;
   const expansionStateKey = `${allDirectoriesExpanded ? "expanded" : "collapsed"}\u0000${directoryPathsKey}`;
   const [directoryExpansionState, setDirectoryExpansionState] = useState<{
@@ -151,21 +155,18 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       ? directoryExpansionState.overrides
       : EMPTY_DIRECTORY_OVERRIDES;
 
-  const toggleDirectory = useCallback(
-    (pathValue: string) => {
-      setDirectoryExpansionState((current) => {
-        const nextOverrides = current.key === expansionStateKey ? current.overrides : {};
-        return {
-          key: expansionStateKey,
-          overrides: {
-            ...nextOverrides,
-            [pathValue]: !(nextOverrides[pathValue] ?? allDirectoriesExpanded),
-          },
-        };
-      });
-    },
-    [allDirectoriesExpanded, expansionStateKey],
-  );
+  const toggleDirectory = (pathValue: string) => {
+    setDirectoryExpansionState((current) => {
+      const nextOverrides = current.key === expansionStateKey ? current.overrides : {};
+      return {
+        key: expansionStateKey,
+        overrides: {
+          ...nextOverrides,
+          [pathValue]: !(nextOverrides[pathValue] ?? allDirectoriesExpanded),
+        },
+      };
+    });
+  };
 
   const renderTreeNode = (node: TurnDiffTreeNode, depth: number) => {
     const leftPadding = 8 + depth * 14;
