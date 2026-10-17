@@ -1,12 +1,6 @@
 import { MousePointer2Icon, PaintbrushIcon, PlusIcon, XIcon } from "lucide-react";
 import { ChevronDown, ChevronUp } from "lucide";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   applyThemeColorPreview,
   THEME_COLOR_ROLES,
@@ -277,6 +271,37 @@ function getManagedEditorColors(
   );
 }
 
+function clampPanelPosition(
+  panel: HTMLElement | null,
+  x: number,
+  y: number,
+  widthOverride?: number,
+) {
+  const margin = 8;
+  // The caller passes a width when it has just shrunk the panel: the DOM
+  // still reports the old one until React commits.
+  const width = widthOverride ?? panel?.offsetWidth ?? 0;
+  return {
+    x: Math.min(Math.max(x, margin), Math.max(margin, window.innerWidth - width - margin)),
+    y: Math.min(Math.max(y, margin), Math.max(margin, window.innerHeight - 48)),
+  };
+}
+
+// Kept out of the component: the compiler cannot lower a throw inside try/catch.
+function retireMergedTheme(retired: ThemeDefinition, mergeTarget: ThemeDefinition) {
+  try {
+    removeCustomTheme(retired.id);
+  } catch (cause) {
+    // The merge already persisted. Leaving it while the edited theme
+    // survives would collide on every retry, so the target goes back to
+    // its pre-merge palettes before the failure surfaces.
+    try {
+      updateCustomTheme(mergeTarget);
+    } catch {}
+    throw cause;
+  }
+}
+
 export function ThemeEditorPanel({
   open,
   onOpenChange,
@@ -345,7 +370,7 @@ export function ThemeEditorPanel({
       });
       setPosition((current) => {
         if (!current) return current;
-        const clamped = clampPosition(current.x, current.y, clampedWidth);
+        const clamped = clampPanelPosition(panelRef.current, current.x, current.y, clampedWidth);
         const height = isMinimized
           ? (panelRef.current?.offsetHeight ?? 0)
           : (clampedHeight ?? panelRef.current?.offsetHeight ?? 0);
@@ -357,14 +382,13 @@ export function ThemeEditorPanel({
     return () => window.removeEventListener("resize", clamp);
   }, [isMinimized, open]);
 
-  // The draft only reaches the live app once this open has been seeded;
-  // previewing in the seeding commit would paint the previous session's
-  // colors for a frame.
-  const [isDraftSeeded, setIsDraftSeeded] = useState(false);
-  const previousOpenRef = useRef(false);
-
-  useEffect(() => {
-    if (open && !previousOpenRef.current) {
+  // Seeded during render so the first open commit already holds this
+  // session's draft; seeding in an effect would preview the previous
+  // session's colors for a frame.
+  const [seededOpen, setSeededOpen] = useState(false);
+  if (seededOpen !== open) {
+    setSeededOpen(open);
+    if (open) {
       const sourceTheme = editingTheme ?? seedTheme ?? null;
       const nextColors = getThemeEditorColorsByAppearance();
       const nextAppearance = sourceTheme
@@ -393,11 +417,8 @@ export function ThemeEditorPanel({
       setUsageCount(null);
       setIsInspecting(false);
       setError(null);
-      setIsDraftSeeded(true);
     }
-    if (!open && isDraftSeeded) setIsDraftSeeded(false);
-    previousOpenRef.current = open;
-  }, [editingTheme, initialAppearance, isDraftSeeded, open, seedName, seedTheme]);
+  }
 
   const nameTargetId = themeIdFromName(name);
   const normalizedName = name.trim().toLowerCase();
@@ -422,22 +443,25 @@ export function ThemeEditorPanel({
     return null;
   };
 
-  const mergeTargetId = mergeTarget?.id ?? null;
-  const takenAppearancesKey = takenAppearances.join(",");
-  useEffect(() => {
-    if (isEditing || mergeTargetId === null) return;
-    const taken = takenAppearancesKey.split(",").filter(Boolean) as ThemeAppearance[];
-    if (taken.length !== 1) return;
-    setActiveAppearance((current) => {
-      if (!taken.includes(current)) return current;
-      return taken[0] === "light" ? "dark" : "light";
-    });
-  }, [isEditing, mergeTargetId, takenAppearancesKey]);
+  // Moves off a palette the merge target already has, once per target change.
+  const mergeKey =
+    isEditing || mergeTarget === null ? null : `${mergeTarget.id}:${takenAppearances.join(",")}`;
+  const [appliedMergeKey, setAppliedMergeKey] = useState<string | null>(null);
+  if (appliedMergeKey !== mergeKey) {
+    setAppliedMergeKey(mergeKey);
+    if (
+      mergeKey !== null &&
+      takenAppearances.length === 1 &&
+      takenAppearances.includes(activeAppearance)
+    ) {
+      setActiveAppearance(takenAppearances[0] === "light" ? "dark" : "light");
+    }
+  }
 
   useEffect(() => {
-    if (!open || !isDraftSeeded) return;
+    if (!open) return;
     applyThemeColorPreview(colorsByAppearance[activeAppearance], activeAppearance);
-  }, [activeAppearance, colorsByAppearance, isDraftSeeded, open]);
+  }, [activeAppearance, colorsByAppearance, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -446,34 +470,31 @@ export function ThemeEditorPanel({
     };
   }, [open, restoreTheme]);
 
-  const updateColor = useCallback(
-    (role: ThemeColorRole, value: string) => {
-      setColorsByAppearance((current) => {
-        const nextColors = { ...current[activeAppearance], [role]: value };
-        const shouldManageColors =
-          !isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value);
+  const updateColor = (role: ThemeColorRole, value: string) => {
+    setColorsByAppearance((current) => {
+      const nextColors = { ...current[activeAppearance], [role]: value };
+      const shouldManageColors =
+        !isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value);
 
-        return {
-          ...current,
-          [activeAppearance]: isAdvanced
-            ? updateThemeColorFamily(activeAppearance, current[activeAppearance], role, value)
-            : shouldManageColors
-              ? getManagedEditorColors(activeAppearance, nextColors)
-              : nextColors,
-        };
-      });
-      if (!isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value)) {
-        setSimpleColorsDirtyByAppearance((current) => ({
-          ...current,
-          [activeAppearance]: true,
-        }));
-      }
-      if (isAdvanced) setShouldRegenerateGuidedColors(true);
-    },
-    [activeAppearance, isAdvanced],
-  );
+      return {
+        ...current,
+        [activeAppearance]: isAdvanced
+          ? updateThemeColorFamily(activeAppearance, current[activeAppearance], role, value)
+          : shouldManageColors
+            ? getManagedEditorColors(activeAppearance, nextColors)
+            : nextColors,
+      };
+    });
+    if (!isAdvanced && THEME_EDITOR_SIMPLE_ROLES.includes(role) && isThemeEditorColor(value)) {
+      setSimpleColorsDirtyByAppearance((current) => ({
+        ...current,
+        [activeAppearance]: true,
+      }));
+    }
+    if (isAdvanced) setShouldRegenerateGuidedColors(true);
+  };
 
-  const selectThemeRole = useCallback((role: ThemeColorRole, reveal = false) => {
+  const selectThemeRole = (role: ThemeColorRole, reveal = false) => {
     const visibleRole = getThemeEditorColorFamily(role)?.role ?? role;
     setSelectedRole(visibleRole);
     if (!THEME_EDITOR_SIMPLE_ROLES.includes(visibleRole)) {
@@ -487,17 +508,17 @@ export function ThemeEditorPanel({
         ?.querySelector(`[data-theme-color-role="${visibleRole}"]`)
         ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
-  }, []);
+  };
 
-  const toggleThemeRole = useCallback((role: ThemeColorRole) => {
+  const toggleThemeRole = (role: ThemeColorRole) => {
     setSelectedRole((current) => (current === role ? null : role));
-  }, []);
+  };
 
-  const clearInspectorSelection = useCallback(() => {
+  const clearInspectorSelection = () => {
     setSelectedRole(null);
     setUsageCount(null);
     setIsInspecting(false);
-  }, []);
+  };
 
   const selectedHighlightRoles = selectedRole
     ? isAdvanced
@@ -514,11 +535,7 @@ export function ThemeEditorPanel({
 
   useEffect(() => {
     clearThemeInspectorHighlights();
-    if (!open || selectedRole === null) {
-      setUsageCount(null);
-      return;
-    }
-    if (isInspecting) return;
+    if (!open || selectedRole === null || isInspecting) return;
 
     const highlightedRoles = selectedHighlightRolesKey.split(",") as Array<ThemeColorRole>;
     const refreshHighlights = () => setUsageCount(highlightThemeRoleUsage(highlightedRoles));
@@ -559,7 +576,8 @@ export function ThemeEditorPanel({
     observer.observe(document.body, { childList: true, subtree: true });
     let spotlightFrame: number | null = null;
     const scheduleSpotlightRefresh = () => {
-      spotlightFrame ??= requestAnimationFrame(() => {
+      if (spotlightFrame !== null) return;
+      spotlightFrame = requestAnimationFrame(() => {
         spotlightFrame = null;
         refreshThemeInspectorSpotlight();
       });
@@ -574,6 +592,7 @@ export function ThemeEditorPanel({
       window.removeEventListener("resize", scheduleSpotlightRefresh);
       window.removeEventListener("scroll", scheduleSpotlightRefresh, true);
       clearThemeInspectorHighlights();
+      setUsageCount(null);
     };
   }, [isInspecting, open, selectedHighlightRolesKey, selectedRole]);
 
@@ -663,8 +682,8 @@ export function ThemeEditorPanel({
       clearInspectorSelection();
     };
     const refreshHover = () => {
-      if (!hoverInspection) return;
-      hoverFrame ??= requestAnimationFrame(() => {
+      if (!hoverInspection || hoverFrame !== null) return;
+      hoverFrame = requestAnimationFrame(() => {
         hoverFrame = null;
         if (hoverInspection) {
           showThemeInspectorHover(
@@ -698,35 +717,32 @@ export function ThemeEditorPanel({
     };
   }, [clearInspectorSelection, isInspecting, open, selectThemeRole]);
 
-  const handleAdvancedChange = useCallback(
-    (checked: boolean) => {
-      setIsAdvanced(checked);
-      if (checked) return;
-      if (selectedRole && !THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)) {
-        setSelectedRole(null);
-      }
-      if (!shouldRegenerateGuidedColors) return;
+  const handleAdvancedChange = (checked: boolean) => {
+    setIsAdvanced(checked);
+    if (checked) return;
+    if (selectedRole && !THEME_EDITOR_SIMPLE_ROLES.includes(selectedRole)) {
+      setSelectedRole(null);
+    }
+    if (!shouldRegenerateGuidedColors) return;
 
-      const managedAppearances: ReadonlyArray<ThemeAppearance> =
-        editingTheme && getThemeModes(editingTheme).length > 1
-          ? ["light", "dark"]
-          : [activeAppearance];
-      setSimpleColorsDirtyByAppearance((current) => {
-        const next = { ...current };
-        for (const appearance of managedAppearances) next[appearance] = true;
-        return next;
-      });
-      setColorsByAppearance((current) => {
-        const next = { ...current };
-        for (const appearance of managedAppearances) {
-          next[appearance] = getManagedEditorColors(appearance, current[appearance]);
-        }
-        return next;
-      });
-      setShouldRegenerateGuidedColors(false);
-    },
-    [activeAppearance, editingTheme, selectedRole, shouldRegenerateGuidedColors],
-  );
+    const managedAppearances: ReadonlyArray<ThemeAppearance> =
+      editingTheme && getThemeModes(editingTheme).length > 1
+        ? ["light", "dark"]
+        : [activeAppearance];
+    setSimpleColorsDirtyByAppearance((current) => {
+      const next = { ...current };
+      for (const appearance of managedAppearances) next[appearance] = true;
+      return next;
+    });
+    setColorsByAppearance((current) => {
+      const next = { ...current };
+      for (const appearance of managedAppearances) {
+        next[appearance] = getManagedEditorColors(appearance, current[appearance]);
+      }
+      return next;
+    });
+    setShouldRegenerateGuidedColors(false);
+  };
 
   const handleSubmit = () => {
     if (!name.trim()) {
@@ -773,17 +789,7 @@ export function ThemeEditorPanel({
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
         });
         retiredTheme = editingTheme;
-        try {
-          removeCustomTheme(editingTheme.id);
-        } catch (cause) {
-          // The merge already persisted. Leaving it while the edited theme
-          // survives would collide on every retry, so the target goes back to
-          // its pre-merge palettes before the failure surfaces.
-          try {
-            updateCustomTheme(mergeTarget);
-          } catch {}
-          throw cause;
-        }
+        retireMergedTheme(editingTheme, mergeTarget);
       } else if (editingTheme) {
         const baseAppearance = editingTheme.appearance;
         const variantAppearance = baseAppearance === "light" ? "dark" : "light";
@@ -1015,17 +1021,7 @@ export function ThemeEditorPanel({
     );
   };
 
-  const clampPosition = (x: number, y: number, widthOverride?: number) => {
-    const panel = panelRef.current;
-    const margin = 8;
-    // The caller passes a width when it has just shrunk the panel: the DOM
-    // still reports the old one until React commits.
-    const width = widthOverride ?? panel?.offsetWidth ?? 0;
-    return {
-      x: Math.min(Math.max(x, margin), Math.max(margin, window.innerWidth - width - margin)),
-      y: Math.min(Math.max(y, margin), Math.max(margin, window.innerHeight - 48)),
-    };
-  };
+  const clampPosition = (x: number, y: number) => clampPanelPosition(panelRef.current, x, y);
 
   const handleDragPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).closest("button, input, a")) return;

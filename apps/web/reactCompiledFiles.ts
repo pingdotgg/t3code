@@ -33,4 +33,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/state/queries.ts",
   "apps/web/src/state/sourceControlActions.ts",
   "apps/web/src/components/settings/ProjectFaviconPickerDialog.tsx",
+  "apps/web/src/components/settings/ThemeEditorPanel.tsx",
 ] as const;
