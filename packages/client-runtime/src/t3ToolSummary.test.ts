@@ -42,6 +42,13 @@ describe("summarizeT3ToolCalls", () => {
     ]);
     expect(allFailed.label).toBe("Could not start 2 review guides");
     expect(allFailed.failedCount).toBe(2);
+    // A call whose output lists no guides yet: writing them was still started.
+    expect(summarizeT3ToolCalls("write-pr-guides", [completed({}, {})]).label).toBe(
+      "Started writing review guides",
+    );
+    expect(
+      summarizeT3ToolCalls("write-pr-guides", [completed({}, {}), completed({}, {})]).label,
+    ).toBe("Started writing review guides 2 times");
   });
 
   it.each([

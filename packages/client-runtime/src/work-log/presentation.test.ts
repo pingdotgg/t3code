@@ -350,6 +350,9 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["t3_thread_send_attachments", "Sending attachments", "Sent attachments"],
     ["run_scheduled_task_now", "Running a scheduled task", "Requested a run of a scheduled task"],
     ["t3_workflow_stop", "Stopping a workflow", "Requested a stop for a workflow"],
+    ["unwatch_pull_request", "Unwatching a pull request", "Stopped watching a pull request"],
+    ["write_pull_request_guides", "Writing review guides", "Started writing review guides"],
+    ["task_cancel", "Canceling a delegated task", "Requested cancellation of a delegated task"],
   ])("labels %s through its lifecycle", (tool, running, completed) => {
     expect(resolveWorkEntryToolPresentation({ label: `T3-code.${tool}` })?.displayName).toBe(
       running,
@@ -360,6 +363,15 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolLifecycleStatus: "completed",
       })?.displayName,
     ).toBe(completed);
+  });
+
+  it("names a stopped unwatch without repeating the verb", () => {
+    expect(
+      resolveWorkEntryToolPresentation({
+        label: "T3-code.unwatch_pull_request",
+        toolLifecycleStatus: "stopped",
+      })?.displayName,
+    ).toBe("Stopped unwatching a pull request");
   });
 
   it("summarizes workflow stop targets separately from their parent thread", () => {
