@@ -869,7 +869,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 ref={inputRef}
                 multiline
                 value={props.draftMessage}
-                readOnly={voiceInput.freezesEditor}
+                // Locked while a queued edit saves, as on web: the save sends the draft as it was.
+                readOnly={voiceInput.freezesEditor || queuedEdit?.saving === true}
                 skills={composerMenu.skills}
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
