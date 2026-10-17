@@ -30,7 +30,6 @@ import {
   NodeId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
-  type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -205,11 +204,34 @@ function currentSubagent<Agent extends RuntimeSubagent>(
   };
 }
 
-// These lookups and the graph walk every subagent and thread; the panel calls
-// several hooks after them, which would stop the compiler caching them inline.
-function useSubagentLookups(subagents: ReadonlyArray<OrchestrationV2Subagent> | undefined) {
-  "use memo";
-  const projected = subagents ?? [];
+export function ThreadRelationshipsPanel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const ref = scopeThreadRef(props.environmentId, props.threadId);
+  const projection = useThreadProjection(ref)?.projection ?? null;
+  const serverConfigs = useServerConfigs();
+  const threadShells = useThreadShells();
+  const allProjects = useProjects();
+  const archived = useArchivedThreadSnapshots([props.environmentId]);
+  const navigate = useNavigate();
+  const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
+  const stopSession = useAtomCommand(threadEnvironment.stopSession);
+  const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
+  const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
+  const canOperateWorkflow = useAtomValue(
+    orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
+  );
+  const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
+  const [stoppingId, setStoppingId] = useState<string | null>(null);
+  // These lookups and the graph walk every subagent and thread, so they sit below
+  // the panel's hooks where the compiler can cache them.
+  const providers = serverConfigs.get(props.environmentId)?.providers;
+  const projects = allProjects.filter((project) => project.environmentId === props.environmentId);
+  const archivedShells = archived.snapshots.find(
+    (entry) => entry.environmentId === props.environmentId,
+  )?.snapshot.threads;
+  const projected = projection?.subagents ?? [];
   const runtimeSubagents = projectedSubagentsToRuntime(projected);
   const byId = new Map(runtimeSubagents.map((agent) => [agent.id, agent]));
   const subagentsByThreadId = new Map(
@@ -234,57 +256,15 @@ function useSubagentLookups(subagents: ReadonlyArray<OrchestrationV2Subagent> | 
   const workflowGroupsById = new Map(
     deriveWorkflowGroups(runtimeSubagents).map((group) => [group.workflow.id, group]),
   );
-  return { subagentsByThreadId, workflowGroupsById };
-}
-
-function useThreadRelationshipGraph(
-  threadShells: ReturnType<typeof useThreadShells>,
-  archivedShells: ReadonlyArray<OrchestrationV2ThreadShell> | undefined,
-  projection: OrchestrationV2ThreadProjection | null,
-  environmentId: EnvironmentId,
-) {
-  "use memo";
   const shells: ReadonlyArray<OrchestrationV2ThreadShell> = [
     ...threadShells
-      .filter((thread) => thread.environmentId === environmentId)
+      .filter((thread) => thread.environmentId === props.environmentId)
       .map((thread) => thread.source),
     ...(archivedShells ?? []),
   ];
-  return deriveThreadRelationshipGraph({ threads: shells, projection });
-}
-
-export function ThreadRelationshipsPanel(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-}) {
-  const ref = scopeThreadRef(props.environmentId, props.threadId);
-  const projection = useThreadProjection(ref)?.projection ?? null;
-  const providers = useServerConfigs().get(props.environmentId)?.providers;
-  const { subagentsByThreadId, workflowGroupsById } = useSubagentLookups(projection?.subagents);
-  const threadShells = useThreadShells();
-  const projects = useProjects().filter((project) => project.environmentId === props.environmentId);
-  const archived = useArchivedThreadSnapshots([props.environmentId]);
-  const archivedShells = archived.snapshots.find(
-    (entry) => entry.environmentId === props.environmentId,
-  )?.snapshot.threads;
-  const graph = useThreadRelationshipGraph(
-    threadShells,
-    archivedShells,
-    projection,
-    props.environmentId,
-  );
+  const graph = deriveThreadRelationshipGraph({ threads: shells, projection });
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
-  const navigate = useNavigate();
-  const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
-  const stopSession = useAtomCommand(threadEnvironment.stopSession);
-  const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
-  const stopWorkflowCommand = useAtomCommand(orchestrationEnvironment.stopWorkflow);
-  const canOperateWorkflow = useAtomValue(
-    orchestrationEnvironment.stopWorkflow.permissionAtom(props.environmentId),
-  );
-  const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
-  const [stoppingId, setStoppingId] = useState<string | null>(null);
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = orderWebThreadLineageRows({
