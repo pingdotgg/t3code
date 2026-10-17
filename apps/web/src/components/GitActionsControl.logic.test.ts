@@ -1269,7 +1269,11 @@ describe("linked PR git actions", () => {
   };
 
   it("commits and pushes to an existing linked PR while VCS lookup is empty", () => {
-    const resolved = resolveThreadGitStatus(status({ hasWorkingTreeChanges: true }), [linked]);
+    const resolved = resolveThreadGitStatus(
+      status({ hasWorkingTreeChanges: true }),
+      [linked],
+      "github.com/team/repo",
+    );
     assert.equal(resolveQuickAction(resolved, false).action, "commit_push");
     assert.deepEqual(
       buildMenuItems(resolved, false).map((item) => item.id),
@@ -1278,7 +1282,11 @@ describe("linked PR git actions", () => {
   });
 
   it("pushes ahead commits without creating another PR", () => {
-    const resolved = resolveThreadGitStatus(status({ aheadCount: 1 }), [linked]);
+    const resolved = resolveThreadGitStatus(
+      status({ aheadCount: 1 }),
+      [linked],
+      "github.com/team/repo",
+    );
     assert.equal(resolveQuickAction(resolved, false).action, "push");
   });
 
@@ -1291,20 +1299,66 @@ describe("linked PR git actions", () => {
       { ...linked, source: "stack-dismissed" as const },
       { ...linked, snapshot: { ...linked.snapshot!, headBranch: "other" } },
     ]) {
-      assert.equal(resolveThreadGitStatus(original, [link]), original);
+      assert.equal(resolveThreadGitStatus(original, [link], "github.com/team/repo"), original);
       assert.equal(resolveQuickAction(original, false).action, "commit_push_pr");
     }
   });
 
+  it("ignores matching branch names in other repositories or unknown checkouts", () => {
+    const original = status({ hasWorkingTreeChanges: true });
+    for (const repositoryKey of [
+      "github.com/other/repo",
+      "github.example.com/team/repo",
+      null,
+      undefined,
+    ]) {
+      const resolved = resolveThreadGitStatus(original, [linked], repositoryKey);
+      assert.equal(resolved, original);
+      assert.equal(resolveQuickAction(resolved, false).action, "commit_push_pr");
+    }
+  });
+
+  it("selects the matching repository and normalizes canonical identities", () => {
+    const other = { ...linked, repository: "other/repo", number: 99 };
+    assert.equal(
+      resolveThreadGitStatus(status(), [other, linked], "GITHUB.COM/TEAM/REPO")?.pr?.number,
+      42,
+    );
+    const azure = {
+      ...linked,
+      host: "dev.azure.com",
+      repository: "project/repo",
+      url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42",
+    };
+    assert.equal(
+      resolveThreadGitStatus(status(), [azure], "ssh.dev.azure.com/v3/org/project/repo")?.pr
+        ?.number,
+      42,
+    );
+    const forgejo = {
+      ...linked,
+      host: "forge.example",
+      url: "http://forge.example:3000/team/repo/pulls/42",
+    };
+    assert.equal(
+      resolveThreadGitStatus(status(), [forgejo], "forge.example:3000/team/repo")?.pr?.number,
+      42,
+    );
+    assert.equal(
+      resolveThreadGitStatus(status(), [forgejo], "forge.example:4000/team/repo")?.pr,
+      null,
+    );
+  });
+
   it("preserves authoritative VCS results and handles unlinking or missing status", () => {
-    const original = resolveThreadGitStatus(status(), [linked])!;
-    assert.equal(resolveThreadGitStatus(original, [linked]), original);
+    const original = resolveThreadGitStatus(status(), [linked], "github.com/team/repo")!;
+    assert.equal(resolveThreadGitStatus(original, [linked], "github.com/team/repo"), original);
     const closed = { ...original, pr: { ...original.pr!, state: "closed" as const } };
-    assert.equal(resolveThreadGitStatus(closed, [linked]), closed);
+    assert.equal(resolveThreadGitStatus(closed, [linked], "github.com/team/repo"), closed);
     const unlinked = status();
-    assert.equal(resolveThreadGitStatus(unlinked, []), unlinked);
+    assert.equal(resolveThreadGitStatus(unlinked, [], "github.com/team/repo"), unlinked);
     const detached = status({ refName: null });
-    assert.equal(resolveThreadGitStatus(detached, [linked]), detached);
-    assert.equal(resolveThreadGitStatus(null, [linked]), null);
+    assert.equal(resolveThreadGitStatus(detached, [linked], "github.com/team/repo"), detached);
+    assert.equal(resolveThreadGitStatus(null, [linked], "github.com/team/repo"), null);
   });
 });

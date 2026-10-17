@@ -77,7 +77,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const isInspector = presentation === "inspector";
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
-  const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
+  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
+    useThreadSelection();
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
   const supportsLinkedPrSnapshots =
     selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true;
@@ -104,9 +105,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
+  const repositoryKey = selectedThreadProject?.repositoryIdentity?.canonicalKey;
   const gitStatusForActions = useMemo(
-    () => resolveThreadGitStatus(gitStatusQuery.data, selectedThread?.pullRequests),
-    [gitStatusQuery.data, selectedThread?.pullRequests],
+    () => resolveThreadGitStatus(gitStatusQuery.data, selectedThread?.pullRequests, repositoryKey),
+    [gitStatusQuery.data, selectedThread?.pullRequests, repositoryKey],
   );
 
   const currentBranchLabel =

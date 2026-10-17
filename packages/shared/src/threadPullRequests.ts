@@ -369,15 +369,21 @@ export function applyThreadPullRequestLinkUpdate(
 /** Use a linked branch snapshot while the separate VCS PR lookup has no result. */
 export function resolveThreadGitStatus(
   status: VcsStatusResult | null,
-  links: ReadonlyArray<ThreadPullRequestLink> = [],
+  links: ReadonlyArray<ThreadPullRequestLink> | undefined,
+  repositoryKey: string | null | undefined,
 ): VcsStatusResult | null {
-  if (!status || status.pr !== null || status.refName === null) return status;
-  const link = links.find(
-    (link) =>
-      link.source !== "stack-dismissed" &&
-      link.snapshot?.state === "open" &&
-      link.snapshot.headBranch === status.refName,
-  );
+  if (!status || status.pr !== null || status.refName === null || !repositoryKey) return status;
+  const canonicalKey = canonicalRepositoryKey(repositoryKey.toLowerCase());
+  const link = links?.find((link) => {
+    if (
+      link.source === "stack-dismissed" ||
+      link.snapshot?.state !== "open" ||
+      link.snapshot.headBranch !== status.refName
+    )
+      return false;
+    const key = legacyThreadPullRequestKey(link, link.host);
+    return canonicalRepositoryKey(`${key.host}/${key.repository}`) === canonicalKey;
+  });
   if (!link?.snapshot) return status;
   return {
     ...status,
