@@ -480,6 +480,187 @@ const runCleanupTest = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer), Effect.scoped);
 
+const submoduleCleanupFixture = () =>
+  Effect.gen(function* () {
+    const fixture = yield* cleanupFixture();
+    const { command, fs, worktree } = fixture;
+    const source = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-submodule-" });
+    const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-submodule-remote-" });
+    yield* command(source, ["init", "-b", "main"]);
+    yield* command(source, ["config", "user.email", "cleanup@example.test"]);
+    yield* command(source, ["config", "user.name", "Cleanup test"]);
+    yield* fs.writeFileString(`${source}/tracked.txt`, "original\n");
+    yield* fs.writeFileString(`${source}/.gitignore`, ".env\nnode_modules/\n");
+    yield* command(source, ["add", "."]);
+    yield* command(source, ["commit", "-m", "initial"]);
+    yield* command(source, ["clone", "--bare", source, remote]);
+    yield* command(worktree, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "add",
+      remote,
+      "module",
+    ]);
+    yield* command(`${worktree}/module`, ["config", "user.name", "Cleanup test"]);
+    yield* command(`${worktree}/module`, ["config", "user.email", "cleanup@example.test"]);
+    yield* command(worktree, ["commit", "-am", "add submodule"]);
+    const submodule = `${worktree}/module`;
+    const addNested = () =>
+      Effect.gen(function* () {
+        yield* command(submodule, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          remote,
+          "child",
+        ]);
+        yield* command(submodule, ["commit", "-am", "add child"]);
+        yield* command(submodule, ["push", "origin", "HEAD:main"]);
+        yield* command(worktree, ["commit", "-am", "update module"]);
+        return `${submodule}/child`;
+      });
+    return { ...fixture, submodule, addNested };
+  });
+
+it.live.each(["populated", "deinitialized"])(
+  "removes a clean worktree with %s nested submodules",
+  (state) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, submodule, command, addNested } =
+          yield* submoduleCleanupFixture();
+        yield* addNested();
+        const unpushed = yield* command(submodule, [
+          "rev-list",
+          "--count",
+          "HEAD",
+          "--not",
+          "--remotes",
+        ]);
+        expect(unpushed.stdout.trim()).toBe("0");
+        if (state === "deinitialized") yield* command(worktree, ["submodule", "deinit", "--all"]);
+        const report = yield* service.runNow;
+        expect(report.entries.find((entry) => entry.path === worktree)).toMatchObject({
+          outcome: "removed",
+        });
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }),
+    ),
+);
+
+it.live.each(["HEAD", "local branch"])("keeps an unpushed submodule %s", (unpushed) =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, command } = yield* submoduleCleanupFixture();
+      yield* command(submodule, ["checkout", "-b", "local-only"]);
+      yield* command(submodule, ["commit", "--allow-empty", "-m", "local only"]);
+      if (unpushed === "local branch") yield* command(submodule, ["checkout", "main"]);
+      yield* command(worktree, ["add", "module"]);
+      yield* command(worktree, ["commit", "--allow-empty", "-m", "record module"]);
+      const report = yield* service.runNow;
+      expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+      expect(report.entries[0]?.reason).toContain("not on a remote-tracking ref");
+      expect(yield* fs.exists(submodule)).toBe(true);
+    }),
+  ),
+);
+
+it.live.each([
+  ["tracked.txt", "uncommitted-changes"],
+  [".env", "any-local-files"],
+] as const)("keeps submodule %s under %s", ([file, policy]) =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, submodule, setPolicy } = yield* submoduleCleanupFixture();
+      setPolicy(policy);
+      yield* fs.writeFileString(`${submodule}/${file}`, "local edit\n");
+      const report = yield* service.runNow;
+      expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+      if (file === ".env") expect(report.entries[0]?.reason).toContain("ignored files (.env)");
+      expect(yield* fs.readFileString(`${submodule}/${file}`)).toBe("local edit\n");
+    }),
+  ),
+);
+
+it.live("keeps a deinitialized nested submodule's local branch in an embedded parent", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, submodule, command, addNested } =
+        yield* submoduleCleanupFixture();
+      const child = yield* addNested();
+      for (const [key, value] of [
+        ["user.name", "Cleanup test"],
+        ["user.email", "cleanup@example.test"],
+      ] as const)
+        yield* command(child, ["config", key, value]);
+      yield* command(child, ["checkout", "-b", "local-only"]);
+      yield* command(child, ["commit", "--allow-empty", "-m", "local only"]);
+      const local = (yield* command(child, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(child, ["checkout", "main"]);
+      yield* command(submodule, ["submodule", "deinit", "--all"]);
+      const parentGit = (yield* command(submodule, [
+        "rev-parse",
+        "--absolute-git-dir",
+      ])).stdout.trim();
+      yield* command(submodule, ["config", "core.worktree", submodule]);
+      yield* fs.remove(`${submodule}/.git`);
+      yield* fs.rename(parentGit, `${submodule}/.git`);
+      const childGit = `${submodule}/.git/modules/child`;
+      const report = yield* service.runNow;
+      expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+      expect(report.entries[0]?.reason).toContain("not on a remote-tracking ref");
+      expect(yield* fs.exists(`${childGit}/HEAD`)).toBe(true);
+      expect(
+        (yield* command(worktree, [
+          "--git-dir",
+          childGit,
+          "rev-parse",
+          "refs/heads/local-only",
+        ])).stdout.trim(),
+      ).toBe(local);
+    }),
+  ),
+);
+
+it.live("keeps a worktree when a stored submodule cannot be inspected", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree, command } = yield* submoduleCleanupFixture();
+      const admin = (yield* command(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+      yield* fs.makeDirectory(`${admin}/modules/broken`);
+      yield* fs.writeFileString(`${admin}/modules/broken/HEAD`, "not a ref\n");
+      const report = yield* service.runNow;
+      expect(report.entries[0]).toMatchObject({ outcome: "kept" });
+      expect(report.entries[0]?.reason).toContain("could not be inspected");
+      expect(yield* fs.exists(worktree)).toBe(true);
+      expect(yield* fs.readFileString(`${admin}/modules/broken/HEAD`)).toBe("not a ref\n");
+    }),
+  ),
+);
+
+it.live("preserves late tracked edits with never-initialized submodules", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const fixture = yield* cleanupFixture();
+      const { service, fs, worktree, command } = fixture;
+      const head = (yield* command(worktree, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* fs.writeFileString(
+        `${worktree}/.gitmodules`,
+        '[submodule "module"]\n\tpath = module\n\turl = /unused\n',
+      );
+      yield* command(worktree, ["add", ".gitmodules"]);
+      yield* command(worktree, ["update-index", "--add", "--cacheinfo", `160000,${head},module`]);
+      yield* command(worktree, ["commit", "-m", "add uninitialized module"]);
+      yield* fs.makeDirectory(`${worktree}/module`);
+      fixture.editBeforeRemoval();
+      expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "failed" });
+      expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("late edit\n");
+    }),
+  ),
+);
+
 describe("subagent worktree ownership", () => {
   it.effect.each([
     "idle",

@@ -533,6 +533,83 @@ const make = Effect.gen(function* () {
     return file === undefined ? null : `has ignored files (${file})`;
   });
 
+  const submoduleRemoval = Effect.fn("StorageCleanup.submoduleRemoval")(
+    function* (cwd: string, rules: WorktreeCleanupRules) {
+      const inspect = (args: string[]) =>
+        git.execute({
+          operation: "StorageCleanup.submodules",
+          cwd,
+          args,
+          maxOutputBytes: 64 * 1024,
+        });
+      const admin = yield* inspect(["rev-parse", "--absolute-git-dir"]);
+      if (admin.stdoutTruncated)
+        return { force: false, reason: "submodule inspection exceeded the limit" };
+      const modules = path.join(admin.stdout.trim(), "modules");
+      const stored = yield* fs.exists(modules);
+      if (!stored && !(yield* fs.exists(path.join(cwd, ".gitmodules"))))
+        return { force: false, reason: null };
+      const populated = yield* inspect([
+        "submodule",
+        "foreach",
+        "--recursive",
+        "--quiet",
+        'printf "%s\\0" "$toplevel/$sm_path"',
+      ]);
+      if (populated.stdoutTruncated)
+        return { force: false, reason: "submodule inspection exceeded the limit" };
+      const paths = populated.stdout.split("\0").filter(Boolean);
+      const pending = [modules];
+      for (const submodule of paths) {
+        const changes = yield* localChangesReason(submodule, rules);
+        if (changes !== null) return { force: false, reason: `submodule ${changes}` };
+        const directory = yield* git.execute({
+          operation: "StorageCleanup.submoduleGitDirectory",
+          cwd: submodule,
+          args: ["rev-parse", "--absolute-git-dir"],
+          maxOutputBytes: 64 * 1024,
+        });
+        if (directory.stdoutTruncated)
+          return { force: false, reason: "submodule inspection exceeded the limit" };
+        pending.push(directory.stdout.trim());
+      }
+      const visited = new Set<string>();
+      while (pending.length > 0) {
+        const directory = pending.pop()!;
+        if (!(yield* fs.exists(directory))) continue;
+        const canonical = yield* fs.realPath(directory);
+        if (visited.has(canonical)) continue;
+        visited.add(canonical);
+        if (visited.size > 10_000)
+          return { force: false, reason: "submodule inspection exceeded the limit" };
+        if ((yield* fs.stat(directory)).type !== "Directory")
+          return { force: false, reason: "submodule repository could not be inspected" };
+        if (yield* fs.exists(path.join(directory, "HEAD"))) {
+          const unpushed = yield* inspect([
+            "--git-dir",
+            directory,
+            "--work-tree",
+            cwd,
+            "rev-list",
+            "--max-count=1",
+            "HEAD",
+            "--all",
+            "--not",
+            "--remotes",
+          ]);
+          if (unpushed.stdoutTruncated || unpushed.stdout.trim() !== "")
+            return { force: false, reason: "submodule has commits not on a remote-tracking ref" };
+          pending.push(path.join(directory, "modules"));
+        } else {
+          for (const name of yield* fs.readDirectory(directory))
+            pending.push(path.join(directory, name));
+        }
+      }
+      return { force: stored || paths.length > 0, reason: null };
+    },
+    Effect.orElseSucceed(() => ({ force: false, reason: "submodules could not be inspected" })),
+  );
+
   const cleanupGit = Effect.fn("StorageCleanup.cleanupGit")(function* (
     cwd: string,
     args: string[],
@@ -829,13 +906,27 @@ const make = Effect.gen(function* () {
           )
         )
           return keep("settings changed since check");
-        // Clean only untracked files; Git must still refuse removal if a tracked
-        // edit arrives after our last status check.
+        // Clean only untracked files. Ordinary worktrees retain Git's final tracked-edit check.
         if (settings.worktreeKeepWhen === "tracked-changes")
           yield* cleanupGit(worktreePath, ["clean", "-ffdx"], "git clean");
+        const submodules = yield* submoduleRemoval(worktreePath, settings);
+        if (submodules.reason !== null) return keep(submodules.reason);
+        if (submodules.force) {
+          const changes = yield* localChangesReason(worktreePath, settings);
+          if (changes !== null) return keep(changes);
+        }
         yield* cleanupGit(
           project.workspaceRoot,
-          ["-c", "status.showUntrackedFiles=normal", "worktree", "remove", "--", worktreePath],
+          [
+            "-c",
+            "status.showUntrackedFiles=normal",
+            "worktree",
+            "remove",
+            // Git requires force for submodules; recursive checks above cannot make removal atomic.
+            ...(submodules.force ? ["--force"] : []),
+            "--",
+            worktreePath,
+          ],
           "git worktree remove",
         );
         entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
