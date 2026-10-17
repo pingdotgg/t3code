@@ -16,6 +16,30 @@ import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import { makeThrottledReader } from "../provider/throttledReader.ts";
+
+/** The provider answered 429 to a request the hub forwarded. */
+class HubProviderRateLimitedError extends Schema.TaggedError<HubProviderRateLimitedError>()(
+  "HubProviderRateLimitedError",
+  {},
+) {
+  override get message(): string {
+    return "The provider is rate limiting requests from the hub. Try again in a few minutes.";
+  }
+}
+const isHubProviderRateLimitedError = Schema.is(HubProviderRateLimitedError);
+
+/**
+ * Every Limits visit, refresh and settings change reads every hub account, and
+ * Claude's usage endpoint answers 429 after a short burst. So each account is
+ * read at most once a minute, a failed read doubles the wait up to eight
+ * minutes, and the last reading stands in for failed reads for fifteen minutes.
+ */
+const HUB_USAGE_READ_PACING = {
+  intervalMs: 60_000,
+  maxIntervalMs: 8 * 60_000,
+  keepLastMs: 15 * 60_000,
+};
 
 const AuthFile = Schema.Struct({
   id: Schema.String,
@@ -180,6 +204,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
     });
     const response = yield* decodeApiResponse(raw);
+    if (response.status_code === 429) return yield* new HubProviderRateLimitedError();
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
@@ -204,6 +229,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
       )
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
+
+  const usageReads = yield* makeThrottledReader<
+    UsageLimitSourceAccount,
+    Effect.Error<ReturnType<typeof apiCall>> | Schema.SchemaError
+  >(HUB_USAGE_READ_PACING);
+  const usageReadKey = (config: UsageLimitSourceConfig, accountId: string) =>
+    `${config.url}\n${accountId}`;
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     config: UsageLimitSourceConfig,
@@ -291,15 +323,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
         },
       };
     });
-    return yield* read.pipe(
-      Effect.orElseSucceed(() => ({
-        ...base,
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
+    return yield* usageReads.read(usageReadKey(config, account.id), read).pipe(
+      Effect.catch((error) =>
+        Effect.succeed({
+          ...base,
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: isHubProviderRateLimitedError(error)
+              ? error.message
+              : "The hub could not read this account's usage.",
+          }),
         }),
-      })),
+      ),
     );
   });
 
@@ -364,11 +400,21 @@ export const makeCliproxyApi = Effect.gen(function* () {
       } as const;
     });
     return yield* operation.pipe(
+      // The credit may be spent even when the answer is lost, so read fresh unless the
+      // provider refused the redeem outright; then the last read and its backoff stand.
+      Effect.tap(() => usageReads.forget(usageReadKey(config, accountId))),
+      Effect.tapError((error) =>
+        isHubProviderRateLimitedError(error)
+          ? Effect.void
+          : usageReads.forget(usageReadKey(config, accountId)),
+      ),
       Effect.mapError((error) =>
         isUsageLimitSourceError(error)
           ? error
           : new UsageLimitSourceError({
-              detail: "The hub returned an unexpected reset-credit response.",
+              detail: isHubProviderRateLimitedError(error)
+                ? error.message
+                : "The hub returned an unexpected reset-credit response.",
             }),
       ),
     );

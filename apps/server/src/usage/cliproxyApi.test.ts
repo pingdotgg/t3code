@@ -213,6 +213,92 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("keeps Claude accounts' last read when the provider answers 429", () =>
+    Effect.gen(function* () {
+      const answered = new Set<string>();
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, provider: "claude" },
+          { ...accounts[1]!, provider: "claude" },
+        ],
+        upstream: (request) => {
+          if (answered.has(request.auth_index)) return { status: 429, body: {} };
+          answered.add(request.auth_index);
+          return { status: 200, body: { five_hour: { utilization: 10, resets_at: null } } };
+        },
+      });
+      const api = yield* test.api;
+      const usageProbes = () => test.requests.filter((request) => request.body?.url).length;
+      yield* api.readAccounts(config);
+      // A refresh straight after does not reach the provider.
+      yield* api.readAccounts(config);
+      expect(usageProbes()).toBe(2);
+      yield* TestClock.adjust("1 minute");
+      const result = yield* api.readAccounts(config);
+      expect(usageProbes()).toBe(4);
+      expect(result.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
+        10, 10,
+      ]);
+      // Backing off for two minutes after the 429s.
+      yield* TestClock.adjust(2 * 60_000 - 1);
+      yield* api.readAccounts(config);
+      expect(usageProbes()).toBe(4);
+      yield* TestClock.adjust(1);
+      yield* api.readAccounts(config);
+      expect(usageProbes()).toBe(6);
+    }),
+  );
+
+  it.effect("says the provider is rate limiting when a 429 leaves nothing to show", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: () => ({ status: 429, body: {} }),
+      });
+      const api = yield* test.api;
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.usageLimits.unavailable?.message).toContain("rate limiting");
+    }),
+  );
+
+  it.effect("reads an account fresh after redeeming its reset", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      const usageProbes = () =>
+        test.requests.filter((request) => request.body?.url?.endsWith("/wham/usage")).length;
+      yield* api.readAccounts(config);
+      yield* api.consume(config, "second.json", "credit-b");
+      yield* api.readAccounts(config);
+      // Only the redeemed account is read again inside the minute.
+      expect(usageProbes()).toBe(3);
+    }),
+  );
+
+  it.effect("keeps an account's last read when the provider refuses a redeem with 429", () =>
+    Effect.gen(function* () {
+      let refuse = false;
+      const test = fixture({
+        upstream: (request) =>
+          refuse
+            ? { status: 429, body: {} }
+            : {
+                status: 200,
+                body: request.url?.endsWith("rate-limit-reset-credits")
+                  ? { credits: [] }
+                  : { rate_limit: { primary_window: { used_percent: 12 } } },
+              },
+      });
+      const api = yield* test.api;
+      yield* api.readAccounts(config);
+      refuse = true;
+      const redeem = yield* api.consume(config, "first.json", "credit").pipe(Effect.flip);
+      expect(redeem.detail).toContain("rate limiting");
+      const [first] = yield* api.readAccounts(config);
+      expect(first?.usageLimits.windows[0]?.usedPercent).toBe(12);
+    }),
+  );
+
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
     Effect.gen(function* () {
       const test = fixture();

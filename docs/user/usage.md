@@ -127,7 +127,9 @@ To see pooled accounts, open **Settings → Providers → Usage providers → Ad
 environment that will connect to the hub and enter its URL and management key.
 
 The accounts appear under **Usage → Limits**. Codex accounts show banked reset credits; select an
-account and choose **Use reset** to redeem one. No hub plugin is required.
+account and choose **Use reset** to redeem one. No hub plugin is required. Each account is read at
+most once a minute. When a read fails, such as when the provider rate-limits it, the last reading
+stays for up to fifteen minutes.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
