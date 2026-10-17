@@ -15,7 +15,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
-import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
+import { previewAnnotationStyles } from "virtual:preview-annotation-css";
 import { installRecordingCursor } from "./RecordingCursor.ts";
 import { DEFAULT_RECORDING_INPUT_OPTIONS } from "./RecordingInput.ts";
 import {
