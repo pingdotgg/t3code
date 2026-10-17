@@ -59,11 +59,25 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             detail: `Pi model '${modelSelection.model}' must use provider/model format.`,
           });
         }
-        yield* connection.request({
-          type: "set_model",
-          provider: parsed.provider,
-          modelId: parsed.modelId,
-        });
+        yield* connection
+          .request({ type: "set_model", provider: parsed.provider, modelId: parsed.modelId })
+          .pipe(
+            // Model discovery loads extensions, so the picker can offer a model
+            // this launch cannot load. Pi gives the same error for a typo or a
+            // removed model, so the hint names extensions as a likely cause.
+            Effect.mapError((error) =>
+              error._tag === "PiRpcError" && error.operation === "set_model"
+                ? new TextGenerationError({
+                    operation,
+                    detail:
+                      `Pi rejected model '${modelSelection.model}': ${error.detail ?? "unknown error"}. ` +
+                      "If the model comes from a Pi extension or package, text generation cannot use it: it runs Pi with --no-extensions. " +
+                      "Pick a built-in Pi model or one from ~/.pi/agent/models.json.",
+                    cause: error,
+                  })
+                : error,
+            ),
+          );
       }
 
       yield* connection.request({ type: "prompt", message: prompt });
