@@ -10,6 +10,7 @@ import type {
 import { HammerIcon, MessageSquareIcon, Trash2Icon } from "lucide-react";
 import { Circle, CircleCheck } from "lucide";
 import { useRef, useState } from "react";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { cn } from "~/lib/utils";
@@ -177,42 +178,39 @@ export function ReviewThreadCard({
     const trimmed = reply.trim();
     if (trimmed.length === 0 || pending || sendingRef.current) return;
     sendingRef.current = true;
-    try {
-      if (await onReply(trimmed)) {
-        // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
-        // the new reply remains reachable without spending requests until they ask to load it.
-        setLoadedPage((previous) =>
-          previous?.threadId === thread.id
-            ? {
-                ...previous,
-                nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
-              }
-            : previous,
-        );
-        setReply("");
-        setReplying(false);
-      }
-    } finally {
-      sendingRef.current = false;
-    }
+    const result = await settlePromise(() => onReply(trimmed));
+    sendingRef.current = false;
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    if (!result.value) return;
+    // The mutation returns no comment. Keep what the reader loaded and reopen its cursor so
+    // the new reply remains reachable without spending requests until they ask to load it.
+    setLoadedPage((previous) =>
+      previous?.threadId === thread.id
+        ? {
+            ...previous,
+            nextCursor: previous.nextCursor ?? thread.nextCommentsCursor ?? null,
+          }
+        : previous,
+    );
+    setReply("");
+    setReplying(false);
   };
   const loadMore = async () => {
     if (nextCommentsCursor === null || loadingMore) return;
     setLoadingMore(true);
-    try {
-      const page = await onLoadMore(nextCommentsCursor);
-      if (page === null) return;
-      setLoadedPage((previous) => ({
-        threadId: thread.id,
-        comments: mergePullRequestThreadComments(
-          previous?.threadId === thread.id ? previous.comments : [],
-          page.comments,
-        ),
-        nextCursor: page.nextCursor,
-      }));
-    } finally {
-      setLoadingMore(false);
-    }
+    const result = await settlePromise(() => onLoadMore(nextCommentsCursor));
+    setLoadingMore(false);
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    const page = result.value;
+    if (page === null) return;
+    setLoadedPage((previous) => ({
+      threadId: thread.id,
+      comments: mergePullRequestThreadComments(
+        previous?.threadId === thread.id ? previous.comments : [],
+        page.comments,
+      ),
+      nextCursor: page.nextCursor,
+    }));
   };
 
   return (
@@ -332,12 +330,14 @@ export function ReviewThreadCard({
                   placeholder="Reply"
                   aria-label="Reply to this conversation"
                   onChange={(event) => setReply(event.target.value)}
-                  onKeyDown={submitKeys({
-                    value: reply,
-                    pending,
-                    onSubmit: () => void send(),
-                    onCancel: () => setReplying(false),
-                  })}
+                  onKeyDown={(event) =>
+                    submitKeys({
+                      value: reply,
+                      pending,
+                      onSubmit: () => void send(),
+                      onCancel: () => setReplying(false),
+                    })(event)
+                  }
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
