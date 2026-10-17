@@ -1815,18 +1815,27 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ).join("\n"),
     [props.workspaceRoot, visibleTurnItems],
   );
-  // Verified hrefs live with the index they were checked against. A chip's menu
+  const threadFilePathIndex = useMemo(
+    () => buildThreadFilePathIndex(threadFilePathsKey === "" ? [] : threadFilePathsKey.split("\n")),
+    [threadFilePathsKey],
+  );
+  // Verified hrefs hold only for the thread, root and index they were checked
+  // against; the root can change while the index stays the same. A chip's menu
   // remembers the href it showed, so its actions use the file it named.
-  const { threadFilePathIndex, boundFileHrefs, pendingFileHrefs, menuFileHrefs } = useMemo(
+  const fileBindingScope = JSON.stringify([
+    props.environmentId,
+    props.threadId,
+    props.workspaceRoot ?? null,
+    threadFilePathsKey,
+  ]);
+  const { boundFileHrefs, pendingFileHrefs, menuFileHrefs } = useMemo(
     () => ({
-      threadFilePathIndex: buildThreadFilePathIndex(
-        threadFilePathsKey === "" ? [] : threadFilePathsKey.split("\n"),
-      ),
+      scope: fileBindingScope,
       boundFileHrefs: new Map<string, string>(),
       pendingFileHrefs: new Map<string, Promise<string>>(),
       menuFileHrefs: new Map<string, string>(),
     }),
-    [threadFilePathsKey],
+    [fileBindingScope],
   );
   const readFileMetadata = useAtomQueryRunner(projectEnvironment.fileMetadata, {
     reportFailure: false,
