@@ -95,39 +95,6 @@ function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
-// The picker's list keys on these arrays, so they stay cached across the
-// queries and transitions the selector calls after computing them.
-function useBranchPickerItems({
-  refs,
-  createBranchItemValue,
-  checkoutPullRequestItemValue,
-  normalizedQuery,
-}: {
-  refs: ReadonlyArray<VcsRef>;
-  createBranchItemValue: string | null;
-  checkoutPullRequestItemValue: string | null;
-  normalizedQuery: string;
-}) {
-  "use memo";
-  const branchPickerItems = [
-    ...(checkoutPullRequestItemValue ? [checkoutPullRequestItemValue] : []),
-    ...refs.map((refName) => refName.name),
-    ...(createBranchItemValue ? [createBranchItemValue] : []),
-  ];
-  const filteredBranchPickerItems =
-    normalizedQuery.length === 0
-      ? branchPickerItems
-      : branchPickerItems.filter((itemValue) =>
-          shouldIncludeBranchPickerItem({
-            itemValue,
-            normalizedQuery,
-            createBranchItemValue,
-            checkoutPullRequestItemValue,
-          }),
-        );
-  return { branchPickerItems, filteredBranchPickerItems };
-}
-
 export function BranchToolbarBranchSelector({
   forceNewWorktree = false,
   ref,
@@ -256,35 +223,18 @@ export function BranchToolbarBranchSelector({
           input: { cwd: branchCwd },
         }),
   );
-  const trimmedBranchQuery = branchQuery.trim();
-  const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
-  // The server filters refs by substring, so it has to be given the sanitized
-  // name as well: querying the raw "new branch" drops an existing new-branch
-  // from the response entirely, which would defeat the collision check below.
-  // Ref names cannot contain an ASCII space, so sanitizing loses no matches.
-  const branchRefQuery = sanitizeNewRefName(deferredTrimmedBranchQuery);
   const branchRefState = usePaginatedBranches({
     environmentId,
     cwd: branchCwd,
-    query: branchRefQuery,
+    // The server filters refs by substring, so it has to be given the sanitized
+    // name as well: querying the raw "new branch" drops an existing new-branch
+    // from the response entirely, which would defeat the collision check below.
+    // Ref names cannot contain an ASCII space, so sanitizing loses no matches.
+    query: sanitizeNewRefName(deferredBranchQuery.trim()),
   });
+  const trimmedBranchQuery = branchQuery.trim();
+  const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const refs = branchRefState.refs;
-  const hasNextPage =
-    branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
-  const isFetchingNextPage = branchRefState.isFetchingNextPage;
-  const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
-  const currentGitBranch =
-    branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
-  const sourceControlPresentation = getSourceControlPresentation(
-    branchStatusQuery.data?.sourceControlProvider,
-  );
-  const SourceControlIcon = sourceControlPresentation.Icon;
-  const canonicalActiveBranch = resolveBranchToolbarValue({
-    envMode: effectiveEnvMode,
-    activeWorktreePath,
-    activeThreadBranch,
-    currentGitBranch,
-  });
   const branchByName = new Map(refs.map((refName) => [refName.name, refName] as const));
   const normalizedDeferredBranchQuery = deferredTrimmedBranchQuery.toLowerCase();
   const prReference = parsePullRequestReference(trimmedBranchQuery);
@@ -301,11 +251,39 @@ export function BranchToolbarBranchSelector({
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
-  const { branchPickerItems, filteredBranchPickerItems } = useBranchPickerItems({
-    refs,
-    createBranchItemValue: hasExactBranchMatch ? null : createBranchItemValue,
-    checkoutPullRequestItemValue,
-    normalizedQuery: normalizedDeferredBranchQuery,
+  const defaultBranchName = refs.find((refName) => refName.isDefault)?.name ?? null;
+  const pickerCreateBranchItemValue = hasExactBranchMatch ? null : createBranchItemValue;
+  const branchPickerItems = [
+    ...(checkoutPullRequestItemValue ? [checkoutPullRequestItemValue] : []),
+    ...refs.map((refName) => refName.name),
+    ...(pickerCreateBranchItemValue ? [pickerCreateBranchItemValue] : []),
+  ];
+  const filteredBranchPickerItems =
+    normalizedDeferredBranchQuery.length === 0
+      ? branchPickerItems
+      : branchPickerItems.filter((itemValue) =>
+          shouldIncludeBranchPickerItem({
+            itemValue,
+            normalizedQuery: normalizedDeferredBranchQuery,
+            createBranchItemValue: pickerCreateBranchItemValue,
+            checkoutPullRequestItemValue,
+          }),
+        );
+  const hasNextPage =
+    branchRefState.data?.nextCursor !== null && branchRefState.data?.nextCursor !== undefined;
+  const isFetchingNextPage = branchRefState.isFetchingNextPage;
+  const isInitialBranchesLoadPending = branchRefState.isPending && branchRefState.data === null;
+  const currentGitBranch =
+    branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
+  const sourceControlPresentation = getSourceControlPresentation(
+    branchStatusQuery.data?.sourceControlProvider,
+  );
+  const SourceControlIcon = sourceControlPresentation.Icon;
+  const canonicalActiveBranch = resolveBranchToolbarValue({
+    envMode: effectiveEnvMode,
+    activeWorktreePath,
+    activeThreadBranch,
+    currentGitBranch,
   });
   const [resolvedActiveBranch, setOptimisticBranch] = useOptimistic(
     canonicalActiveBranch,
@@ -499,7 +477,6 @@ export function BranchToolbarBranchSelector({
     });
   };
 
-  const defaultBranchName = refs.find((refName) => refName.isDefault)?.name ?? null;
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
     ? null
     : (defaultBranchName ?? currentGitBranch);
