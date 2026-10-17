@@ -25,6 +25,19 @@ import { KnownWorkflowRuns } from "./gitHubConditionalChecks.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
+// GitHub's field-level reviewer refusal; the surrounding response data is synthetic.
+const refusedReviewer = {
+  type: "FORBIDDEN",
+  message: "Resource not accessible by integration",
+  path: ["repository", "pullRequest", "reviewRequests", "nodes", 0, "requestedReviewer"],
+};
+const pullRequestInput = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+type PullRequestRead = (
+  input: typeof pullRequestInput,
+) => Effect.Effect<unknown, GitHubPullRequestApi.GitHubPullRequestApiError>;
+const refusedReviewerResponse = () =>
+  Effect.succeed(output(encodeJson({ ...coreResponse(), errors: [refusedReviewer] })));
+
 const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
   data: {
     repository: {
@@ -336,6 +349,7 @@ function thread(id: string, ...commentIds: ReadonlyArray<string>) {
 function reviewThreadsPage(
   nodes: ReadonlyArray<Record<string, unknown>>,
   endCursor: string | null,
+  requestedReviewers: ReadonlyArray<Record<string, unknown>> = [],
 ): string {
   return encodeJson({
     data: {
@@ -353,7 +367,9 @@ function reviewThreadsPage(
           reactionGroups: [],
           comments: { nodes: [] },
           reviews: { nodes: [] },
-          reviewRequests: { nodes: [] },
+          reviewRequests: {
+            nodes: requestedReviewers.map((requestedReviewer) => ({ requestedReviewer })),
+          },
           latestReviews: { nodes: [] },
           reviewDismissals: { pageInfo: lastPage, nodes: [] },
           commits: { nodes: [] },
@@ -4057,6 +4073,181 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("reads the detail again when GitHub refuses a requested reviewer", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const result = yield* Effect.result(cli.getPullRequestDetail(pullRequestInput));
+      assert.isTrue(Result.isSuccess(result));
+      if (Result.isFailure(result)) return;
+      const detail = result.success;
+      expect(detail.number).toBe(7);
+      expect(detail.reviewRequestLogins).toEqual([]);
+      expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([100, 0]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "check path",
+      errors: [
+        {
+          ...refusedReviewer,
+          path: ["repository", "pullRequest", "commits", "nodes", 0, "requestedReviewer"],
+        },
+      ],
+    },
+    { name: "mixed errors", errors: [refusedReviewer, { message: "other", type: "NOT_FOUND" }] },
+    { name: "untyped error", errors: [refusedReviewer, { message: "untyped" }] },
+    {
+      name: "wrong type",
+      errors: [{ ...refusedReviewer, type: "NOT_FOUND" }],
+      tag: "GitHubApiNotFoundError",
+    },
+    {
+      name: "string index",
+      errors: [
+        {
+          ...refusedReviewer,
+          path: ["repository", "pullRequest", "reviewRequests", "nodes", "0", "requestedReviewer"],
+        },
+      ],
+    },
+    {
+      name: "negative index",
+      errors: [
+        {
+          ...refusedReviewer,
+          path: ["repository", "pullRequest", "reviewRequests", "nodes", -1, "requestedReviewer"],
+        },
+      ],
+    },
+    { name: "suffix", errors: [{ ...refusedReviewer, path: [...refusedReviewer.path, "login"] }] },
+    { name: "HTTP 403", errors: [refusedReviewer], status: 403 },
+    {
+      name: "authentication",
+      errors: [refusedReviewer],
+      status: 401,
+      tag: "GitHubApiAuthenticationError",
+    },
+    { name: "rate limit", errors: [refusedReviewer], status: 429, tag: "GitHubApiRateLimitError" },
+    {
+      name: "GraphQL rate limit",
+      errors: [refusedReviewer, { message: "API rate limit exceeded", type: "RATE_LIMITED" }],
+      tag: "GitHubApiRateLimitError",
+    },
+  ])("does not retry a reviewer refusal with $name", ({ name, errors, status = 200, tag }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson(status === 401 ? { message: "Bad credentials" } : { data: null, errors }),
+            false,
+            false,
+            {},
+            status,
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const reads: ReadonlyArray<PullRequestRead> = [
+        cli.getPullRequestDetail,
+        cli.listReviewThreadComments,
+      ];
+      for (const [index, read] of reads.entries()) {
+        const error = yield* read({
+          ...pullRequestInput,
+          host: `github-${name.replaceAll(" ", "-")}-${index}.test`,
+        }).pipe(Effect.asVoid, Effect.flip);
+        expect(error._tag).toBe(tag ?? "GitHubApiResponseError");
+        if (error._tag === "GitHubApiResponseError")
+          expect(error).toMatchObject({ status, githubErrors: errors.map((e) => e.message) });
+        expect(mockedExecute).toHaveBeenCalledTimes(index + 1);
+      }
+    }),
+  );
+
+  it.effect.each(["detail", "threads"] as const)("fails a refused retry of %s", (kind) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(refusedReviewerResponse());
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const read: PullRequestRead =
+        kind === "detail" ? cli.getPullRequestDetail : cli.listReviewThreadComments;
+      const error = yield* read(pullRequestInput).pipe(Effect.asVoid, Effect.flip);
+      expect(error._tag).toBe("GitHubApiResponseError");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(varsAt(1)["requestedReviewers"]).toBe(0);
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "keeps thread cursors and reviewers after a refusal (later page: %s)",
+    (later) =>
+      Effect.gen(function* () {
+        if (later)
+          mockedExecute.mockReturnValueOnce(
+            Effect.succeed(
+              output(
+                reviewThreadsPage([thread("T1", "c1")], "next", [
+                  {
+                    __typename: "User",
+                    login: "prior",
+                    name: null,
+                    avatarUrl: "https://avatars/prior",
+                  },
+                ]),
+              ),
+            ),
+          );
+        mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(reviewThreadsPage([thread("T2", "c2")], "last"))),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const result = yield* Effect.result(cli.listReviewThreadComments(pullRequestInput));
+        assert.isTrue(Result.isSuccess(result));
+        if (Result.isFailure(result)) return;
+        expect(
+          variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
+        ).toEqual(
+          later
+            ? [
+                [null, 50],
+                ["next", 50],
+                ["next", 0],
+                ["last", 0],
+              ]
+            : [
+                [null, 50],
+                [null, 0],
+                ["last", 0],
+              ],
+        );
+        expect(result.success.comments.map((c) => c.id)).toEqual(
+          later ? ["c1", "c2", "c3"] : ["c2", "c3"],
+        );
+        expect(result.success.reviewers.map((r) => r.login)).toEqual(later ? ["prior"] : []);
+      }),
+  );
+
+  it.effect("retries review threads once per read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], "next"))));
+      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect((yield* Effect.flip(cli.listReviewThreadComments(pullRequestInput)))._tag).toBe(
+        "GitHubApiResponseError",
+      );
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(varsAt(2)).toMatchObject({ after: "next", requestedReviewers: 0 });
+    }),
+  );
+
   it.effect("decodes reviewers, labels and workflow checks without another detail read", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -4136,8 +4327,9 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads every check when the combined response has another page", () =>
+  it.effect("reads every check after retrying without requested reviewers", () =>
     Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
@@ -4182,24 +4374,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const detail = yield* cli.getPullRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-      });
+      const result = yield* Effect.result(cli.getPullRequestDetail(pullRequestInput));
+      assert.isTrue(Result.isSuccess(result));
+      if (Result.isFailure(result)) return;
+      const detail = result.success;
       expect(detail.checks).toHaveLength(2);
       expect(detail.checksState).toBe("failing");
       expect(detail.checksTruncated).toBe(false);
       // The whole rollup is walked from its start, so no check is counted twice or skipped.
-      expect(varsAt(1)).toMatchObject({ number: 7 });
-      expect(varsAt(1)).not.toHaveProperty("after");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(varsAt(2)).toMatchObject({ number: 7 });
+      expect(varsAt(2)).not.toHaveProperty("after");
+      assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
   );
 
-  it.effect("refuses to combine checks from different head revisions", () =>
+  it.effect("refuses to combine checks from different head revisions after a reviewer retry", () =>
     Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
       const response = coreResponse({
         commits: {
           nodes: [
@@ -4218,17 +4409,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              ...response.data.repository.pullRequest,
-              headRefOid: "new-head",
-              reviewRequests: [],
-              labels: [],
-              statusCheckRollup: [],
-            }),
-          ),
-        ),
+        Effect.succeed(output(checkContextsPage([], null, "new-head"))),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const error = yield* Effect.flip(

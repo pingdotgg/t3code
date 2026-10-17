@@ -51,6 +51,7 @@ query PullRequestCore(
   $number: Int!
   $headRef: String!
   $required: Boolean!
+  $requestedReviewers: Int!
 ) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed
@@ -108,7 +109,7 @@ query PullRequestCore(
           behindBy
         }
       }
-      reviewRequests(first: 100) {
+      reviewRequests(first: $requestedReviewers) {
         nodes {
           requestedReviewer {
             ... on User {

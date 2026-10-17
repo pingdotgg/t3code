@@ -317,6 +317,25 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
+// Only optional reviewer metadata may be omitted. Refused checks must still fail the read.
+const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
+  isGraphQlClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.status === 200 &&
+  error.reason.errors.every(
+    ({ path, ...error }) =>
+      error["type"] === "FORBIDDEN" &&
+      path?.length === 6 &&
+      path[0] === "repository" &&
+      path[1] === "pullRequest" &&
+      path[2] === "reviewRequests" &&
+      path[3] === "nodes" &&
+      typeof path[4] === "number" &&
+      Number.isInteger(path[4]) &&
+      path[4] >= 0 &&
+      path[5] === "requestedReviewer",
+  );
+
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT = Duration.seconds(60);
@@ -1354,8 +1373,19 @@ export const make = Effect.gen(function* () {
             number: input.number,
             headRef: `refs/pull/${input.number}/head`,
             required: asksRequired(input.host),
+            requestedReviewers: 100,
           })
           .pipe(
+            Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
+              client.PullRequestCore({
+                owner,
+                name,
+                number: input.number,
+                headRef: `refs/pull/${input.number}/head`,
+                required: asksRequired(input.host),
+                requestedReviewers: 0,
+              }),
+            ),
             graphql({ ...input, operation, allowReserve }),
             Effect.map(toPullRequestCore),
             Effect.flatMap(found({ ...input, operation })),
@@ -2061,12 +2091,25 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { owner, name } = parseRepositorySelector(input.repository);
         const target = { ...input, operation: "listReviewThreadComments" };
+        let requestedReviewers = 50;
         const threadPage = (
           after: string | null,
-        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> =>
-          client
-            .ReviewThreads({ owner, name, number: input.number, after })
-            .pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
+        ): Effect.Effect<GitHubReviewThreadPage, GitHubPullRequestApiError> => {
+          const read = () =>
+            client.ReviewThreads({ owner, name, number: input.number, after, requestedReviewers });
+          return read().pipe(
+            Effect.catchIf(
+              (error) => requestedReviewers > 0 && isRefusedRequestedReviewersOnly(error),
+              () => {
+                requestedReviewers = 0;
+                return read();
+              },
+            ),
+            graphql(target),
+            Effect.map(toReviewThreadPage),
+            Effect.flatMap(found(target)),
+          );
+        };
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
         const botLogins = new Set<string>();
