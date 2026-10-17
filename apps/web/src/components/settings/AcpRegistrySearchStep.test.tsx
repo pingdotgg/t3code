@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { isValidElement, type ReactElement } from "react";
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -118,9 +118,23 @@ function findByAriaLabel(
   tree: ReactElement<Record<string, unknown>>,
   label: string,
 ): ReactElement<Record<string, unknown>> {
-  const found = visitElements(tree, (element) => element.props["aria-label"] === label);
+  const found = visitElements(expandRows(tree), (element) => element.props["aria-label"] === label);
   expect(found).not.toBeNull();
   return found!;
+}
+
+// The harness calls components as plain functions, so result rows stay
+// unexpanded elements until rendered here.
+function expandRows(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(expandRows);
+  if (!isValidElement<Record<string, unknown>>(node)) return node;
+  if (typeof node.type === "function" && node.type.name === "AcpRegistryAgentRow") {
+    return expandRows((node.type as (props: unknown) => unknown)(node.props));
+  }
+  const props = Object.fromEntries(
+    Object.entries(node.props).map(([key, value]) => [key, expandRows(value)]),
+  );
+  return { ...node, props };
 }
 
 describe("AcpRegistrySearchStep", () => {
