@@ -19,6 +19,10 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { expandedImageKey } from "./ExpandedImagePreview";
 
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
@@ -282,3 +286,47 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     </Dialog>
   );
 });
+
+/**
+ * The chat view's open media preview. It lives outside ChatView so opening or
+ * closing it renders only the dialog host, not the whole chat chrome.
+ */
+const expandedImagePreviewAtom = Atom.make<{
+  readonly threadKey: string;
+  readonly preview: ExpandedImagePreview;
+} | null>(null).pipe(Atom.keepAlive, Atom.withLabel("chat:expanded-image-preview"));
+
+export function openExpandedImagePreview(threadKey: string, preview: ExpandedImagePreview): void {
+  appAtomRegistry.set(expandedImagePreviewAtom, { threadKey, preview });
+}
+
+function closeExpandedImagePreview(): void {
+  appAtomRegistry.set(expandedImagePreviewAtom, null);
+}
+
+function closeExpandedImagePreviewFor(threadKey: string): void {
+  if (appAtomRegistry.get(expandedImagePreviewAtom)?.threadKey === threadKey) {
+    closeExpandedImagePreview();
+  }
+}
+
+export function ExpandedImageDialogHost({ threadKey }: { readonly threadKey: string }) {
+  const state = useAtomValue(expandedImagePreviewAtom);
+  const preview = state?.threadKey === threadKey ? state.preview : null;
+  const item = preview?.images[preview.index];
+  const ownedSrc = item?.ownsSrc === true ? item.src : null;
+  useEffect(() => {
+    if (ownedSrc === null) return;
+    return () => URL.revokeObjectURL(ownedSrc);
+  }, [ownedSrc]);
+  // Leaving the thread (or the chat view) drops its preview.
+  useEffect(() => () => closeExpandedImagePreviewFor(threadKey), [threadKey]);
+  if (preview === null) return null;
+  return (
+    <ExpandedImageDialog
+      key={expandedImageKey(preview)}
+      preview={preview}
+      onClose={closeExpandedImagePreview}
+    />
+  );
+}

@@ -23,6 +23,8 @@ export interface ExpandedImageItem {
   src: string | null;
   name: string;
   type?: "video";
+  /** The preview created this object URL and must revoke it; other blob URLs belong to the timeline. */
+  ownsSrc?: boolean;
   source?: SnapShotSource;
   autoPlay?: boolean;
   originalUrl?: string;
@@ -167,7 +169,14 @@ export function buildExpandedImagePreview(
   const selected = images.find((image) => image.id === selectedImageId);
   if (selected?.type === "file" && selected.file && isVideoAttachment(selected)) {
     return {
-      images: [{ src: URL.createObjectURL(selected.file), name: selected.name, type: "video" }],
+      images: [
+        {
+          src: URL.createObjectURL(selected.file),
+          name: selected.name,
+          type: "video",
+          ownsSrc: true,
+        },
+      ],
       index: 0,
     };
   }
