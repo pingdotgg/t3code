@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -85,6 +86,7 @@ export function resolveOpenCodeServerPassword(
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_STARTUP_MAX_OUTPUT_CHARS = 64 * 1024;
+const OPENCODE_SERVER_EXIT_DRAIN_TIMEOUT = "500 millis";
 const OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export interface OpenCodeServerProcess {
   readonly url: string;
@@ -107,7 +109,16 @@ export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERRO
   readonly operation: string;
   readonly cause?: unknown;
   readonly detail: string;
+  readonly reason?: OpenCodeStartupFailureReason;
 }> {}
+
+export type OpenCodeStartupFailureReason = "databaseLocked";
+
+// OpenCode reports a held opencode.db lock on stderr. Classify it once where the
+// exit is captured so callers branch on the category, not on diagnostic text.
+function classifyStartupExit(stderr: string): OpenCodeStartupFailureReason | undefined {
+  return /SQLITE_BUSY|database is locked/i.test(stderr) ? "databaseLocked" : undefined;
+}
 
 export const isOpenCodeRuntimeError = (u: unknown): u is OpenCodeRuntimeError =>
   P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
@@ -657,9 +668,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       throwOnError: true,
     });
 
-  const startOpenCodeServerProcess: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (
-    input,
-  ) =>
+  const startServerAttempt: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (input) =>
     Effect.gen(function* () {
       const runtimeScope = yield* Scope.Scope;
 
@@ -782,13 +791,22 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const exitFiber = yield* child.exitCode.pipe(
         Effect.flatMap((code) =>
           Effect.gen(function* () {
+            // Allow trailing diagnostics to drain, but descendants can keep pipes open.
+            const drained = yield* Fiber.joinAll([stdoutFiber, stderrFiber]).pipe(
+              Effect.timeoutOption(OPENCODE_SERVER_EXIT_DRAIN_TIMEOUT),
+            );
+            if (Option.isNone(drained)) {
+              yield* Fiber.interruptAll([stdoutFiber, stderrFiber]);
+            }
             const stdout = (yield* Ref.get(stdoutRef)) ?? "";
             const stderr = (yield* Ref.get(stderrRef)) ?? "";
             const exitCode = Number(code);
+            const reason = classifyStartupExit(stderr);
             yield* Deferred.fail(
               readyDeferred,
               new OpenCodeRuntimeError({
                 operation: "startOpenCodeServerProcess",
+                ...(reason ? { reason } : {}),
                 detail: [
                   `OpenCode server exited before startup completed (code: ${String(exitCode)}).`,
                   stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
@@ -858,6 +876,31 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           Effect.orElseSucceed(() => 0),
         ),
       } satisfies OpenCodeServerProcess;
+    });
+
+  const startOpenCodeServerProcess: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const ownerScope = yield* Scope.Scope;
+      const attempt = Effect.gen(function* () {
+        const attemptScope = yield* Scope.fork(ownerScope);
+        return yield* startServerAttempt(input).pipe(
+          Effect.provideService(Scope.Scope, attemptScope),
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit) ? Scope.close(attemptScope, exit) : Effect.void,
+          ),
+        );
+      });
+      // OpenCode instances share opencode.db. Migration/WAL locks are transient;
+      // configuration and executable errors are not helped by launching again.
+      return yield* attempt.pipe(
+        Effect.retry({
+          times: 3,
+          schedule: Schedule.spaced("250 millis"),
+          while: (error) => error.reason === "databaseLocked",
+        }),
+      );
     });
 
   const connectToOpenCodeServer: OpenCodeRuntime["Service"]["connectToOpenCodeServer"] = (
