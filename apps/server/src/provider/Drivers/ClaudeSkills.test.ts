@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
+import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -64,6 +65,65 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           description: "Deploy the app.",
         },
       ]);
+    }),
+  );
+
+  it.effect("discovers skills from the instance's --add-dir launch args", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(tempDir, "claude-home");
+      const workspace = path.join(tempDir, "workspace");
+      const extraDir = path.join(workspace, "extra skills");
+      yield* fs.makeDirectory(workspace, { recursive: true });
+      yield* writeSkill(
+        path.join(extraDir, ".claude", "skills"),
+        "demo",
+        ["---", "description: From an additional directory.", "---"].join("\n"),
+      );
+
+      assert.deepEqual(yield* discoverClaudeSkills({ homePath: configDir }, workspace), []);
+      for (const launchArgs of [
+        `--add-dir "${extraDir}"`,
+        `--add-dir="${extraDir}"`,
+        '--add-dir "extra skills"',
+        '--add-dir="extra skills"',
+        `--add-dir missing --add-dir "${extraDir}"`,
+      ]) {
+        const settings = { homePath: configDir, launchArgs };
+        const skills = yield* discoverClaudeSkills(settings, workspace);
+        assert.deepEqual(skills, [
+          {
+            name: "demo",
+            path: path.join(extraDir, ".claude", "skills", "demo", "SKILL.md"),
+            enabled: true,
+            scope: "project",
+            description: "From an additional directory.",
+          },
+        ]);
+      }
+      const settings = { homePath: configDir, launchArgs: `--add-dir "${extraDir}"` };
+      const skills = yield* discoverClaudeSkills(settings, workspace);
+      assert.deepEqual(
+        planClaudeSkillDispatch("$demo", new Set(skills.map((skill) => skill.name))),
+        {
+          leadingText: undefined,
+          commandText: "/demo",
+          skillName: "demo",
+        },
+      );
+      yield* writeSkill(
+        path.join(workspace, ".claude", "skills"),
+        "demo",
+        "---\ndescription: Project copy.\n---",
+      );
+      const projectSkills = yield* discoverClaudeSkills(settings, workspace);
+      assert.equal(projectSkills[0]?.description, "Project copy.");
+      for (const launchArgs of ["--add-dir", '--add-dir=""', '--add-dir "extra skills"']) {
+        const settings = { homePath: configDir, launchArgs };
+        assert.deepEqual(yield* discoverClaudeSkills(settings), []);
+      }
     }),
   );
 
