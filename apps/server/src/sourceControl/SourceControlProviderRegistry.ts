@@ -74,13 +74,18 @@ function unsupportedProvider(
 ): SourceControlProvider.SourceControlProvider["Service"] {
   return SourceControlProvider.SourceControlProvider.of({
     kind,
+    // A remote on a host no provider recognizes (or no remote at all) has no change
+    // requests T3 could know about. Answering with none keeps the status poller from
+    // failing, and warning, on every refresh of such a repository.
     listChangeRequests: (input) =>
-      new SourceControlProviderError({
-        provider: kind,
-        operation: "listChangeRequests",
-        cwd: input.cwd,
-        detail: `No ${kind} source control provider is registered.`,
-      }),
+      kind === "unknown"
+        ? Effect.succeed([])
+        : new SourceControlProviderError({
+            provider: kind,
+            operation: "listChangeRequests",
+            cwd: input.cwd,
+            detail: `No ${kind} source control provider is registered.`,
+          }),
     getChangeRequest: (input) =>
       new SourceControlProviderError({
         provider: kind,
