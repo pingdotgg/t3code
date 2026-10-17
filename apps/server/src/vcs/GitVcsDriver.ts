@@ -201,11 +201,15 @@ export interface GitFetchPullRequestBranchInput {
   cwd: string;
   prNumber: number;
   branch: string;
+  /** The remote ref holding the head; `refs/pull/<prNumber>/head` when absent. */
+  headRef?: string | undefined;
 }
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
   prNumber: number;
+  /** The remote ref holding the head; `refs/pull/<prNumber>/head` when absent. */
+  headRef?: string | undefined;
 }
 
 export interface GitResolveCommitInput {

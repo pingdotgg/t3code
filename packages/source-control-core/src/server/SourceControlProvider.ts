@@ -121,6 +121,7 @@ export class SourceControlProvider extends Context.Service<
      * more than that (Forgejo's HTTP installation mount). Absent means the whole path.
      */
     readonly repositoryNameFromRemoteUrl?: (url: string) => string | null;
+    readonly changeRequestHeadRef?: (number: number) => string;
     readonly refineRepositoryIdentity?: (input: {
       readonly identity: RepositoryIdentity;
       readonly resolveContext: (input: {

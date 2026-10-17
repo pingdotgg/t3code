@@ -46,6 +46,8 @@ import {
 import * as ServerConfig from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const pullRequestHeadRef = (input: { prNumber: number; headRef?: string | undefined }) =>
+  input.headRef ?? `refs/pull/${input.prNumber}/head`;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
@@ -3562,7 +3564,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "--quiet",
           "--no-tags",
           remoteName,
-          `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
+          `+${pullRequestHeadRef(input)}:refs/heads/${input.branch}`,
         ],
         {
           fallbackErrorDetail: "git fetch pull request branch failed",
@@ -3590,7 +3592,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestHeadCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
+        ["fetch", "--quiet", "--no-tags", remoteName, pullRequestHeadRef(input)],
         {
           fallbackErrorDetail: "git fetch pull request head failed",
         },
