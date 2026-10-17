@@ -33,9 +33,11 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -3831,6 +3833,228 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
   }),
 );
 
+it.effect.each(["typed", "defect"] as const)(
+  "settles failed runs after transient %s terminal write failures",
+  (failureKind) =>
+    Effect.gen(function* () {
+      const failedAt = yield* DateTime.now;
+      const failedWrite = yield* Deferred.make<void>();
+      const writeAttempts = yield* Ref.make(0);
+      const { observed, attempts, written } = yield* captureRootRunTermination({
+        key: `failure-finalization-retry:${failureKind}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        ingestNormalized: () => Effect.die("ingestion failed"),
+        beforeTerminalWrite: () =>
+          Effect.gen(function* () {
+            const count = yield* Ref.updateAndGet(writeAttempts, (count) => count + 1);
+            if (count > 2) return true;
+            yield* Deferred.succeed(failedWrite, undefined);
+            const error = new EventSink.EventSinkWriteError({ eventCount: 5 });
+            return yield* failureKind === "typed" ? Effect.fail(error) : Effect.die(error);
+          }),
+        afterStart: (closed) =>
+          Effect.gen(function* () {
+            yield* Deferred.await(failedWrite);
+            yield* TestClock.adjust("1 second");
+            assert.isFalse(yield* Deferred.isDone(closed));
+            assert.equal(yield* Ref.get(writeAttempts), 2);
+            yield* TestClock.adjust("2 seconds");
+          }),
+      });
+      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      assert.deepEqual(attempts, ["failed"]);
+      assert.deepEqual(
+        written.map((item) => item.completedAt),
+        [failedAt],
+      );
+      assert.equal(yield* Ref.get(writeAttempts), 3);
+    }),
+);
+
+it.effect("throttles failure-finalization warnings without slowing recovery", () => {
+  const warnings: Array<unknown> = [];
+  const logger = Logger.make(({ message }) => {
+    const text = Array.isArray(message) ? message[0] : message;
+    if (text === "orchestration V2 run failure finalization retry") warnings.push(text);
+  });
+  return Effect.gen(function* () {
+    const failedWrite = yield* Deferred.make<void>();
+    const storageAvailable = yield* Ref.make(false);
+    const writeAttempts = yield* Ref.make(0);
+    const { observed } = yield* captureRootRunTermination({
+      key: "failure-finalization-warning-throttle",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      ingestNormalized: () => Effect.die("ingestion failed"),
+      beforeTerminalWrite: () =>
+        Effect.gen(function* () {
+          yield* Ref.update(writeAttempts, (count) => count + 1);
+          if (yield* Ref.get(storageAvailable)) return true;
+          yield* Deferred.succeed(failedWrite, undefined);
+          return yield* new EventSink.EventSinkWriteError({ eventCount: 5 });
+        }),
+      afterStart: () =>
+        Effect.gen(function* () {
+          yield* Deferred.await(failedWrite);
+          yield* TestClock.adjust("1 minute");
+          assert.isAbove(yield* Ref.get(writeAttempts), 2);
+          assert.lengthOf(warnings, 1);
+          yield* TestClock.adjust("10 minutes");
+          assert.lengthOf(warnings, 2);
+          yield* Ref.set(storageAvailable, true);
+          yield* TestClock.adjust("30 seconds");
+        }),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.lengthOf(warnings, 2);
+  }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+});
+
+it.effect("does not overwrite a superseding attempt when failure finalization retries", () =>
+  Effect.gen(function* () {
+    const failedWrite = yield* Deferred.make<void>();
+    const writeAttempts = yield* Ref.make(0);
+    const { observed, attempts, written } = yield* captureRootRunTermination({
+      key: "failure-finalization-superseded",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      ingestNormalized: () => Effect.die("ingestion failed"),
+      beforeTerminalWrite: () =>
+        Effect.gen(function* () {
+          const count = yield* Ref.updateAndGet(writeAttempts, (count) => count + 1);
+          if (count > 1) return false;
+          yield* Deferred.succeed(failedWrite, undefined);
+          return yield* new EventSink.EventSinkWriteError({ eventCount: 5 });
+        }),
+      afterStart: (closed) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(failedWrite);
+          yield* TestClock.adjust("1 second");
+          assert.equal(yield* Ref.get(writeAttempts), 2);
+          yield* Deferred.await(closed);
+          yield* TestClock.adjust("30 seconds");
+        }),
+    });
+    assert.deepEqual(observed, []);
+    assert.deepEqual(attempts, []);
+    assert.deepEqual(written, []);
+    assert.equal(yield* Ref.get(writeAttempts), 2);
+  }),
+);
+
+it.effect("does not overwrite a startup terminal when its consumer interrupts recovery", () =>
+  Effect.gen(function* () {
+    const failedWrite = yield* Deferred.make<void>();
+    const writeAttempts = yield* Ref.make(0);
+    const { observed, attempts } = yield* captureRootRunTermination({
+      key: "failure-finalization-start-rejected",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      ingestNormalized: () => Effect.die("ingestion failed"),
+      beforeTerminalWrite: () =>
+        Effect.gen(function* () {
+          const count = yield* Ref.updateAndGet(writeAttempts, (count) => count + 1);
+          if (count > 1) return count === 2;
+          yield* Deferred.succeed(failedWrite, undefined);
+          return yield* new EventSink.EventSinkWriteError({ eventCount: 5 });
+        }),
+      startTurn: (input) =>
+        Deferred.await(failedWrite).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.runId,
+                cause: "provider rejected the turn",
+              }),
+            ),
+          ),
+        ),
+      afterStart: (closed) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(closed);
+          // The service is still open here; only the consumer was interrupted.
+          yield* TestClock.adjust("30 seconds");
+          assert.equal(yield* Ref.get(writeAttempts), 3);
+        }),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.deepEqual(attempts, ["failed"]);
+  }),
+);
+
+it.effect("settles ingestion failure after startup finalization also fails", () =>
+  Effect.gen(function* () {
+    const failedWrite = yield* Deferred.make<void>();
+    const writeAttempts = yield* Ref.make(0);
+    const { observed, attempts } = yield* captureRootRunTermination({
+      key: "failure-finalization-start-write-failed",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      ingestNormalized: () => Effect.die("ingestion failed"),
+      beforeTerminalWrite: () =>
+        Effect.gen(function* () {
+          const count = yield* Ref.updateAndGet(writeAttempts, (count) => count + 1);
+          if (count > 2) return true;
+          yield* Deferred.succeed(failedWrite, undefined);
+          return yield* new EventSink.EventSinkWriteError({ eventCount: 5 });
+        }),
+      startTurn: (input) =>
+        Deferred.await(failedWrite).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver,
+                threadId: input.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.runId,
+                cause: "provider rejected the turn",
+              }),
+            ),
+          ),
+        ),
+      onStartFailure: (error) =>
+        Effect.sync(() => assert.instanceOf(error, RunExecutionService.RunExecutionStartError)),
+      afterStart: (closed) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(closed);
+          assert.equal(yield* Ref.get(writeAttempts), 2);
+          // Startup has failed and its consumer is gone, but the service is open.
+          yield* TestClock.adjust("1 second");
+          assert.equal(yield* Ref.get(writeAttempts), 3);
+        }),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.deepEqual(attempts, ["failed"]);
+  }),
+);
+
+it.effect("interrupts failure-finalization retries when the service scope closes", () =>
+  Effect.gen(function* () {
+    const failedWrite = yield* Deferred.make<void>();
+    const writeAttempts = yield* Ref.make(0);
+    const exit = yield* captureRootRunTermination({
+      key: "failure-finalization-shutdown",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      ingestNormalized: () => Effect.die("ingestion failed"),
+      beforeTerminalWrite: () =>
+        Ref.update(writeAttempts, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(failedWrite, undefined)),
+          Effect.andThen(Effect.fail(new EventSink.EventSinkWriteError({ eventCount: 5 }))),
+        ),
+      afterStart: (closed) =>
+        Effect.gen(function* () {
+          yield* Deferred.await(failedWrite);
+          yield* TestClock.adjust("1 second");
+          assert.isFalse(yield* Deferred.isDone(closed));
+          assert.equal(yield* Ref.get(writeAttempts), 2);
+          return yield* Effect.interrupt;
+        }),
+    }).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+    yield* TestClock.adjust("30 seconds");
+    assert.equal(yield* Ref.get(writeAttempts), 2);
+  }),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
@@ -3844,9 +4068,15 @@ function captureRootRunTermination(input: {
     ProviderAdapter.ProviderAdapterV2Error
   >;
   readonly startTurn?: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"];
+  readonly onStartFailure?: (
+    error: RunExecutionService.RunExecutionServiceV2Error,
+  ) => Effect.Effect<void>;
   readonly refreshAfterTurn?: Effect.Effect<void>;
   readonly shouldStartProviderTurn?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["shouldStartProviderTurn"];
   readonly appContext?: ReturnType<McpAppModelContext.McpAppModelContext["Service"]["forThread"]>;
+  readonly ingestNormalized?: ProviderEventIngestor.ProviderEventIngestorV2["Service"]["ingestNormalized"];
+  readonly beforeTerminalWrite?: () => Effect.Effect<boolean, EventSink.EventSinkV2Error>;
+  readonly afterStart?: (closed: Deferred.Deferred<void>) => Effect.Effect<void>;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
@@ -3861,6 +4091,7 @@ function captureRootRunTermination(input: {
     const writtenItems = yield* Ref.make<ReadonlyArray<OrchestrationV2TurnItem>>([]);
     const finalEvents = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
     const observed = yield* Ref.make<ReadonlyArray<string>>([]);
+    const attempts = yield* Ref.make<ReadonlyArray<OrchestrationV2RunAttempt["status"]>>([]);
     const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const ingestionDone = yield* Deferred.make<void>();
@@ -3875,6 +4106,9 @@ function captureRootRunTermination(input: {
           }
           if (event.type === "run.updated") {
             yield* Ref.update(observed, (current) => [...current, `run:${event.payload.status}`]);
+          }
+          if (event.type === "run-attempt.updated") {
+            yield* Ref.update(attempts, (current) => [...current, event.payload.status]);
           }
         }
       });
@@ -3906,7 +4140,10 @@ function captureRootRunTermination(input: {
               Effect.gen(function* () {
                 const effects = payload.effects ?? [];
                 yield* Ref.update(submittedEffects, (current) => [...current, ...effects]);
-                if (input.rejectTerminalWrite === true) {
+                if (
+                  input.rejectTerminalWrite === true ||
+                  (input.beforeTerminalWrite !== undefined && !(yield* input.beforeTerminalWrite()))
+                ) {
                   return { committed: false, storedEvents: [] };
                 }
                 yield* Ref.update(committedEffects, (current) => [...current, ...effects]);
@@ -3916,7 +4153,7 @@ function captureRootRunTermination(input: {
           }),
           IdAllocator.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: () => Effect.succeed([]),
+            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3932,7 +4169,7 @@ function captureRootRunTermination(input: {
 
     yield* Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-      yield* runExecution.startRootRun({
+      const start = runExecution.startRootRun({
         commandId: CommandId.make(`command:${input.key}`),
         appThread: { id: ids.threadId } as OrchestrationV2AppThread,
         providerSessionId: ProviderSessionId.make(`session:${input.key}`),
@@ -4021,13 +4258,18 @@ function captureRootRunTermination(input: {
           },
         },
       });
+      yield* start.pipe(
+        Effect.catch((error) => input.onStartFailure?.(error) ?? Effect.fail(error)),
+      );
+      yield* input.afterStart?.(ingestionDone) ?? Effect.void;
+      yield* Deferred.await(ingestionDone);
     }).pipe(Effect.provide(layerTest));
 
-    yield* Deferred.await(ingestionDone);
     return {
       written: yield* Ref.get(writtenItems),
       finalEvents: yield* Ref.get(finalEvents),
       observed: yield* Ref.get(observed),
+      attempts: yield* Ref.get(attempts),
       submittedEffects: yield* Ref.get(submittedEffects),
       committedEffects: yield* Ref.get(committedEffects),
     };
