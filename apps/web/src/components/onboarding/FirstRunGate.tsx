@@ -136,24 +136,20 @@ export function FirstRunGate({
         threadCount: threads.length,
       });
 
+  if (decision !== "wizard" && hydrated) {
+    const transitioned = transitionFirstRunGateState(gateState, {
+      type: "evidence",
+      decision: nextDecision,
+    });
+    if (transitioned !== gateState) setGateState(transitioned);
+  }
+
   useEffect(() => {
     if (decision === "wizard" || !hydrated) return;
-
     if (persistCompletion && onboardingCompletedAt === null) {
       void completeOnboarding().catch(() => undefined);
     }
-
-    setGateState((state) =>
-      transitionFirstRunGateState(state, { type: "evidence", decision: nextDecision }),
-    );
-  }, [
-    completeOnboarding,
-    decision,
-    hydrated,
-    nextDecision,
-    onboardingCompletedAt,
-    persistCompletion,
-  ]);
+  }, [completeOnboarding, decision, hydrated, onboardingCompletedAt, persistCompletion]);
 
   useEffect(() => {
     if (!enabled || decision !== "pending" || !hydrated) return;
