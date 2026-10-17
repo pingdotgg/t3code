@@ -381,6 +381,49 @@ function titleCaseCommandSegment(segment: string): string {
   return words.join(" ");
 }
 
+/**
+ * US shifted glyph and the unshifted name of that physical key. Consulted only
+ * while Shift is held, so an unshifted `{` on BracketLeft stays `{`.
+ */
+const US_SHIFTED_EVENT_CODE_KEYS: Readonly<Record<string, readonly [string, string]>> = {
+  Backquote: ["~", "`"],
+  Backslash: ["|", "\\"],
+  BracketLeft: ["{", "["],
+  BracketRight: ["}", "]"],
+  Comma: ["<", ","],
+  Digit0: [")", "0"],
+  Digit1: ["!", "1"],
+  Digit2: ["@", "2"],
+  Digit3: ["#", "3"],
+  Digit4: ["$", "4"],
+  Digit5: ["%", "5"],
+  Digit6: ["^", "6"],
+  Digit7: ["&", "7"],
+  Digit8: ["*", "8"],
+  Digit9: ["(", "9"],
+  Equal: ["+", "="],
+  Minus: ["_", "-"],
+  Period: [">", "."],
+  Quote: ['"', "'"],
+  Semicolon: [":", ";"],
+  Slash: ["?", "/"],
+};
+
+/**
+ * Key token the keybinding editor stores. A single typed character is kept
+ * (`#`, `'`, `ü`). Shift plus the US shifted glyph for that `code` stores the
+ * US name (`{` on BracketLeft is `[`), so a US layout still records `shift+[`.
+ */
+function recordedLayoutShortcutKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "shiftKey">,
+): string {
+  const layoutKey = event.key.toLowerCase();
+  const shifted = event.code ? US_SHIFTED_EVENT_CODE_KEYS[event.code] : undefined;
+  if (event.shiftKey && shifted && layoutKey === shifted[0]) return shifted[1];
+  if (layoutKey.length === 1) return layoutKey;
+  return shortcutKeyFromEvent(event);
+}
+
 function normalizeShortcutKeyToken(key: string): string | null {
   const normalized = key.toLowerCase();
   if (
@@ -411,11 +454,22 @@ function normalizeShortcutKeyToken(key: string): string | null {
   return null;
 }
 
+/**
+ * `layoutCharacter` stores the character the active layout typed. Without it,
+ * the key is the US name of the physical position, which global shortcut
+ * recording still uses.
+ */
 export function keybindingFromKeyboardEvent(
   event: Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
   platform: string,
+  options?: {
+    /** Store the typed character instead of the US name of `event.code`. */
+    readonly layoutCharacter?: boolean;
+  },
 ): string | null {
-  const keyToken = normalizeShortcutKeyToken(shortcutKeyFromEvent(event));
+  const keyToken = normalizeShortcutKeyToken(
+    options?.layoutCharacter ? recordedLayoutShortcutKey(event) : shortcutKeyFromEvent(event),
+  );
   if (!keyToken) return null;
 
   const parts: string[] = [];
