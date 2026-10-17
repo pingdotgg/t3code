@@ -2440,6 +2440,124 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("counts many untracked files exactly without mutating a split index", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "before.txt", "one\ntwo\nthree\nfour\nfive\n");
+        yield* writeTextFile(cwd, "removed.txt", "first\nsecond\nthird\n");
+        yield* writeTextFile(cwd, "tracked-dir/child.txt", "tree old\nsource\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "sources"]);
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(cwd, ["checkout", "-b", "feature/many-untracked"]);
+        yield* git(cwd, ["rm", "removed.txt"]);
+        yield* writeTextFile(cwd, "removed.txt", "recreated path stays deleted in review\n");
+        // The untracked literal path also prefix-matches a tracked descendant.
+        yield* fileSystem.remove(pathService.join(cwd, "tracked-dir"), { recursive: true });
+        yield* writeTextFile(cwd, "tracked-dir", "replacement\n");
+        yield* fileSystem.rename(
+          pathService.join(cwd, "before.txt"),
+          pathService.join(cwd, "after.txt"),
+        );
+        yield* writeTextFile(cwd, "after.txt", "one\ntwo\nTHREE\nfour\nfive\n");
+        yield* Effect.forEach(
+          Array.from({ length: 1_001 }, (_, index) => `bulk/${index}.txt`),
+          (file) => writeTextFile(cwd, file, "one\ntwo\n"),
+          { concurrency: 32, discard: true },
+        );
+        // Keep literal pathspecs and NUL-separated filenames in the large-file-count case.
+        const posix = (yield* HostProcess.Platform) !== "win32";
+        const unusualPaths = ["-leading.txt", "[literal].txt"];
+        if (posix) {
+          unusualPaths.push(":(exclude)literal.txt", "tabs\there.txt", "line\nbreak.txt");
+        }
+        for (const file of unusualPaths) yield* writeTextFile(cwd, file, "special\n");
+        yield* fileSystem.writeFile(pathService.join(cwd, "binary"), new Uint8Array([0, 1, 2]));
+        if (posix) {
+          yield* fileSystem.symlink("README.md", pathService.join(cwd, "untracked-link"));
+          yield* writeTextFile(cwd, "executable.sh", "echo untracked\n");
+          yield* fileSystem.chmod(pathService.join(cwd, "executable.sh"), 0o755);
+        }
+        yield* git(cwd, ["config", "core.splitIndex", "true"]);
+        yield* git(cwd, ["config", "splitIndex.sharedIndexExpire", "now"]);
+        yield* git(cwd, ["update-index", "--split-index"]);
+        const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
+        const indexBefore = yield* git(cwd, ["hash-object", indexPath]);
+        const sharedIndexes = (yield* fileSystem.readDirectory(pathService.join(cwd, ".git")))
+          .filter((entry) => entry.startsWith("sharedindex."))
+          .sort();
+        const sharedBefore = yield* Effect.forEach(sharedIndexes, (entry) =>
+          git(cwd, ["hash-object", `.git/${entry}`]),
+        );
+
+        const expected = {
+          baseRef: "main",
+          insertions: 2_004 + unusualPaths.length + (posix ? 2 : 0),
+          deletions: 6,
+        };
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, expected);
+        assert.include(
+          status.workingTree.files.map((file) => file.path),
+          "bulk/",
+        );
+        const review = yield* driver.getReviewDiffPreview({ cwd });
+        const files =
+          review.sources.find((candidate) => candidate.kind === "working-tree")?.files ?? [];
+        assert.deepStrictEqual(
+          files.find((file) => file.path === "after.txt"),
+          {
+            path: "after.txt",
+            previousPath: "before.txt",
+            additions: 1,
+            deletions: 1,
+          },
+        );
+        assert.deepStrictEqual(
+          files.find((file) => file.path === "removed.txt"),
+          {
+            path: "removed.txt",
+            previousPath: null,
+            additions: 0,
+            deletions: 3,
+          },
+        );
+        assert.deepStrictEqual(
+          files.find((file) => file.path === "binary"),
+          {
+            path: "binary",
+            previousPath: null,
+            additions: 0,
+            deletions: 0,
+          },
+        );
+        // A second external edit changes totals even though the status path list is identical.
+        yield* writeTextFile(cwd, "bulk/0.txt", "one\ntwo\nthree\n");
+        const updated = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(updated.branchChanges, {
+          ...expected,
+          insertions: expected.insertions + 1,
+        });
+        assert.strictEqual(yield* git(cwd, ["hash-object", indexPath]), indexBefore);
+        assert.deepStrictEqual(
+          (yield* fileSystem.readDirectory(pathService.join(cwd, ".git")))
+            .filter((entry) => entry.startsWith("sharedindex."))
+            .sort(),
+          sharedIndexes,
+        );
+        assert.deepStrictEqual(
+          yield* Effect.forEach(sharedIndexes, (entry) =>
+            git(cwd, ["hash-object", `.git/${entry}`]),
+          ),
+          sharedBefore,
+        );
+      }),
+    );
+
     it.effect("reports non-repository directories without failing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
