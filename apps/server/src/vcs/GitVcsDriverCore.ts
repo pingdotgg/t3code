@@ -92,7 +92,7 @@ const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
 const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
-const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
+export const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
   GIT_TERMINAL_PROMPT: "0",
@@ -100,7 +100,7 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
-const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
+export const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
   isRepo: false,
   hasOriginRemote: false,
@@ -209,7 +209,7 @@ function parseNumstatEntries(
   return entries;
 }
 
-function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
+export function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   const fields = stdout.split("\0");
   const files: ReviewDiffFileStat[] = [];
   for (let index = 0; index < fields.length; index++) {
@@ -250,7 +250,7 @@ function parsePorcelainPath(line: string): string | null {
   return filePath.length > 0 ? filePath : null;
 }
 
-function filterBranchesForListQuery(
+export function filterBranchesForListQuery(
   refs: ReadonlyArray<VcsRef>,
   query?: string,
 ): ReadonlyArray<VcsRef> {
@@ -262,7 +262,7 @@ function filterBranchesForListQuery(
   return refs.filter((refName) => refName.name.toLowerCase().includes(normalizedQuery));
 }
 
-function paginateBranches(input: {
+export function paginateBranches(input: {
   refs: ReadonlyArray<VcsRef>;
   cursor?: number | undefined;
   limit?: number | undefined;
@@ -487,7 +487,7 @@ const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
 const SSH_TRANSPORT_REFUSAL_PATTERN =
   /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
 
-function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
+export function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
   const diagnostics = stderr
     .split(/\r?\n/)
     .filter(

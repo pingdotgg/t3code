@@ -1,16 +1,22 @@
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
+
 type WorkspaceMode = "local" | "worktree";
 
 export function resolveNewTaskWorkspaceLabel(input: {
   readonly workspaceMode: WorkspaceMode;
   readonly worktreePath: string | null;
-}): "Current checkout" | "Current worktree" | "New worktree" {
+  readonly terminology?: VcsTerminology;
+}): string {
+  const terminology = input.terminology ?? DEFAULT_VCS_TERMINOLOGY;
   if (input.workspaceMode === "worktree") {
-    return "New worktree";
+    return `New ${terminology.workspaceNoun}`;
   }
-  return input.worktreePath ? "Current worktree" : "Current checkout";
+  return input.worktreePath
+    ? `Current ${terminology.workspaceNoun}`
+    : `Current ${terminology.currentRefFallback}`;
 }
 
 export function resolveNewTaskBranchWorktreePath(input: {
@@ -65,13 +71,14 @@ export function resolveNewTaskBranchLabel(input: {
   readonly startFromOrigin: boolean;
   readonly workspaceMode: WorkspaceMode;
   readonly pullRequestReference?: string;
+  readonly terminology?: VcsTerminology;
 }): string {
   if (input.workspaceMode === "worktree" && input.pullRequestReference) {
     const pr = parseChangeRequestUrl(input.pullRequestReference);
     if (pr) return `From PR #${pr.number}`;
   }
   if (!input.branchName) {
-    return "Choose branch";
+    return `Choose ${(input.terminology ?? DEFAULT_VCS_TERMINOLOGY).refNoun}`;
   }
 
   if (input.workspaceMode === "local") {

@@ -7,7 +7,7 @@ import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
 } from "@t3tools/client-runtime/state/thread-checkpoints";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, VcsDriverKind } from "@t3tools/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
@@ -35,8 +35,10 @@ export function useReviewSections(input: {
   readonly environmentId?: EnvironmentId;
   readonly threadId?: ThreadId;
   readonly reviewCache: ReviewCacheForThread;
+  readonly vcsKind?: VcsDriverKind | null;
 }) {
   const { environmentId, reviewCache, threadId } = input;
+  const vcsKind = input.vcsKind ?? null;
   const enabled = input.enabled ?? true;
   const fileAccessSession = useEnvironmentQuery(
     environmentId === undefined ? null : environmentSession.sessionStateAtom(environmentId),
@@ -94,6 +96,7 @@ export function useReviewSections(input: {
       turnDiffById: reviewCache.turnDiffById,
       loadingTurnIds,
       loadingGitSections: fileAccess.isPending || diffPreview.isPending,
+      vcsKind,
     });
     // Keep the selected section while its grant loads, without displaying cached host files.
     return fileAccess.isPending
@@ -110,6 +113,7 @@ export function useReviewSections(input: {
     readyCheckpoints,
     reviewCache.gitSections,
     reviewCache.turnDiffById,
+    vcsKind,
   ]);
   const selectedSection = useMemo(
     () =>

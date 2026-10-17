@@ -44,7 +44,9 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
   buildMenuItems,
   formatGitActionElapsed,
+  getGitActionDisabledReason,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
+  noRefHint,
   type GitActionProgressPresentation,
   type GitActionIconName,
   type GitActionMenuItem,
@@ -118,6 +120,7 @@ import {
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
@@ -218,68 +221,6 @@ function getPublishProviderReadiness(input: {
     };
   }
   return { ready: true, hint: null };
-}
-
-function getMenuActionDisabledReason({
-  item,
-  gitStatus,
-  isBusy,
-  hasPrimaryRemote,
-}: {
-  item: GitActionMenuItem;
-  gitStatus: VcsStatusResult | null;
-  isBusy: boolean;
-  hasPrimaryRemote: boolean;
-}): string | null {
-  if (!item.disabled) return null;
-  if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
-
-  const hasBranch = gitStatus.refName !== null;
-  const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const isAhead = gitStatus.aheadCount > 0;
-  const isBehind = gitStatus.behindCount > 0;
-  const terminology = getSourceControlPresentation(gitStatus.sourceControlProvider).terminology;
-
-  if (item.id === "commit") {
-    if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
-    }
-    return "Commit is currently unavailable.";
-  }
-
-  if (item.id === "push") {
-    if (!hasBranch) {
-      return "Detached HEAD: check out a branch before pushing.";
-    }
-    if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
-    }
-    if (isBehind) {
-      return "Branch is behind upstream. Pull/rebase before pushing.";
-    }
-    if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
-      return 'Add an "origin" remote before pushing.';
-    }
-    if (!isAhead) {
-      return "No local commits to push.";
-    }
-    return "Push is currently unavailable.";
-  }
-
-  if (!hasBranch) {
-    return `Detached HEAD: check out a branch before creating a ${terminology.singular}.`;
-  }
-  if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
-    return `Add an "origin" remote before creating a ${terminology.singular}.`;
-  }
-  if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return `No local commits to include in a ${terminology.singular}.`;
-  }
-  if (isBehind) {
-    return `Branch is behind upstream. Pull/rebase before creating a ${terminology.singular}.`;
-  }
-  return `Create ${terminology.singular} is currently unavailable.`;
 }
 
 const COMMIT_DIALOG_TITLE = "Commit changes";
@@ -1083,6 +1024,7 @@ export default function GitActionsControl({
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const changeRequestTerminology = sourceControlPresentation.terminology;
+  const vcsTerminology = resolveVcsTerminology(gitStatus);
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
@@ -1153,6 +1095,7 @@ export default function GitActionsControl({
         branchName: pendingDefaultBranchAction.branchName,
         includesCommit: pendingDefaultBranchAction.includesCommit,
         terminology: changeRequestTerminology,
+        vcsTerminology,
       })
     : null;
 
@@ -1537,7 +1480,7 @@ export default function GitActionsControl({
   const gitItems = (
     <>
       {gitActionMenuItems.map((item) => {
-        const disabledReason = getMenuActionDisabledReason({
+        const disabledReason = getGitActionDisabledReason({
           item,
           gitStatus: gitStatusForActions,
           isBusy: isGitActionRunning,
@@ -1606,7 +1549,13 @@ export default function GitActionsControl({
       ) : null}
       {gitStatusForActions?.refName === null && (
         <p className="px-2 py-1.5 text-xs text-warning">
-          Detached HEAD: create and check out a branch to enable push and pull request actions.
+          {gitStatusForActions.vcs?.kind === "jj"
+            ? noRefHint(
+                gitStatusForActions,
+                vcsTerminology,
+                `enabling push and ${changeRequestTerminology.singular} actions`,
+              )
+            : "Detached HEAD: create and check out a branch to enable push and pull request actions."}
         </p>
       )}
       {gitStatusForActions &&
@@ -1628,7 +1577,6 @@ export default function GitActionsControl({
         !isRepo ? (
           <MenuItem
             density={presentation === "menu" ? "touch" : "default"}
-
             disabled={initAction.isPending}
             onClick={initializeGit}
           >
@@ -1664,7 +1612,7 @@ export default function GitActionsControl({
             >
               <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
                 <SourceControlIcon className="size-4" />
-                <MenuItemLabel>Git actions</MenuItemLabel>
+                <MenuItemLabel>{vcsTerminology.systemName} actions</MenuItemLabel>
               </MenuSubTrigger>
               <MenuSubPopup>{gitItems}</MenuSubPopup>
             </MenuSub>
@@ -1687,7 +1635,7 @@ export default function GitActionsControl({
       ) : compact && !gitActionProgress && !visibleInlineSuccess ? null : (
         <ActionGroup
           role="group"
-          aria-label="Git actions"
+          aria-label={`${vcsTerminology.systemName} actions`}
           {...(isPanel ? { ref: panelAnchorRef } : {})}
           className={cn(
             "shrink-0",
@@ -1794,7 +1742,7 @@ export default function GitActionsControl({
                 <MenuTrigger
                   render={
                     <ThreadDetailsControl
-                      aria-label="Git action options"
+                      aria-label={`${vcsTerminology.systemName} action options`}
                       size={isPanel ? "sm" : "icon-xs"}
                       variant={isPanel ? "ghost" : "outline"}
                       part="secondary"
@@ -1856,16 +1804,28 @@ export default function GitActionsControl({
           <DialogHeader>
             <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
+            {gitStatusForActions?.vcs?.kind === "jj" ? (
+              <p className="text-sm text-muted-foreground">Jujutsu does not run Git hooks.</p>
+            ) : null}
           </DialogHeader>
           <DialogPanel>
             <div className="space-y-3 rounded-xl bg-zinc-25 p-3 text-sm ring-1 ring-black/5 dark:bg-white/[0.035] dark:ring-white/5">
               <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
-                <span className="text-muted-foreground">Branch</span>
+                <span className="text-muted-foreground">{vcsTerminology.refNounTitle}</span>
                 <span className="flex items-center justify-between gap-2">
                   <span className="font-medium">
-                    {gitStatusForActions?.refName ?? "(detached HEAD)"}
+                    {gitStatusForActions?.refName ??
+                      (gitStatusForActions?.vcs?.kind === "jj"
+                        ? "(no bookmark)"
+                        : "(detached HEAD)")}
                   </span>
-                  {isDefaultRef && <span className="text-right text-warning">Default branch</span>}
+                  {isDefaultRef && (
+                    <span className="text-right text-warning">
+                      {gitStatusForActions?.vcs?.kind === "jj"
+                        ? "Warning: default bookmark"
+                        : "Default branch"}
+                    </span>
+                  )}
                 </span>
               </div>
               <div className="space-y-1">
@@ -2004,7 +1964,7 @@ export default function GitActionsControl({
               disabled={!canChangeThreadBranch || noneSelected}
               onClick={runDialogActionOnNewBranch}
             >
-              Commit on new branch
+              {`${vcsTerminology.changeNounTitle} on new ${vcsTerminology.refNoun}`}
             </Button>
             <Button
               size="sm"
@@ -2036,7 +1996,8 @@ export default function GitActionsControl({
         <DialogPopup className="max-w-xl">
           <DialogHeader>
             <DialogTitle>
-              {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
+              {pendingDefaultBranchActionCopy?.title ??
+                `Run action on default ${vcsTerminology.refNoun}?`}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
@@ -2064,7 +2025,7 @@ export default function GitActionsControl({
               onClick={checkoutFeatureBranchAndContinuePendingAction}
               disabled={!canChangeThreadBranch}
             >
-              Check out feature branch & continue
+              {`Check out feature ${vcsTerminology.refNoun} & continue`}
             </Button>
           </DialogFooter>
         </DialogPopup>

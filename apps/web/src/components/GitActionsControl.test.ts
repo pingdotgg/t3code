@@ -64,6 +64,7 @@ vi.mock("~/state/threads", () => ({
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: () => ({
     data: {
+      versionControlSystems: [],
       sourceControlProviders: [],
       isRepo: true,
       refName: state.branch,

@@ -475,6 +475,7 @@ export function ThreadRelationshipsPanel(props: {
               const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
               const relationshipTooltip = agent ? (
                 <SubagentTooltipContent
+                  environmentId={props.environmentId}
                   title={threadTitle}
                   model={agent.model}
                   providerInstanceId={agent.providerInstanceId}

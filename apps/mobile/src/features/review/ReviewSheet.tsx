@@ -1,3 +1,6 @@
+import { getVcsTerminology, type VcsTerminology } from "@t3tools/shared/vcs";
+import { useEnvironmentQuery } from "../../state/query";
+import { vcsEnvironment } from "../../state/vcs";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -73,6 +76,7 @@ import { reportShowcaseSceneRendered } from "../showcase/showcaseRenderSignal";
 function ReviewHeader(
   props: Parameters<typeof useReviewHeaderPresentation>[0] & {
     readonly iconColor: string;
+    readonly vcsTerminology: VcsTerminology;
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
@@ -125,8 +129,19 @@ function ReviewHeader(
                     id: "sections",
                     inline: true,
                     items: [
-                      sectionAction(props.sectionMenu.branchChanges, "Changes"),
-                      sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
+                      sectionAction(
+                        props.sectionMenu.branchChanges,
+                        props.vcsTerminology.systemName === "Jujutsu"
+                          ? (props.sectionMenu.branchChanges?.title ?? "Changes")
+                          : "Changes",
+                      ),
+                      sectionAction(
+                        props.sectionMenu.workingTree,
+                        props.vcsTerminology.systemName === "Jujutsu"
+                          ? (props.sectionMenu.workingTree?.title ??
+                              props.vcsTerminology.workingTreeNounTitle)
+                          : "Uncommitted",
+                      ),
                       sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
                     ],
                   },
@@ -463,6 +478,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const topContentInset = Platform.OS === "ios" ? safeArea.top : 0;
   const bottomContentInset =
     Platform.OS === "ios" ? safeArea.bottom + 8 : Math.max(insets.bottom, 18) + 18;
+  const gitStatusQuery = useEnvironmentQuery(
+    selectedThreadCwd === null
+      ? null
+      : vcsEnvironment.status({ environmentId, input: { cwd: selectedThreadCwd } }),
+  );
+  const vcsKind = gitStatusQuery.data?.vcs?.kind ?? null;
+  const vcsTerminology = getVcsTerminology(vcsKind);
 
   useEffect(() => {
     showAuxiliaryPane("inspector");
@@ -480,6 +502,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     environmentId,
     threadId,
     reviewCache,
+    vcsKind,
   });
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
@@ -713,6 +736,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         subtitle={headerSubtitle}
         androidSubtitle={androidHeaderSubtitle}
         iconColor={headerIcon}
+        vcsTerminology={vcsTerminology}
         selectedThreadCwd={selectedThreadCwd}
         sectionMenu={sectionMenu}
         selectedSection={selectedSection}

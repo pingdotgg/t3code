@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 
 import {
   buildDraftActionMenuItems,
@@ -40,6 +41,19 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("uses bookmark terminology for jj thread copy actions", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      branch: "feature",
+      terminology: JJ_VCS_TERMINOLOGY,
+    });
+    expect(items.find((item) => item.id === "copy")?.children).toContainEqual({
+      id: "copy-branch",
+      label: "Bookmark",
+      icon: "git-branch",
+    });
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {
@@ -228,6 +242,7 @@ describe("buildDraftActionMenuItems", () => {
     const items = buildDraftActionMenuItems({ hasPath: false, hasBranch: true, hasProject: true });
     expect(items[0]).toMatchObject({ id: "copy", disabled: false });
     expect(items[0]?.children?.map((item) => item.id)).toEqual(["copy-branch"]);
+    expect(items[0]?.children?.[0]?.label).toBe("Branch");
 
     const noCopy = buildDraftActionMenuItems({
       hasPath: false,
@@ -235,6 +250,19 @@ describe("buildDraftActionMenuItems", () => {
       hasProject: true,
     });
     expect(noCopy[0]).toMatchObject({ id: "copy", disabled: true, children: [] });
+  });
+
+  it("uses bookmark terminology for jj draft copy actions", () => {
+    const items = buildDraftActionMenuItems({
+      hasPath: true,
+      hasBranch: true,
+      hasProject: true,
+      terminology: JJ_VCS_TERMINOLOGY,
+    });
+    expect(items[0]?.children).toEqual([
+      { id: "copy-path", label: "Path", icon: "folder" },
+      { id: "copy-branch", label: "Bookmark", icon: "git-branch" },
+    ]);
   });
 
   it("drops project settings without a project and keeps discard last", () => {

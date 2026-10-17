@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({
   canChangeThreadBranch: true,
   navigations: 0,
   result: Promise.resolve(null) as Promise<unknown>,
+  platform: "ios",
+  vcsKind: "git",
 }));
 
 vi.mock("react", async (importOriginal) => ({
@@ -18,7 +20,11 @@ vi.mock("react", async (importOriginal) => ({
   },
 }));
 vi.mock("react-native", () => ({
-  Platform: { OS: "ios" },
+  Platform: {
+    get OS() {
+      return state.platform;
+    },
+  },
   useWindowDimensions: () => ({ height: 800, width: 400 }),
   Pressable: "Pressable",
   ScrollView: "ScrollView",
@@ -36,7 +42,7 @@ vi.mock("../../../components/ui/AndroidScreenHeader", () => ({
 vi.mock("../../../components/ui/AppText", () => ({ AppText: "Text", AppTextInput: "TextInput" }));
 vi.mock("./gitSheetComponents", () => ({ SheetActionButton: "SheetActionButton" }));
 vi.mock("../../../state/query", () => ({
-  useEnvironmentQuery: () => ({ data: { refName: "main" } }),
+  useEnvironmentQuery: () => ({ data: { refName: "main", vcs: { kind: state.vcsKind } } }),
 }));
 vi.mock("../../../state/vcs", () => ({ vcsEnvironment: { status: () => null } }));
 vi.mock("../../../state/use-thread-selection", () => ({
@@ -68,6 +74,7 @@ import { GitBranchesSheet } from "./GitBranchesSheet";
 
 type ControlProps = {
   label?: string;
+  title?: string;
   placeholder?: string;
   onPress?: () => unknown;
   onChangeText?: (value: string) => void;
@@ -86,6 +93,7 @@ function findControl(node: ReactNode, label: string): ControlProps | null {
   if (!isValidElement<ControlProps>(node)) return null;
   if (
     node.props.label === label ||
+    node.props.title === label ||
     node.props.placeholder === label ||
     (label === "checkout" && node.type === "Pressable")
   ) {
@@ -118,6 +126,8 @@ describe("branch sheet operation completion", () => {
     state.fieldIndex = 0;
     state.canChangeThreadBranch = true;
     state.navigations = 0;
+    state.platform = "ios";
+    state.vcsKind = "git";
     control("feature/mobile-polish").onChangeText?.("feature/branch");
     control("main").onChangeText?.("release");
     control("feature/mobile-thread").onChangeText?.("feature/worktree");
@@ -169,4 +179,16 @@ describe("branch sheet operation completion", () => {
       );
     },
   );
+});
+
+describe("branch sheet terminology", () => {
+  it.each([
+    ["git", "Branches & worktrees"],
+    ["jj", "Bookmarks & workspaces"],
+  ])("capitalizes the %s sheet title", (kind, title) => {
+    state.platform = "android";
+    state.vcsKind = kind;
+    state.fields = [];
+    expect(control(title).title).toBe(title);
+  });
 });
