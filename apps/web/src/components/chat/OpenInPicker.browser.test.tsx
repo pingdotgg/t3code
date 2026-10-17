@@ -195,7 +195,8 @@ describe("host editor access", () => {
     expect(menuItems().length).toBeGreaterThan(0);
     state.allowed.delete(selected);
     await renderPicker();
-    expect(menuItems()).toHaveLength(0);
+    // The menu unmounts after its exit animation, so wait for it rather than asserting at once.
+    await vi.waitFor(() => expect(menuItems()).toHaveLength(0));
     state.allowed.add(selected);
     await renderPicker();
     expect(menuItems()).toHaveLength(0);
