@@ -17,7 +17,6 @@ import {
 import { Atom } from "effect/reactivity";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
@@ -534,27 +533,6 @@ export function threadChangeRequestSnapshotsEqual(
     sourceControlProvidersEqual(left.sourceControlProvider, right.sourceControlProvider) &&
     linkedPullRequestsEqual(left.linkedPullRequest, right.linkedPullRequest)
   );
-}
-
-export function setThreadChangeRequestSnapshot(
-  threadKey: string,
-  snapshot: ThreadChangeRequestSnapshot | null,
-): void {
-  appAtomRegistry.modify(threadChangeRequestSnapshotsAtom, (current) => {
-    const existing = current.get(threadKey);
-    if (snapshot === null) {
-      if (existing === undefined) return [false, current];
-      const next = new Map(current);
-      next.delete(threadKey);
-      return [true, next];
-    }
-    if (existing !== undefined && threadChangeRequestSnapshotsEqual(existing, snapshot)) {
-      return [false, current];
-    }
-    const next = new Map(current);
-    next.set(threadKey, snapshot);
-    return [true, next];
-  });
 }
 
 export function nextThreadChangeRequestSnapshot(input: {
