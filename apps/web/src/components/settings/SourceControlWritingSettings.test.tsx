@@ -1,4 +1,5 @@
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { getVcsTerminology } from "@t3tools/shared/vcs";
 import { act, StrictMode, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -8,6 +9,9 @@ import type { ScopedSettingsPatch } from "./scopedSettings";
 type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
+  vcsKind: "git" as "git" | "jj",
+  scopeKind: "all" as "all" | "checkout" | "project",
+  terminologyLookup: vi.fn(),
   updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
 }));
 
@@ -24,7 +28,21 @@ vi.mock("./useScopedSettings", () => ({
 }));
 vi.mock("./SettingsScopeContext", () => ({
   useSettingsScope: () => ({
-    scope: { kind: "all", environmentIds: [] },
+    scope: {
+      kind: state.scopeKind,
+      environmentIds: [],
+      checkout: {
+        id: "naming-project",
+        environmentId: "naming-environment",
+        workspaceRoot: "/naming-project",
+      },
+      members: [{
+        id: "naming-project",
+        environmentId: "naming-environment",
+        workspaceRoot: "/naming-project",
+      }],
+    },
+    target: { projectId: "naming-project" },
     environment: null,
     connectedEnvironments: [],
     targets: state.styles.map((style) => ({
@@ -37,6 +55,12 @@ vi.mock("./useScopedModelAvailability", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
+vi.mock("../../state/vcs", () => ({
+  useVcsTerminology: (environmentId: unknown, workspaceRoot: unknown) => {
+    state.terminologyLookup(environmentId, workspaceRoot);
+    return getVcsTerminology(state.vcsKind);
+  },
+}));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: (id: string) => ({ id, title: id }) }));
 vi.mock("./settingsLayout", () => ({
@@ -94,6 +118,9 @@ function applyInstructions() {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.vcsKind = "git";
+  state.scopeKind = "all";
+  state.terminologyLookup.mockReset();
   state.styles = [
     {
       ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle,
@@ -124,6 +151,34 @@ afterEach(async () => {
   await act(async () => renderer?.unmount());
   renderer = null;
   vi.unstubAllGlobals();
+});
+
+describe("ref naming terminology", () => {
+  it.each([
+    ["git", "branch", "checkout"],
+    ["jj", "bookmark", "checkout"],
+    ["jj", "bookmark", "project"],
+  ] as const)("resets %s naming preferences in %s controls for %s scope", (kind, refNoun, scopeKind) => {
+    state.vcsKind = kind;
+    state.scopeKind = scopeKind;
+    act(() => {
+      renderer!.update(
+        <StrictMode>
+          <SourceControlWritingSettingsSection />
+        </StrictMode>,
+      );
+    });
+    expect(state.terminologyLookup).toHaveBeenLastCalledWith(
+      "naming-environment",
+      "/naming-project",
+    );
+    const reset = button(`Reset ${refNoun} naming`);
+    expect(reset).toBeDefined();
+    act(() => reset.props.onClick());
+    expect(state.updateSettings).toHaveBeenCalledWith({
+      branchNamingMode: DEFAULT_UNIFIED_SETTINGS.branchNamingMode,
+    });
+  });
 });
 
 describe("mixed source control instructions", () => {

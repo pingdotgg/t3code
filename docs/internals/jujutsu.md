@@ -47,3 +47,15 @@ follows a secondary workspace's `.jj/repo` pointer back to the main root so ever
 a `--git-dir`.
 
 Private behind counts are bounded by time, output size and commit count. Timeouts and output limits retain jj's known remote-bookmark count. Reaching the commit cap reports a lower bound of 1000 rather than a potentially stale zero, so Pull remains available. Remote discovery failures still surface as errors.
+
+## Unusable is not Git
+
+Missing `jj`, older than 0.46.0 ([`JJ_MINIMUM_VERSION`](../../apps/server/src/vcs/JjAvailability.ts)), or not
+colocated: detection still says jj. Falling back to Git would write a Git worktree into a jj repo.
+Every op instead fails with a named reason that reaches clients as
+`VcsStatusLocalResult.vcs.unsupportedReason` and disables the action menu with that text.
+
+Checkpoints are the exception. `checkpointsUsable` answers `false` there so
+[`CheckpointStore.supportsCheckpoints`](../../apps/server/src/checkpointing/CheckpointStore.ts) skips
+capture silently, same as a directory with no repo, instead of writing a failed-capture activity into
+every turn.

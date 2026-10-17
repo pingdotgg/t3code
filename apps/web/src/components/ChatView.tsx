@@ -367,6 +367,7 @@ import {
   useEnvironments,
   usePrimaryEnvironment,
 } from "../state/environments";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import {
   resolveThreadDetailRef,
   useEnvironmentSupportsServerBrowser,
@@ -3092,6 +3093,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
   const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  const vcsTerminology = resolveVcsTerminology(gitStatusQuery.data);
   // A provider-native subagent cannot take messages: a status bar replaces the
   // composer and its strips. Its approvals and questions are asked on the
   // top-level parent thread.
@@ -5453,7 +5455,9 @@ export default function ChatView(props: ChatViewProps) {
         icon: <GitBranchIcon />,
         title: (
           <span className="flex min-w-0 items-baseline gap-1.5">
-            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
+            <span className="shrink-0 font-normal text-muted-foreground">
+              {vcsTerminology.refNounTitle} changed — was
+            </span>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -5476,10 +5480,10 @@ export default function ChatView(props: ChatViewProps) {
             disabled={!canWriteSourceControl || isRestoringThreadBranch}
             onClick={handleRestoreThreadBranchStable}
           >
-            {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+            {isRestoringThreadBranch ? "Restoring..." : `Restore ${vcsTerminology.refNoun}`}
           </Button>
         ),
-        dismissLabel: "Dismiss branch change notice",
+        dismissLabel: `Dismiss ${vcsTerminology.refNoun} change notice`,
         onDismiss: () => {
           dismissBranchMismatchForSession(activeBranchMismatchKey);
           setBranchMismatchDismissTick((tick) => tick + 1);
@@ -6112,9 +6116,8 @@ export default function ChatView(props: ChatViewProps) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
-          title: "Choose models and a base branch",
-          description:
-            "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+          title: `Choose models and a base ${vcsTerminology.refNoun}`,
+          description: `Multiple models need a new thread in a ${vcsTerminology.systemName} project. Each gets its own ${vcsTerminology.workspaceNoun}.`,
         }),
       );
       return;
@@ -8264,6 +8267,7 @@ export default function ChatView(props: ChatViewProps) {
                               composerRef={composerRef}
                               composerDraftTarget={composerDraftTarget}
                               environmentId={environmentId}
+                              workspaceNoun={vcsTerminology.workspaceNoun}
                               attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
                               supportsAttachmentUploads={supportsAttachmentUploads}
                               supportsQuestionAttachments={supportsQuestionAttachments}
@@ -8309,7 +8313,7 @@ export default function ChatView(props: ChatViewProps) {
                                         : threadDetailLoading
                                           ? "Messages loading"
                                           : worktreeSetupBlocksSend
-                                            ? "Preparing worktree"
+                                            ? `Preparing ${vcsTerminology.workspaceNoun}`
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
@@ -8519,6 +8523,8 @@ export default function ChatView(props: ChatViewProps) {
               threadKey={activeThreadKey}
               threadBranch={localCheckoutBranchMismatch?.threadBranch ?? ""}
               canWriteSourceControl={canWriteSourceControl}
+              refNoun={vcsTerminology.refNoun}
+              refSwitchChangesDescription={vcsTerminology.refSwitchChangesDescription}
               onConfirm={handleSwitchCheckoutToThreadStable}
             />
 

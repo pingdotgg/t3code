@@ -5,6 +5,8 @@ import { View } from "react-native";
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
 import { SettingsChoiceRow } from "./SettingsChoiceRow";
 import { SettingsSection } from "./SettingsSection";
+import { useVcsTerminology } from "../../../state/vcs";
+import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
 
 const MODES = {
   static: { label: "Static prefix", description: "Add your prefix to the generated branch name." },
@@ -27,9 +29,21 @@ export function BranchNamingSettings(props: {
 }) {
   const prefixEdited = useRef(false);
   const instructionsEdited = useRef(false);
+  const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const projects = projectGroups
+    .find((group) => group.key === selectedProjectKey)
+    ?.members.filter((member) =>
+      selectedTargets.some((target) => target.environmentId === member.project.environmentId),
+    );
+  const project = projects?.length === 1 ? projects[0]?.project : undefined;
+  const terminology = useVcsTerminology(
+    project?.environmentId ?? null,
+    project?.workspaceRoot ?? null,
+  );
+  const refNounTitle = terminology.refNounTitle;
   return (
     <SettingsSection
-      title="Worktree branch naming"
+      title={`${terminology.workspaceNounTitle} ${terminology.refNoun} naming`}
       trailing={
         props.mode === null ? <Text className="text-xs text-foreground-muted">Mixed</Text> : null
       }
@@ -38,7 +52,11 @@ export function BranchNamingSettings(props: {
         <SettingsChoiceRow
           key={mode}
           label={MODES[mode].label}
-          description={MODES[mode].description}
+          description={
+            mode === "static"
+              ? `Add your prefix to the generated ${terminology.refNoun} name.`
+              : MODES[mode].description
+          }
           selected={props.mode === mode}
           separated={index > 0}
           disabled={props.disabled}
@@ -52,7 +70,7 @@ export function BranchNamingSettings(props: {
           </Text>
           <AppTextInput
             key={props.prefix}
-            accessibilityLabel="Branch prefix"
+            accessibilityLabel={`${refNounTitle} prefix`}
             onChangeText={() => {
               prefixEdited.current = true;
             }}
@@ -82,7 +100,7 @@ export function BranchNamingSettings(props: {
           </Text>
           <AppTextInput
             key={props.instructions}
-            accessibilityLabel="Branch naming instructions"
+            accessibilityLabel={`${refNounTitle} naming instructions`}
             onChangeText={() => {
               instructionsEdited.current = true;
             }}

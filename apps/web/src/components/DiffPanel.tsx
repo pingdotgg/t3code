@@ -79,6 +79,7 @@ import {
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useEnvironmentQuery } from "../state/query";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
@@ -259,6 +260,7 @@ export default function DiffPanel({
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const vcsTerminology = resolveVcsTerminology(gitStatusQuery.data);
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
     if (left.checkpointTurnCount !== right.checkpointTurnCount) {
@@ -291,7 +293,7 @@ export default function DiffPanel({
   const selectedScopeLabel =
     selectedRunId === null
       ? selectedGitScope === "unstaged"
-        ? "Uncommitted"
+        ? vcsTerminology.workingTreeDiffLabel
         : "Changes"
       : selectedTurn?.runId === latestTurn?.runId
         ? "Latest turn"
@@ -304,7 +306,7 @@ export default function DiffPanel({
   const reviewSectionTitle = selectedTurn
     ? `Turn ${selectedCheckpointTurnCount ?? "?"}`
     : selectedGitScope === "unstaged"
-      ? "Uncommitted"
+      ? vcsTerminology.workingTreeDiffLabel
       : "Changes";
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
@@ -673,7 +675,7 @@ export default function DiffPanel({
                 <span>Changes</span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
-                <span>Uncommitted</span>
+                <span>{vcsTerminology.workingTreeDiffLabel}</span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="latest" closeOnClick>
                 <span>Latest turn</span>
@@ -753,11 +755,14 @@ export default function DiffPanel({
                 <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border/70 ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
                   <span aria-hidden="true" />
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
-                    <span>Branch</span>
+                    <span>{vcsTerminology.refNounTitle}</span>
                     <span className="text-right">Remote</span>
                   </div>
                 </div>
-                <ComboboxEmpty>No matching refs.</ComboboxEmpty>
+                <ComboboxEmpty>
+                  No matching{" "}
+                  {vcsTerminology.systemName === "Jujutsu" ? vcsTerminology.refNounPlural : "refs"}.
+                </ComboboxEmpty>
                 <ComboboxList className="max-h-64 min-w-0 overflow-x-hidden">
                   <ComboboxItem
                     className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
@@ -966,7 +971,7 @@ export default function DiffPanel({
         </div>
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
+          {`Turn diffs are unavailable because this project is not a ${vcsTerminology.systemName === "Jujutsu" ? vcsTerminology.systemName : "git"} repository.`}
         </div>
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
@@ -1001,7 +1006,7 @@ export default function DiffPanel({
                     selectedTurn
                       ? "Loading checkpoint diff..."
                       : selectedGitScope === "unstaged"
-                        ? "Loading uncommitted changes..."
+                        ? `Loading ${vcsTerminology.workingTreeDiffLabel.toLowerCase()} changes...`
                         : "Loading changes..."
                   }
                 />
