@@ -32,6 +32,19 @@ export const PinnedGitHubCredential = Context.Reference<{
   defaultValue: () => null,
 });
 
+/**
+ * Which repository the requests inside are about, set by `withRepositoryAccount`: the credential
+ * is the one Settings choose for `repository` (`owner/name`, or just an owner), and `credential`
+ * is the fingerprint of the one it is actually read with, which GraphQL batches split by so one
+ * batch never mixes two credentials' lookups.
+ */
+export const GitHubCredentialRepository = Context.Reference<{
+  readonly repository: string;
+  readonly credential: string | undefined;
+} | null>("@t3tools/source-control-github/server/GitHubRequestPolicy/GitHubCredentialRepository", {
+  defaultValue: () => null,
+});
+
 export class GitHubApiRequestError extends Schema.TaggedError<GitHubApiRequestError>()(
   "GitHubApiRequestError",
   { host: Schema.String, operation: Schema.String, cause: Schema.Defect() },
@@ -224,13 +237,30 @@ export class GitHubRequestPolicy extends Context.Service<
       input: GitHubRequest,
       send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
     ) => Effect.Effect<A, E | GitHubApiError, R>;
-    /** The credential a request to `host` would carry right now. */
+    /** The credential a request to `host` about `repository` would carry right now. */
     readonly credential: (
       host: string,
+      repository?: string | null,
     ) => Effect.Effect<
       { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
       GitHubApiError
     >;
+    /**
+     * Runs `effect` as the account Settings choose for `repository` (`owner/name`, or just an
+     * owner) on `host`, so every request inside it carries that account's credential. A pinned
+     * credential, such as a routed operation's verified one, still wins, and so does a repository
+     * set further out: a checkout of a fork's pull request reads the fork as the account of the
+     * repository it was opened against.
+     */
+    readonly withRepositoryAccount: <A, E, R>(
+      input: { readonly host: string; readonly repository: string | null },
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
+    /**
+     * The fingerprint of the credential `repository` is read with on `host`, after any chosen
+     * login `gh` no longer holds gave way; empty when there is none, which the read then reports.
+     */
+    readonly credentialScope: (host: string, repository: string) => Effect.Effect<string>;
   }
 >()("@t3tools/source-control-github/server/GitHubRequestPolicy") {}
 
@@ -243,7 +273,7 @@ export const make = Effect.gen(function* () {
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = Effect.fn(
     "GitHubRest.credential",
-  )(function* (host) {
+  )(function* (host, repository) {
     const normalized = normalizeHost(host);
     const pinned = yield* PinnedGitHubCredential;
     if (pinned !== null) {
@@ -256,9 +286,36 @@ export const make = Effect.gen(function* () {
       }
       return { token: pinned.token, fingerprint: pinned.credentialFingerprint };
     }
-    const held = yield* credentials.get(normalized);
+    const held = yield* credentials.get(
+      normalized,
+      repository ?? (yield* GitHubCredentialRepository)?.repository ?? null,
+    );
     return { token: held.token, fingerprint: held.fingerprint };
   });
+
+  const credentialScope: GitHubRequestPolicy["Service"]["credentialScope"] = (host, repository) =>
+    credentials.get(normalizeHost(host), repository).pipe(
+      Effect.map((credential) => credential.fingerprint),
+      Effect.orElseSucceed(() => ""),
+    );
+
+  const withRepositoryAccount: GitHubRequestPolicy["Service"]["withRepositoryAccount"] = (
+    input,
+    effect,
+  ) =>
+    Effect.gen(function* () {
+      const repository = input.repository;
+      if (repository === null || (yield* GitHubCredentialRepository) !== null) {
+        return yield* effect;
+      }
+      const credential = yield* credentialScope(input.host, repository);
+      return yield* effect.pipe(
+        Effect.provideService(GitHubCredentialRepository, {
+          repository,
+          credential: credential === "" ? undefined : credential,
+        }),
+      );
+    });
 
   const request: GitHubRequestPolicy["Service"]["request"] = <A, E, R>(
     input: GitHubRequest,
@@ -351,7 +408,12 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint));
     });
 
-  return GitHubRequestPolicy.of({ request, credential });
+  return GitHubRequestPolicy.of({
+    request,
+    credential,
+    withRepositoryAccount,
+    credentialScope,
+  });
 });
 
 export const layer = Layer.effect(GitHubRequestPolicy, make);

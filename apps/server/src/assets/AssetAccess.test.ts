@@ -28,6 +28,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
@@ -195,17 +196,22 @@ describe("AssetAccess", () => {
       expect(authorizations).toEqual([undefined, "Bearer signed-in", "Bearer signed-in"]);
     }).pipe(
       Effect.provide(
-        Layer.mock(GitHubCredentials.GitHubCredentials)({
-          get: (host) =>
-            ++lookups === 1
-              ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-              : Effect.succeed({
-                  host,
-                  token: Redacted.make("signed-in"),
-                  source: "gh" as const,
-                  fingerprint: "fingerprint",
-                }),
-        }),
+        Layer.mergeAll(
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () => Effect.succeed(null),
+          }),
+          Layer.mock(GitHubCredentials.GitHubCredentials)({
+            get: (host) =>
+              ++lookups === 1
+                ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
+                : Effect.succeed({
+                    host,
+                    token: Redacted.make("signed-in"),
+                    source: "gh" as const,
+                    fingerprint: "fingerprint",
+                  }),
+          }),
+        ),
       ),
       Effect.provideService(
         HttpClient.HttpClient,

@@ -243,8 +243,12 @@ export interface ProviderRepositoryRef {
 }
 
 export interface PullRequestProviderApi {
+  /**
+   * `repository` names the repository the operation is about, for a host whose account depends
+   * on it (see `credentialScope`); absent asks for the host's own account.
+   */
   readonly withVerifiedCredential?: <A, E, R>(
-    input: { readonly cwd: string; readonly host: string },
+    input: { readonly cwd: string; readonly host: string; readonly repository?: string },
     use: (identity: {
       readonly accountId: string;
       readonly viewer: string;
@@ -254,6 +258,7 @@ export interface PullRequestProviderApi {
   readonly getRoutingIdentity?: (input: {
     readonly cwd: string;
     readonly host: string;
+    readonly repository?: string;
   }) => Effect.Effect<
     { readonly accountId: string; readonly viewer: string },
     PullRequestProviderError
@@ -270,9 +275,21 @@ export interface PullRequestProviderApi {
    */
   readonly repositoryKey?: (input: { readonly canonicalKey: string }) => string;
 
+  /**
+   * Which credential a repository is read with, for a host whose settings choose one per
+   * repository rather than once. Repositories with the same scope share a viewer and may share
+   * one batched read. Absent means one account for the whole host.
+   */
+  readonly credentialScope?: (input: {
+    readonly host: string;
+    readonly repository: string;
+  }) => Effect.Effect<string>;
+
+  /** `repository` picks the account for a host with a `credentialScope`. */
   readonly getViewer: (input: {
     readonly cwd: string;
     readonly host?: string;
+    readonly repository?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (
@@ -302,6 +319,7 @@ export interface PullRequestProviderApi {
    * the answer: the newest `limit` rows across every repository named, which is exactly the
    * rows a page ordered by update shows. `cursor` is one boundary for all of them, so a caller
    * with repositories standing at different boundaries asks in groups rather than in one call.
+   * Every repository named reads as the same viewer, which grouping by `credentialScope` ensures.
    */
   readonly listChangeRequestsAcross?: (input: {
     readonly cwd: string;
@@ -316,6 +334,7 @@ export interface PullRequestProviderApi {
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
+  /** One call reads as one account, like `listChangeRequestsAcross`. */
   readonly listChangeRequestStats?: (input: {
     readonly cwd: string;
     readonly host: string;

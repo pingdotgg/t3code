@@ -35,6 +35,8 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Hash from "effect/Hash";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
@@ -52,7 +54,38 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   reasoningEffort: Schema.optional(Schema.String),
+  /**
+   * Variables the agent's own processes run with in this workspace, over the provider's: the
+   * GitHub token for the account Settings choose for the repository's owner. Redacted, so a
+   * policy that is logged or used as a key never carries a value. Adapters whose provider runs
+   * one process for every workspace cannot apply it and run on the server's environment.
+   */
+  environment: Schema.optional(Schema.Record(Schema.String, Schema.Redacted(Schema.String))),
 });
+
+/** The policy's workspace variables as plain values, for a process's environment. */
+export function runtimePolicyEnvironment(
+  policy: Pick<ProviderAdapterV2RuntimePolicy, "environment"> | null | undefined,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(policy?.environment ?? {}).map(([name, value]) => [name, Redacted.value(value)]),
+  );
+}
+
+/**
+ * Which variables the runtime environment sets, and a digest of each value. A key that decides
+ * whether a live process can serve the next turn includes it, so a changed credential opens a
+ * fresh one without the credential itself appearing in the key.
+ */
+export function runtimePolicyEnvironmentKey(
+  policy: Pick<ProviderAdapterV2RuntimePolicy, "environment"> | null | undefined,
+): string {
+  return JSON.stringify(
+    Object.entries(policy?.environment ?? {})
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => [name, Hash.string(Redacted.value(value))]),
+  );
+}
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
 export const ProviderAdapterV2TurnMessage = Schema.Struct({

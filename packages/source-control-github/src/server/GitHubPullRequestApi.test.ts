@@ -169,6 +169,7 @@ const layer = it.layer(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
         get: (host) =>
           Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+        accountFor: () => Effect.succeed(undefined),
         invalidate: () => Effect.void,
       }),
     ),
@@ -633,6 +634,7 @@ it.effect(
               source: "gh" as const,
               fingerprint: `${host}:${activeToken.length}${activeToken.at(-1)}`,
             })),
+          accountFor: () => Effect.succeed(undefined),
           invalidate: () => Effect.void,
         }),
       );

@@ -48,9 +48,10 @@ export class GitHubRest extends Context.Service<
   GitHubRest,
   {
     readonly rest: (input: GitHubRestInput) => Effect.Effect<GitHubRestResponse, GitHubApiError>;
-    /** The credential a request to `host` would carry right now. */
+    /** The credential a request to `host` about `repository` would carry right now. */
     readonly credential: (
       host: string,
+      repository?: string | null,
     ) => Effect.Effect<
       { readonly token: Redacted.Redacted<string>; readonly fingerprint: string },
       GitHubApiError

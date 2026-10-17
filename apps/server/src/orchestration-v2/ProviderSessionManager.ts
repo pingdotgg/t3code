@@ -290,6 +290,8 @@ function providerThreadLoadKey(input: {
     providerThread: providerThreadRuntimeKey(input.providerThread),
     modelSelection: input.modelSelection ?? null,
     runtimePolicy: input.runtimePolicy ?? null,
+    // Redacted values serialize as a placeholder, so a changed token needs its own digest.
+    environment: ProviderAdapter.runtimePolicyEnvironmentKey(input.runtimePolicy),
   });
 }
 

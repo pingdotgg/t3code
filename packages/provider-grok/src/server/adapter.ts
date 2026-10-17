@@ -274,7 +274,10 @@ export function makeGrokAcpAdapterFlavor(
           ...input,
           interruptPromptOnCancel: input.interruptPromptOnCancel ?? false,
           grokSettings: options.settings,
-          environment: options.environment,
+          environment: {
+            ...options.environment,
+            ...ProviderAdapter.runtimePolicyEnvironment(runtimePolicy),
+          },
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),
     // In its Auto mode Grok decides routine actions itself and only asks about

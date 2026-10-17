@@ -37,6 +37,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "transformStdout"
 > {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** The thread workspace's own variables, such as the GitHub token for its repository's owner. */
+  readonly workspaceEnvironment?: Readonly<Record<string, string>>;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly clientFileSystem?: boolean;

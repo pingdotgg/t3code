@@ -138,7 +138,9 @@ function makeRegistry(input: {
           : ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         // The GitHub provider's GraphQL reads go through these; no test here makes one.
-        Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
+        Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({
+          withRepositoryAccount: (_input, effect) => effect,
+        }),
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make(() => Effect.die(new Error("Unexpected GitHub GraphQL read"))),

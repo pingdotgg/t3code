@@ -233,6 +233,7 @@ function harness(input: {
                 source: "gh" as const,
                 fingerprint: `${host}:token`,
               })),
+          accountFor: () => Effect.succeed(undefined),
           invalidate: () => Effect.void,
         }),
         GitHubQuota.layer,

@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -4395,6 +4396,21 @@ it.effect(
         assert.equal((yield* Ref.get(state)).resumeCount, 2);
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 3);
+        // Another account's token is another thread config, though the policy shows it redacted.
+        const resumeWithToken = (token: string) =>
+          secondRuntime.resumeThread({
+            providerThread: secondProviderThread,
+            threadId: secondThreadId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, environment: { GH_TOKEN: Redacted.make(token) } },
+          });
+        yield* resumeWithToken("work-token");
+        yield* resumeWithToken("work-token");
+        assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        yield* resumeWithToken("personal-token");
+        assert.equal((yield* Ref.get(state)).resumeCount, 5);
+        yield* resumeSecondThread;
+        assert.equal((yield* Ref.get(state)).resumeCount, 6);
         const subscribe = firstRuntime.subscribeEvents;
         assert.isDefined(subscribe);
         if (subscribe === undefined) return;
@@ -4426,7 +4442,7 @@ it.effect(
           runtimePolicy,
         });
         yield* resumeSecondThread;
-        assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        assert.equal((yield* Ref.get(state)).resumeCount, 7);
 
         assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
 

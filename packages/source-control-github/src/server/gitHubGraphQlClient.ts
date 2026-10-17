@@ -217,14 +217,17 @@ const layerProtocol = GraphQLProtocol.layerHttp({
 export const layer = Layer.merge(GitHubGraphQlAuth.layer, layerProtocol);
 
 /**
- * What decides which lookups to one host may share a batched request: the credential and
- * rate-limit scope it will be sent under. Read from the context the lookup was made in. Resolvers
- * already keep hosts apart, since they batch by the transport's URL too.
+ * What decides which lookups to one host may share a batched request: the credential, the
+ * credential the repositories are read with, and the rate-limit scope it will be sent under.
+ * Read from the context the lookup was made in, which is the context a batch then runs in.
+ * Resolvers already keep hosts apart, since they batch by the transport's URL too.
  */
 export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
   JSON.stringify([
     Context.getOrElse(context, GitHubRequestPolicy.PinnedGitHubCredential, () => null)
       ?.credentialFingerprint ?? null,
+    Context.getOrElse(context, GitHubRequestPolicy.GitHubCredentialRepository, () => null)
+      ?.credential ?? null,
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
   ]);
 

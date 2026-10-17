@@ -95,6 +95,7 @@ const runGitHubStackAction = (send: Send, input: Parameters<typeof runStackActio
                     source: "gh" as const,
                     fingerprint: "fp",
                   }),
+                accountFor: () => Effect.succeed(undefined),
                 invalidate: () => Effect.void,
               }),
               GitHubQuota.layer,

@@ -26,6 +26,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
@@ -134,6 +135,11 @@ function makeAcpRegistryRuntime(
   > =>
     Effect.gen(function* () {
       const { processEnvironment, ...runtimeInput } = input;
+      const workspaceEnvironment = ProviderAdapter.runtimePolicyEnvironment(input.runtimePolicy);
+      const extraEnvironment =
+        processEnvironment === undefined && Object.keys(workspaceEnvironment).length === 0
+          ? undefined
+          : { ...processEnvironment, ...workspaceEnvironment };
       const resolved = yield* catalog
         .resolve(options.settings, input.cwd, options.environment)
         .pipe(
@@ -149,11 +155,11 @@ function makeAcpRegistryRuntime(
         AcpSessionRuntime.layer({
           ...runtimeInput,
           spawn:
-            processEnvironment === undefined
+            extraEnvironment === undefined
               ? resolved.spawn
               : {
                   ...resolved.spawn,
-                  env: { ...resolved.spawn.env, ...processEnvironment },
+                  env: { ...resolved.spawn.env, ...extraEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
           customModels: readCustomModelEntries(options.settings.customModels).map(
