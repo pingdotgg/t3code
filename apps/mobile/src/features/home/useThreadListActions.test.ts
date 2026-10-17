@@ -141,6 +141,7 @@ vi.mock("../../state/threads", () => ({
 }));
 
 import { useArchivedThreadListActions, useThreadListActions } from "./useThreadListActions";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
 const otherEnvironmentId = EnvironmentId.make("other");
@@ -182,6 +183,49 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllEnvs());
+
+describe("thread arrangement save recovery", () => {
+  it("retries failed moves without repeating confirmed moves from another environment", async () => {
+    const primary = makeThread({
+      pinnedAt: "2026-10-15T00:00:00.000Z",
+      pinOrderKey: "a",
+    });
+    const other = makeThread({ ...primary, environmentId: otherEnvironmentId });
+    state.shells = [primary, other];
+    const drafts = new Map([
+      [scopedThreadKey(primary.environmentId, primary.id), { pinOrderKey: "c" }],
+      [scopedThreadKey(other.environmentId, other.id), { pinOrderKey: "d" }],
+    ]);
+    state.afterRequest = () => {
+      state.shells = [{ ...primary, pinOrderKey: "c" }, other];
+    };
+    const { saveThreadArrangement } = useThreadListActions();
+
+    expect(await saveThreadArrangement(drafts)).toBe(false);
+    expect(state.dropBusy).toBe(false);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: primaryEnvironmentId,
+        input: { threadId: primary.id, orderKey: "c" },
+      },
+    ]);
+
+    state.requests = [];
+    state.scopes.get(otherEnvironmentId)!.add(AuthOrchestrationOperateScope);
+    state.afterRequest = undefined;
+
+    expect(await saveThreadArrangement(drafts)).toBe(true);
+    expect(state.dropBusy).toBe(false);
+    expect(state.requests).toEqual([
+      {
+        action: "reorderPin",
+        environmentId: otherEnvironmentId,
+        input: { threadId: other.id, orderKey: "d" },
+      },
+    ]);
+  });
+});
 
 describe("thread list operation permissions", () => {
   it.each(mutationCases)(

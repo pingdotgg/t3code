@@ -25,6 +25,8 @@ import { useThreadListActions } from "../home/useThreadListActions";
 import {
   createThreadMovePlanner,
   threadDragAction,
+  withThreadDrafts,
+  type ThreadArrangementPatch,
   type ThreadMoveDestination,
 } from "./threadOrder";
 import { getThreadListV2OrderedSection, threadListInboxReturns } from "./threadListV2";
@@ -149,12 +151,17 @@ function DragHandle(props: {
 
 export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const insets = useSafeAreaInsets();
-  const threads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
+  const savedThreads = useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const queuedThreadKeys = useAtomValue(queuedThreadKeysAtom);
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
-  const { moveThread } = useThreadListActions();
+  const { previewThreadMove, saveThreadArrangement } = useThreadListActions();
+  // Moves stack up as drafts and are sent together on Done, so a drop never
+  // waits on the network.
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, ThreadArrangementPatch>>(new Map());
+  const [saving, setSaving] = useState(false);
+  const threads = useMemo(() => withThreadDrafts(savedThreads, drafts), [savedThreads, drafts]);
   const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
   const [now, setNow] = useState(() => new Date().toISOString());
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
@@ -245,8 +252,23 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const frame = useRef<number | null>(null);
   const [preview, setPreview] = useState<Drag | null>(null);
   const translateY = useRef(new Animated.Value(0)).current;
-  const latest = useRef({ rows, planners, moveThread });
-  latest.current = { rows, planners, moveThread };
+  const latest = useRef({ rows, planners });
+  latest.current = { rows, planners };
+
+  function move(thread: EnvironmentThreadShell, destination: ThreadMoveDestination) {
+    const next = previewThreadMove(drafts, thread, destination);
+    if (next !== null) setDrafts(next);
+  }
+  async function done() {
+    if (saving) return;
+    stop();
+    setSaving(true);
+    try {
+      if (await saveThreadArrangement(drafts)) props.onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function stop() {
     if (frame.current !== null) cancelAnimationFrame(frame.current);
@@ -369,7 +391,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
       visible
       animationType="slide"
       presentationStyle="fullScreen"
-      onRequestClose={props.onClose}
+      onRequestClose={() => void done()}
     >
       <GestureHandlerRootView style={{ flex: 1 }}>
         <View
@@ -380,14 +402,16 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
             <Text className="flex-1 text-xl font-t3-semibold">Arrange threads</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={props.onClose}
+              accessibilityState={{ busy: saving }}
+              disabled={saving}
+              onPress={() => void done()}
               className="min-h-11 justify-center px-3"
             >
-              <Text className="text-base text-primary-text">Done</Text>
+              <Text className="text-base text-primary-text">{saving ? "Saving…" : "Done"}</Text>
             </Pressable>
           </View>
           <Text className="px-5 pb-3 text-sm text-foreground-muted">
-            Drag to reorder, pin, or settle. Changes save when you drop.
+            Drag to reorder, pin, or settle. Changes save when you tap Done.
           </Text>
           <View
             onLayout={(event) => {
@@ -473,6 +497,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                         <DragHandle
                           title={thread.title}
                           disabled={
+                            saving ||
                             dropBusy ||
                             pendingOrder !== null ||
                             !(
@@ -483,30 +508,19 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
                             )
                           }
                           sectionActions={sectionActions}
-                          onSectionMove={(section) => {
-                            void moveThread(thread, {
-                              section,
-                              targetId: null,
-                              placement: "before",
-                            });
-                          }}
+                          onSectionMove={(section) =>
+                            move(thread, { section, targetId: null, placement: "before" })
+                          }
                           canMoveUp={planner?.(item.key, "up") != null}
                           canMoveDown={planner?.(item.key, "down") != null}
-                          onStep={(direction) => {
-                            void moveThread(thread, direction);
-                          }}
+                          onStep={(direction) => move(thread, direction)}
                           onStart={() => start(item)}
                           onMove={update}
                           onEnd={(cancelled) => {
                             const current = drag.current;
-                            if (cancelled || !current?.destination) {
-                              stop();
-                              return;
-                            }
-                            if (frame.current !== null) cancelAnimationFrame(frame.current);
-                            frame.current = null;
-                            drag.current = null;
-                            void moveThread(current.thread, current.destination).finally(stop);
+                            if (!cancelled && current?.destination)
+                              move(current.thread, current.destination);
+                            stop();
                           }}
                         />
                       </>
