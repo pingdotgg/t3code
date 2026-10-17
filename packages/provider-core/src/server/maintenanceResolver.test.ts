@@ -21,6 +21,7 @@ import {
   makeTargetedProviderUpdateAction,
   enrichProviderSnapshotWithVersionAdvisory,
   homebrewOwnershipFromCommandPath,
+  invalidateLatestProviderVersion,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
@@ -667,14 +668,13 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           ),
         );
 
-        expect(spawned).toEqual([
-          [brewPath, "--prefix"],
-          [brewPath, "info", "--json=v2", fixture.name],
-        ]);
+        // `brew info` asks the registry, so it waits for an update check.
+        expect(spawned).toEqual([[brewPath, "--prefix"]]);
         expect(capabilities).toEqual({
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
-          latestVersion: "0.148.0",
+          latestVersion: null,
+          lookupLatestVersion: expect.anything(),
           update: {
             command:
               fixture.kind === "cask"
@@ -688,8 +688,94 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
             lockKey: "homebrew",
           },
         });
+
+        const latestVersion = yield* resolveLatestProviderVersion(capabilities).pipe(
+          Effect.provide(ProviderLatestVersions.layer),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
+          ),
+        );
+        expect(latestVersion).toBe("0.148.0");
+        expect(spawned.at(-1)).toEqual([brewPath, "info", "--json=v2", fixture.name]);
       }),
     { skip: !symlinksSupported },
+  );
+
+  it.effect("keeps installer latest versions apart per update target", () =>
+    Effect.gen(function* () {
+      const brewCapabilities = (args: ReadonlyArray<string>, latest: string) =>
+        makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "/opt/homebrew/bin/brew",
+          updateArgs: args,
+          updateLockKey: "homebrew",
+          latestVersion: null,
+          lookupLatestVersion: Effect.succeed(latest),
+        });
+      const formula = brewCapabilities(["upgrade", "package-tool"], "2.0.0");
+      const cask = brewCapabilities(["upgrade", "--cask", "package-tool"], "1.0.0");
+
+      expect(yield* resolveLatestProviderVersion(formula)).toBe("2.0.0");
+      expect(yield* resolveLatestProviderVersion(cask)).toBe("1.0.0");
+    }).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
+      ),
+    ),
+  );
+
+  it.effect.skipIf(windowsHost)("asks brew for the latest version only with update checks", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-homebrew-update-checks");
+      writeExecutable(NodePath.join(tempDir, "bin", "brew"));
+      const kegBinary = NodePath.join(tempDir, "Cellar", "package-tool", "1.0.0", "bin", "tool");
+      writeExecutable(kegBinary);
+      const spawned: Array<ReadonlyArray<string>> = [];
+      let brewInfo = "not json";
+      const spawner = stdoutSpawner((_command, args) => {
+        spawned.push(args);
+        return args[0] === "--prefix" ? `${tempDir}\n` : brewInfo;
+      });
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+        binaryPath: kegBinary,
+        env: { PATH: "" },
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const latestVersions = yield* ProviderLatestVersions.make();
+      const enrich = (enableProviderUpdateChecks: boolean) =>
+        enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, capabilities, {
+          enableProviderUpdateChecks,
+        }).pipe(
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
+          ),
+        );
+
+      yield* enrich(false);
+      expect(spawned).toEqual([["--prefix"]]);
+
+      // An unreadable answer stays unknown rather than borrowing npm's newer release.
+      expect((yield* enrich(true)).versionAdvisory?.latestVersion).toBeNull();
+      expect(spawned).toEqual([["--prefix"], ["info", "--json=v2", "package-tool"]]);
+
+      // After an upgrade the runner drops the cached answer so brew is asked again.
+      brewInfo = JSON.stringify({ formulae: [{ versions: { stable: "1.1.0" } }] });
+      yield* invalidateLatestProviderVersion(capabilities).pipe(
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+      );
+      expect((yield* enrich(true)).versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        latestVersion: "1.1.0",
+      });
+    }),
   );
 
   it.effect.skipIf(windowsHost)(
