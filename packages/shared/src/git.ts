@@ -163,11 +163,12 @@ export function normalizeGitRemoteUrl(value: string): string {
     }
   }
 
-  const scpStyleHostAndPath = /^[a-zA-Z0-9._-]+@([^:/\s]+):([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
-    normalized,
-  );
-  const scpHost = scpStyleHostAndPath?.[1];
-  const scpPath = scpStyleHostAndPath?.[2];
+  // The user and a leading path slash are optional (`host:/group/project`). Without a user, a
+  // one-letter host is a Windows drive (`c:/repos/project`), not a remote.
+  const scpStyleHostAndPath =
+    /^(?:[a-zA-Z0-9._-]+@([^:/\s]+)|([^:/\s]{2,})):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
+  const scpHost = scpStyleHostAndPath?.[1] ?? scpStyleHostAndPath?.[2];
+  const scpPath = scpStyleHostAndPath?.[3];
   if (scpHost && scpPath) {
     return azureDevOpsRepositoryKey(scpHost, scpPath.split("/")) ?? `${scpHost}/${scpPath}`;
   }

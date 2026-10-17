@@ -241,6 +241,67 @@ it("tells a host glab has no login for apart from output that cannot say", () =>
   assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
 });
 
+it.effect("settles unknown identities served by a GitLab login for their host", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({});
+    const refine = provider.refineRepositoryIdentity;
+    assert.isDefined(refine);
+    const identity = (remoteUrl: string, provider?: string) => ({
+      canonicalKey: "code.example.test/team/repo",
+      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+      rootPath: "/repo",
+      ...(provider === undefined ? {} : { provider }),
+    });
+    const askedHosts: string[] = [];
+    const servedBy =
+      (kind: string) =>
+      (input: { readonly context: { readonly provider: { readonly name: string } } }) => {
+        askedHosts.push(input.context.provider.name);
+        return Effect.succeed({
+          provider: { kind: SourceControlProviderKind.make(kind), name: "", baseUrl: "" },
+          remoteName: "origin",
+          remoteUrl: "",
+        });
+      };
+
+    for (const remoteUrl of [
+      "https://code.example.test/team/repo.git",
+      "git@code.example.test:team/repo.git",
+      "code.example.test:team/repo.git",
+    ]) {
+      assert.deepStrictEqual(
+        yield* refine!({ identity: identity(remoteUrl), resolveContext: servedBy("gitlab") }),
+        { ...identity(remoteUrl), provider: SourceControlProviderKind.make("gitlab") },
+      );
+    }
+    // `glab` logins are matched against the provider name, so it has to be the host.
+    assert.deepStrictEqual(askedHosts, [
+      "code.example.test",
+      "code.example.test",
+      "code.example.test",
+    ]);
+
+    // A Windows drive path is not a remote, even if a login matches its drive letter.
+    const drivePath = identity("C:/repos/project");
+    assert.strictEqual(
+      yield* refine!({ identity: drivePath, resolveContext: () => Effect.die("not asked") }),
+      drivePath,
+    );
+
+    // A host no GitLab login serves, or an identity another host already owns, is left alone.
+    const unserved = identity("https://code.example.test/team/repo.git", "unknown");
+    assert.strictEqual(
+      yield* refine!({ identity: unserved, resolveContext: servedBy("unknown") }),
+      unserved,
+    );
+    const github = identity("https://github.com/team/repo.git", "github");
+    assert.strictEqual(
+      yield* refine!({ identity: github, resolveContext: () => Effect.die("not asked") }),
+      github,
+    );
+  }),
+);
+
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {
   assert.deepStrictEqual(
     parseGitLabAuthStatusHosts(`localhost:8080
