@@ -8,6 +8,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import { createDpopProof, loadOrCreateDpopProofKeyPair } from "./dpop";
+import { resolveCloudPublicConfig } from "./publicConfig";
 import { managedRelayAccessTokenStore } from "./managedRelayTokenStore";
 
 const layerRelayDpopSigner = Layer.effect(
@@ -65,6 +66,7 @@ const layerRelayDpopSigner = Layer.effect(
 export const layer = (relayUrl: string) =>
   ManagedRelay.layer({
     relayUrl,
+    backgroundRelayUrl: resolveCloudPublicConfig().relay.backgroundUrl ?? undefined,
     clientId: RelayMobileClientId,
     accessTokenStore: managedRelayAccessTokenStore,
   }).pipe(Layer.provideMerge(layerRelayDpopSigner));

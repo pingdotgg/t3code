@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CloudPublicConfigMissingError,
+  BackgroundRelayUrlInvalidError,
   hasTracingPublicConfig,
   resolveCloudPublicConfig,
   resolveRelayClerkTokenOptions,
@@ -16,6 +17,33 @@ vi.mock("expo-constants", () => ({
 }));
 
 describe("resolveCloudPublicConfig", () => {
+  it("normalizes an independent background relay without changing T3 Connect", () => {
+    expect(
+      resolveCloudPublicConfig({
+        relay: {
+          url: "https://relay.example.test",
+          backgroundUrl: " https://background.example.test/// ",
+        },
+      }).relay,
+    ).toEqual({
+      url: "https://relay.example.test",
+      backgroundUrl: "https://background.example.test",
+    });
+  });
+
+  it.each([
+    "http://background.example.test",
+    "https://user:secret@background.example.test",
+    "https://background.example.test/path",
+    "not a URL",
+  ])(
+    "rejects invalid background configuration instead of silently using the primary relay: %s",
+    (backgroundUrl) => {
+      expect(() => resolveCloudPublicConfig({ relay: { backgroundUrl } })).toThrow(
+        BackgroundRelayUrlInvalidError,
+      );
+    },
+  );
   it("reports the missing Clerk JWT template as structured configuration", () => {
     expect(() => resolveRelayClerkTokenOptions()).toThrowError(
       new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" }),
@@ -30,6 +58,7 @@ describe("resolveCloudPublicConfig", () => {
       },
       relay: {
         url: null,
+        backgroundUrl: null,
       },
       observability: {
         tracesUrl: null,
@@ -57,6 +86,7 @@ describe("resolveCloudPublicConfig", () => {
       },
       relay: {
         url: "https://relay.example.test",
+        backgroundUrl: null,
       },
       observability: {
         tracesUrl: "https://api.axiom.co/v1/traces",
@@ -79,6 +109,7 @@ describe("resolveCloudPublicConfig", () => {
       },
       relay: {
         url: null,
+        backgroundUrl: null,
       },
       observability: {
         tracesUrl: null,
