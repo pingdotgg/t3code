@@ -181,8 +181,11 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]')).not.toBeNull();
     await press("Escape");
     expect(document.querySelector('[role="menu"]:not([data-closed])')).toBeNull();
-    expect(document.activeElement).toBe(
-      container.querySelector('[aria-label="Add panel surface"]'),
+    // The menu hands focus back to its trigger once its close finishes, which can land a frame later.
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(
+        container.querySelector('[aria-label="Add panel surface"]'),
+      ),
     );
     input.remove();
   });
