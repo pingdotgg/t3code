@@ -247,7 +247,15 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
   );
 }
 
-function NoticeDescription({ children }: { children: ReactNode }) {
+function NoticeDescription({
+  children,
+  className,
+  detailsLabel,
+}: {
+  readonly children: ReactNode;
+  readonly className: string;
+  readonly detailsLabel: string;
+}) {
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -279,10 +287,7 @@ function NoticeDescription({ children }: { children: ReactNode }) {
 
   return (
     <span className="contents">
-      <span
-        ref={descriptionRef}
-        className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
-      >
+      <span ref={descriptionRef} className={className}>
         {children}
       </span>
       {showDetails ? (
@@ -294,7 +299,7 @@ function NoticeDescription({ children }: { children: ReactNode }) {
                 ref={detailsRef}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Show notice details"
+                aria-label={detailsLabel}
                 className="flex-none"
               />
             }
@@ -351,8 +356,20 @@ function ComposerBannerStackAlert({
           {item.icon}
         </ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
-          <span className="min-w-0 truncate font-medium leading-7 sm:leading-6">{item.title}</span>
-          {item.description ? <NoticeDescription>{item.description}</NoticeDescription> : null}
+          <NoticeDescription
+            detailsLabel="Show title details"
+            className="min-w-0 truncate font-medium leading-7 sm:leading-6"
+          >
+            {item.title}
+          </NoticeDescription>
+          {item.description ? (
+            <NoticeDescription
+              detailsLabel="Show notice details"
+              className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
+            >
+              {item.description}
+            </NoticeDescription>
+          ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
