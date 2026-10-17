@@ -1,4 +1,6 @@
 import { ThreadId } from "@t3tools/contracts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -226,9 +228,10 @@ export const layer: Layer.Layer<
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
     // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
-    // Discovery runs on the shared synchronous connection; json_extract over
-    // large payloads made 500-row pages block the event loop for ~90ms.
+    // Bound each reader request and writer delete, including when the reader
+    // worker is unavailable and discovery falls back to the writer.
     const COMPACTION_PAGE_SIZE = 50;
+    const COMPACTION_SLICE_NANOS = 25_000_000n;
 
     /**
      * Scan newest first to retain the newest state for each entity. Keyed
@@ -241,6 +244,16 @@ export const layer: Layer.Layer<
      * turn-item.updated stays intact because replay assigns positions on first write.
      */
     const compactEventStore = Effect.gen(function* () {
+      let sliceStarted = yield* Clock.monotonicTimeNanos;
+      const pause = Effect.gen(function* () {
+        const elapsed = (yield* Clock.monotonicTimeNanos) - sliceStarted;
+        if (elapsed < COMPACTION_SLICE_NANOS) return;
+        // Spend at most 10% of wall time compacting. A slow page can exceed
+        // the slice budget; repay its entire elapsed time before the next page.
+        // Keep both cursors and all retention state in this fiber across rests.
+        yield* Effect.sleep((Number(elapsed) / 1_000_000) * 9);
+        sliceStarted = yield* Clock.monotonicTimeNanos;
+      });
       const bounds = yield* sql<{
         readonly event_sequence: number;
         readonly receipt_row_id: number;
@@ -248,7 +261,7 @@ export const layer: Layer.Layer<
         SELECT
           COALESCE((SELECT MAX(sequence) FROM orchestration_events), 0) AS event_sequence,
           COALESCE((SELECT MAX(rowid) FROM orchestration_command_receipts), 0) AS receipt_row_id
-      `;
+      `.pipe(NodeSqliteClient.readOnly);
       let throughSequence = bounds[0]?.event_sequence ?? 0;
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
       const retainedThreadIds = new Set<string>();
@@ -299,7 +312,7 @@ export const layer: Layer.Layer<
           WHERE event.sequence <= ${throughSequence}
           ORDER BY event.sequence DESC
           LIMIT ${COMPACTION_PAGE_SIZE}
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
         const obsolete: number[] = [];
         for (const row of rows) {
           if (row.imported_legacy_thread === 1) {
@@ -342,8 +355,7 @@ export const layer: Layer.Layer<
             }
           }
         }
-        // Both discovery and deletion use the synchronous connection. Yield even
-        // when this page has nothing to delete so startup and requests can progress.
+        // Never hold a transaction or the reader lock across a yield or a rest.
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
           yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
@@ -351,6 +363,7 @@ export const layer: Layer.Layer<
           yield* Effect.yieldNow;
         }
         throughSequence = (rows.at(-1)?.sequence ?? 1) - 1;
+        yield* pause;
         if (rows.length < COMPACTION_PAGE_SIZE) break;
       }
 
@@ -375,9 +388,10 @@ export const layer: Layer.Layer<
           FROM orchestration_command_receipts AS receipt
           WHERE receipt.rowid <= ${throughReceiptRowId}
           ORDER BY receipt.rowid DESC
-          LIMIT ${COMPACTION_PAGE_SIZE}
-        `;
-        const obsolete = rows
+          LIMIT ${COMPACTION_PAGE_SIZE + 1}
+        `.pipe(NodeSqliteClient.readOnly);
+        const page = rows.slice(0, COMPACTION_PAGE_SIZE);
+        const obsolete = page
           .filter((row) => row.imported_legacy_thread === 1)
           .map((row) => row.command_id);
         yield* Effect.yieldNow;
@@ -386,8 +400,9 @@ export const layer: Layer.Layer<
           deletedReceiptCount += obsolete.length;
           yield* Effect.yieldNow;
         }
-        throughReceiptRowId = (rows.at(-1)?.row_id ?? 1) - 1;
-        if (rows.length < COMPACTION_PAGE_SIZE) break;
+        throughReceiptRowId = (page.at(-1)?.row_id ?? 1) - 1;
+        if (rows.length <= COMPACTION_PAGE_SIZE) break;
+        yield* pause;
       }
 
       const freelistRows = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
