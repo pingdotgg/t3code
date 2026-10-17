@@ -71,6 +71,63 @@ describe("cookieScope", () => {
 });
 
 describe("readChromiumCookieDatabase", () => {
+  it.effect.each([14, 24])(
+    "reads mixed TEXT and BLOB encrypted values in schema %i without losing bytes",
+    (schemaVersion) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-chromium-storage-types-",
+        });
+        const filename = `${directory}/Cookies`;
+        const key = Buffer.from("0123456789abcdef");
+        const host = ".example.test";
+        const value = "stored encrypted value";
+        const payload =
+          schemaVersion >= 24
+            ? Buffer.concat([
+                NodeCrypto.createHash("sha256").update(host).digest(),
+                Buffer.from(value),
+              ])
+            : Buffer.from(value);
+        const encrypted = encryptV10(payload, key);
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`create table meta (key text primary key, value text not null)`;
+          yield* sql`insert into meta values ('version', ${schemaVersion})`;
+          yield* sql`create table cookies (
+            host_key text not null, name text not null, value text not null,
+            encrypted_value blob not null, path text not null, expires_utc integer not null,
+            is_secure integer not null, is_httponly integer not null, samesite integer not null
+          )`;
+          if (schemaVersion >= 15) {
+            yield* sql`alter table cookies add column top_frame_site_key text not null default ''`;
+          }
+          yield* sql`insert into cookies
+            (host_key, name, value, encrypted_value, path, expires_utc, is_secure, is_httponly, samesite) values
+            (${host}, 'plaintext', 'stored plaintext', '', '/', 0, 0, 0, -1),
+            (${host}, 'text-encrypted', '', cast(${encrypted} as text), '/', 0, 1, 1, 2),
+            (${host}, 'blob-encrypted', '', ${encrypted}, '/', 0, 1, 1, 2)`;
+          const storageTypes = yield* sql`select typeof(encrypted_value) as storage_type
+            from cookies order by name`;
+          expect(storageTypes).toEqual([
+            { storage_type: "blob" },
+            { storage_type: "text" },
+            { storage_type: "text" },
+          ]);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename })));
+
+        const result = yield* readChromiumCookieDatabase(filename, { cbcV10: key }, "darwin");
+        expect(result.undecryptable).toBe(0);
+        expect(result.cookies.map((cookie) => [cookie.name, cookie.value])).toEqual([
+          ["plaintext", "stored plaintext"],
+          ["text-encrypted", value],
+          ["blob-encrypted", value],
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it("decrypts Windows v10 AES-GCM records and rejects app-bound v20 records", () => {
     const key = Buffer.from("0123456789abcdef0123456789abcdef");
     const host = ".example.test";
