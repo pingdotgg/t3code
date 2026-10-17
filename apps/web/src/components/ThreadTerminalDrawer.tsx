@@ -34,11 +34,9 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type SetStateAction,
-  useCallback,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -201,6 +199,20 @@ const TERMINAL_PALETTES = {
     "#e5e5e5",
   ].map(hexToGhosttyColor),
 };
+
+// The surface reads `visible` once it finishes loading WASM, so it must see the value at
+// that moment rather than the one from when setup started.
+function withLiveVisibility(
+  visibleRef: { readonly current: boolean },
+  options: Omit<GhosttyTerminalSurfaceOptions, "visible">,
+): GhosttyTerminalSurfaceOptions {
+  return {
+    ...options,
+    get visible() {
+      return visibleRef.current;
+    },
+  };
+}
 
 function runtimeEnvSignature(runtimeEnv: Record<string, string> | undefined): string {
   if (!runtimeEnv) return "";
@@ -396,7 +408,21 @@ interface TerminalLaunchLocation {
   readonly runtimeEnv?: Record<string, string>;
 }
 
-export function TerminalViewport({
+export function TerminalViewport(props: TerminalViewportProps) {
+  // A different launch is a different session, so it gets a fresh surface and fresh
+  // session bookkeeping.
+  const sessionKey = JSON.stringify([
+    props.threadRef.environmentId,
+    props.threadId,
+    props.terminalId,
+    props.cwd,
+    props.worktreePath ?? null,
+    runtimeEnvSignature(props.runtimeEnv),
+  ]);
+  return <TerminalSessionViewport key={sessionKey} {...props} />;
+}
+
+function TerminalSessionViewport({
   advancedTypography,
   threadRef,
   threadId,
@@ -446,8 +472,7 @@ export function TerminalViewport({
   const hasHandledExitRef = useRef(false);
   const selectionActionRequestIdRef = useRef(0);
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
-  const keybindingsRef = useRef(keybindings);
-  const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
+  const readKeybindings = useEffectEvent(() => keybindings);
   const handleSessionExited = useEffectEvent(() => {
     if (hasTerminalWriteAccess()) onSessionExited();
   });
@@ -529,23 +554,26 @@ export function TerminalViewport({
     status: terminalStatus,
     version: terminalVersion,
   });
-  const latestSessionRef = useRef(previousSessionRef.current);
-  latestSessionRef.current = {
+  const readLatestSession = useEffectEvent(() => ({
     output: terminalOutput,
     error: terminalError,
     status: terminalStatus,
     version: terminalVersion,
-  };
-
-  useEffect(() => {
-    keybindingsRef.current = keybindings;
-  }, [keybindings]);
+  }));
+  const openLinkInPreview = useEffectEvent(
+    (url: string, forceBrowser: boolean, fallbackToBrowser: () => void) =>
+      openTerminalLinkInPreview({ url, threadRef, openPreview, fallbackToBrowser, forceBrowser }),
+  );
 
   useLayoutEffect(() => {
     if (terminalRef.current) terminalRef.current.input.readOnly = !canOperateTerminal;
   }, [canOperateTerminal]);
 
+  // Links re-read the grant on activation; only the hovered link's styling needs a nudge.
+  const linkActivationScopeRef = useRef(canOpenHostEditor);
   useEffect(() => {
+    if (linkActivationScopeRef.current === canOpenHostEditor) return;
+    linkActivationScopeRef.current = canOpenHostEditor;
     terminalRef.current?.refreshLinkActivation();
   }, [canOpenHostEditor]);
 
@@ -581,12 +609,9 @@ export function TerminalViewport({
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
-      const terminalOptions: GhosttyTerminalSurfaceOptions = {
+      const terminalOptions = withLiveVisibility(visibleRef, {
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
-        get visible() {
-          return visibleRef.current;
-        },
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
@@ -599,7 +624,7 @@ export function TerminalViewport({
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
         },
-      };
+      });
       const terminal = await GhosttyTerminalSurface.create(mount, terminalOptions);
       if (cancelled) {
         terminal.dispose();
@@ -619,7 +644,7 @@ export function TerminalViewport({
       if (currentFont.family !== setupFont.family || currentFont.size !== setupFont.size) {
         void terminal.setFont(terminalFontOptions(currentFont.family, currentFont.size));
       }
-      const latestSession = latestSessionRef.current;
+      const latestSession = readLatestSession();
       previousSessionRef.current = latestSession;
       const initialOutput = readTerminalOutputUpdate(
         latestSession.output,
@@ -842,7 +867,7 @@ export function TerminalViewport({
       };
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
-        const currentKeybindings = keybindingsRef.current;
+        const currentKeybindings = readKeybindings();
         const options = { context: { terminalFocus: true, terminalOpen: true } };
         if (preventTerminalCloseShortcut(event, currentKeybindings)) {
           return false;
@@ -901,21 +926,17 @@ export function TerminalViewport({
             fallbackToBrowser();
             return;
           }
-          void openTerminalLinkInPreview({
-            url: text,
-            threadRef,
-            openPreview,
-            fallbackToBrowser,
-            forceBrowser: event.metaKey || event.ctrlKey,
-          }).catch((error: unknown) => {
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Unable to open link",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          });
+          void openLinkInPreview(text, event.metaKey || event.ctrlKey, fallbackToBrowser).catch(
+            (error: unknown) => {
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to open link",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            },
+          );
           return;
         }
         const target = resolvePathLinkTarget(text, cwd);
@@ -1027,7 +1048,7 @@ export function TerminalViewport({
         mount.focus({ preventScroll: true });
       }
     };
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [cwd, environmentId, terminalId]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -1057,14 +1078,19 @@ export function TerminalViewport({
     previousSessionRef.current = current;
   }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
+  // Each new request focuses again, even when nothing else changed.
+  const focusRequest = autoFocus && canOperateTerminal && visible ? focusRequestId : null;
   useEffect(() => {
-    if (!autoFocus || !canOperateTerminal || !visible) return;
+    if (focusRequest === null) return;
     (terminalRef.current ?? containerRef.current)?.focus();
-  }, [autoFocus, canOperateTerminal, focusRequestId, visible]);
+  }, [focusRequest]);
 
+  // The surface measures its mount, so each drawer resize or window resize refits it.
+  // A hidden surface skips fitting, and showing it again fits through setVisible.
+  const layoutRevision = visible ? `${drawerHeight}:${resizeEpoch}` : null;
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || !visibleRef.current) return;
+    if (!terminal || layoutRevision === null) return;
     const wasAtBottom = terminal.isAtBottom();
     // The surface reports grid changes through onResize, which is the single
     // channel for PTY resize RPCs; fitting here only refreshes the layout.
@@ -1078,7 +1104,7 @@ export function TerminalViewport({
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [drawerHeight, environmentId, resizeEpoch, terminalId, threadId]);
+  }, [layoutRevision]);
   return (
     <div
       ref={containerRef}
@@ -1116,6 +1142,107 @@ interface ThreadTerminalDrawerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalLabelsById?: ReadonlyMap<string, string>;
   terminalLaunchLocationsById?: ReadonlyMap<string, TerminalLaunchLocation>;
+}
+
+function useTerminalLayout(
+  terminalIds: readonly string[],
+  terminalGroups: readonly ThreadTerminalGroup[],
+  terminalLabelsById: ReadonlyMap<string, string> | undefined,
+) {
+  // Calls no hooks, so the compiler needs the directive to memoize it.
+  "use memo";
+  const normalizedTerminalIds = (() => {
+    const normalizedIds: string[] = [];
+    const seen = new Set<string>();
+    for (const id of terminalIds) {
+      const trimmedId = id.trim();
+      if (trimmedId.length === 0 || seen.has(trimmedId)) continue;
+      seen.add(trimmedId);
+      normalizedIds.push(trimmedId);
+    }
+    return normalizedIds;
+  })();
+  const resolvedTerminalGroups = (() => {
+    if (normalizedTerminalIds.length === 0) {
+      return [];
+    }
+    const validTerminalIdSet = new Set(normalizedTerminalIds);
+    const assignedTerminalIds = new Set<string>();
+    const usedGroupIds = new Set<string>();
+    const nextGroups: ThreadTerminalGroup[] = [];
+
+    const assignUniqueGroupId = (groupId: string): string => {
+      if (!usedGroupIds.has(groupId)) {
+        usedGroupIds.add(groupId);
+        return groupId;
+      }
+      let suffix = 2;
+      while (usedGroupIds.has(`${groupId}-${suffix}`)) {
+        suffix += 1;
+      }
+      const uniqueGroupId = `${groupId}-${suffix}`;
+      usedGroupIds.add(uniqueGroupId);
+      return uniqueGroupId;
+    };
+
+    for (const terminalGroup of terminalGroups) {
+      const nextTerminalIds: string[] = [];
+      const seenGroupTerminalIds = new Set<string>();
+      for (const id of terminalGroup.terminalIds) {
+        const terminalId = id.trim();
+        if (terminalId.length === 0) continue;
+        if (seenGroupTerminalIds.has(terminalId)) continue;
+        seenGroupTerminalIds.add(terminalId);
+        if (!validTerminalIdSet.has(terminalId)) continue;
+        if (assignedTerminalIds.has(terminalId)) continue;
+        nextTerminalIds.push(terminalId);
+      }
+      if (nextTerminalIds.length === 0) continue;
+
+      for (const terminalId of nextTerminalIds) {
+        assignedTerminalIds.add(terminalId);
+      }
+
+      const baseGroupId =
+        terminalGroup.id.trim().length > 0
+          ? terminalGroup.id.trim()
+          : `group-${nextTerminalIds[0] ?? normalizedTerminalIds[0] ?? ""}`;
+      nextGroups.push({
+        id: assignUniqueGroupId(baseGroupId),
+        terminalIds: nextTerminalIds,
+        ...(terminalGroup.splitDirection === "vertical"
+          ? { splitDirection: "vertical" as const }
+          : {}),
+      });
+    }
+
+    for (const terminalId of normalizedTerminalIds) {
+      if (assignedTerminalIds.has(terminalId)) continue;
+      nextGroups.push({
+        id: assignUniqueGroupId(`group-${terminalId}`),
+        terminalIds: [terminalId],
+      });
+    }
+
+    const terminalOrderIndex = new Map(
+      normalizedTerminalIds.map((id, index) => [id, index] as const),
+    );
+    nextGroups.sort((left, right) => {
+      const rank = (ids: readonly string[]) =>
+        Math.min(...ids.map((id) => terminalOrderIndex.get(id) ?? Number.POSITIVE_INFINITY));
+      return rank(left.terminalIds) - rank(right.terminalIds);
+    });
+
+    return nextGroups;
+  })();
+  const terminalLabelById = (() => {
+    const next = new Map<string, string>();
+    for (const terminalId of normalizedTerminalIds) {
+      next.set(terminalId, terminalLabelsById?.get(terminalId) ?? getTerminalLabel(terminalId));
+    }
+    return next;
+  })();
+  return { normalizedTerminalIds, resolvedTerminalGroups, terminalLabelById };
 }
 
 interface TerminalActionButtonProps {
@@ -1207,24 +1334,24 @@ export default function ThreadTerminalDrawer({
   const preferredDrawerHeight =
     drawerHeightState.threadId === threadId ? drawerHeightState.height : controlledDrawerHeight;
   const drawerHeight = clampDrawerHeight(preferredDrawerHeight, windowMaxDrawerHeight);
-  const setDrawerHeight = useCallback(
-    (update: SetStateAction<number>) => {
-      setDrawerHeightState((current) => {
-        const currentHeight =
-          current.threadId === threadId ? current.height : controlledDrawerHeight;
-        const nextHeight = typeof update === "function" ? update(currentHeight) : update;
-        return nextHeight === currentHeight && current.threadId === threadId
-          ? current
-          : { threadId, height: nextHeight };
-      });
-    },
-    [controlledDrawerHeight, threadId],
-  );
+  const setDrawerHeight = (update: SetStateAction<number>) => {
+    setDrawerHeightState((current) => {
+      const currentHeight = current.threadId === threadId ? current.height : controlledDrawerHeight;
+      const nextHeight = typeof update === "function" ? update(currentHeight) : update;
+      return nextHeight === currentHeight && current.threadId === threadId
+        ? current
+        : { threadId, height: nextHeight };
+    });
+  };
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const [shownVisible, setShownVisible] = useState(visible);
+  if (shownVisible !== visible) {
+    setShownVisible(visible);
+    // The window may have resized while the drawer was hidden and not listening.
+    if (visible) setWindowMaxDrawerHeight(maxDrawerHeight());
+  }
   const drawerHeightRef = useRef(drawerHeight);
-  const preferredDrawerHeightRef = useRef(preferredDrawerHeight);
-  const lastSyncedHeightRef = useRef(controlledDrawerHeight);
-  const onHeightChangeRef = useRef(onHeightChange);
+  const lastSyncedHeightRef = useRef({ threadId, height: controlledDrawerHeight });
   const resizeStateRef = useRef<{
     pointerId: number;
     startY: number;
@@ -1233,17 +1360,11 @@ export default function ThreadTerminalDrawer({
   } | null>(null);
   const didResizeDuringDragRef = useRef(false);
 
-  const normalizedTerminalIds = useMemo(() => {
-    const normalizedIds: string[] = [];
-    const seen = new Set<string>();
-    for (const id of terminalIds) {
-      const trimmedId = id.trim();
-      if (trimmedId.length === 0 || seen.has(trimmedId)) continue;
-      seen.add(trimmedId);
-      normalizedIds.push(trimmedId);
-    }
-    return normalizedIds;
-  }, [terminalIds]);
+  const { normalizedTerminalIds, resolvedTerminalGroups, terminalLabelById } = useTerminalLayout(
+    terminalIds,
+    terminalGroups,
+    terminalLabelsById,
+  );
 
   const resolvedActiveTerminalId =
     normalizedTerminalIds.length === 0
@@ -1252,81 +1373,7 @@ export default function ThreadTerminalDrawer({
         ? activeTerminalId
         : (normalizedTerminalIds[0] ?? "");
 
-  const resolvedTerminalGroups = useMemo(() => {
-    if (normalizedTerminalIds.length === 0) {
-      return [];
-    }
-    const validTerminalIdSet = new Set(normalizedTerminalIds);
-    const assignedTerminalIds = new Set<string>();
-    const usedGroupIds = new Set<string>();
-    const nextGroups: ThreadTerminalGroup[] = [];
-
-    const assignUniqueGroupId = (groupId: string): string => {
-      if (!usedGroupIds.has(groupId)) {
-        usedGroupIds.add(groupId);
-        return groupId;
-      }
-      let suffix = 2;
-      while (usedGroupIds.has(`${groupId}-${suffix}`)) {
-        suffix += 1;
-      }
-      const uniqueGroupId = `${groupId}-${suffix}`;
-      usedGroupIds.add(uniqueGroupId);
-      return uniqueGroupId;
-    };
-
-    for (const terminalGroup of terminalGroups) {
-      const nextTerminalIds: string[] = [];
-      const seenGroupTerminalIds = new Set<string>();
-      for (const id of terminalGroup.terminalIds) {
-        const terminalId = id.trim();
-        if (terminalId.length === 0) continue;
-        if (seenGroupTerminalIds.has(terminalId)) continue;
-        seenGroupTerminalIds.add(terminalId);
-        if (!validTerminalIdSet.has(terminalId)) continue;
-        if (assignedTerminalIds.has(terminalId)) continue;
-        nextTerminalIds.push(terminalId);
-      }
-      if (nextTerminalIds.length === 0) continue;
-
-      for (const terminalId of nextTerminalIds) {
-        assignedTerminalIds.add(terminalId);
-      }
-
-      const baseGroupId =
-        terminalGroup.id.trim().length > 0
-          ? terminalGroup.id.trim()
-          : `group-${nextTerminalIds[0] ?? normalizedTerminalIds[0] ?? ""}`;
-      nextGroups.push({
-        id: assignUniqueGroupId(baseGroupId),
-        terminalIds: nextTerminalIds,
-        ...(terminalGroup.splitDirection === "vertical"
-          ? { splitDirection: "vertical" as const }
-          : {}),
-      });
-    }
-
-    for (const terminalId of normalizedTerminalIds) {
-      if (assignedTerminalIds.has(terminalId)) continue;
-      nextGroups.push({
-        id: assignUniqueGroupId(`group-${terminalId}`),
-        terminalIds: [terminalId],
-      });
-    }
-
-    const terminalOrderIndex = new Map(
-      normalizedTerminalIds.map((id, index) => [id, index] as const),
-    );
-    nextGroups.sort((left, right) => {
-      const rank = (ids: readonly string[]) =>
-        Math.min(...ids.map((id) => terminalOrderIndex.get(id) ?? Number.POSITIVE_INFINITY));
-      return rank(left.terminalIds) - rank(right.terminalIds);
-    });
-
-    return nextGroups;
-  }, [normalizedTerminalIds, terminalGroups]);
-
-  const resolvedActiveGroupIndex = useMemo(() => {
+  const resolvedActiveGroupIndex = (() => {
     const indexById = resolvedTerminalGroups.findIndex(
       (terminalGroup) => terminalGroup.id === activeTerminalGroupId,
     );
@@ -1335,7 +1382,7 @@ export default function ThreadTerminalDrawer({
       terminalGroup.terminalIds.includes(resolvedActiveTerminalId),
     );
     return indexByTerminal >= 0 ? indexByTerminal : 0;
-  }, [activeTerminalGroupId, resolvedActiveTerminalId, resolvedTerminalGroups]);
+  })();
 
   const visibleTerminalIds =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.terminalIds ??
@@ -1348,25 +1395,12 @@ export default function ThreadTerminalDrawer({
     resolvedTerminalGroups.length > 1 ||
     resolvedTerminalGroups.some((terminalGroup) => terminalGroup.terminalIds.length > 1);
   const hasReachedSplitLimit = visibleTerminalIds.length >= MAX_TERMINALS_PER_GROUP;
-  const terminalLabelById = useMemo(() => {
-    const next = new Map<string, string>();
-    for (const terminalId of normalizedTerminalIds) {
-      next.set(terminalId, terminalLabelsById?.get(terminalId) ?? getTerminalLabel(terminalId));
-    }
-    return next;
-  }, [normalizedTerminalIds, terminalLabelsById]);
-  const resolveTerminalLaunchLocation = useCallback(
-    (terminalId: string): TerminalLaunchLocation => {
-      return (
-        terminalLaunchLocationsById?.get(terminalId) ?? {
-          cwd,
-          ...(worktreePath !== undefined ? { worktreePath } : {}),
-          ...(runtimeEnv ? { runtimeEnv } : {}),
-        }
-      );
-    },
-    [cwd, runtimeEnv, terminalLaunchLocationsById, worktreePath],
-  );
+  const resolveTerminalLaunchLocation = (terminalId: string): TerminalLaunchLocation =>
+    terminalLaunchLocationsById?.get(terminalId) ?? {
+      cwd,
+      ...(worktreePath !== undefined ? { worktreePath } : {}),
+      ...(runtimeEnv ? { runtimeEnv } : {}),
+    };
   const splitTerminalActionLabel = hasReachedSplitLimit
     ? `Split Terminal Horizontally (max ${MAX_TERMINALS_PER_GROUP} per group)`
     : splitShortcutLabel
@@ -1383,34 +1417,27 @@ export default function ThreadTerminalDrawer({
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
-  const onSplitTerminalAction = useCallback(() => {
+  const onSplitTerminalAction = () => {
     if (!canOperateTerminal || hasReachedSplitLimit) return;
     onSplitTerminal();
-  }, [canOperateTerminal, hasReachedSplitLimit, onSplitTerminal]);
-  const onSplitTerminalVerticalAction = useCallback(() => {
+  };
+  const onSplitTerminalVerticalAction = () => {
     if (!canOperateTerminal || hasReachedSplitLimit) return;
     onSplitTerminalVertical();
-  }, [canOperateTerminal, hasReachedSplitLimit, onSplitTerminalVertical]);
-  const onNewTerminalAction = useCallback(() => {
+  };
+  const onNewTerminalAction = () => {
     if (!canOperateTerminal) return;
     onNewTerminal();
-  }, [canOperateTerminal, onNewTerminal]);
-  const confirmCloseTerminal = useCallback(
-    (terminalId: string) => {
-      if (!canOperateTerminal) return;
-      const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose([label]).then((confirmed) => {
-        if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
-          onCloseTerminal(terminalId);
-        }
-      });
-    },
-    [canOperateTerminal, onCloseTerminal, terminalLabelById, threadRef.environmentId],
-  );
-
-  useEffect(() => {
-    onHeightChangeRef.current = onHeightChange;
-  }, [onHeightChange]);
+  };
+  const confirmCloseTerminal = (terminalId: string) => {
+    if (!canOperateTerminal) return;
+    const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
+    void confirmTerminalClose([label]).then((confirmed) => {
+      if (confirmed && readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)) {
+        onCloseTerminal(terminalId);
+      }
+    });
+  };
 
   useLayoutEffect(() => {
     const resizeState = resizeStateRef.current;
@@ -1421,21 +1448,18 @@ export default function ThreadTerminalDrawer({
     drawerHeightRef.current = drawerHeight;
   }, [drawerHeight]);
 
-  useEffect(() => {
-    preferredDrawerHeightRef.current = preferredDrawerHeight;
-  }, [preferredDrawerHeight]);
-
-  const syncHeight = useCallback((nextHeight: number) => {
-    if (lastSyncedHeightRef.current === nextHeight) return;
-    lastSyncedHeightRef.current = nextHeight;
-    onHeightChangeRef.current(nextHeight);
-  }, []);
+  const syncHeight = (nextHeight: number) => {
+    const lastSynced = lastSyncedHeightRef.current;
+    if (lastSynced.threadId === threadId && lastSynced.height === nextHeight) return;
+    lastSyncedHeightRef.current = { threadId, height: nextHeight };
+    onHeightChange(nextHeight);
+  };
 
   useEffect(() => {
-    lastSyncedHeightRef.current = controlledDrawerHeight;
+    lastSyncedHeightRef.current = { threadId, height: controlledDrawerHeight };
   }, [controlledDrawerHeight, threadId]);
 
-  const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1446,9 +1470,9 @@ export default function ThreadTerminalDrawer({
       startHeight: drawerHeightRef.current,
       drawer: event.currentTarget.parentElement,
     };
-  }, []);
+  };
 
-  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+  const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const resizeState = resizeStateRef.current;
     if (!resizeState || resizeState.pointerId !== event.pointerId) return;
     event.preventDefault();
@@ -1461,32 +1485,29 @@ export default function ThreadTerminalDrawer({
     didResizeDuringDragRef.current = true;
     drawerHeightRef.current = clampedHeight;
     resizeState.drawer?.style.setProperty("height", `${clampedHeight}px`);
-  }, []);
+  };
 
-  const handleResizePointerEnd = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-      resizeStateRef.current = null;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      // A drag that ends where it started keeps the stored preference, which may
-      // be taller than the window-capped height the drag started from.
-      if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
-        // React skips the write when the rendered height did not change, so put
-        // back the preference as the current window caps it.
-        const renderedHeight = clampDrawerHeight(preferredDrawerHeightRef.current);
-        drawerHeightRef.current = renderedHeight;
-        resizeState.drawer?.style.setProperty("height", `${renderedHeight}px`);
-        return;
-      }
-      setDrawerHeight(drawerHeightRef.current);
-      syncHeight(drawerHeightRef.current);
-      setResizeEpoch((value) => value + 1);
-    },
-    [setDrawerHeight, syncHeight],
-  );
+  const handleResizePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resizeState = resizeStateRef.current;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
+    resizeStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    // A drag that ends where it started keeps the stored preference, which may
+    // be taller than the window-capped height the drag started from.
+    if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
+      // React skips the write when the rendered height did not change, so put
+      // back the preference as the current window caps it.
+      const renderedHeight = clampDrawerHeight(preferredDrawerHeight);
+      drawerHeightRef.current = renderedHeight;
+      resizeState.drawer?.style.setProperty("height", `${renderedHeight}px`);
+      return;
+    }
+    setDrawerHeight(drawerHeightRef.current);
+    syncHeight(drawerHeightRef.current);
+    setResizeEpoch((value) => value + 1);
+  };
 
   useEffect(() => {
     if (!visible) {
@@ -1509,19 +1530,8 @@ export default function ThreadTerminalDrawer({
     };
   }, [visible]);
 
-  useEffect(() => {
-    if (!visible) {
-      return;
-    }
-    setWindowMaxDrawerHeight(maxDrawerHeight());
-    setResizeEpoch((value) => value + 1);
-  }, [visible]);
-
-  useEffect(() => {
-    return () => {
-      syncHeight(preferredDrawerHeightRef.current);
-    };
-  }, [syncHeight]);
+  const syncPreferredHeight = useEffectEvent(() => syncHeight(preferredDrawerHeight));
+  useEffect(() => () => syncPreferredHeight(), []);
 
   if (normalizedTerminalIds.length === 0) {
     return (

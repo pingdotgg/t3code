@@ -94,4 +94,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useResizeDrag.ts",
   "apps/web/src/components/settings/ThemeColorPicker.tsx",
   "apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx",
+  "apps/web/src/components/ThreadTerminalDrawer.tsx",
 ] as const;
