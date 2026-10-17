@@ -13,7 +13,7 @@ import {
   MessageCircleQuestionIcon,
   MessageSquareIcon,
 } from "lucide-react";
-import { useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { getDiffLineStat } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
@@ -71,7 +71,7 @@ export function GuideStop({
   onFinish: (() => void) | null;
   onOpenFile: (path: string) => void;
 }) {
-  const { lettered, byExcerpt } = useMemo(() => letterStopNotes(stop), [stop]);
+  const { lettered, byExcerpt } = letterStopNotes(stop);
   const excerptPaths = new Set(stop.excerpts.map((excerpt) => excerpt.path));
   const otherFiles = stop.files.filter((file) => !excerptPaths.has(file.path));
 
