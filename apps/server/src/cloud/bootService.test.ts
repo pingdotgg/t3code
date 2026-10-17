@@ -69,6 +69,15 @@ it("survives the kernel OOM-killing a greedy agent child", () => {
   expect(unit).toContain("OOMPolicy=continue");
 });
 
+it("does not trigger the uresourced OOM preference feedback loop", () => {
+  const unit = BootService.renderBootServiceUnit(linuxPlan);
+
+  expect(unit).not.toContain("ManagedOOMPreference=");
+  expect(unit).toContain("CPUWeight=1000");
+  expect(unit).toContain("IOWeight=1000");
+  expect(unit).toContain("OOMPolicy=continue");
+});
+
 const macRuntime = "/Users/theo/.t3/runtime/versions/1.2.3/t3";
 const macPlan = {
   program: [macRuntime, "__service-launcher"],

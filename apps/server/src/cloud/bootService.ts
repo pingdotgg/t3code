@@ -106,10 +106,6 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     // server responsive while agents saturate CPU or disk.
     "CPUWeight=1000",
     "IOWeight=1000",
-    // systemd-oomd only honors this when the cgroup it watches is owned by the
-    // same user. Distros watch user-1000.slice, which root owns, so there it is
-    // ignored.
-    "ManagedOOMPreference=avoid",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     `StandardError=append:${escapeSystemdSpecifiers(plan.logPath)}`,
     "",
