@@ -2578,22 +2578,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       ]);
       const calls: SourceControlHost.SourceControlProcessInput[] = [];
+      const host = TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return fakeGhOutput(output);
+            }),
+        },
+      });
       const provider = yield* GitLabSourceControlProvider.make.pipe(
-        Effect.provide(
-          GitLabCli.layer.pipe(
-            Layer.provide(
-              TestSourceControlHost.layer({
-                process: {
-                  run: (input) =>
-                    Effect.sync(() => {
-                      calls.push(input);
-                      return fakeGhOutput(output);
-                    }),
-                },
-              }),
-            ),
-          ),
-        ),
+        Effect.provide(Layer.mergeAll(GitLabCli.layer.pipe(Layer.provide(host)), host)),
       );
       const { manager } = yield* makeManager({ sourceControlProvider: provider });
 
@@ -4912,6 +4907,68 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);
       expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+    }),
+  );
+
+  it.effect("passes the GitLab provider's default template to content generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const templateDir = NodePath.join(repoDir, ".gitlab", "merge_request_templates");
+      NodeFS.mkdirSync(templateDir, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(templateDir, "Default.md"), "## Summary\n\n## Testing");
+      yield* runGit(repoDir, ["add", ".gitlab"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add merge request template"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature-gitlab-template"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature-gitlab-template"]);
+      yield* runGit(repoDir, ["config", "branch.feature-gitlab-template.gh-merge-base", "main"]);
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const gitlab = yield* GitLabSourceControlProvider.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(GitLabCli.GitLabCli)({}),
+            TestSourceControlHost.layer({ git: { execute: git.execute } }),
+          ),
+        ),
+      );
+      const { service: fakeProvider } = createGitHubProviderWithFakeGh({
+        prListSequence: [
+          "[]",
+          JSON.stringify([
+            {
+              number: 7,
+              title: "Follow the GitLab template",
+              url: "https://gitlab.com/group/project/-/merge_requests/7",
+              baseRefName: "main",
+              headRefName: "feature-gitlab-template",
+            },
+          ]),
+        ],
+      });
+      let generatedChangeRequestTemplate: string | undefined;
+
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...fakeProvider,
+          kind: SourceControlProviderKind.make("gitlab"),
+          readChangeRequestTemplate: gitlab.readChangeRequestTemplate!,
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedChangeRequestTemplate = input.changeRequestTemplate;
+            return Effect.succeed({ title: "Follow the GitLab template", body: "Body" });
+          },
+        },
+      });
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "commit_push_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(generatedChangeRequestTemplate).toBe("## Summary\n\n## Testing");
     }),
   );
 

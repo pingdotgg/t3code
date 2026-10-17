@@ -5,13 +5,16 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   return GitLabSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(GitLabCli.GitLabCli)(gitlab)),
+    Effect.provide(
+      Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer()),
+    ),
   );
 }
 
@@ -334,4 +337,44 @@ it.effect.each(["read", "decode"] as const)(
       if (stage === "read") assert.strictEqual(error.cause, cause);
       else assert.propertyVal(error.cause, "_tag", "SchemaError");
     }),
+);
+
+it.effect("reads the default merge request template through the host's git", () =>
+  Effect.gen(function* () {
+    const gitArgs: Array<ReadonlyArray<string>> = [];
+    const objectId = "a".repeat(40);
+    const host = TestSourceControlHost.layer({
+      git: {
+        execute: (input) =>
+          Effect.sync(() => {
+            gitArgs.push(input.args);
+            const stdout =
+              input.args[0] === "ls-tree"
+                ? `100644 blob ${objectId}\t.gitlab/merge_request_templates/Default.md\0`
+                : "## Summary\n";
+            return {
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout,
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+      },
+    });
+    const provider = yield* GitLabSourceControlProvider.make.pipe(
+      Effect.provide(Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)({}), host)),
+    );
+
+    const template = yield* provider.readChangeRequestTemplate!({ cwd: "/repo", treeish: "main" });
+
+    assert.deepStrictEqual(template, Option.some("## Summary"));
+    assert.deepStrictEqual(
+      gitArgs.map((args) => args.slice(0, 5)),
+      [
+        ["ls-tree", "-z", "--full-tree", "main", "--"],
+        ["cat-file", "blob", objectId],
+      ],
+    );
+  }),
 );

@@ -5,6 +5,8 @@ import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as GitLabCli from "./GitLabCli.ts";
+import * as GitLabChangeRequestTemplate from "./gitLabChangeRequestTemplate.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   combinedAuthOutput,
@@ -122,6 +124,7 @@ export const discovery = {
 
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
+  const { git } = yield* SourceControlHost.SourceControlHost;
 
   const readLinkSubject = Effect.fn("GitLabSourceControlProvider.readLinkSubject")(function* (
     input: { readonly cwd: string; readonly url: URL },
@@ -163,6 +166,8 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitlab"),
+    readChangeRequestTemplate: ({ cwd, treeish }) =>
+      GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute),
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "gitlab.com") return undefined;
