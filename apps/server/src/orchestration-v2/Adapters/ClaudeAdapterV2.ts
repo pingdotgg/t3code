@@ -2043,6 +2043,8 @@ function claudePendingBackgroundTask(input: {
   // that started it tells it apart from a background Bash command.
   readonly startedByMonitor: boolean;
   readonly description: string | undefined;
+  // Undeclared SDK field: the subagent whose own background work this is.
+  readonly parentTaskId: unknown;
 }): OrchestrationV2PendingBackgroundTask {
   return {
     taskId: input.taskId,
@@ -2053,6 +2055,9 @@ function claudePendingBackgroundTask(input: {
           : CLAUDE_OPAQUE_BACKGROUND_TASK_KINDS.get(input.taskType)) ?? "background_task"),
     ...(input.description !== undefined && input.description.trim().length > 0
       ? { description: input.description }
+      : {}),
+    ...(typeof input.parentTaskId === "string" && input.parentTaskId.trim().length > 0
+      ? { parentTaskId: input.parentTaskId }
       : {}),
   };
 }
@@ -2105,6 +2110,7 @@ function parseClaudeBackgroundTaskEntry(
     taskType,
     startedByMonitor: monitorTasks.has(taskId),
     description: typeof description === "string" ? description : undefined,
+    parentTaskId: Reflect.get(entry, "parent_task_id"),
   });
 }
 
@@ -6285,6 +6291,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
                 description:
                   typeof message.description === "string" ? message.description : undefined,
+                parentTaskId: Reflect.get(message, "parent_task_id"),
               }),
             );
             rosterChanged = true;

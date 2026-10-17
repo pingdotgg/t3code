@@ -4103,6 +4103,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       WHERE ended.thread_id = ${threadId}
                         AND ended.provider_thread_id = roster.provider_thread_id
                         AND ended.status NOT IN ('queued', 'rolled_back')
+                        -- A run that never started (see neverStarted) owns no work.
+                        AND NOT (
+                          json_type(ended.payload_json, '$.startedAt') = 'null'
+                          AND json_type(ended.payload_json, '$.restartContinuationOfRunId') IS NULL
+                        )
                       ORDER BY ended.completed_at IS NULL DESC, ended.completed_at DESC,
                         ended.ordinal DESC
                       LIMIT 1
@@ -4249,6 +4254,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   OR provider_thread.provider_thread_id IN (
                     SELECT item.provider_thread_id
                     FROM orchestration_v2_projection_turn_items AS item
+                    WHERE item.thread_id = ${threadId}
+                      AND item.status IN ('pending', 'running', 'waiting')
+                  )
+                  -- A native subagent's item names its own provider thread; the
+                  -- run that waits on it (see awaitingProviderThreadId) is woken.
+                  OR provider_thread.provider_thread_id IN (
+                    SELECT run.provider_thread_id
+                    FROM orchestration_v2_projection_turn_items AS item
+                    JOIN orchestration_v2_projection_runs AS run ON run.run_id = item.run_id
                     WHERE item.thread_id = ${threadId}
                       AND item.status IN ('pending', 'running', 'waiting')
                   )

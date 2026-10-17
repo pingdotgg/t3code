@@ -3161,6 +3161,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               occurredAt: now,
               payload: { ...original, status: "cancelled", completedAt: now },
             },
+            // A provider wake the restart cut before it started does not supersede it.
+            {
+              id: EventId.make("restart-cut-wake-event"),
+              type: "run.created",
+              threadId,
+              runId: RunId.make("restart-cut-wake"),
+              occurredAt: now,
+              payload: {
+                ...original,
+                id: RunId.make("restart-cut-wake"),
+                ordinal: 2,
+                status: "cancelled",
+                startedAt: null,
+                completedAt: now,
+              },
+            },
           ],
           effects: [],
         });
@@ -3186,10 +3202,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* orchestrator.dispatch(command);
         yield* orchestrator.dispatch(command);
         const admitted = yield* orchestrator.getThreadProjection(threadId);
-        assert.lengthOf(admitted.runs, 2);
-        assert.equal(admitted.runs[1]?.restartContinuationOfRunId, original.id);
+        assert.lengthOf(admitted.runs, 3);
+        assert.equal(admitted.runs[2]?.restartContinuationOfRunId, original.id);
         const continuationItems = admitted.turnItems.filter(
-          (item) => item.runId === admitted.runs[1]?.id,
+          (item) => item.runId === admitted.runs[2]?.id,
         );
         assert.isFalse(continuationItems.some((item) => item.type === "user_message"));
         assert.deepInclude(
@@ -3204,7 +3220,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           messageId: MessageId.make("restart-stale-race"),
         });
         const raced = yield* orchestrator.getThreadProjection(threadId);
-        assert.lengthOf(raced.runs, 2);
+        assert.lengthOf(raced.runs, 3);
         assert.isFalse(raced.messages.some((message) => message.id === "restart-stale-race"));
       }),
   );

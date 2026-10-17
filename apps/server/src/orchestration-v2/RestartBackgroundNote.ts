@@ -13,21 +13,42 @@ type Attempt = Pick<OrchestrationV2RunAttempt, "id" | "runId">;
 
 const MAX_LABEL_LENGTH = 160;
 
-function compactLabel(value: unknown): string | undefined {
+function compactLabel(value: unknown, maxLength = MAX_LABEL_LENGTH): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.replaceAll(/\s+/g, " ").trim();
   if (text.length === 0) return undefined;
-  return text.length > MAX_LABEL_LENGTH ? `${text.slice(0, MAX_LABEL_LENGTH - 1)}…` : text;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
-export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | undefined {
+/** A bounded label that keeps its id suffix whole whenever it fits. */
+function labelWithId(name: unknown, fallback: string, suffix: string): string {
+  const budget = MAX_LABEL_LENGTH - suffix.length;
+  if (budget < 2) return compactLabel(`${fallback}${suffix}`) ?? fallback;
+  return `${compactLabel(name, budget) ?? compactLabel(fallback, budget)}${suffix}`;
+}
+
+/**
+ * `resumeId` is what the agent resumes a native subagent by, when that is not its
+ * item's native id (a Codex subagent resumes by its own provider thread's id).
+ */
+export function cancelledTurnItemWork(
+  item: OrchestrationV2TurnItem,
+  resumeId?: string,
+): Work | undefined {
   switch (item.type) {
-    case "subagent":
+    case "subagent": {
+      const nativeId =
+        item.origin === "provider_native" ? (resumeId ?? item.nativeItemRef?.nativeId) : undefined;
       return {
         kind: "subagent",
-        label: compactLabel(item.title) ?? compactLabel(item.prompt) ?? "subagent",
+        label: labelWithId(
+          compactLabel(item.title) === undefined ? item.prompt : item.title,
+          "subagent",
+          nativeId === undefined ? "" : ` (id ${nativeId})`,
+        ),
         id: item.id,
       };
+    }
     case "command_execution":
       return {
         kind: "shell",
@@ -50,6 +71,20 @@ export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | und
   }
 }
 
+/**
+ * The provider thread waiting on an item's work. A native subagent can run on
+ * its own child provider thread (Codex), but the turn that started it awaits it.
+ */
+export function awaitingProviderThreadId(
+  item: OrchestrationV2TurnItem,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "providerThreadId">>,
+): OrchestrationV2Run["providerThreadId"] | undefined {
+  const runProviderThreadId = runs.find((run) => run.id === item.runId)?.providerThreadId;
+  return item.type === "subagent" && item.origin === "provider_native"
+    ? (runProviderThreadId ?? item.providerThreadId)
+    : (item.providerThreadId ?? runProviderThreadId);
+}
+
 function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind"] {
   switch (task.kind) {
     case "command":
@@ -67,6 +102,13 @@ function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind
 }
 
 export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTask): Work {
+  if (task.parentTaskId !== undefined) {
+    return {
+      kind: "subagent",
+      label: labelWithId(task.description, "background task", ` (subagent ${task.parentTaskId})`),
+      id: task.parentTaskId,
+    };
+  }
   const kind = restartWorkKind(task);
   const description = compactLabel(task.description);
   return {
@@ -87,7 +129,7 @@ const MAX_NOTE_ENTRIES = 10;
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back:",
+    "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");
@@ -130,6 +172,27 @@ export function runOutcome(
     (run.restartCancelledBackgroundWork ?? []).some(isAwaitedWork)
     ? "interrupted"
     : run.status;
+}
+
+/**
+ * A run that never reached its provider, such as a provider wake the restart
+ * cut while it was starting: it lost no work and has no turn to continue. A
+ * prepared restart continuation still counts, since it carries its source.
+ */
+export function neverStarted(
+  run: Pick<OrchestrationV2Run, "startedAt" | "restartContinuationOfRunId">,
+): boolean {
+  return run.startedAt === null && run.restartContinuationOfRunId === undefined;
+}
+
+/**
+ * A run the restart cancelled before it started, so it supersedes nothing. A
+ * run the user stopped before it started still does.
+ */
+export function cancelledBeforeStart(
+  run: Pick<OrchestrationV2Run, "status" | "startedAt" | "restartContinuationOfRunId">,
+): boolean {
+  return run.status === "cancelled" && neverStarted(run);
 }
 
 export function isRestartContinuationSource(
