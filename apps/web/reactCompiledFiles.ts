@@ -7,6 +7,8 @@
 export const REACT_COMPILED_FILES = [
   "apps/web/src/components/PersistentThreadTerminals.tsx",
   "apps/web/src/components/chat/usePendingThreadRequests.ts",
+  "apps/web/src/components/chat/composerFocusRedirect.ts",
+  "apps/web/src/components/chat/useChatShortcuts.ts",
   "apps/web/src/components/chat/useQueuedRunEdit.ts",
   "apps/web/src/components/chat/useUsageLimitsPanel.ts",
   "apps/web/src/components/chat/useWorktreeSetup.ts",

@@ -38,6 +38,14 @@ import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
+import { useChatShortcuts, type ChatShortcutHandler } from "./chat/useChatShortcuts";
+import {
+  eventPathContainsSelector,
+  pasteTextToFocusComposer,
+  shouldRedirectInputToComposer,
+  TYPE_TO_FOCUS_EDITABLE_SELECTOR,
+  TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
+} from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as Schema from "effect/Schema";
 import {
@@ -74,7 +82,6 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
   wasBootstrapThreadNotCreated,
@@ -202,8 +209,6 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
-  isBrowserPreviewAttachment,
-  isImageAttachment,
   type SessionPhase,
   type Thread,
 } from "../types";
@@ -267,7 +272,7 @@ import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { resolveChatShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { shortcutLabelForCommand } from "../keybindings";
 import {
   PersistentThreadTerminalDrawer,
   PersistentThreadTerminalPanel,
@@ -324,13 +329,9 @@ import {
   getComposerPromptInjectionState,
   getComposerProviderState,
 } from "./chat/composerProviderState";
-import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
+import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import {
-  preventRepeatedTerminalCloseShortcut,
-  preventTerminalCloseShortcut,
-} from "../lib/terminalCloseShortcut";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -662,84 +663,11 @@ const DevicePanel = lazy(() =>
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
-const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
-  "input",
-  "textarea",
-  "select",
-  '[contenteditable="true"]',
-  '[contenteditable="plaintext-only"]',
-  '[role="textbox"]',
-].join(",");
-const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
-  "button",
-  "a[href]",
-  "summary",
-  '[role="button"]',
-  '[role="checkbox"]',
-  '[role="menuitem"]',
-  '[role="option"]',
-  '[role="radio"]',
-  '[role="switch"]',
-  '[role="tab"]',
-].join(",");
-// Popups match only while open or closing: some stay mounted when closed,
-// such as the chat header actions menu.
-const TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR = [
-  '[role="dialog"][aria-modal="true"]',
-  '[data-slot="alert-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="command-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="sheet-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="sidebar"][data-mobile="true"]:is([data-open],[data-ending-style])',
-  '[data-slot="menu-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="select-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="popover-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="combobox-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="autocomplete-popup"]:is([data-open],[data-ending-style])',
-].join(",");
-
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly connection: EnvironmentConnectionPresentation;
 };
-
-function eventPathContainsSelector(event: Event, selector: string): boolean {
-  const path = event.composedPath();
-  if (path.length === 0 && event.target) {
-    path.push(event.target);
-  }
-  return path.some((target) => target instanceof Element && target.closest(selector));
-}
-
-const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
-
-function shouldRedirectInputToComposer(event: Event): boolean {
-  if (event.defaultPrevented) return false;
-  // Near a pending secret request, input is meant for its private field: it
-  // must never land in the composer draft, which is persisted and sent.
-  if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
-  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
-  if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
-  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
-  return true;
-}
-
-function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
-  if (event.isComposing) return false;
-  if (event.metaKey || event.ctrlKey || event.altKey) return false;
-  if (event.key.length !== 1) return false;
-  if (!shouldRedirectInputToComposer(event)) return false;
-
-  return true;
-}
-
-function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
-  if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
-  if (!shouldRedirectInputToComposer(event)) return null;
-  const text = event.clipboardData.getData("text/plain");
-  return text.length > 0 ? text : null;
-}
 
 // Kept per route so a send in flight, and the multiple-model selections, survive
 // ChatView remounting while the user navigates.
@@ -6069,229 +5997,112 @@ export default function ChatView(props: ChatViewProps) {
   const closeThreadFind = () => threadFindControlsRef.current?.close();
   const closeThreadFindStable = useStableCallback(closeThreadFind);
 
-  useEffect(() => {
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
-        event.stopPropagation();
-        return;
-      }
-      if (isThreadFindActive && event.key === "Escape") return;
-      if (isTerminalCloseConfirmPending() && preventTerminalCloseShortcut(event, keybindings)) {
-        event.stopPropagation();
-        return;
-      }
-      if (!activeThreadId || isCommandPaletteOpen()) {
-        return;
-      }
-      const terminalFocusOwner = getTerminalFocusOwner();
-      if (event.defaultPrevented && terminalFocusOwner === null) {
-        return;
-      }
-      const shortcutContext = getShortcutContextStable(event.target);
-
-      if (
-        !shortcutContext.terminalFocus &&
-        !shortcutContext.modelPickerOpen &&
-        shouldTypeToFocusComposer(event)
-      ) {
-        if (composerRef.current?.insertTextAtEnd(event.key)) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-      }
-
-      const command = resolveChatShortcutCommand(event, keybindings, scriptKeybindings, {
-        context: shortcutContext,
-      });
-      if (!command) return;
-
-      if (command === "thread.copyReference") {
-        event.preventDefault();
-        event.stopPropagation();
+  const toastPinFailure = (title: string) => (result: AtomCommandResult<unknown, unknown>) => {
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    const error = squashAtomCommandFailure(result);
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  };
+  const openTerminalIfClosed = () => {
+    if (!terminalUiState.terminalOpen) setTerminalOpenStable(true);
+  };
+  const openComposerControl = (command: Parameters<ChatComposerHandle["openControl"]>[0]) =>
+    (({ event }) => {
+      if (!event.repeat) composerRef.current?.openControl(command);
+    }) satisfies ChatShortcutHandler;
+  useChatShortcuts({
+    enabled: activeThreadId !== null,
+    keybindings,
+    scriptKeybindings,
+    getShortcutContext: getShortcutContextStable,
+    threadFindActive: isThreadFindActive,
+    typeIntoComposer: (key) => composerRef.current?.insertTextAtEnd(key) === true,
+    closeThreadFind: () => {
+      closeThreadFindStable();
+      focusComposerStable();
+    },
+    commands: {
+      "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReferenceStable();
-        return;
-      }
-
-      if (command === "thread.settle") {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "thread.settle": () => {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
         if (!isServerThread || !activeThreadRef || !supportsSettlement) return;
         if (activeThreadSettled) {
           void handleUnsettleActiveThreadStable();
           return;
         }
         if (settleAndAdvance(activeThreadRef)) return;
-
-        void settleThread(activeThreadRef).then((result) => {
-          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-          const error = squashAtomCommandFailure(result);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to settle thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        });
-        return;
-      }
-
-      if (command === "thread.pin") {
-        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-        event.preventDefault();
-        event.stopPropagation();
+        void settleThread(activeThreadRef).then(toastPinFailure("Failed to settle thread"));
+      },
+      "thread.pin": () => {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
         if (!isServerThread || !activeThreadRef || !supportsPinning) return;
-        const pinned = activeThreadPinned;
-        void (pinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)).then(
-          (result) => {
-            if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: pinned ? "Failed to unpin thread" : "Failed to pin thread",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          },
+        void (
+          activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
+        ).then(
+          toastPinFailure(activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread"),
         );
-        return;
-      }
-
-      if (command === "terminal.toggle") {
-        if (!terminalUiState.terminalOpen && !canReadTerminal && !canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "terminal.toggle": () => {
+        if (!terminalUiState.terminalOpen && !canReadTerminal && !canOperateTerminal) return false;
         toggleTerminalVisibilityStable();
-        return;
-      }
-
-      if (command === "chat.find" && isServerThread && serverConfig?.threadFind === true) {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "chat.find": () => {
+        if (!isServerThread || serverConfig?.threadFind !== true) return false;
         openThreadFindStable();
-        return;
-      }
-
-      if (command === "rightPanel.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleRightPanelStable();
-        return;
-      }
-
-      if (command === "rightPanel.toggleMaximized") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "rightPanel.toggle": () => toggleRightPanelStable(),
+      "rightPanel.toggleMaximized": ({ event }) => {
         if (!event.repeat) toggleRightPanelMaximizedStable();
-        return;
-      }
-
-      if (command === "threadPanel.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleThreadPanelStable();
-        return;
-      }
-
-      if (command === "rightPanel.close") {
-        if (!activeRightPanelSurface) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "threadPanel.toggle": () => toggleThreadPanelStable(),
+      "rightPanel.close": ({ event }) => {
+        if (!activeRightPanelSurface) return false;
         if (!event.repeat) closeRightPanelSurfaceStable(activeRightPanelSurface);
-        return;
-      }
-
-      if (command === "terminal.split") {
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (terminalFocusOwner === "right-panel") {
-          splitPanelTerminalStable();
-          return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+      },
+      "terminal.split": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
+        if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable();
+        openTerminalIfClosed();
         splitTerminalStable();
-        return;
-      }
-
-      if (command === "terminal.splitVertical") {
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (terminalFocusOwner === "right-panel") {
-          splitPanelTerminalStable("vertical");
-          return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+      },
+      "terminal.splitVertical": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
+        if (terminalFocusOwner === "right-panel") return void splitPanelTerminalStable("vertical");
+        openTerminalIfClosed();
         splitTerminalStable("vertical");
-        return;
-      }
-
-      if (command === "terminal.close") {
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "terminal.close": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
         if (terminalFocusOwner === "right-panel" && activeRightPanelSurface?.kind === "terminal") {
           requestClosePanelTerminalStable(activeRightPanelSurface.activeTerminalId);
           return;
         }
-        if (!terminalUiState.terminalOpen) return;
-        requestCloseTerminalStable(terminalUiState.activeTerminalId);
-        return;
-      }
-
-      if (command === "terminal.new") {
-        if (!canOperateTerminal) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (terminalFocusOwner === "right-panel") {
-          addTerminalSurfaceStable();
-          return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpenStable(true);
-        }
+        if (terminalUiState.terminalOpen)
+          requestCloseTerminalStable(terminalUiState.activeTerminalId);
+      },
+      "terminal.new": ({ terminalFocusOwner }) => {
+        if (!canOperateTerminal) return false;
+        if (terminalFocusOwner === "right-panel") return void addTerminalSurfaceStable();
+        openTerminalIfClosed();
         createNewTerminalStable();
-        return;
-      }
-
-      if (command === "diff.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
-        onToggleDiffStable();
-        return;
-      }
-
-      if (command === "modelPicker.toggle") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "diff.toggle": () => onToggleDiffStable(),
+      "modelPicker.toggle": ({ event }) => {
         if (!event.repeat) composerRef.current?.toggleModelPicker();
-        return;
-      }
-
-      if (
-        command === "composer.host" ||
-        command === "composer.effort" ||
-        command === "composer.mode" ||
-        command === "composer.workspace"
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!event.repeat) composerRef.current?.openControl(command);
-        return;
-      }
-
-      if (command === "composer.cycleHost") {
-        if (envLocked || !draftId || !hasMultipleEnvironments) return;
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "composer.host": openComposerControl("composer.host"),
+      "composer.effort": openComposerControl("composer.effort"),
+      "composer.mode": openComposerControl("composer.mode"),
+      "composer.workspace": openComposerControl("composer.workspace"),
+      "composer.cycleHost": ({ event }) => {
+        if (envLocked || !draftId || !hasMultipleEnvironments) return false;
         if (event.repeat) return;
         const currentId = environmentChangeRef.current?.environmentId ?? environmentId;
         const index = logicalProjectEnvironments.findIndex(
@@ -6299,130 +6110,31 @@ export default function ChatView(props: ChatViewProps) {
         );
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
         if (next) onEnvironmentChangeStable(next.environmentId);
-        return;
-      }
-
-      if (command === "composer.branch") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "composer.branch": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.openBranchPicker();
-        return;
-      }
-
-      if (command === "composer.previousWorktree") {
-        event.preventDefault();
-        event.stopPropagation();
+      },
+      "composer.previousWorktree": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
-        return;
-      }
-
-      if (command === "thread.steerQueuedMessage") {
-        if (routeKind === "draft") return;
-        if (!queuedRunsControlRef.current?.steerNext(event.repeat)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      if (command === "thread.editQueuedMessage") {
-        if (routeKind === "draft") return;
-        if (!composerRef.current?.isCaretAtStart()) return;
-        if (!queuedRunsControlRef.current?.editLatest(event.repeat)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
-      if (command === "thread.stop") {
-        if (!canInterruptRunningThread) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (event.repeat) return;
-        void onInterruptStable();
-        return;
-      }
-
+      },
+      "thread.steerQueuedMessage": ({ event }) =>
+        routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
+      "thread.editQueuedMessage": ({ event }) =>
+        routeKind !== "draft" &&
+        composerRef.current?.isCaretAtStart() === true &&
+        queuedRunsControlRef.current?.editLatest(event.repeat) === true,
+      "thread.stop": ({ event }) => {
+        if (!canInterruptRunningThread) return false;
+        if (!event.repeat) void onInterruptStable();
+      },
+    },
+    fallback: (command) => {
       const scriptId = projectScriptIdFromCommand(command);
-      if (!scriptId || !activeProject || !canOperateTerminal) return;
+      if (!scriptId || !activeProject || !canOperateTerminal) return undefined;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
-      if (!script) return;
-      event.preventDefault();
-      event.stopPropagation();
-      void runProjectScriptStable(script);
-    };
-    const dismissFind = (event: KeyboardEvent) => {
-      if (
-        event.key !== "Escape" ||
-        !isThreadFindActive ||
-        event.defaultPrevented ||
-        event.isComposing ||
-        event.keyCode === 229 ||
-        isCommandPaletteOpen()
-      )
-        return;
-      const context = getShortcutContextStable(event.target);
-      if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
-      event.preventDefault();
-      closeThreadFindStable();
-      focusComposerStable();
-    };
-    window.addEventListener("keydown", handler, true);
-    window.addEventListener("keydown", dismissFind);
-    return () => {
-      window.removeEventListener("keydown", handler, true);
-      window.removeEventListener("keydown", dismissFind);
-    };
-  }, [
-    activeProject,
-    activeRightPanelSurface,
-    activeProjectScripts,
-    canReadTerminal,
-    canOperateTerminal,
-    addTerminalSurfaceStable,
-    activeThreadRef,
-    activeThreadPinned,
-    activeThreadSettled,
-    canInterruptRunningThread,
-    terminalUiState.terminalOpen,
-    terminalUiState.activeTerminalId,
-    activeThreadId,
-    closeRightPanelSurfaceStable,
-    requestCloseTerminalStable,
-    requestClosePanelTerminalStable,
-    createNewTerminalStable,
-    setTerminalOpenStable,
-    runProjectScriptStable,
-    splitTerminalStable,
-    splitPanelTerminalStable,
-    keybindings,
-    scriptKeybindings,
-    handleUnsettleActiveThreadStable,
-    isServerThread,
-    serverConfig?.threadFind,
-    onInterruptStable,
-    onToggleDiffStable,
-    pinThread,
-    settleThread,
-    supportsPinning,
-    supportsSettlement,
-    confirmAndUnpinThread,
-    copyActiveThreadReferenceStable,
-    getShortcutContextStable,
-    openThreadFindStable,
-    closeThreadFindStable,
-    isThreadFindActive,
-    toggleRightPanelStable,
-    toggleRightPanelMaximizedStable,
-    toggleThreadPanelStable,
-    toggleTerminalVisibilityStable,
-    composerRef,
-    draftId,
-    environmentId,
-    envLocked,
-    hasMultipleEnvironments,
-    logicalProjectEnvironments,
-    onEnvironmentChangeStable,
-  ]);
+      return script ? () => void runProjectScriptStable(script) : undefined;
+    },
+  });
 
   // A focused desktop browser page forwards these chords as menu actions.
   useEffect(() => {
