@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -108,6 +109,30 @@ describe("ElectronWindow", () => {
     windowsForegroundPrepareMock.mockReset().mockResolvedValue(false);
     windowsForegroundCloseMock.mockReset();
   });
+
+  it.effect("waits for a live main window and follows replacements", () =>
+    Effect.gen(function* () {
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const first = makeBrowserWindow({ id: 1, destroyed: false });
+      const destroyed = makeBrowserWindow({ id: 2, destroyed: true });
+      const inspectedDestroyed = Promise.withResolvers<void>();
+      vi.spyOn(destroyed, "isDestroyed").mockImplementation(() => {
+        inspectedDestroyed.resolve();
+        return true;
+      });
+      const replacement = makeBrowserWindow({ id: 3, destroyed: false });
+      const waiting = yield* electronWindow.waitForMain.pipe(Effect.forkChild);
+      yield* electronWindow.setMain(first);
+      assert.strictEqual(yield* Fiber.join(waiting), first);
+      assert.strictEqual(yield* electronWindow.waitForMain, first);
+      yield* electronWindow.clearMain(Option.some(first));
+      yield* electronWindow.setMain(destroyed);
+      const next = yield* electronWindow.waitForMain.pipe(Effect.forkChild);
+      yield* Effect.promise(() => inspectedDestroyed.promise);
+      yield* electronWindow.setMain(replacement);
+      assert.strictEqual(yield* Fiber.join(next), replacement);
+    }).pipe(Effect.provide(layerTest)),
+  );
 
   it.effect("preserves schema-safe creation context and the Electron cause", () =>
     Effect.gen(function* () {

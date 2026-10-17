@@ -126,11 +126,42 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.orDie),
   );
 
+  // macOS can deliver the link or file that launched the app while runtime
+  // acquisition or shell probing is still in progress. Register before either can yield.
+  const pendingLinks: string[] = [];
+  let receiveLink = (url: string) => {
+    pendingLinks.push(url);
+  };
+  const providerAuthDestination = (value: string | undefined) => {
+    const destination = providerAuthReturnUrl(value);
+    const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
+    return destination?.startsWith(`${expectedOrigin}/`) ? destination : undefined;
+  };
+  if (bridge.isPrimaryInstance) {
+    yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
+      if (
+        !readCodexAuthHandoff(url, environment.isDevelopment) &&
+        !providerAuthDestination(url) &&
+        !DesktopWebLinks.isWebLink(url) &&
+        promptLinkAppPath(url) === null
+      )
+        return;
+      event.preventDefault();
+      receiveLink(url);
+    });
+    yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
+      if (!DesktopWebLinks.isWebPageFile(path)) return;
+      event.preventDefault();
+      receiveLink(NodeURL.pathToFileURL(path).href);
+    });
+  }
+
   return DesktopClerk.of({
     configure: Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const scope = yield* Scope.Scope;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -171,19 +202,23 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const resumeProviderAuth = (value: string | undefined) => {
-        const destination = providerAuthReturnUrl(value);
-        const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
-        if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
+        const destination = providerAuthDestination(value);
+        if (!destination) return false;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isNone(mainWindow)) return;
-            yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
+            const currentWindow = yield* electronWindow.currentMainOrFirst;
+            // configure runs before Electron is ready and before the main window
+            // exists. Keep cold auth returns alive until startup creates it.
+            const mainWindow = Option.isSome(currentWindow)
+              ? currentWindow.value
+              : yield* electronWindow.waitForMain;
+            yield* Effect.promise(() => mainWindow.loadURL(destination));
+            yield* electronWindow.reveal(mainWindow);
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),
             ),
+            Effect.forkIn(scope),
           ),
         );
         return true;
@@ -195,24 +230,12 @@ export const make = Effect.gen(function* () {
       };
       const args = yield* HostProcess.Arguments;
       args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
-      const openWebLink = (url: string) => {
-        if (!DesktopWebLinks.isWebLink(url)) return false;
-        void runPromise(webLinks.receive(url));
-        return true;
-      };
-      yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-        if (
-          startProviderAuthHandoff(url) ||
-          resumeProviderAuth(url) ||
-          openWebLink(url) ||
-          openAppLink(url)
-        )
-          event.preventDefault();
-      });
-      yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
-        if (!DesktopWebLinks.isWebPageFile(path)) return;
-        event.preventDefault();
-        void runPromise(webLinks.receive(NodeURL.pathToFileURL(path).href));
+      yield* Effect.sync(() => {
+        receiveLink = (url) => {
+          if (startProviderAuthHandoff(url) || resumeProviderAuth(url)) return;
+          void runPromise(webLinks.receive(url));
+        };
+        for (const url of pendingLinks.splice(0)) receiveLink(url);
       });
       yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
         if (

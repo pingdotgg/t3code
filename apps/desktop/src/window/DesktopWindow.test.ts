@@ -277,6 +277,7 @@ function layerTest(input: {
         Effect.andThen(Ref.update(input.createCount, (count) => count + 1)),
         Effect.as(input.window),
       ),
+    waitForMain: Effect.die("unexpected main window wait"),
     main: Ref.get(input.mainWindow),
     currentMainOrFirst: Ref.get(input.mainWindow),
     focusedMainOrFirst:
@@ -400,6 +401,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           yield* Ref.update(createdWindows, (windows) => [...windows, outcome]);
           return outcome;
         }),
+      waitForMain: Effect.die("unexpected main window wait"),
       main: Ref.get(mainWindow),
       currentMainOrFirst,
       focusedMainOrFirst: currentMainOrFirst,
