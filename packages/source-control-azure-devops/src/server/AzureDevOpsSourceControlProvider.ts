@@ -3,6 +3,8 @@ import * as Effect from "effect/Effect";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as ChangeRequestTemplate from "@t3tools/source-control-core/server/changeRequestTemplate";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
   combinedAuthOutput,
@@ -85,9 +87,19 @@ function toChangeRequest(summary: {
 
 export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
+  const { git } = yield* SourceControlHost.SourceControlHost;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("azure-devops"),
+    readChangeRequestTemplate: ({ cwd, treeish }) =>
+      ChangeRequestTemplate.detect(cwd, treeish, git.execute, {
+        paths: [".azuredevops/", ".vsts/", "docs/", ""].flatMap((directory) => [
+          `${directory}pull_request_template.md`,
+          `${directory}pull_request_template.txt`,
+        ]),
+        directories: [],
+        caseInsensitive: true,
+      }),
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return azure

@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./server/changeRequestTemplate": {
+      "types": "./src/server/changeRequestTemplate.ts",
+      "import": "./src/server/changeRequestTemplate.ts"
+    },
     "./client/definition": {
       "types": "./src/client/definition.ts",
       "import": "./src/client/definition.ts"

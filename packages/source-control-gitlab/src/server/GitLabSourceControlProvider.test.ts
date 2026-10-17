@@ -1,5 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -11,7 +12,9 @@ import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   return GitLabSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(GitLabCli.GitLabCli)(gitlab)),
+    Effect.provide(
+      Layer.merge(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer()),
+    ),
   );
 }
 

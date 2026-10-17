@@ -47,6 +47,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
 import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as AzureDevOpsSourceControlProvider from "@t3tools/source-control-azure-devops/server/AzureDevOpsSourceControlProvider";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -713,6 +715,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  sourceControlProviderKind?: SourceControlProviderKind;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -797,14 +800,28 @@ function makeManager(input?: {
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     Effect.gen(function* () {
+      if (input?.sourceControlProvider) return input.sourceControlProvider;
       const git = yield* GitVcsDriver.GitVcsDriver;
-      return (
-        input?.sourceControlProvider ?? {
-          ...fakeGitHubProvider,
-          readChangeRequestTemplate: ({ cwd, treeish }: { cwd: string; treeish: string }) =>
-            GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
-        }
-      );
+      const kind = input?.sourceControlProviderKind ?? fakeGitHubProvider.kind;
+      let readChangeRequestTemplate: SourceControlProvider["Service"]["readChangeRequestTemplate"] =
+        ({ cwd, treeish }) => GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      if (kind === "gitlab" || kind === "azure-devops") {
+        const provider = yield* (
+          kind === "gitlab"
+            ? GitLabSourceControlProvider.make.pipe(
+                Effect.provide(Layer.mock(GitLabCli.GitLabCli)({})),
+              )
+            : AzureDevOpsSourceControlProvider.make.pipe(
+                Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({})),
+              )
+        ).pipe(Effect.provide(TestSourceControlHost.layer({ git: { execute: git.execute } })));
+        readChangeRequestTemplate = provider.readChangeRequestTemplate;
+      }
+      return {
+        ...fakeGitHubProvider,
+        kind,
+        ...(readChangeRequestTemplate ? { readChangeRequestTemplate } : {}),
+      };
     }).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
@@ -2581,7 +2598,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
-            Layer.provide(
+            Layer.provideMerge(
               TestSourceControlHost.layer({
                 process: {
                   run: (input) =>
@@ -4841,16 +4858,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("creates PR when one does not already exist", () =>
+  it.effect.each(["github", "gitlab", "azure-devops"] as const)("%s PR templates", (kind) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
-      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
-      NodeFS.writeFileSync(
-        NodePath.join(repoDir, ".github", "pull_request_template.md"),
-        "## What changed?\n\n## Verification",
-      );
-      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
+      const templatePaths = {
+        github: ".github/pull_request_template.md",
+        gitlab: ".gitlab/merge_request_templates/Default.md",
+        "azure-devops": ".azuredevops/pull_request_template.md",
+      };
+      const templateContent = (provider: string) => `## ${provider} context\n\n## Verification`;
+      for (const [provider, relativePath] of Object.entries(templatePaths)) {
+        const templatePath = NodePath.join(repoDir, relativePath);
+        NodeFS.mkdirSync(NodePath.dirname(templatePath), { recursive: true });
+        NodeFS.writeFileSync(templatePath, templateContent(provider));
+      }
+      yield* runGit(repoDir, ["add", ...Object.values(templatePaths)]);
       yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
       const remoteDir = yield* createBareRemote();
@@ -4864,6 +4887,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       let generatedChangeRequestTemplate: string | undefined;
 
       const { manager, ghCalls } = yield* makeManager({
+        sourceControlProviderKind: SourceControlProviderKind.make(kind),
         serverSettings: {
           sourceControlWritingStyle: {
             mode: "custom" as const,
@@ -4906,7 +4930,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(generatedPolicy).toMatchObject({
         changeRequestInstructions: "Lead with user impact.",
       });
-      expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
+      expect(generatedChangeRequestTemplate).toBe(templateContent(kind));
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),

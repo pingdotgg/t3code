@@ -6,6 +6,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as AzureDevOpsSourceControlProvider from "@t3tools/source-control-azure-devops/server/AzureDevOpsSourceControlProvider";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -250,6 +255,91 @@ it.effect("bounds template reads and marks truncated content", () =>
       assert.strictEqual(template, `${prefix}\n\n[truncated]`);
       assert.lengthOf(template.match(/\[truncated\]/g) ?? [], 1);
       assert.notInclude(template, "SECRET_SENTINEL");
+    }),
+  ),
+);
+
+const readProviderTemplate = (cwd: string, kind: "gitlab" | "azure-devops", treeish = "HEAD") =>
+  Effect.gen(function* () {
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const provider = yield* (
+      kind === "gitlab"
+        ? GitLabSourceControlProvider.make.pipe(Effect.provide(Layer.mock(GitLabCli.GitLabCli)({})))
+        : AzureDevOpsSourceControlProvider.make.pipe(
+            Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({})),
+          )
+    ).pipe(Effect.provide(TestSourceControlHost.layer({ git: { execute: git.execute } })));
+    assert.isDefined(provider.readChangeRequestTemplate);
+    return yield* provider.readChangeRequestTemplate!({ cwd, treeish });
+  });
+
+it.effect.each([
+  ["gitlab", ".gitlab/merge_request_templates/Default.md"],
+  ["gitlab", ".gitlab/merge_request_templates/DEFAULT.MD"],
+  ...[".azuredevops/", ".vsts/", "docs/", ""].flatMap((directory) =>
+    ["md", "txt"].map(
+      (extension) => ["azure-devops", `${directory}pull_request_template.${extension}`] as const,
+    ),
+  ),
+  ["azure-devops", ".AzureDevOps/PULL_REQUEST_TEMPLATE.MD"],
+] as const)("%s reads its committed template at %s", ([kind, relativePath]) =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, relativePath, "## Context\n\n## Verification");
+      yield* commitTemplates(cwd);
+      yield* runGit(cwd, ["branch", "base"]);
+      yield* writeTemplate(cwd, "subdir/.keep", "");
+      yield* writeTemplate(cwd, relativePath, "changed on the feature branch");
+      yield* commitTemplates(cwd);
+      assert.strictEqual(
+        Option.getOrThrow(yield* readProviderTemplate(`${cwd}/subdir`, kind, "base")),
+        "## Context\n\n## Verification",
+      );
+    }),
+  ),
+);
+
+it.effect("GitLab prefers Default.md over named templates and ignores other hosts", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Feature.md", "not the default");
+      yield* writeTemplate(cwd, ".github/pull_request_template.md", "GitHub");
+      yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", "Azure");
+      yield* commitTemplates(cwd);
+      assert.isTrue(Option.isNone(yield* readProviderTemplate(cwd, "gitlab")));
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "GitLab default");
+      yield* commitTemplates(cwd);
+      assert.strictEqual(
+        Option.getOrThrow(yield* readProviderTemplate(cwd, "gitlab")),
+        "GitLab default",
+      );
+      assert.strictEqual(Option.getOrThrow(yield* detectTemplate(cwd)), "GitHub");
+    }),
+  ),
+);
+
+it.effect("Azure follows its directory precedence and ignores other hosts", () =>
+  runWithTempDirectory((cwd) =>
+    Effect.gen(function* () {
+      yield* writeTemplate(cwd, ".github/pull_request_template.md", "GitHub");
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "GitLab");
+      yield* commitTemplates(cwd);
+      assert.isTrue(Option.isNone(yield* readProviderTemplate(cwd, "azure-devops")));
+      for (let i = 0; i < 2_000; i++) {
+        yield* writeTemplate(cwd, `docs/archive/unrelated-document-${i}.md`, "unrelated");
+      }
+      for (const directory of ["", "docs/", ".vsts/", ".azuredevops/"]) {
+        yield* writeTemplate(
+          cwd,
+          `${directory}pull_request_template.md`,
+          `from ${directory || "root"}`,
+        );
+        yield* commitTemplates(cwd);
+        assert.strictEqual(
+          Option.getOrThrow(yield* readProviderTemplate(cwd, "azure-devops")),
+          `from ${directory || "root"}`,
+        );
+      }
     }),
   ),
 );
