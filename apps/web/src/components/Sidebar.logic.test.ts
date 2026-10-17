@@ -592,6 +592,18 @@ describe("sidebar thread lineage helpers", () => {
       "solo:0/0",
     ]);
     expect(summarize({ orchestrator: true })).toEqual(["orchestrator:4/4 folded", "solo:0/0"]);
+    const [folded] = foldLaunchedSidebarThreads(
+      nested,
+      () => true,
+      () => false,
+      () => false,
+    );
+    expect(folded?.hiddenThreads.map((entry) => entry.id)).toEqual([
+      "child",
+      "grandchild",
+      "helper",
+      "sibling",
+    ]);
     // The open thread's branch stays visible; its folded siblings stay folded.
     expect(summarize({ orchestrator: true }, "grandchild")).toEqual([
       "orchestrator:4/2 folded",

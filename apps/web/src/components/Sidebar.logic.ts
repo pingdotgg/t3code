@@ -616,6 +616,7 @@ export function foldLaunchedSidebarThreads<T>(
   NestedSidebarThread<T> & {
     readonly childCount: number;
     readonly hiddenCount: number;
+    readonly hiddenThreads: readonly T[];
     readonly folded: boolean;
   }
 > {
@@ -628,6 +629,7 @@ export function foldLaunchedSidebarThreads<T>(
     NestedSidebarThread<T> & {
       readonly childCount: number;
       readonly hiddenCount: number;
+      readonly hiddenThreads: readonly T[];
       readonly folded: boolean;
     }
   > = [];
@@ -636,17 +638,25 @@ export function foldLaunchedSidebarThreads<T>(
     const end = subtreeEnd(index);
     const state = foldState(entry.thread);
     const visibleChildren: number[] = [];
-    let hiddenCount = 0;
+    const hiddenThreads: T[] = [];
     let folded = false;
     for (let child = index + 1; child < end; child = subtreeEnd(child)) {
       const childEnd = subtreeEnd(child);
       const foldable = state === true || (state === undefined && isSubagent(nested[child]!.thread));
       const pinned = nested.slice(child, childEnd).some((branch) => keepVisible(branch.thread));
       folded ||= foldable;
-      if (foldable && !pinned) hiddenCount += childEnd - child;
-      else visibleChildren.push(child);
+      if (foldable && !pinned) {
+        for (const hidden of nested.slice(child, childEnd)) hiddenThreads.push(hidden.thread);
+      }
+      if (!foldable || pinned) visibleChildren.push(child);
     }
-    result.push({ ...entry, childCount: end - index - 1, hiddenCount, folded });
+    result.push({
+      ...entry,
+      childCount: end - index - 1,
+      hiddenCount: hiddenThreads.length,
+      hiddenThreads,
+      folded,
+    });
     for (const child of visibleChildren) visit(child);
   };
   for (let index = 0; index < nested.length; index = subtreeEnd(index)) visit(index);

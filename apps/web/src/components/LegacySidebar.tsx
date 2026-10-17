@@ -343,7 +343,9 @@ function LaunchedThreadConnector(props: {
   /** One "1" or "0" per ancestor level, outermost first. */
   ancestorLines: string;
 }) {
-  const { visibleDepth, isFirstChild, isLastChild, isActive, ancestorLines } = props;
+  const { visibleDepth, isFirstChild, isLastChild, isActive } = props;
+  // A row deeper than the visible limit is drawn at the limit, so it keeps the outermost levels.
+  const ancestorLines = props.ancestorLines.slice(0, visibleDepth - 1);
   return (
     <span
       aria-hidden
@@ -384,6 +386,8 @@ interface SidebarThreadRowProps {
   launchedCount: number;
   /** Launched threads and subagents folded away below this one. */
   launchedHiddenCount: number;
+  /** The most urgent status among the folded threads, which have no row of their own. */
+  launchedHiddenStatus: ThreadStatusPill | null;
   launchedFolded: boolean;
   launchDepth: number;
   isFirstLaunchedChild: boolean;
@@ -446,6 +450,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const {
     launchedCount,
     launchedHiddenCount,
+    launchedHiddenStatus,
     launchedFolded,
     launchDepth,
     isFirstLaunchedChild,
@@ -847,6 +852,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {launchedHiddenCount > 0 && launchedHiddenStatus ? (
+            <ThreadStatusLabel status={launchedHiddenStatus} compact />
+          ) : null}
           {launchedCount > 0 ? (
             // Folded, it shows how many threads it hides; the chevron appears on row hover or focus.
             <button
@@ -874,7 +882,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <ChevronRightIcon
                 className={cn(
                   "absolute inset-0 m-auto size-3.5 opacity-0 transition-[opacity,rotate] duration-150 group-hover/menu-sub-item:opacity-100 group-focus-visible/launch-fold:opacity-100",
-                  !launchedFolded && "rotate-90",
+                  !launchedFolded && "rotate-90 max-sm:opacity-100",
                 )}
               />
             </button>
@@ -1024,7 +1032,12 @@ interface SidebarProjectThreadListProps {
   renderedThreads: readonly SidebarThreadSummary[];
   launchFoldByThreadKey: ReadonlyMap<
     string,
-    { childCount: number; hiddenCount: number; folded: boolean }
+    {
+      childCount: number;
+      hiddenCount: number;
+      hiddenStatus: ThreadStatusPill | null;
+      folded: boolean;
+    }
   >;
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
@@ -1116,10 +1129,11 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   const showMoreButtonRender = <button type="button" />;
   const showLessButtonRender = <button type="button" />;
   // Built from the rendered rows so a hidden launcher or sibling leaves no dangling line.
+  const renderedLaunchTree = nestLaunchedSidebarThreads(renderedThreads);
   const launchTreeByThreadKey = new Map(
-    nestLaunchedSidebarThreads(renderedThreads).map((entry) => [
+    renderedLaunchTree.map((entry, index) => [
       scopedThreadKey(scopeThreadRef(entry.thread.environmentId, entry.thread.id)),
-      entry,
+      { ...entry, hasRenderedChild: (renderedLaunchTree[index + 1]?.depth ?? 0) > entry.depth },
     ]),
   );
 
@@ -1143,13 +1157,20 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         renderedThreads.map((thread) => {
           const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
           const launchTree = launchTreeByThreadKey.get(threadKey);
-          const launchFold = launchFoldByThreadKey.get(threadKey);
+          // A fold toggle only helps while its children can appear: not in a collapsed project's
+          // pinned row, nor when "Show more" cuts off every unfolded child.
+          const launchFold =
+            projectExpanded &&
+            (launchTree?.hasRenderedChild || launchFoldByThreadKey.get(threadKey)?.hiddenCount)
+              ? launchFoldByThreadKey.get(threadKey)
+              : undefined;
           return (
             <SidebarThreadRow
               key={threadKey}
               thread={thread}
               launchedCount={launchFold?.childCount ?? 0}
               launchedHiddenCount={launchFold?.hiddenCount ?? 0}
+              launchedHiddenStatus={launchFold?.hiddenStatus ?? null}
               launchedFolded={launchFold?.folded ?? false}
               launchDepth={launchTree?.depth ?? 0}
               isFirstLaunchedChild={launchTree?.isFirstChild ?? true}
@@ -1334,6 +1355,7 @@ function useProjectThreads(project: SidebarProjectSnapshot) {
 // null input and the folded list stays cached across navigation.
 function useFoldedProjectThreads(
   nestedProjectThreads: ReturnType<typeof useProjectThreads>["nestedProjectThreads"],
+  lastVisitedAtByThreadKey: ReadonlyMap<string, string | undefined>,
   pinnedThreadKey: string | null,
 ) {
   const launchGroupCollapsedById = useUiStateStore((state) => state.launchGroupCollapsedById);
@@ -1350,9 +1372,18 @@ function useFoldedProjectThreads(
     visibleProjectThreads,
     orderedProjectThreadKeys: visibleProjectThreads.map(keyOf),
     launchFoldByThreadKey: new Map(
-      foldedProjectThreads.map(({ thread, childCount, hiddenCount, folded }) => [
+      foldedProjectThreads.map(({ thread, childCount, hiddenCount, hiddenThreads, folded }) => [
         keyOf(thread),
-        { childCount, hiddenCount, folded },
+        {
+          childCount,
+          hiddenCount,
+          hiddenStatus: resolveProjectStatusIndicator(
+            hiddenThreads.map((hidden) =>
+              resolveProjectThreadStatus(hidden, lastVisitedAtByThreadKey),
+            ),
+          ),
+          folded,
+        },
       ]),
     ),
   };
@@ -1526,7 +1557,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ? activeRouteThreadKey
       : null;
   const { visibleProjectThreads, orderedProjectThreadKeys, launchFoldByThreadKey } =
-    useFoldedProjectThreads(nestedProjectThreads, pinnedLaunchedThreadKey);
+    useFoldedProjectThreads(
+      nestedProjectThreads,
+      lastVisitedAtByThreadKey,
+      pinnedLaunchedThreadKey,
+    );
   // The "Delete anyway" toast action runs after the toast delay, so it must see
   // the thread list as of the click, not as of the first prompt.
   const readSidebarThreadByKey = useStableCallback(() => sidebarThreadByKey);
