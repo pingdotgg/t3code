@@ -58,3 +58,49 @@ it("only offers notice details when the description cannot fit", async () => {
   await nextFrame();
   expect(hasDetails()).toBe(true);
 });
+
+const titles = (scope: ParentNode) =>
+  Array.from(
+    scope.querySelectorAll('[data-slot="composer-banner-content"] > span:first-child'),
+    (title) => title.textContent,
+  );
+
+it("keeps urgent, warning and error notices out of the collapsed stack behind activity", async () => {
+  await act(async () =>
+    root.render(
+      <ComposerBannerStack
+        items={[
+          {
+            id: "limit",
+            variant: "warning",
+            priority: "urgent",
+            icon: null,
+            title: "Usage limit reached",
+          },
+          { id: "usage", variant: "info", priority: "notice", icon: null, title: "Usage limits" },
+          { id: "offline", variant: "warning", icon: null, title: "Server is reconnecting" },
+          { id: "clone", variant: "error", icon: null, title: "Failed to clone repo" },
+          {
+            id: "work",
+            variant: "default",
+            priority: "activity",
+            icon: null,
+            title: "Waiting on 2 subagents",
+          },
+        ]}
+      />,
+    ),
+  );
+  // Order is unchanged: activity stays attached, with the notices above it.
+  expect(titles(container)).toEqual([
+    "Usage limit reached",
+    "Server is reconnecting",
+    "Failed to clone repo",
+    "Usage limits",
+    "Waiting on 2 subagents",
+  ]);
+  // Only the ordinary notice waits behind the hover-to-expand peek.
+  expect(titles(container.querySelector('[aria-label="Other notices"]')!)).toEqual([
+    "Usage limits",
+  ]);
+});
