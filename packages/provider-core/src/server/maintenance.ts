@@ -11,6 +11,12 @@ export interface ProviderMaintenanceCapabilities {
    */
   readonly latestVersion?: string | null;
   readonly compareVersions?: (current: string, latest: string) => number;
+  /**
+   * The executable T3 Code runs, symlinks followed, when no update command is
+   * proven for it. The version advisory names it so the user knows which
+   * install to update.
+   */
+  readonly installPath?: string;
 }
 
 export interface ProviderMaintenanceCommandAction {

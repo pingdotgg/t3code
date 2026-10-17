@@ -294,13 +294,43 @@ describe("provider update launch notification logic", () => {
   it("describes settings-only updates without one-click support", () => {
     const view = getProviderUpdateInitialToastView({
       updateProviders: [
-        updateCandidate({ driver: driver("codex"), canUpdate: false }),
-        updateCandidate({ driver: driver("cursor"), canUpdate: false }),
+        updateCandidate({ driver: driver("codex") }),
+        updateCandidate({ driver: driver("cursor") }),
       ],
       oneClickProviders: [],
     });
 
     expect(view.description).toBe("Codex and Cursor can be updated from provider settings.");
+  });
+
+  it("sends installs the server cannot update to the tool that installed them", () => {
+    const manual = { canUpdate: false, updateCommand: null };
+    expect(
+      getProviderUpdateInitialToastView({
+        updateProviders: [updateCandidate({ driver: driver("codex"), ...manual })],
+        oneClickProviders: [],
+      }).description,
+    ).toBe("Update Codex with the app or tool that installed it.");
+    expect(
+      getProviderUpdateInitialToastView({
+        updateProviders: [
+          updateCandidate({ driver: driver("codex"), ...manual }),
+          updateCandidate({ driver: driver("cursor") }),
+        ],
+        oneClickProviders: [],
+      }).description,
+    ).toBe(
+      "Cursor can be updated from provider settings. Update Codex with the app or tool that installed it.",
+    );
+    const oneClick = updateCandidate({ driver: driver("claudeAgent") });
+    expect(
+      getProviderUpdateInitialToastView({
+        updateProviders: [oneClick, updateCandidate({ driver: driver("codex"), ...manual })],
+        oneClickProviders: [oneClick],
+      }).description,
+    ).toBe(
+      "Install the update now or review provider settings. Update Codex with the app or tool that installed it.",
+    );
   });
 
   it("uses server update state for running progress", () => {
