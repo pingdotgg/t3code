@@ -173,7 +173,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Defaults to async. Use wait only when this turn needs the child's result before you can continue.",
     }),
   ),
-  timeoutMs: Schema.optional(Schema.Number).annotate({
+  timeoutMs: Schema.optional(Schema.Finite).annotate({
     description:
       "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
@@ -443,7 +443,7 @@ export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendRe
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
-  timeoutMs: Schema.optional(Schema.Number),
+  timeoutMs: Schema.optional(Schema.Finite),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 
