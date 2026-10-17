@@ -570,13 +570,24 @@ function ChartCard(props: {
         </View>
       )}
 
-      <View className="flex-row items-center justify-between">
+      {/* Edge labels pin to the plot's ends, so the legend cannot share their
+          row: seven providers are far wider than a phone, and an unwrapped row
+          would overflow the card and push the trailing label off screen. */}
+      <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-xs text-foreground-tertiary">
           {props.isPast24Hours
             ? formatHourShort(props.days[0] ?? "", props.timeZone)
             : formatDayShort(props.sinceDay)}
         </Text>
-        <View className="flex-row items-center gap-4">
+        <Text className="text-xs text-foreground-tertiary">
+          {props.isPast24Hours
+            ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
+            : formatDayShort(props.untilDay)}
+        </Text>
+      </View>
+
+      {merged.providers.length > 0 ? (
+        <View className="flex-row flex-wrap gap-x-4 gap-y-1.5">
           {merged.providers.map((provider) => (
             <View key={provider.provider} className="flex-row items-center gap-1.5">
               <View
@@ -589,12 +600,7 @@ function ChartCard(props: {
             </View>
           ))}
         </View>
-        <Text className="text-xs text-foreground-tertiary">
-          {props.isPast24Hours
-            ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
-            : formatDayShort(props.untilDay)}
-        </Text>
-      </View>
+      ) : null}
     </View>
   );
 }
