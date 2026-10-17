@@ -22,6 +22,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -3421,6 +3422,194 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const rebuilt = yield* maintenance.rebuild;
       assert.isTrue(rebuilt.valid);
       assert.lengthOf((yield* projectionStore.getThreadProjection(threadId)).turnItems, 151);
+    }),
+  );
+
+  it.effect("settles a request card stored while its answer was being written", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:foundation-card-during-answer");
+      const thread = makeThread(threadId, now);
+      const event = (id: string, rest: Omit<OrchestrationV2DomainEvent, "id" | "occurredAt">) =>
+        ({
+          ...rest,
+          id: EventId.make(`event:foundation-card-during-answer:${id}`),
+          occurredAt: now,
+        }) as OrchestrationV2DomainEvent;
+      const requestNode = (requestId: RuntimeRequestId) => ({
+        id: NodeId.make(`node:${requestId}`),
+        threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: NodeId.make(`node:${requestId}`),
+        kind: "approval_request" as const,
+        status: "waiting" as const,
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: requestId,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      });
+      const pendingRequest = (requestId: RuntimeRequestId) => ({
+        id: requestId,
+        nodeId: NodeId.make(`node:${requestId}`),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "command" as const,
+        status: "pending" as const,
+        responseCapability: { type: "not_resumable" as const, reason: "Test request." },
+        createdAt: now,
+        resolvedAt: null,
+      });
+      const card = (requestId: RuntimeRequestId): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(`item:${requestId}`),
+        threadId,
+        runId: null,
+        nodeId: NodeId.make(`node:${requestId}`),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "waiting",
+        title: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "approval_request",
+        requestId,
+        requestKind: "command",
+      });
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({ id: "event:foundation-card-during-answer:thread", thread, now }),
+        ],
+      });
+
+      // The answer's handler read the request with no card, the adapter then
+      // stored the card, and the answer's write settles the request, with its
+      // node or (when the handler found no node either) on its own.
+      for (const [name, decision, expected, withNode] of [
+        ["accepted", "accept", "completed", true],
+        ["declined", "decline", "cancelled", true],
+        ["request-only", "accept", "completed", false],
+      ] as const) {
+        const requestId = RuntimeRequestId.make(`request:foundation-card-during-answer:${name}`);
+        const node = requestNode(requestId);
+        yield* eventSink.write({
+          events: [
+            event(`${name}:node`, {
+              type: "node.updated",
+              threadId,
+              nodeId: node.id,
+              payload: node,
+            }),
+            event(`${name}:request`, {
+              type: "runtime-request.updated",
+              threadId,
+              nodeId: node.id,
+              payload: pendingRequest(requestId),
+            }),
+          ],
+        });
+        yield* eventSink.write({
+          events: [
+            event(`${name}:card`, {
+              type: "turn-item.updated",
+              threadId,
+              nodeId: node.id,
+              payload: card(requestId),
+            }),
+          ],
+        });
+        assert.equal(
+          (yield* projectionStore.getRuntimeResponseContext(threadId, requestId)).item?.status,
+          "waiting",
+        );
+        yield* eventSink.write({
+          events: [
+            event(`${name}:resolved`, {
+              type: "runtime-request.updated",
+              threadId,
+              nodeId: node.id,
+              payload: {
+                ...pendingRequest(requestId),
+                status: "resolved",
+                resolvedAt: now,
+                decision,
+              },
+            }),
+            ...(withNode
+              ? [
+                  event(`${name}:node-settled`, {
+                    type: "node.updated",
+                    threadId,
+                    nodeId: node.id,
+                    payload: { ...node, status: expected, completedAt: now },
+                  }),
+                ]
+              : []),
+          ],
+        });
+        const settled = yield* projectionStore.getRuntimeResponseContext(threadId, requestId);
+        if (withNode) assert.equal(settled.node?.status, expected);
+        assert.equal(settled.item?.status, expected);
+      }
+
+      // A session that closes with the request open settles the request and
+      // node; a card the adapter stores afterwards is settled to match.
+      const expiredId = RuntimeRequestId.make("request:foundation-card-during-answer:expired");
+      const expiredNode = requestNode(expiredId);
+      yield* eventSink.write({
+        events: [
+          event("expired:node", {
+            type: "node.updated",
+            threadId,
+            nodeId: expiredNode.id,
+            payload: expiredNode,
+          }),
+          event("expired:request", {
+            type: "runtime-request.updated",
+            threadId,
+            nodeId: expiredNode.id,
+            payload: pendingRequest(expiredId),
+          }),
+        ],
+      });
+      yield* eventSink.write({
+        events: [
+          event("expired:closed", {
+            type: "runtime-request.updated",
+            threadId,
+            nodeId: expiredNode.id,
+            payload: { ...pendingRequest(expiredId), status: "expired", resolvedAt: now },
+          }),
+          event("expired:node-closed", {
+            type: "node.updated",
+            threadId,
+            nodeId: expiredNode.id,
+            payload: { ...expiredNode, status: "cancelled", completedAt: now },
+          }),
+        ],
+      });
+      yield* eventSink.write({
+        events: [
+          event("expired:card", {
+            type: "turn-item.updated",
+            threadId,
+            nodeId: expiredNode.id,
+            payload: card(expiredId),
+          }),
+        ],
+      });
+      const expired = yield* projectionStore.getRuntimeResponseContext(threadId, expiredId);
+      assert.equal(expired.node?.status, "cancelled");
+      assert.equal(expired.item?.status, "cancelled");
     }),
   );
 });
