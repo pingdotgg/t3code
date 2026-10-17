@@ -85,4 +85,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/DiagnosticsSettings.tsx",
   "apps/web/src/components/settings/DeviceHostsSettings.tsx",
   "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+  "apps/web/src/components/settings/AcpSessionManagementSection.tsx",
 ] as const;
