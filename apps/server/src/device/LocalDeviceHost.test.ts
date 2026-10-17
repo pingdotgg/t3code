@@ -12,7 +12,7 @@ import * as Stream from "effect/Stream";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -459,6 +459,47 @@ it.effect(
         );
       expect(missing.XDG_RUNTIME_DIR).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.live("limits hub discovery to Android unless the host is a Mac", () =>
+  Effect.gen(function* () {
+    if ((yield* HostProcess.Platform) === "win32") return;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const environment = yield* HostProcess.Environment;
+    const hubArguments = Effect.fn(function* (platform: NodeJS.Platform) {
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-hub-" });
+      const installDir = path.join(baseDir, "tools/expo-device-hub", DEVICE_HUB_VERSION);
+      const entryPath = path.join(installDir, "node_modules/expo-device-hub/dist/server/cli.mjs");
+      const argumentsPath = path.join(baseDir, "hub-args.json");
+      yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fs.writeFileString(path.join(installDir, ".install-complete"), DEVICE_HUB_VERSION);
+      yield* fs.writeFileString(
+        entryPath,
+        `import http from 'node:http'; import fs from 'node:fs';
+const args=process.argv.slice(2); fs.writeFileSync(${JSON.stringify(argumentsPath)},JSON.stringify(args));
+http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
+      );
+      const host = yield* LocalDeviceHost.make().pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ServerConfig.layerTest(baseDir, baseDir),
+            NetService.layer,
+            ProcessRunner.layer,
+            FetchHttpClient.layer,
+          ),
+        ),
+        Effect.provideService(HostProcess.Environment, { ...environment, HOME: baseDir }),
+        Effect.provideService(HostProcess.Platform, platform),
+      );
+      yield* host.ensureReady(() => Effect.void).pipe(Effect.ensuring(host.stop));
+      return (yield* fs
+        .readFileString(argumentsPath)
+        .pipe(Effect.map((contents) => JSON.parse(contents)))) as ReadonlyArray<string>;
+    });
+    expect((yield* hubArguments("linux")).slice(-2)).toEqual(["--platform", "android"]);
+    expect(yield* hubArguments("darwin")).not.toContain("--platform");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(

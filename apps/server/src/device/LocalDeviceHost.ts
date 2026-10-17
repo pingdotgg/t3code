@@ -224,6 +224,10 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   return env;
 });
 
+/** Only a Mac can list Apple simulators; elsewhere the hub's attempt surfaces as an error. */
+const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
+  hostPlatform === "darwin" ? [] : ["--platform", "android"];
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -394,6 +398,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               "127.0.0.1",
               "--hide-sidebar",
               "--hide-boot-device",
+              ...hubPlatformArguments(hostPlatform),
             ],
             {
               detached: false,
