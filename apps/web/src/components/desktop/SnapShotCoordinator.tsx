@@ -1,6 +1,7 @@
 import {
   type DesktopPendingSnapShot,
   type DesktopSnapShotEvent,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -33,6 +34,11 @@ import {
   getDesktopSnapShotBridge,
   type DesktopSnapShotBridge,
 } from "../../lib/desktopSnapShot";
+import {
+  countQuestionRequestAttachments,
+  type OpenQuestionAttachmentDraft,
+  openQuestionAttachmentDraft,
+} from "../../questionAttachments";
 import { readFileAsDataUrl } from "../ChatView.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
@@ -62,6 +68,23 @@ export function resolveExistingSnapShotTarget(
     readThreadShell(target) !== null
     ? target
     : null;
+}
+
+// The question open when a capture is first seen owns it, so the animation and the delivery agree.
+// Once that question closes, the capture goes to the thread draft, never to a newer question.
+export function resolveSnapShotAttachmentTarget(
+  pins: Map<string, OpenQuestionAttachmentDraft | null>,
+  id: string,
+  target: CaptureTarget,
+): CaptureTarget {
+  if (typeof target === "string") return target;
+  const open = openQuestionAttachmentDraft(target);
+  let pinned = pins.get(id);
+  if (pinned === undefined) {
+    pinned = open;
+    pins.set(id, open);
+  }
+  return pinned && pinned.draftId === open?.draftId ? pinned.draftId : target;
 }
 
 const NEXT_PAINT_FALLBACK_MS = 100;
@@ -137,10 +160,12 @@ async function afterNextPaint(): Promise<void> {
   });
 }
 
+// `resolveTarget` runs after the capture is read and compressed, so a question that closed in the
+// meantime does not get its draft recreated with an image its answer can no longer carry.
 export async function deliverSnapShot(
   bridge: DesktopSnapShotBridge,
   item: DesktopPendingSnapShot,
-  target: CaptureTarget,
+  resolveTarget: () => CaptureTarget,
 ): Promise<void> {
   const store = useComposerDraftStore.getState();
   updateSnapShotAnimationSource(item.id, item.source);
@@ -154,20 +179,29 @@ export async function deliverSnapShot(
   const file = compressed.file;
   const source = resizeSnapShotSource(capture.source, compressed.imageSize);
   const dataUrl = compressed.recompressed ? await readFileAsDataUrl(file) : capture.dataUrl;
+  const target = resolveTarget();
   const alreadyAttached =
     store.getComposerDraft(target)?.images.some(({ id }) => id === capture.id) ?? false;
+  // The questions of one request share a limit that `addImages` only checks per draft, and
+  // `addImage` refuses drafts without a thread session, which a question draft never has.
   if (
     !alreadyAttached &&
-    !store.addImage(target, {
-      type: "image",
-      id: capture.id,
-      name: file.name,
-      mimeType: file.type,
-      sizeBytes: file.size,
-      previewUrl: dataUrl,
-      file,
-      source,
-    })
+    ((typeof target === "string" &&
+      countQuestionRequestAttachments(target) >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) ||
+      !store
+        .addImages(target, [
+          {
+            type: "image",
+            id: capture.id,
+            name: file.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: dataUrl,
+            file,
+            source,
+          },
+        ])
+        .includes(capture.id))
   ) {
     throw new Error("Remove an attachment, then try this capture again.");
   }
@@ -214,6 +248,7 @@ export function SnapShotCoordinator() {
   );
   const animateCaptures = useClientSettings((settings) => settings.snapShotAnimations);
   const captureTargetsRef = useRef(new Map<string, Promise<CaptureTarget | null>>());
+  const questionPinsRef = useRef(new Map<string, OpenQuestionAttachmentDraft | null>());
   const targetResolutionRef = useRef<Promise<CaptureTarget | null> | null>(null);
   const drainingRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
@@ -316,8 +351,14 @@ export function SnapShotCoordinator() {
           }
 
           try {
-            await deliverSnapShot(bridge, item, target);
+            // A capture this coordinator never saw requested (a reload, a blurred window) is
+            // pinned here, before the read, so a question that opens meanwhile cannot claim it.
+            resolveSnapShotAttachmentTarget(questionPinsRef.current, item.id, target);
+            await deliverSnapShot(bridge, item, () =>
+              resolveSnapShotAttachmentTarget(questionPinsRef.current, item.id, target),
+            );
             captureTargetsRef.current.delete(item.id);
+            questionPinsRef.current.delete(item.id);
             soundedCaptureIdsRef.current.delete(item.id);
           } catch (error) {
             await dismissSnapShotAnimation(item.id);
@@ -363,6 +404,7 @@ export function SnapShotCoordinator() {
           const target = current ? resolveExistingSnapShotTarget(current, routeThreadRef) : null;
           // Creating a new draft would navigate the renderer before a self-capture finishes.
           if (target) {
+            resolveSnapShotAttachmentTarget(questionPinsRef.current, event.id, target);
             void resolveSnapShotDeliveryTarget(captureTargetsRef.current, event.id, () =>
               Promise.resolve(target),
             );
@@ -378,6 +420,10 @@ export function SnapShotCoordinator() {
                 captureTargetsRef.current,
                 event.id,
                 resolveCaptureTarget,
+              ).then(
+                (target) =>
+                  target &&
+                  resolveSnapShotAttachmentTarget(questionPinsRef.current, event.id, target),
               ),
               pendingAnimationStartsRef.current,
             );
@@ -388,7 +434,10 @@ export function SnapShotCoordinator() {
           void drain();
           return;
         case "failed": {
-          if (event.id) captureTargetsRef.current.delete(event.id);
+          if (event.id) {
+            captureTargetsRef.current.delete(event.id);
+            questionPinsRef.current.delete(event.id);
+          }
           dismissFailedSnapShot(
             event.id,
             soundedCaptureIdsRef.current,
