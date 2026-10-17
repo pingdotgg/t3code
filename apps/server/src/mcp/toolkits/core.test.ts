@@ -61,6 +61,7 @@ import * as AttachmentHandlers from "./attachment/handlers.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
+import * as ThreadHandoff from "../../peer/handoff/ThreadHandoff.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
@@ -94,6 +95,7 @@ const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+  Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
 );
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
@@ -598,6 +600,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
         Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
@@ -657,6 +660,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
         Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
@@ -746,6 +750,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
         ),
       ),
     ),
@@ -839,6 +844,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(ThreadHandoff.ThreadHandoff)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
         Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
