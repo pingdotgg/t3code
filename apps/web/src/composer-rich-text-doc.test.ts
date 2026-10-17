@@ -12,6 +12,7 @@ import {
   buildDocJson,
   buildTiptapContent,
   caretTakesMarksBefore,
+  codePairCaretPlugin,
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
@@ -1093,5 +1094,65 @@ describe("caret stops at styled edges", () => {
     expect(stepCaretAcrossStyledEdge(stateAt("**bold** tail", 3), -1)).toBeNull();
     expect(stepCaretAcrossStyledEdge(stateAt("plain text", 1), -1)).toBeNull();
     expect(caretTakesMarksBefore(stateAt("plain text", 1))).toBe(false);
+  });
+});
+
+describe("backtick pair at the caret", () => {
+  function withPlugin(text: string, pos: number) {
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, text ? [schema.text(text)] : []),
+    ]);
+    return EditorState.create({
+      doc,
+      selection: TextSelection.create(doc, pos),
+      plugins: [codePairCaretPlugin(schema.marks.code!)],
+    });
+  }
+
+  it("formats text typed between backticks once the caret leaves the pair", () => {
+    let state = withPlugin("", 1);
+    const type = (ch: string) => {
+      state = state.apply(state.tr.insertText(ch));
+    };
+    type("`");
+    type("`");
+    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 2)));
+    for (const ch of "not working") type(ch);
+    expect(state.doc.textContent).toBe("`not working`");
+    state = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, 1 + state.doc.textContent.length)),
+    );
+    expect(state.doc.textContent).toBe("not working");
+    expect(serializeEditorDoc(state.doc).value).toBe("`not working`");
+    state = state.apply(state.tr.insertText("x"));
+    expect(serializeEditorDoc(state.doc).value).toBe("`not working`x");
+  });
+
+  it("leaves a pasted backtick pair literal", () => {
+    const state = withPlugin("", 1);
+    const pasted = state.apply(state.tr.insertText("`not working`").setMeta("uiEvent", "paste"));
+    expect(pasted.doc.textContent).toBe("`not working`");
+    const before = pasted.apply(pasted.tr.setSelection(TextSelection.create(pasted.doc, 1)));
+    const moved = before.apply(
+      before.tr.setSelection(TextSelection.create(before.doc, 1 + before.doc.textContent.length)),
+    );
+    expect(moved.doc.textContent).toBe("`not working`");
+    expect(moved.doc.child(0).firstChild?.marks).toEqual([]);
+  });
+
+  it("does not format doubled backticks", () => {
+    const text = "``not working``";
+    const state = withPlugin(text, 1);
+    const moved = state.apply(
+      state.tr.setSelection(TextSelection.create(state.doc, 1 + text.length)),
+    );
+    expect(moved.doc.textContent).toBe(text);
+  });
+
+  it("does not code the prefix when the caret sits between two closing backticks", () => {
+    const text = "`a``";
+    const state = withPlugin(text, 1);
+    const moved = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 4)));
+    expect(moved.doc.textContent).toBe(text);
   });
 });
