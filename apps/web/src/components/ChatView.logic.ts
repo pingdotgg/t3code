@@ -402,7 +402,6 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
   activeThreadKey: string | null;
   nextEntries: T;
   rememberedForActive?: T | null;
-  lastReady?: HeldThreadTimeline<T> | null;
 }): { entries: T; displayThreadKey: string | null } {
   if (input.nextEntries.length > 0) {
     return { entries: input.nextEntries, displayThreadKey: input.activeThreadKey };
@@ -414,17 +413,6 @@ export function resolveThreadSwitchTimeline<T extends readonly unknown[]>(input:
     return { entries: rememberedForActive, displayThreadKey: input.activeThreadKey };
   }
 
-  const lastReady = input.lastReady ?? peekHeldThreadTimeline<T>();
-  if (
-    input.loading &&
-    lastReady !== null &&
-    lastReady.threadKey !== null &&
-    lastReady.threadKey !== input.activeThreadKey &&
-    lastReady.entries.length > 0 &&
-    threadKeysShareEnvironment(lastReady.threadKey, input.activeThreadKey)
-  ) {
-    return { entries: lastReady.entries, displayThreadKey: lastReady.threadKey };
-  }
   return { entries: input.nextEntries, displayThreadKey: input.activeThreadKey };
 }
 

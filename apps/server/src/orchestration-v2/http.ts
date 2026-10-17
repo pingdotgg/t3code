@@ -77,6 +77,7 @@ export const layer = HttpApiBuilder.group(
 
     const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* (
       compactPullRequests: boolean,
+      deduplicatePullRequests: boolean,
     ) {
       const base = buildActiveShellSnapshot(
         yield* loadShellSnapshotParts({
@@ -162,7 +163,10 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* loadShellSnapshot(args.query.compactPullRequests === "true").pipe(
+          return yield* loadShellSnapshot(
+            args.query.compactPullRequests === "true",
+            args.query.deduplicatePullRequests === "true",
+          ).pipe(
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),

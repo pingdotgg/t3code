@@ -4330,6 +4330,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toggleInteractionMode();
       return true;
     }
+    if (
+      submissionIntent === null &&
+      key !== "Escape" &&
+      key !== "ArrowDown" &&
+      key !== "ArrowUp" &&
+      key !== "Enter" &&
+      key !== "Tab"
+    ) {
+      return false;
+    }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);

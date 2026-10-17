@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Order from "effect/Order";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
@@ -331,6 +332,36 @@ describe("observability", () => {
   });
 
   nodeServicesIt("node services", (it) => {
+    it.effect("flushes timed trace records after a long idle", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-idle-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
+        const flushed = yield* Queue.unbounded<void>();
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024 * 1024,
+          maxFiles: 2,
+          batchWindowMs: 1_000,
+          onFlush: () => Queue.offer(flushed, undefined).pipe(Effect.asVoid),
+        });
+
+        const names: string[] = [];
+        for (const name of ["first", "second"]) {
+          yield* TestClock.adjust("1 hour");
+          sink.push(makeRecord(name));
+          yield* TestClock.adjust("1 second");
+          yield* Queue.take(flushed);
+          names.push(name);
+          assert.deepStrictEqual(
+            (yield* readTraceRecords(tracePath)).map((line) => line.name),
+            names,
+          );
+        }
+      }).pipe(Effect.scoped),
+    );
+
     it.effect(
       "keeps trace producers responsive during a slow write, bounds the backlog, and drains on close",
       () =>

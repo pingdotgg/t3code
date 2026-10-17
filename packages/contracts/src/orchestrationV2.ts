@@ -1828,6 +1828,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(OrchestrationV2ShellPullRequestLink)),
+  /** Opted-in HTTP snapshots reuse an earlier thread row's identical link list. */
+  pullRequestReference: Schema.optionalKey(NonNegativeInt),
   /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,

@@ -82,10 +82,10 @@ const sharedStackLink: ThreadPullRequestLink = {
   stack: sharedStack,
 };
 
-function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function session(client: WsRpcProtocolClient, completionMarker = true): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({ shellResumeCompletionMarker: true } as never),
+    initialConfig: Effect.succeed({ shellResumeCompletionMarker: completionMarker } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -94,7 +94,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
 }
 
 describe("environment shell synchronization", () => {
-  it.effect("restores shared native stacks after deferred HTTP decoding", () =>
+  it.effect("restores shared link lists and native stacks after deferred HTTP decoding", () =>
     Effect.gen(function* () {
       const link = sharedStackLink;
       const stack = sharedStack;
@@ -114,6 +114,12 @@ describe("environment shell synchronization", () => {
               expected[2]!,
             ],
           },
+          {
+            ...v2ThreadShell,
+            id: ThreadId.make("shared-links"),
+            pullRequests: undefined,
+            pullRequestReference: 0,
+          },
         ],
       };
       const json = yield* encodeShellSnapshotJson(source);
@@ -123,6 +129,8 @@ describe("environment shell synchronization", () => {
       yield* TestClock.adjust("1 millis");
       const restored = yield* Fiber.join(loading);
       expect(restored.get(v2ThreadShell.id)).toEqual(expected);
+      expect(restored.get(ThreadId.make("shared-links"))).toBe(restored.get(v2ThreadShell.id));
+      expect(decoded.threads[1]?.pullRequestReference).toBeUndefined();
     }),
   );
   it.effect("publishes live state before persistence and preserves it when ready", () =>
@@ -406,7 +414,7 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("resubscribes from the in-memory shell cursor when the app becomes active", () =>
+  it.effect("resumes the synchronized shell cursor on foreground and socket reconnect", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
@@ -517,7 +525,29 @@ describe("environment shell synchronization", () => {
         if ((yield* Ref.get(capturedAfterSequences)).length >= 4) break;
         yield* Effect.yieldNow;
       }
-      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 40]);
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
+      yield* Queue.offer(events, {
+        kind: "thread.updated",
+        sequence: 41,
+        location: "active",
+        thread: { ...v2ThreadShell, title: "changed while disconnected" },
+      });
+      const updated = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((value) => Option.getOrNull(value.snapshot)?.snapshotSequence === 41),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      expect(Option.getOrThrow(updated.snapshot).threads[0]?.title).toBe(
+        "changed while disconnected",
+      );
+      // An older server without a completion marker retains the authoritative refresh.
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client, false)));
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* Ref.get(capturedAfterSequences)).length >= 5) break;
+        yield* Effect.yieldNow;
+      }
+      expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 40, 20]);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
     }),
   );

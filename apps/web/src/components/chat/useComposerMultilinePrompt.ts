@@ -1,9 +1,12 @@
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { observeResize } from "../../lib/observeResize";
 
 export function measureComposerMultilinePrompt(body: HTMLElement): boolean | null {
   const editor = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');
   if (!editor || editor.clientWidth === 0) return null;
+  // A draft that already scrolls vertically is multiline. Avoid measuring every glyph in a
+  // long prompt through a Range just to reach the same result on the next keystroke.
+  if (editor.scrollHeight > editor.clientHeight + 1) return true;
 
   const bodyStyle = getComputedStyle(body);
   const expandedWidth =
@@ -23,12 +26,18 @@ export function measureComposerMultilinePrompt(body: HTMLElement): boolean | nul
 
 export function useComposerMultilinePrompt(body: HTMLElement | null): boolean {
   const [isMultiline, setIsMultiline] = useState(false);
+  const measuredRef = useRef(false);
 
   useLayoutEffect(() => {
     if (!body) return;
+    const update = (next: boolean) => {
+      if (next === measuredRef.current) return;
+      measuredRef.current = next;
+      setIsMultiline(next);
+    };
     const measure = () => {
       const next = measureComposerMultilinePrompt(body);
-      if (next !== null) setIsMultiline(next);
+      if (next !== null) update(next);
     };
     measure();
     const editor = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');

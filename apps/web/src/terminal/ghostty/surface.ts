@@ -17,6 +17,7 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { isMonospaceFamily } from "../../appearanceFonts";
 import { observeResize } from "../../lib/observeResize";
+import { loadGhosttyRuntime } from "./runtime";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -54,9 +55,17 @@ function ensureTerminalSymbolsFont(): Promise<void> {
     try {
       const face = new FontFace("Symbols Nerd Font Mono", `url(${symbolsFontUrl})`);
       document.fonts.add(await face.load());
-    } catch {}
+    } catch {
+      // Locally installed fallback faces still apply.
+      symbolsFontLoad = null;
+    }
   })();
   return symbolsFontLoad;
+}
+
+/** Warm the first renderer without mounting a surface or starting a shell. */
+export function preloadTerminalAssets() {
+  return Promise.all([ensureTerminalSymbolsFont(), loadGhosttyRuntime()]);
 }
 
 function quoteTerminalFontFamilies(list: string): string {

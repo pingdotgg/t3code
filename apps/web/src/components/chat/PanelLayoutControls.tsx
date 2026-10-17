@@ -3,6 +3,7 @@ import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactElement } from "react";
 
+import { preloadTerminalDrawer } from "../lazySurfaces";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
@@ -90,6 +91,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
+              onPointerEnter={() => void preloadTerminalDrawer()}
+              onFocus={() => void preloadTerminalDrawer()}
               aria-label="Toggle terminal drawer"
               variant="ghost"
               size="sm"

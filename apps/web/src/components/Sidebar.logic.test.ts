@@ -1010,6 +1010,16 @@ describe("pullRequestMatchesSearchQuery", () => {
     expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "rebase 123")).toBe(false);
     expect(pullRequestMatchesSearchQuery({ branchPullRequest }, "   ")).toBe(false);
   });
+
+  it("updates matching terms when a new PR snapshot replaces the old one", () => {
+    const original = { branchPullRequest };
+    expect(pullRequestMatchesSearchQuery(original, "#123")).toBe(true);
+    const updated = {
+      branchPullRequest: { ...branchPullRequest, number: 456, url: "https://example.com/pull/456" },
+    };
+    expect(pullRequestMatchesSearchQuery(updated, "#123")).toBe(false);
+    expect(pullRequestMatchesSearchQuery(updated, "#456")).toBe(true);
+  });
 });
 
 describe("searchSidebarThreads", () => {

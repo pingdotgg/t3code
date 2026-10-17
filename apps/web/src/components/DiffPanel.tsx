@@ -48,6 +48,7 @@ import { useProject, useThreadProjection, useThreadShell } from "../state/entiti
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
+import { preloadDiffWorkerPool } from "./DiffWorkerPoolProvider";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
@@ -203,6 +204,10 @@ export default function DiffPanel({
   threadRef: routeThreadRef,
 }: DiffPanelProps) {
   const { resolvedTheme } = useTheme();
+  // Opening the diff is viewer intent. Compile workers while review data arrives.
+  useEffect(() => {
+    void preloadDiffWorkerPool(resolveDiffThemeName(resolvedTheme)).catch(() => undefined);
+  }, [resolvedTheme]);
   const settings = useClientSettings();
   const diffLayout = settings.diffLayout;
   const updateClientSettings = useUpdateClientSettings();

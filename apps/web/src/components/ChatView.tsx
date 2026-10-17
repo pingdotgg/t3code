@@ -168,6 +168,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import { queryShownElement } from "../lib/shownElement";
+import { diffPanelSurface } from "./lazySurfaces";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -654,7 +655,7 @@ function useDraftHeroLayoutTransition(
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
-const DiffPanel = lazy(() => import("./DiffPanel"));
+const DiffPanel = diffPanelSurface.Component;
 const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );

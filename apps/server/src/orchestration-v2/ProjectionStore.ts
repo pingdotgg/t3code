@@ -437,6 +437,7 @@ export interface ProjectionStoreV2Shape {
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
+    options?: { readonly watchedOnly?: boolean },
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
   readonly getThreadWorktreePaths: () => Effect.Effect<
     ReadonlyArray<{ readonly threadId: ThreadId; readonly worktreePath: string }>,
@@ -1214,6 +1215,21 @@ const decodeRows =
           }),
       ),
     );
+
+// Schema decoding a row is synchronous, so the fiber's operation budget cannot
+// interrupt it. Bulk reads yield between small groups without changing validation.
+const decodeReadRows = <A, B, E, R>(
+  rows: ReadonlyArray<A>,
+  decode: (row: A) => Effect.Effect<B, E, R>,
+) =>
+  Effect.gen(function* () {
+    const values: Array<B> = [];
+    for (let index = 0; index < rows.length; index++) {
+      if (index > 0 && index % 16 === 0) yield* Effect.yieldNow;
+      values.push(yield* decode(rows[index]!));
+    }
+    return values;
+  });
 
 function messageIdForTurnItem(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
@@ -5634,9 +5650,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1
             ) AND blocked.status = 'failed'
-            WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${
-              projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`
-            }${
+            WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}${projectId === undefined ? sql`` : sql` AND t.project_id = ${projectId}`}${
               location === "active"
                 ? sql` AND t.archived_at IS NULL`
                 : location === "archive"
@@ -5773,8 +5787,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       });
 
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (threadId) =>
-      sql
-        .withTransaction(
+      Effect.flatMap(
+        sql.withTransaction(
           Effect.gen(function* () {
             const rows = yield* sql<SettlementThreadRow>`
             SELECT t.thread_id,
@@ -5826,14 +5840,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
-            if (rows.length === 0) return [];
+            if (rows.length === 0) {
+              return { rows, providerThreadRows: [], pendingTurnItemRows: [] };
+            }
             const threadIds = rows.map((row) => ThreadId.make(row.thread_id));
+            return {
+              rows,
+              providerThreadRows: yield* selectShellProviderThreadRows(threadIds),
+              pendingTurnItemRows: yield* selectShellPendingTurnItemRows(threadIds),
+            };
+          }),
+        ),
+        // Decode after releasing the read transaction.
+        ({ rows, providerThreadRows, pendingTurnItemRows }) =>
+          Effect.gen(function* () {
             const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
-              yield* pendingBackgroundDataByThreadId({
-                providerThreadRows: yield* selectShellProviderThreadRows(threadIds),
-                pendingTurnItemRows: yield* selectShellPendingTurnItemRows(threadIds),
-              });
-            return yield* Effect.forEach(rows, (row) =>
+              yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
+            return yield* decodeReadRows(rows, (row) =>
               Effect.gen(function* () {
                 const thread = yield* decodeThreadReadRow(row, true);
                 const status = shellStatusFromStoredRunStatus(row.latest_run_status);
@@ -5886,11 +5909,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               }),
             );
           }),
-        )
-        .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
+      ).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = (
       threadId,
+      options,
     ) =>
       Effect.gen(function* () {
         const rows = yield* sql<ThreadReadRow>`
@@ -5904,9 +5927,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND t.archived_at IS NULL
             -- Read from the sweep index (migration 061) rather than each payload.
             AND json_array_length(t.payload_json, '$.pullRequests') > 0
+            ${
+              options?.watchedOnly
+                ? sql`AND EXISTS (
+                    SELECT 1 FROM json_each(
+                      CASE WHEN summary.thread_id IS NULL THEN t.payload_json ELSE summary.compact_payload_json END,
+                      CASE WHEN summary.thread_id IS NULL THEN '$.pullRequests' ELSE '$.thread.pullRequests' END
+                    ) AS link
+                    WHERE json_type(link.value, '$.watch') IS NOT NULL
+                  )`
+                : sql``
+            }
           ORDER BY t.updated_at ASC, t.thread_id ASC
         `;
-        return yield* Effect.forEach(rows, (row) =>
+        return yield* decodeReadRows(rows, (row) =>
           decodeThreadReadRow(row, false).pipe(
             Effect.map((thread): ProjectionThreadPullRequests => ({
               id: thread.id,
@@ -6158,7 +6192,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         });
         const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
           yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
-        const states = yield* Effect.forEach(threadRows, (row) =>
+        const states = yield* decodeReadRows(threadRows, (row) =>
           shellThreadStateFromRow({
             row,
             compactPullRequests,
@@ -6462,7 +6496,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             ),
           ),
         ),
-      getThreadsWithPullRequests: (threadId) =>
+      getThreadsWithPullRequests: (threadId, options) =>
         Ref.get(replayState).pipe(
           Effect.map((state) =>
             [...state.projections.values()]
@@ -6472,7 +6506,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   (threadId === undefined || thread.id === threadId) &&
                   thread.deletedAt === null &&
                   thread.archivedAt === null &&
-                  (thread.pullRequests ?? []).length > 0,
+                  (thread.pullRequests ?? []).length > 0 &&
+                  (!options?.watchedOnly ||
+                    thread.pullRequests?.some((link) => link.watch !== undefined)),
               )
               .toSorted(
                 (left, right) =>

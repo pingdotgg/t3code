@@ -48,12 +48,25 @@ export function detachPullRequests(snapshot: unknown): ReadonlyArray<unknown> {
   if (!Predicate.isObject(snapshot)) return [];
   const rows: unknown = snapshot.threads;
   if (!Array.isArray(rows)) return [];
-  return rows.map((row: unknown) => {
-    if (!Predicate.isObject(row)) return undefined;
-    const links = row.pullRequests;
+  const detached: Array<unknown> = [];
+  for (const [index, row] of rows.entries()) {
+    if (!Predicate.isObject(row)) {
+      detached.push(undefined);
+      continue;
+    }
+    const reference = row.pullRequestReference;
+    const links =
+      typeof reference === "number" &&
+      Number.isInteger(reference) &&
+      reference >= 0 &&
+      reference < index
+        ? detached[reference]
+        : row.pullRequests;
     delete row.pullRequests;
-    return links;
-  });
+    delete row.pullRequestReference;
+    detached.push(links);
+  }
+  return detached;
 }
 
 export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
@@ -64,10 +77,16 @@ export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
   // Schema decoding runs when called, so each thread's decode is built after a yield.
   const loadPullRequests = Effect.gen(function* () {
     const linksByThreadId = new Map<ThreadId, ReadonlyArray<ThreadPullRequestLink>>();
+    const decodedLists = new Map<unknown, ReadonlyArray<ThreadPullRequestLink> | undefined>();
     let batchSize = LINKS_PER_BATCH;
     for (const [index, threadId] of threadIds.entries()) {
       const raw = rawLinks[index];
       if (raw === undefined) continue;
+      if (decodedLists.has(raw)) {
+        const links = decodedLists.get(raw);
+        if (links !== undefined) linksByThreadId.set(threadId, links);
+        continue;
+      }
       const size = Array.isArray(raw) ? raw.length : 1;
       if (batchSize + size > LINKS_PER_BATCH) {
         yield* yieldToHost;
@@ -82,7 +101,9 @@ export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
           }).pipe(Effect.as(undefined)),
         ),
       );
-      if (links !== undefined) linksByThreadId.set(threadId, restoreStackReferences(links));
+      const restored = links === undefined ? undefined : restoreStackReferences(links);
+      decodedLists.set(raw, restored);
+      if (restored !== undefined) linksByThreadId.set(threadId, restored);
     }
     return linksByThreadId as ReadonlyMap<ThreadId, ReadonlyArray<ThreadPullRequestLink>>;
   });

@@ -292,7 +292,7 @@ const make = Effect.gen(function* () {
   // worker instead of the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
     const { threads } = yield* projections
-      .getShellSnapshot({ location: "active" })
+      .getShellSnapshot({ location: "active", compactPullRequests: true })
       .pipe(NodeSqliteClient.readOnly);
     const projects = yield* projectStore.listShells();
     return { projects, threads };

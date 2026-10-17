@@ -828,14 +828,25 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     editorRef,
   } = props;
   const richText = !literalText && (richTextEnabled ?? false);
+  const cursorBoundsRef = useRef({ value: "", length: 0 });
   const clampEditorCursor = useCallback(
-    (text: string, position: number) =>
-      literalText
-        ? Math.max(
-            0,
-            Math.min(text.length, Number.isFinite(position) ? Math.floor(position) : text.length),
-          )
-        : clampCollapsedComposerCursor(text, position),
+    (text: string, position: number) => {
+      // Key handling and selection reads revisit the document the transaction just reported.
+      // Keep the prompt-space bound, including typed @name/$name, until the text changes.
+      if (!literalText && cursorBoundsRef.current.value !== text) {
+        cursorBoundsRef.current = {
+          value: text,
+          length: /[@[\p{Sc}]/u.test(text)
+            ? clampCollapsedComposerCursor(text, Infinity)
+            : text.length,
+        };
+      }
+      const length = literalText ? text.length : cursorBoundsRef.current.length;
+      return Math.max(
+        0,
+        Math.min(length, Number.isFinite(position) ? Math.floor(position) : length),
+      );
+    },
     [literalText],
   );
   const expandEditorCursor = useCallback(

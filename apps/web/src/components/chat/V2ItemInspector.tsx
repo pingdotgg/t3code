@@ -14,7 +14,16 @@ import {
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
-import { memo, type ReactNode, Suspense, use, useMemo } from "react";
+import {
+  memo,
+  type ReactNode,
+  Suspense,
+  use,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useTheme } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -30,6 +39,29 @@ import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPa
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ShellCommandBlock } from "./ShellCommandBlock";
+
+/** Keep the text node when logs grow; edits and resets replace its contents. */
+function ToolOutputText({ text }: { text: string }) {
+  const [initial] = useState(text);
+  const previous = useRef(text);
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const target = element.current;
+    if (!target || previous.current === text) return;
+    const node = target.firstChild;
+    if (node instanceof Text && text.startsWith(previous.current)) {
+      node.appendData(text.slice(previous.current.length));
+    } else {
+      target.textContent = text;
+    }
+    previous.current = text;
+  }, [text]);
+  return (
+    <div ref={element} className="max-h-80 overflow-auto text-muted-foreground">
+      {initial}
+    </div>
+  );
+}
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
@@ -169,7 +201,7 @@ function ToolOutput(props: ToolOutputState) {
     />
   ));
   const text = props.output ? (
-    <div className="max-h-80 overflow-auto text-muted-foreground">{props.output}</div>
+    <ToolOutputText text={props.output} />
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (

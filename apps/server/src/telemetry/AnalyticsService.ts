@@ -259,15 +259,16 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // A starting server sends its first batch once startup work may run.
-  yield* awaitBackgroundTurn.pipe(
-    Effect.andThen(
-      Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
-        disableYield: true,
-      }),
-    ),
-    Effect.forkScoped,
-  );
+  if (telemetryConfig.enabled && identifier) {
+    yield* awaitBackgroundTurn.pipe(
+      Effect.andThen(
+        Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
+          disableYield: true,
+        }),
+      ),
+      Effect.forkScoped,
+    );
+  }
 
   yield* Effect.addFinalizer(() => flush);
 

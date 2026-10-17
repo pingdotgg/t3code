@@ -242,6 +242,8 @@ export default defineConfig(() => {
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },
     resolve: {
+      // lucide 0.564's module entry is missing; resolve its actual ESM entry.
+      alias: [{ find: /^lucide$/, replacement: "lucide/dist/esm/lucide/src/lucide.js" }],
       tsconfigPaths: true,
       dedupe: ["react", "react-dom"],
     },
