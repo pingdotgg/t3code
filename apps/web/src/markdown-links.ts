@@ -6,6 +6,7 @@ import {
   resolveMarkdownFileLinkTarget,
 } from "@t3tools/shared/markdownLinks";
 import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import type { ThreadFilePathIndex } from "@t3tools/shared/threadFilePaths";
 
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 import { isTerminalLinkActivation } from "./terminal-links";
@@ -18,6 +19,8 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  /** A file the thread named that the link may mean, used when the joined path is missing. */
+  threadCandidate?: MarkdownFileLinkMeta;
 }
 
 export function shouldOpenMarkdownFileLinkInEditor(
@@ -41,6 +44,7 @@ export function resolveInlineCodeFileLinkMeta(
   codeText: string,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  threadFilePaths?: ThreadFilePathIndex | null,
 ): MarkdownFileLinkMeta | null {
   const candidate = inlineCodeFilePathCandidate(codeText);
   if (candidate === null) return null;
@@ -49,6 +53,7 @@ export function resolveInlineCodeFileLinkMeta(
     candidate,
     cwd,
     inlineCodePathNamesFromWorkspaceRoot(candidate, cwd, baseDir) ? cwd : baseDir,
+    threadFilePaths,
   );
 }
 
@@ -67,10 +72,17 @@ export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  threadFilePaths?: ThreadFilePathIndex | null,
 ): MarkdownFileLinkMeta | null {
   const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
-  if (!targetPath) return null;
-  return buildFileLinkMetaFromTarget(targetPath, cwd);
+  const threadPath = threadFilePaths
+    ? resolveMarkdownFileLinkTarget(href, cwd, baseDir, threadFilePaths)
+    : targetPath;
+  if (!targetPath) return threadPath ? buildFileLinkMetaFromTarget(threadPath, cwd) : null;
+  const meta = buildFileLinkMetaFromTarget(targetPath, cwd);
+  return threadPath && threadPath !== targetPath
+    ? { ...meta, threadCandidate: buildFileLinkMetaFromTarget(threadPath, cwd) }
+    : meta;
 }
 
 function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string): MarkdownFileLinkMeta {

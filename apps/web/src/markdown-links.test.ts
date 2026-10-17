@@ -7,6 +7,7 @@ import {
   shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
 } from "./markdown-links";
+import { buildThreadFilePathIndex } from "@t3tools/shared/threadFilePaths";
 
 describe("shouldOpenMarkdownFileLinkInEditor", () => {
   it("uses command-click on macOS", () => {
@@ -297,5 +298,44 @@ it("routes the project-root code link to the workspace explorer", () => {
   expect(resolveInlineCodeFileLinkMeta(cwd, cwd)).toMatchObject({
     workspaceRelativePath: ".",
     filePath: cwd,
+  });
+});
+
+describe("links that may mean a file the thread named", () => {
+  const index = buildThreadFilePathIndex(["/notes/meeting-42/raw/recording.mp3"]);
+
+  it("keeps the root join and carries the thread's file as a candidate", () => {
+    const meta = resolveMarkdownFileLinkMeta("raw/recording.mp3:3", "/repo", "/repo", index);
+    expect(meta).toMatchObject({
+      filePath: "/repo/raw/recording.mp3",
+      workspaceRelativePath: "raw/recording.mp3",
+      line: 3,
+      threadCandidate: {
+        filePath: "/notes/meeting-42/raw/recording.mp3",
+        targetPath: "/notes/meeting-42/raw/recording.mp3:3",
+        workspaceRelativePath: null,
+      },
+    });
+  });
+
+  it("finds a candidate for inline code the same way", () => {
+    expect(
+      resolveInlineCodeFileLinkMeta("raw/recording.mp3", "/repo", "/repo", index),
+    ).toMatchObject({
+      filePath: "/repo/raw/recording.mp3",
+      threadCandidate: { filePath: "/notes/meeting-42/raw/recording.mp3" },
+    });
+  });
+
+  it("carries no candidate when the thread names no matching file", () => {
+    const meta = resolveMarkdownFileLinkMeta("src/app.ts", "/repo", "/repo", index);
+    expect(meta?.filePath).toBe("/repo/src/app.ts");
+    expect(meta?.threadCandidate).toBeUndefined();
+  });
+
+  it("uses the thread's file when there is no workspace root to join onto", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("raw/recording.mp3", undefined, undefined, index)?.filePath,
+    ).toBe("/notes/meeting-42/raw/recording.mp3");
   });
 });

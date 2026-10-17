@@ -124,6 +124,7 @@ import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
+import { useFileMetadataQuery } from "../hooks/useFileMetadata";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
@@ -217,6 +218,7 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { ThreadFilePathsContext } from "../threadFilePathsContext";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -1848,6 +1850,23 @@ function MarkdownExternalLinkContent({
   );
 }
 
+/**
+ * The joined path keeps the chip while it exists or its metadata is loading, so
+ * a link that works today never moves to the thread's candidate.
+ */
+function ThreadFileLinkChip(props: {
+  environmentId: EnvironmentId | null;
+  meta: MarkdownFileLinkMeta;
+  threadCandidate: MarkdownFileLinkMeta;
+  render: (meta: MarkdownFileLinkMeta) => ReactNode;
+}) {
+  const joined = useFileMetadataQuery(props.environmentId, props.meta.filePath);
+  const candidate = useFileMetadataQuery(props.environmentId, props.threadCandidate.filePath);
+  const useCandidate =
+    joined.isSuccess && joined.data === null && candidate.isSuccess && candidate.data !== null;
+  return props.render(useCandidate ? props.threadCandidate : props.meta);
+}
+
 const MarkdownFileLink = memo(function MarkdownFileLink({
   environmentId,
   href,
@@ -2385,6 +2404,7 @@ function useChatMarkdownState({
     });
   };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const threadFilePaths = use(ThreadFilePathsContext);
   const markdownFileLinkMetaByHref = (() => {
     const metaByHref = new Map<
       string,
@@ -2394,7 +2414,12 @@ function useChatMarkdownState({
       if (parseComposerContextHref(href)) continue;
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
-      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd);
+      const meta = resolveMarkdownFileLinkMeta(
+        normalizedHref,
+        cwd,
+        imageBaseDir ?? cwd,
+        threadFilePaths,
+      );
       if (meta) {
         metaByHref.set(normalizedHref, meta);
       }
@@ -2405,7 +2430,7 @@ function useChatMarkdownState({
     const metaByText = new Map<string, MarkdownFileLinkMeta>();
     for (const span of extractInlineCodeSpans(text)) {
       if (metaByText.has(span)) continue;
-      const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd);
+      const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd, threadFilePaths);
       if (meta) {
         metaByText.set(span, meta);
       }
@@ -2567,7 +2592,7 @@ function useChatMarkdownState({
     const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
     return revealFileInFileManager(filePath);
   };
-  const fileLinkChip = (
+  const renderFileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
     mediaSource?: string,
@@ -2626,6 +2651,21 @@ function useChatMarkdownState({
       />
     );
   };
+  const fileLinkChip = (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    copyMarkdown: string,
+    mediaSource?: string,
+  ) =>
+    fileLinkMeta.threadCandidate ? (
+      <ThreadFileLinkChip
+        environmentId={environmentId}
+        meta={fileLinkMeta}
+        threadCandidate={fileLinkMeta.threadCandidate}
+        render={(meta) => renderFileLinkChip(meta, copyMarkdown, mediaSource)}
+      />
+    ) : (
+      renderFileLinkChip(fileLinkMeta, copyMarkdown, mediaSource)
+    );
 
   const componentState = {
     canOperateHost,
@@ -2656,6 +2696,7 @@ function useChatMarkdownState({
     resolvedTheme,
     pullRequestsEnabled,
     skills,
+    threadFilePaths,
     threadRef,
     updateThreadPullRequestLink,
   };
@@ -2794,6 +2835,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       environmentId,
       imageBaseDir,
       markdownFileLinkMetaByHref,
+      threadFilePaths,
       threadRef,
       openMarkdownMedia,
       openChangeRequestLink,
@@ -2832,7 +2874,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
     const fileLinkMeta = normalizedHref
       ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
-        resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd))
+        resolveMarkdownFileLinkMeta(normalizedHref, cwd, imageBaseDir ?? cwd, threadFilePaths))
       : null;
     if (!fileLinkMeta) {
       const faviconHost = resolveExternalWebLinkHost(href);
@@ -3057,14 +3099,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
+    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, threadFilePaths } = use(
       ChatMarkdownRendererContext,
     );
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
-        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
+        resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd, threadFilePaths);
       if (fileLinkMeta) {
         return fileLinkChip(
           fileLinkMeta,

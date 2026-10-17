@@ -47,7 +47,13 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
+import {
+  isMarkdownFileLinkLabel,
+  resolveMarkdownFileLinkTarget,
+  resolveMarkdownFileLinkThreadTarget,
+} from "@t3tools/shared/markdownLinks";
+import { formatFilePathPosition, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { buildThreadFilePathIndex, threadFilePaths } from "@t3tools/shared/threadFilePaths";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -213,6 +219,8 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
 import { useLiveThreadLinkLabels } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useThreadVisibleTurnItems } from "../../state/use-thread-detail";
+import { projectEnvironment } from "../../state/projects";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -1660,6 +1668,18 @@ function ThreadFeedPlaceholder(props: {
   );
 }
 
+/** A host path as a link destination, encoded so parsing it decodes back to the same path. */
+function fileLinkHref(pathWithPosition: string): string {
+  const position = splitFilePathPosition(pathWithPosition);
+  return formatFilePathPosition({
+    ...position,
+    path: position.path
+      .split(/([\\/])/)
+      .map((part) => (part === "/" || part === "\\" ? part : encodeURIComponent(part)))
+      .join(""),
+  });
+}
+
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
@@ -1780,6 +1800,126 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
+  // A relative file link may name a file the agent touched by its absolute
+  // path outside the workspace root. Keyed by content so streaming updates that
+  // name no new path keep the same index.
+  const visibleTurnItems = useThreadVisibleTurnItems({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+  });
+  const threadFilePathsKey = useMemo(
+    () =>
+      threadFilePaths(
+        visibleTurnItems.map((row) => row.item),
+        props.workspaceRoot ?? null,
+      ).join("\n"),
+    [props.workspaceRoot, visibleTurnItems],
+  );
+  const threadFilePathIndex = useMemo(
+    () => buildThreadFilePathIndex(threadFilePathsKey === "" ? [] : threadFilePathsKey.split("\n")),
+    [threadFilePathsKey],
+  );
+  // Verified hrefs hold only for the thread, root and index they were checked
+  // against; the root can change while the index stays the same. A chip's menu
+  // remembers the href it showed, so its actions use the file it named.
+  const fileBindingScope = JSON.stringify([
+    props.environmentId,
+    props.threadId,
+    props.workspaceRoot ?? null,
+    threadFilePathsKey,
+  ]);
+  const { boundFileHrefs, pendingFileHrefs, menuFileHrefs } = useMemo(
+    () => ({
+      scope: fileBindingScope,
+      boundFileHrefs: new Map<string, string>(),
+      pendingFileHrefs: new Map<string, Promise<string>>(),
+      menuFileHrefs: new Map<string, string>(),
+    }),
+    [fileBindingScope],
+  );
+  const readFileMetadata = useAtomQueryRunner(projectEnvironment.fileMetadata, {
+    reportFailure: false,
+  });
+  const fileBindRequest = useRef(0);
+  // A check that settles after the feed left its thread must not navigate.
+  const fileBindThread = useRef<string | null>(null);
+  useEffect(() => {
+    fileBindThread.current = `${props.environmentId}/${props.threadId}`;
+    return () => {
+      fileBindThread.current = null;
+    };
+  }, [props.environmentId, props.threadId]);
+  // The joined path stands unless it is missing and the named file exists.
+  // Without a workspace root nothing is joined, so the named file is the only
+  // reading, as on web.
+  const checkThreadFileHref = useCallback(
+    async (href: string) => {
+      const candidate = resolveMarkdownFileLinkThreadTarget(
+        href,
+        props.workspaceRoot,
+        threadFilePathIndex,
+      );
+      if (candidate === null) return href;
+      const joined = resolveMarkdownFileLinkTarget(
+        href,
+        props.workspaceRoot ?? undefined,
+        props.workspaceRoot ?? undefined,
+      );
+      if (joined === null) {
+        const bound = fileLinkHref(candidate);
+        boundFileHrefs.set(href, bound);
+        return bound;
+      }
+      const exists = async (path: string) => {
+        const metadata = await readFileMetadata({
+          environmentId: props.environmentId,
+          input: { path: splitFilePathPosition(path).path, threadId: props.threadId },
+        });
+        return metadata._tag === "Success" ? metadata.value !== null : null;
+      };
+      const [joinedExists, candidateExists] = await Promise.all([
+        exists(joined),
+        exists(candidate),
+      ]);
+      if (joinedExists === null || candidateExists === null) return href;
+      const bound = !joinedExists && candidateExists ? fileLinkHref(candidate) : href;
+      boundFileHrefs.set(href, bound);
+      return bound;
+    },
+    [
+      boundFileHrefs,
+      props.environmentId,
+      props.threadId,
+      props.workspaceRoot,
+      readFileMetadata,
+      threadFilePathIndex,
+    ],
+  );
+  // iOS asks for every link's menu while it builds them, so concurrent asks
+  // share one check. A failed check is dropped, so the next ask retries it.
+  const bindThreadFileHref = useCallback(
+    (href: string) => {
+      const known = boundFileHrefs.get(href);
+      if (known !== undefined) return Promise.resolve(known);
+      const pending = pendingFileHrefs.get(href);
+      if (pending !== undefined) return pending;
+      const check = checkThreadFileHref(href).finally(() => pendingFileHrefs.delete(href));
+      pendingFileHrefs.set(href, check);
+      return check;
+    },
+    [boundFileHrefs, checkThreadFileHref, pendingFileHrefs],
+  );
+  // A slow check must not reopen a file after a later press opened another.
+  const withBoundFileHref = useCallback(
+    (href: string, use: (bound: string) => void) => {
+      const request = ++fileBindRequest.current;
+      const thread = `${props.environmentId}/${props.threadId}`;
+      void bindThreadFileHref(href).then((bound) => {
+        if (request === fileBindRequest.current && thread === fileBindThread.current) use(bound);
+      });
+    },
+    [bindThreadFileHref, props.environmentId, props.threadId],
+  );
   const onMarkdownLinkPress = useCallback(
     (href: string, imageEmbed = false) => {
       const linkedThreadId = parseThreadLinkHref(href);
@@ -1854,15 +1994,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const markdownLinkHandlers = useMemo<MarkdownLinkHandlers>(
     () => ({
-      onLinkPress: onMarkdownLinkPress,
-      onImagePress: (href) => onMarkdownLinkPress(href, true),
+      onLinkPress: (href) => withBoundFileHref(href, (bound) => onMarkdownLinkPress(bound)),
+      onImagePress: (href) => withBoundFileHref(href, (bound) => onMarkdownLinkPress(bound, true)),
       resolveImageSource,
+      // The menu opens synchronously, so it uses a verified binding when one is
+      // known and starts the check for its actions otherwise.
       fileContextMenu: (href) => {
-        const target = resolveFileChipTarget(href, props.workspaceRoot);
+        const known = boundFileHrefs.get(href);
+        if (known === undefined) void bindThreadFileHref(href);
+        const shown = known ?? href;
+        menuFileHrefs.set(href, shown);
+        const target = resolveFileChipTarget(shown, props.workspaceRoot);
         return target ? fileChipMenu(target) : undefined;
       },
       onFileContextMenuAction: (href, actionId) => {
-        const target = resolveFileChipTarget(href, props.workspaceRoot);
+        fileBindRequest.current += 1;
+        const shown = menuFileHrefs.get(href) ?? href;
+        const target = resolveFileChipTarget(shown, props.workspaceRoot);
         if (!target) return;
         switch (actionId as FileChipAction) {
           case "copy-full-path":
@@ -1872,7 +2020,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             if (target.relativePath) copyTextWithHaptic(target.relativePath);
             return;
           case "open-file":
-            onMarkdownLinkPress(href);
+            onMarkdownLinkPress(shown);
             return;
           case "save":
             shareFileChip(target);
@@ -1880,7 +2028,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         }
       },
     }),
-    [onMarkdownLinkPress, props.workspaceRoot, shareFileChip, resolveImageSource],
+    [
+      bindThreadFileHref,
+      boundFileHrefs,
+      menuFileHrefs,
+      onMarkdownLinkPress,
+      props.workspaceRoot,
+      shareFileChip,
+      resolveImageSource,
+      withBoundFileHref,
+    ],
   );
   const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
     (image) => {
