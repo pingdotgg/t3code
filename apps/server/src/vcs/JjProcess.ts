@@ -179,6 +179,11 @@ export const jjCommand = Effect.fn("JjProcess.jjCommand")(function* (
   return result;
 });
 
+/** The `run(operation, cwd, args, options)` shim every jj module binds once against its process. */
+export const jjRunner =
+  (process: VcsProcess.VcsProcess["Service"]) =>
+  (operation: string, cwd: string, args: ReadonlyArray<string>, options?: JjCommandOptions) =>
+    jjCommand(process, operation, cwd, args, options);
 
 export interface ColocatedGitInput {
   readonly gitDir: string;

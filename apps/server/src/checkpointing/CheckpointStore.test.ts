@@ -102,13 +102,13 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(layerTest)("CheckpointStore.layer", (it) => {
-  describe("isGitRepository", () => {
-    it.effect("returns false when no Git repository is detected", () =>
+  describe("supportsCheckpoints", () => {
+    it.effect("returns false when no repository is detected", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+        expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(false);
       }),
     );
 
@@ -118,7 +118,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* initRepoWithCommit(tmp);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+        expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(true);
       }),
     );
   });
@@ -131,7 +131,7 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
       const nested = NodePath.join(tmp, "packages", "nested");
       yield* fileSystem.makeDirectory(nested, { recursive: true });
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
-      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+      expect(yield* checkpointStore.supportsCheckpoints(nested)).toBe(true);
     }),
   );
   describe("diffCheckpoints", () => {

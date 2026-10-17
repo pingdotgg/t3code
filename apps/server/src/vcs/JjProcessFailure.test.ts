@@ -87,6 +87,68 @@ for (const command of ["jj", "git"] as const) {
 }
 
 describe("jj process failure boundaries", () => {
+  it.effect("keeps checkpoint retry policy in VcsProcess", () =>
+    Effect.gen(function* () {
+      const calls: VcsProcess.VcsProcessInput[] = [];
+      const process: VcsProcess.VcsProcess["Service"] = {
+        run: (input) => {
+          calls.push(input);
+          return Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: "",
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+        },
+      };
+      yield* colocatedGitCommand(
+        process,
+        VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+        { gitDir: "/repo/.git", cwd: "/repo" },
+        ["add", "-A"],
+        { retryTransientFailures: true },
+      );
+      assert.equal(calls[0]?.allowNonZeroExit, false);
+    }),
+  );
+
+  it.effect("retries transient checkpoint Git failures through the colocated command", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const process = yield* VcsProcess.make.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () =>
+            Effect.sync(() => {
+              attempts += 1;
+              return {
+                stdout: "",
+                stderr:
+                  attempts === 1 ? "fatal: Unable to create '/repo/index.lock': File exists" : "",
+                code: ChildProcessSpawner.ExitCode(attempts === 1 ? 1 : 0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        }),
+      );
+      const fiber = yield* colocatedGitCommand(
+        process,
+        VcsProcess.JJ_CHECKPOINT_CAPTURE_OPERATION,
+        { gitDir: "/repo/.git", cwd: "/repo" },
+        ["add", "-A"],
+        { retryTransientFailures: true },
+      ).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("150 millis");
+      const result = yield* Fiber.join(fiber);
+      assert.equal(result.exitCode, 0);
+      assert.equal(attempts, 2);
+    }),
+  );
+
   for (const [stderr, expectedKind] of [
     ["Error: Revision `missing` doesn't exist", "not-found"],
     ["Error: Function `trnk` doesn't exist", "command-failed"],

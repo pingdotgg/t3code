@@ -10,7 +10,7 @@ const COMMIT_ID_PATTERN = /^[0-9a-f]{40}$/;
 const CHANGE_ID_PATTERN = /^[k-z]{32}$/;
 
 /** Escapes `\` and `"` for a jj string literal. */
-function escapeRevsetString(value: string): string {
+export function escapeRevsetString(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
@@ -36,6 +36,14 @@ export function splitRemoteRefName(
   return parsed === null ? null : { remote: parsed.remoteName, name: parsed.branchName };
 }
 
+/**
+ * `file:"<escaped>"` is jj's literal fileset form, git's `--literal-pathspecs` equivalent. Bare
+ * arguments are parsed as fileset *expressions*, so `a~b` silently becomes a difference and
+ * `a (1).png` fails to parse; a bare leading `-` is parsed as an option instead of a path.
+ */
+export function literalFilesetPath(filePath: string): string {
+  return `file:"${escapeRevsetString(filePath)}"`;
+}
 
 /** `bookmarks(exact:"<escaped>")` resolves a local bookmark unambiguously. */
 export function localBookmarkRevset(name: string): string {

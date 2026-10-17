@@ -264,7 +264,8 @@ export const make = Effect.gen(function* () {
     const bounded = vcsProcesses.withPermits(1)(runUnbounded(input));
     if (
       input.command === "git" &&
-      input.operation === CHECKPOINT_CAPTURE_OPERATION &&
+      (input.operation === CHECKPOINT_CAPTURE_OPERATION ||
+        input.operation === JJ_CHECKPOINT_CAPTURE_OPERATION) &&
       input.onStdoutChunk === undefined
     ) {
       return yield* bounded.pipe(

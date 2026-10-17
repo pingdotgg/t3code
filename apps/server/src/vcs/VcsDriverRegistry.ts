@@ -72,7 +72,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
-  const jj = yield* JjVcsDriver.makeVcsDriverShape;
+  const jj = yield* JjVcsDriver.JjVcsDriver;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
     ...(JJ_REPOSITORY_DETECTION_ENABLED ? { jj } : {}),
@@ -214,4 +214,5 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(VcsDriverRegistry, make).pipe(
   Layer.provide(VcsProjectConfig.layer),
+  Layer.provide(JjVcsDriver.layer),
 );
