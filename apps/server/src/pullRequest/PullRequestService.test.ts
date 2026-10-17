@@ -2635,6 +2635,185 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
+it.effect(
+  "names the requesting project, not the one lending its credentials, for a pull request no checkout names",
+  () =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const service = yield* makeService({
+        // Listed first, so it is the project on the host that lends its credentials.
+        projects: [
+          project({
+            id: "unrelated",
+            title: "unrelated",
+            workspaceRoot: "/unrelated",
+            repository: "acme/unrelated",
+          }),
+          project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: (input) =>
+              Effect.sync(() => {
+                seen.push(input.cwd);
+                return hostedChangeRequest("Description");
+              }),
+            getChangeRequestSummary: (input) =>
+              Effect.sync(() => {
+                seen.push(input.cwd);
+                return changeRequest(1, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+      });
+
+      // A link recorded before the repository was renamed from old-org/app to acme/app.
+      const reference = {
+        projectId: "app" as ProjectId,
+        host: "github.com",
+        repository: "old-org/app",
+        number: 1,
+      };
+      // Read before the detail, which a later preview would be drawn from instead.
+      const preview = yield* service.preview(reference);
+      const detail = yield* service.detail(reference);
+      const summary = yield* service.summary(reference, { recoverTransientFailure: false });
+
+      // A hand-off checks the pull request out where it was asked from, not in the project that
+      // lent its credentials.
+      assert.strictEqual(preview.projectId, "app");
+      assert.strictEqual(detail.projectId, "app");
+      assert.strictEqual(detail.projectTitle, "app");
+      assert.strictEqual(detail.workspaceRoot, "/app");
+      assert.strictEqual(detail.repository, "old-org/app");
+      assert.strictEqual(summary.projectId, "app");
+      // The reads still borrow the credentials of the project that lent them.
+      assert.deepStrictEqual([...new Set(seen)], ["/unrelated"]);
+    }),
+);
+
+it.effect(
+  "keeps each requesting project's checkout when two projects read one borrowed pull request",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "unrelated",
+            title: "unrelated",
+            workspaceRoot: "/unrelated",
+            repository: "acme/unrelated",
+          }),
+          project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+          project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestSummary: () => Effect.succeed(changeRequest(7, "2026-07-02T00:00:00Z")),
+          }),
+        ],
+      });
+      const reference = { host: "github.com", repository: "acme/api", number: 7 };
+
+      // Both reads borrow the same project, so they share its persisted entry unless the entry
+      // also knows which project asked.
+      const fromWeb = yield* service.summary(
+        { ...reference, projectId: "web" as ProjectId },
+        { recoverTransientFailure: false },
+      );
+      const fromApp = yield* service.summary(
+        { ...reference, projectId: "app" as ProjectId },
+        { recoverTransientFailure: false },
+      );
+
+      assert.strictEqual(fromWeb.projectId, "web");
+      assert.strictEqual(fromApp.projectId, "app");
+    }),
+);
+
+it.effect.each([
+  // No hosted remote, so it cannot read the pull request for a hand-off to check out.
+  { checkout: "no checkout", host: undefined },
+  // The same repository name on another install of the host's kind is another repository.
+  { checkout: "a checkout only on another host", host: "ghe.example.com" },
+])(
+  "keeps the lending project as the target when the requesting project has $checkout",
+  ({ host }) =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "unrelated",
+            title: "unrelated",
+            workspaceRoot: "/unrelated",
+            repository: "acme/unrelated",
+          }),
+          project({
+            id: "asker",
+            title: "asker",
+            workspaceRoot: "/asker",
+            ...(host === undefined ? {} : { repository: "acme/app", host }),
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          }),
+        ],
+      });
+
+      const detail = yield* service.detail({
+        projectId: "asker" as ProjectId,
+        host: "github.com",
+        repository: "acme/app",
+        number: 1,
+      });
+
+      assert.strictEqual(detail.projectId, "unrelated");
+    }),
+);
+
+it.effect("refreshes a borrowed pull request after a turn in the project that asked for it", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "unrelated",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "acme/unrelated",
+        }),
+        project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return changeRequest(7, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const reference = {
+      projectId: "app" as ProjectId,
+      host: "github.com",
+      repository: "acme/api",
+      number: 7,
+    };
+
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 1);
+    // The read borrows another project's checkout but is cached as the asking project's, whose
+    // turn is the one that may have changed the pull request.
+    yield* service.refreshAfterTurn(reference.projectId);
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 2);
+  }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
@@ -5827,6 +6006,85 @@ it.effect.each([false, true])(
       yield* service.summary(unrelated);
       assert.strictEqual(summaryReads, 2);
     }),
+);
+
+it.effect("refreshes the asking project's sibling layers after a borrowed stack action fails", () =>
+  Effect.gen(function* () {
+    const actedIn: string[] = [];
+    const summaryReads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        // Listed first, so it is the project on the host that lends its credentials.
+        project({
+          id: "unrelated",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "acme/unrelated",
+        }),
+        project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["update-branch"],
+            mergeMethods: ["merge"],
+            updateMethods: ["rebase"],
+            stackActions: true,
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: [],
+              stackRebase: true,
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          getChangeRequestSummary: (input) =>
+            Effect.sync(() => {
+              summaryReads.push(input.cwd);
+              return changeRequest(8, "2026-07-01T00:00:00Z");
+            }),
+          // One layer is updated on the host before the next one fails.
+          runAction: (input) =>
+            Effect.gen(function* () {
+              actedIn.push(input.cwd);
+              return yield* requestFailed;
+            }),
+        }),
+      ],
+    });
+    const layer = { host: "github.com", repository: "acme/api", number: 3 };
+    const sibling = { ...layer, projectId: "app" as ProjectId, number: 8 };
+    const lendersSibling = { ...sibling, projectId: "unrelated" as ProjectId };
+    yield* service.summary(sibling);
+    yield* service.summary(lendersSibling);
+    assert.strictEqual(summaryReads.length, 2);
+
+    yield* Effect.flip(
+      service.runAction({
+        ...layer,
+        projectId: "app" as ProjectId,
+        action: "update-branch",
+        updateMethod: "rebase",
+        stackNumber: 50,
+        expectedStackHeads: [{ number: 3, headSha: "ccc" }],
+      }),
+    );
+
+    // The action ran with the lending project's credentials, but the sibling was cached as the
+    // asking project's, and the same pull request asked from the lender as the lender's.
+    assert.deepStrictEqual(actedIn, ["/unrelated"]);
+    yield* service.summary(sibling);
+    yield* service.summary(lendersSibling);
+    assert.strictEqual(summaryReads.length, 4);
+  }),
 );
 
 it.effect("refuses a way of updating a branch that the host or the viewer does not allow", () =>

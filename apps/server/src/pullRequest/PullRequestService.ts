@@ -309,6 +309,11 @@ export interface SupportedProject {
    */
   readonly remote: string;
   readonly repositoryKey: string | null;
+  /**
+   * The asking project, where `project` only lends its credentials for the read. A hand-off
+   * checks the change request out here rather than in the project that lent them.
+   */
+  readonly checkout?: OrchestrationProjectShell;
 }
 
 interface WorkspaceProjects {
@@ -844,6 +849,7 @@ export const make = Effect.gen(function* () {
                     ...route,
                     repository,
                     remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+                    ...(own !== undefined && own.host === host ? { checkout: own.project } : {}),
                   },
             );
           }),
@@ -857,7 +863,7 @@ export const make = Effect.gen(function* () {
     const project = yield* requireProject(input);
     return {
       ...input,
-      projectId: project.project.id,
+      projectId: (project.checkout ?? project.project).id,
       host: project.host,
       repository: project.repository,
     };
@@ -1468,7 +1474,7 @@ export const make = Effect.gen(function* () {
           observeRead,
           Effect.map(({ value: changeRequest, observedAt }): PullRequestSummary => ({
             provider: project.api.kind,
-            projectId: project.project.id,
+            projectId: (project.checkout ?? project.project).id,
             repository: project.repository,
             number: changeRequest.number,
             title: changeRequest.title,
@@ -1559,9 +1565,9 @@ export const make = Effect.gen(function* () {
           Effect.map(([{ value: changeRequest, observedAt }, viewer]): PullRequestDetail => ({
             provider: project.api.kind,
             capabilities: project.api.capabilities,
-            projectId: project.project.id,
-            projectTitle: project.project.title,
-            workspaceRoot: project.project.workspaceRoot,
+            projectId: (project.checkout ?? project.project).id,
+            projectTitle: (project.checkout ?? project.project).title,
+            workspaceRoot: (project.checkout ?? project.project).workspaceRoot,
             repository: project.repository,
             number: changeRequest.number,
             title: changeRequest.title,
@@ -1633,7 +1639,7 @@ export const make = Effect.gen(function* () {
           Effect.map((value) =>
             previewFields({
               ...value,
-              projectId: project.project.id,
+              projectId: (project.checkout ?? project.project).id,
               repository: project.repository,
             }),
           ),
@@ -1903,10 +1909,16 @@ export const make = Effect.gen(function* () {
                       : { updateMethod: input.updateMethod }),
                   })
                   .pipe(
+                    // A borrowed read is cached as the asking project's, and the same read asked
+                    // from the lending project as the lender's.
                     Effect.ensuring(
                       input.stackNumber === undefined
                         ? Effect.void
-                        : refreshAfterTurn(project.project.id),
+                        : Effect.forEach(
+                            new Set([project.project.id, (project.checkout ?? project.project).id]),
+                            refreshAfterTurn,
+                            { discard: true },
+                          ),
                     ),
                     Effect.mapError(toPullRequestError("runAction")),
                     Effect.as(
@@ -2636,7 +2648,7 @@ export const make = Effect.gen(function* () {
       project.api.kind,
       project.host.toLowerCase(),
       project.repository.toLowerCase(),
-      project.project.id,
+      (project.checkout ?? project.project).id,
       project.project.workspaceRoot,
       String(input.number),
       input.expectedAccountId ?? "",
