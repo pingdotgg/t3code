@@ -462,6 +462,7 @@ import {
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
+import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
 import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timestampFormat";
@@ -670,8 +671,6 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
-const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
-  settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -4129,110 +4128,16 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "device");
   };
   const addDeviceSurfaceStable = useStableCallback(addDeviceSurface);
-  const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
-  const previousDeviceSessions = useRef(new Map<string, Set<string>>());
-  useEffect(() => {
-    if (!activeThreadRef || !deviceStateLoaded) return;
-    const threadKey = `${activeThreadRef.environmentId}:${activeThreadRef.threadId}`;
-    const sessions = deviceState.sessions.filter(
-      (session) => session.threadId === activeThreadRef.threadId,
-    );
-    const key = (session: (typeof sessions)[number]) => `${session.hostId}:${session.deviceId}`;
-    const deviceFor = (session: (typeof sessions)[number]) =>
-      deviceState.devices.find(
-        (entry) => entry.hostId === session.hostId && entry.id === session.deviceId,
-      );
-    const previous = previousDeviceSessions.current.get(threadKey);
-    previousDeviceSessions.current.set(
-      threadKey,
-      new Set(sessions.filter((session) => deviceFor(session) !== undefined).map(key)),
-    );
-    if (!previous || shouldUsePlanSidebarSheet) return;
-    for (const session of sessions) {
-      if (previous.has(key(session))) continue;
-      const device = deviceFor(session);
-      if (!device) continue;
-      const target = {
-        hostId: session.hostId,
-        deviceId: session.deviceId,
-        platform: device.platform,
-        name: device.name,
-      };
-      if (autoShowFloatingPreview) {
-        usePreviewMiniPlayerStore.getState().open(activeThreadRef, { kind: "device", ...target });
-        continue;
-      }
-      const existing = useRightPanelStore
-        .getState()
-        .byThreadKey[scopedThreadKey(activeThreadRef)]?.surfaces.some(
-          (surface) =>
-            surface.kind === "device" &&
-            surface.target?.hostId === session.hostId &&
-            surface.target.deviceId === session.deviceId,
-        );
-      if (existing) continue;
-      useRightPanelStore.getState().openDevice(activeThreadRef, target, true);
-    }
-  }, [
-    activeThreadRef,
-    autoShowFloatingPreview,
+  useAgentOpenedPreviews({
+    threadRef: activeThreadRef,
+    deviceState,
     deviceStateLoaded,
-    shouldUsePlanSidebarSheet,
-    deviceState.sessions,
-    deviceState.devices,
-  ]);
-  const previousServerPreviewTabs = useRef(new Map<string, Map<string, string | undefined>>());
-  useEffect(() => {
-    if (!activeThreadRef || !activeEnvironmentServerBrowser || !activePreviewState.listLoaded)
-      return;
-    const threadKey = scopedThreadKey(activeThreadRef);
-    const serverSessions = Object.values(activePreviewState.sessions).filter(
-      (session) => session.runtime === "server",
-    );
-    const previous = previousServerPreviewTabs.current.get(threadKey);
-    previousServerPreviewTabs.current.set(
-      threadKey,
-      new Map(serverSessions.map((session) => [session.tabId, session.revealRequest?.id])),
-    );
-    if (!previous) return;
-    for (const session of serverSessions) {
-      const requested = session.revealRequest;
-      const fresh = requested
-        ? previous.get(session.tabId) !== requested.id
-        : !previous.has(session.tabId);
-      if (!fresh || session.reveal !== true) continue;
-      if (!autoShowFloatingPreview && requested?.force !== true) continue;
-      const surface = rightPanelState.surfaces.find(
-        (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
-      );
-      if (surface && requested?.force === true) {
-        useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
-      } else if (!surface) {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(activeThreadRef, browserMiniPlayerSource(session.tabId));
-      }
-    }
-  }, [
-    activeEnvironmentServerBrowser,
-    activePreviewState.listLoaded,
-    activePreviewState.sessions,
-    activeThreadRef,
-    autoShowFloatingPreview,
-    rightPanelState.surfaces,
-  ]);
-  useEffect(() => {
-    if (!activeThreadRef || !deviceStateLoaded) return;
-    const source = activePreviewMiniPlayer?.source;
-    if (source?.kind !== "device") return;
-    const sessionStillExists = deviceState.sessions.some(
-      (session) =>
-        session.threadId === activeThreadRef.threadId &&
-        session.hostId === source.hostId &&
-        session.deviceId === source.deviceId,
-    );
-    if (!sessionStillExists) usePreviewMiniPlayerStore.getState().close(activeThreadRef);
-  }, [activePreviewMiniPlayer, activeThreadRef, deviceState.sessions, deviceStateLoaded]);
+    previewState: activePreviewState,
+    serverBrowserAvailable: activeEnvironmentServerBrowser,
+    panelSurfaces: rightPanelState.surfaces,
+    miniPlayerSource: activePreviewMiniPlayer?.source ?? null,
+    sheetLayout: shouldUsePlanSidebarSheet,
+  });
   const openFileSurface = (relativePath: string) => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
