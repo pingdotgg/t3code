@@ -1007,10 +1007,19 @@ export function NewTaskDraftScreen(props: {
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
+  // An attachment is checked against the machine on screen and keeps the
+  // draft there, so auto balance must not move it while one is on its way.
+  const keepMachineForAttachment = useCallback(() => {
+    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+      flow.pinEnvironment();
+    }
+  }, [flow]);
+
   async function handlePickMedia(): Promise<void> {
     if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
+    keepMachineForAttachment();
     const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerMedia({
@@ -1046,6 +1055,7 @@ export function NewTaskDraftScreen(props: {
       Dialog.alert("File attachments are not available on this server.");
       return;
     }
+    keepMachineForAttachment();
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerFiles({
       existingCount:
@@ -1069,6 +1079,7 @@ export function NewTaskDraftScreen(props: {
 
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
+      keepMachineForAttachment();
       try {
         const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
         const images = await convertPastedImagesToAttachments({
@@ -1085,7 +1096,7 @@ export function NewTaskDraftScreen(props: {
         console.error("[native paste] error converting images", error);
       }
     },
-    [flow],
+    [flow, keepMachineForAttachment],
   );
 
   const handleNativePasteText = useCallback(
@@ -1128,6 +1139,7 @@ export function NewTaskDraftScreen(props: {
         }) === "attachment"
       ) {
         if (canAttach && maxBytes !== null) {
+          keepMachineForAttachment();
           pendingPastedTextAttachmentCountRef.current += 1;
           setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
           try {
@@ -1183,7 +1195,7 @@ export function NewTaskDraftScreen(props: {
 
       insertPaste();
     },
-    [composerMenu, flow, selectedEnvironmentServerConfig],
+    [composerMenu, flow, keepMachineForAttachment, selectedEnvironmentServerConfig],
   );
 
   async function handleStart(): Promise<void> {
