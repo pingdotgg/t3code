@@ -472,11 +472,72 @@ describe("composer rich text document model", () => {
     "> **bold** and @README.md inside",
     "> - looks like a list but stays quote text",
     "> > nested stays literal inside the quote",
-    "before\n> quoted\nafter",
+    "before\n> quoted",
     "> quote\n\n> another",
     "- item\n> quote after list",
+    "> quoted\n\ncomment",
+    "> line one\n> line two\n\ncomment",
   ])("round-trips the quote %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
+  });
+
+  describe("a paragraph after a quote", () => {
+    const paragraph = (text?: string) => ({
+      type: "paragraph",
+      ...(text ? { content: [{ type: "text", text }] } : {}),
+    });
+    const quote = (...lines: string[]) => ({
+      type: "blockquote",
+      attrs: { prefix: "> " },
+      content: lines.map((line) => paragraph(line)),
+    });
+    const serialize = (...content: object[]) => {
+      const doc = ProseMirrorNode.fromJSON(schema, { type: "doc", content });
+      doc.check();
+      return { doc, map: serializeEditorDoc(doc) };
+    };
+
+    it("is written after a blank line, or Markdown folds it into the quote", () => {
+      expect(serialize(quote("quoted"), paragraph("Comment to it")).map.value).toBe(
+        "> quoted\n\nComment to it",
+      );
+      expect(serialize(quote("a", "b"), paragraph("comment")).map.value).toBe(
+        "> a\n> b\n\ncomment",
+      );
+    });
+
+    it("does not double up on the empty line the user left themselves", () => {
+      expect(serialize(quote("quoted"), paragraph(), paragraph("Comment to it")).map.value).toBe(
+        "> quoted\n\nComment to it",
+      );
+    });
+
+    it("settles on the blank line when a draft glued it to the quote", () => {
+      const settled = "before\n> quoted\n\nafter";
+      expect(roundTrip("before\n> quoted\nafter").value).toBe(settled);
+      expect(roundTrip(settled).value).toBe(settled);
+    });
+
+    it.each(["# Heading", "- item", "3. item", "---", "```\ncode\n```"])(
+      "leaves %s on the next line, since it opens its own block",
+      (next) => {
+        const value = `> quoted\n${next}`;
+        expect(roundTrip(value).value).toBe(value);
+      },
+    );
+
+    it("keeps every offset mapped through the blank line", () => {
+      const { doc, map } = serialize(quote("quoted"), paragraph("Comment"));
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+      }
+      // The caret on the end of the quote stays on it, and the blank line is
+      // not a place to type: it clamps to the start of the comment.
+      expect(flatToCollapsed(map, "quoted".length)).toBe("> quoted".length);
+      expect(collapsedToFlat(map, "> quoted\n".length)).toBe("quoted".length + 1);
+      expect(flatToCollapsed(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
+      expect(flatToPm(map, "quoted".length + 1)).toBe(doc.child(0).nodeSize + 1);
+    });
   });
 
   it.each([

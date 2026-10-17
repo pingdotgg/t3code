@@ -741,6 +741,39 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
+/**
+ * A paragraph on the line right after a quote reads as part of it in Markdown
+ * (a lazy continuation), so the draft writes a blank line between them. An empty
+ * paragraph is that blank line already.
+ */
+function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+  return (
+    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
+  );
+}
+
+/**
+ * That blank line, as a run that owns no document characters, like a marker:
+ * offsets inside it clamp to the start of the paragraph.
+ */
+function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
+  acc.runs.push({
+    kind: "prefix",
+    flatStart: acc.flat,
+    docLen: 0,
+    collapsedLen: 1,
+    mdLen: 1,
+    openLen: 0,
+    closeLen: 0,
+    pmPos,
+    mdStart: acc.md,
+    collapsedStart: acc.collapsed,
+  });
+  acc.value += "\n";
+  acc.collapsed += 1;
+  acc.md += 1;
+}
+
 function appendInlineRuns(
   container: ProseMirrorNode,
   contentStart: number,
@@ -1197,6 +1230,9 @@ export function serializeEditorDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
+    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+      pushBlankLineRun(acc, pmBlockStart + 1);
+    }
     if (LIST_NODE_NAMES.has(block.type.name)) {
       walkList(block, pmBlockStart, acc);
     } else if (block.type.name === "codeBlock") {
