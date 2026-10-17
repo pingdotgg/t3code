@@ -54,6 +54,7 @@ import {
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
 } from "./xaiAcpExtension.ts";
+import { discoverGrokSkills, leadingGrokSkillMention, rewriteGrokSkillMention } from "./skills.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -248,6 +249,24 @@ export function makeGrokAcpAdapterFlavor(
     // still accepts image content blocks (verified with real screenshots).
     supportsImagePrompts: true,
     supportsCompaction: true,
+    // The `$` picker lists `grok inspect` skills; ask the same catalog before
+    // sending a leading mention as the `/name` command Grok expands.
+    rewriteUserText: (text, turnInput) =>
+      leadingGrokSkillMention(text) === undefined
+        ? Effect.succeed(text)
+        : discoverGrokSkills(
+            options.settings,
+            options.environment,
+            turnInput.runtimePolicy.cwd ?? undefined,
+          ).pipe(
+            Effect.map((skills) =>
+              rewriteGrokSkillMention(
+                text,
+                new Set(skills.filter((skill) => skill.enabled).map((skill) => skill.name)),
+              ),
+            ),
+            Effect.orElseSucceed(() => text),
+          ),
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
     applyModelSelection: ({ runtime, startResult, modelSelection }) =>
       Effect.gen(function* () {

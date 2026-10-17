@@ -5,7 +5,7 @@ import * as Stream from "effect/Stream";
 import type * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { discoverGrokSkills } from "./skills.ts";
+import { discoverGrokSkills, leadingGrokSkillMention, rewriteGrokSkillMention } from "./skills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
@@ -197,5 +197,26 @@ describe("discoverGrokSkills", () => {
       });
       expect(environment.GROK_DISABLE_AUTOUPDATER).toBe("0");
     });
+  });
+});
+
+describe("rewriteGrokSkillMention", () => {
+  it("sends only a leading mention of a known skill as a slash command", () => {
+    const skills = new Set(["deploy"]);
+    expect(rewriteGrokSkillMention("$deploy ship it", skills)).toBe("/deploy ship it");
+    expect(rewriteGrokSkillMention("  $deploy", skills)).toBe("  /deploy");
+    for (const text of ["$other ship it", "$HOME is set", "$25 total", "ship $deploy", "/deploy"]) {
+      expect(rewriteGrokSkillMention(text, skills)).toBe(text);
+    }
+  });
+
+  it("never reads a dollar amount as a mention, even when a skill has that name", () => {
+    const skills = new Set(["25", "20k", "1e6", "deploy"]);
+    for (const text of ["$25 is the price", "$20k budget", "$1e6"]) {
+      expect(leadingGrokSkillMention(text)).toBeUndefined();
+      expect(rewriteGrokSkillMention(text, skills)).toBe(text);
+    }
+    expect(leadingGrokSkillMention("$deploy now")).toBe("deploy");
+    expect(rewriteGrokSkillMention("$deploy now", skills)).toBe("/deploy now");
   });
 });

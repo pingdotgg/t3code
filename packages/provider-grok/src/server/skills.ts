@@ -9,12 +9,30 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { grokProbeEnvironment } from "./probeEnvironment.ts";
 
 const GROK_SKILLS_PROBE_TIMEOUT_MS = 4_000;
+// The composer's chip rule, so `$25` or `$20k` never names a skill.
+const LEADING_SKILL_MENTION_PATTERN = new RegExp(`^\\s*${SKILL_MENTION_PATTERN.source}`, "u");
+
+/** The composer token a message starts with, such as `deploy` for `$deploy ship it`. */
+export function leadingGrokSkillMention(prompt: string): string | undefined {
+  return LEADING_SKILL_MENTION_PATTERN.exec(prompt)?.[2];
+}
+
+/**
+ * Grok expands only a leading `/name`; T3 composers insert `$name`. Rewrite
+ * that leading token when it names a skill and leave all other text alone.
+ */
+export function rewriteGrokSkillMention(prompt: string, skillNames: ReadonlySet<string>): string {
+  return prompt.replace(LEADING_SKILL_MENTION_PATTERN, (match, _delimiter: string, name: string) =>
+    skillNames.has(name) ? match.replace(/\p{Sc}(?=\S*$)/u, "/") : match,
+  );
+}
 
 class GrokSkillsProbeError extends Schema.TaggedError<GrokSkillsProbeError>()(
   "GrokSkillsProbeError",

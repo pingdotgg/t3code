@@ -193,6 +193,11 @@ export interface AcpAdapterV2ExtensionContext {
 
 export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  /** Rewrites user text before attachments and T3 instructions wrap it (Grok skill mentions). */
+  readonly rewriteUserText?: (
+    text: string,
+    turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -6312,7 +6317,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({
-            text: turnInput.message.text,
+            text:
+              flavor.rewriteUserText === undefined
+                ? turnInput.message.text
+                : yield* flavor
+                    .rewriteUserText(turnInput.message.text, turnInput)
+                    .pipe(
+                      Effect.provideService(
+                        ChildProcessSpawner.ChildProcessSpawner,
+                        childProcessSpawner,
+                      ),
+                    ),
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
