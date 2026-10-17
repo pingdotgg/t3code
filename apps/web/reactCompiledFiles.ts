@@ -60,4 +60,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/files/useDirectoryEntries.ts",
   "apps/web/src/components/files/FileBrowserPanel.tsx",
   "apps/web/src/components/sidebar/SidebarUpdatePill.tsx",
+  "apps/web/src/components/ProviderUpdatesAction.tsx",
 ] as const;
