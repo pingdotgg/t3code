@@ -2,7 +2,11 @@ import {
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
+  OrchestratorMcpEnvironmentLinkInput,
+  OrchestratorMcpEnvironmentLinkResult,
   OrchestratorMcpEnvironmentLinksResult,
+  OrchestratorMcpEnvironmentUnlinkInput,
+  OrchestratorMcpEnvironmentUnlinkResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpCreateThreadsResult,
   OrchestratorMcpDelegateTaskInput,
@@ -38,6 +42,8 @@ import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -49,6 +55,12 @@ const dependencies = [
 ];
 /** Tools that also run in a linked environment, when `environmentId` names one. */
 const forwardingDependencies = [...dependencies, PeerForwarding.PeerForwarding];
+/** Making and forgetting links. */
+const linkingDependencies = [
+  ...dependencies,
+  PeerLinkRequests.PeerLinkRequests,
+  PeerLinks.PeerLinks,
+];
 const threadMetadataDependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
@@ -279,7 +291,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   description:
-    "List the other T3 Code environments this one is linked to, such as the user's other machines, and whether each answers now. Pass one's environmentId to t3_project_list, t3_thread_launch, t3_thread_list, t3_thread_read, t3_thread_send, t3_thread_wait, t3_thread_interrupt, or orchestrator_capabilities to act there. A linked environment lets this one's agents do at most its access there, and never more than the calling agent may do here. An expired link has to be linked again from a new pairing code.",
+    "List the other T3 Code environments this one is linked to, such as the user's other machines, and whether each answers now. A machine the user names that is not listed is not linked yet: call t3_environment_link for it rather than looking elsewhere. Pass one's environmentId to t3_project_list, t3_thread_launch, t3_thread_list, t3_thread_read, t3_thread_send, t3_thread_wait, t3_thread_interrupt, or orchestrator_capabilities to act there. A linked environment lets this one's agents do at most its access there, and never more than the calling agent may do here. An expired link has to be linked again from a new pairing code.",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -288,6 +300,32 @@ const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   .annotate(Tool.Title, "List linked environments")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const EnvironmentLinkTool = Tool.make("t3_environment_link", {
+  description:
+    'Ask the user to link another T3 Code environment, such as their VPS or another machine, so agents here can work there (t3_environment_links). Call it when the user asks to link, connect, or delegate to another machine. You usually do not know where it answers, so pass no address: pass a hint from their words ("vps") and the card lets the user pick the machine. Pass environmentId when a machine the user mentioned names it; if it is already linked, this returns linked at once. Pass url only when the user gave an address. The card lets the user pick the access agents here get there and approve it; their app signs in there with their own session, or they paste a pairing code from there into the card. It returns pending at once: the user answers in the card whenever they get to it, and the outcome (linked with the environmentId to pass to other tools, declined, or failed with the reason) arrives as a message in this thread. End your turn or keep working; do not poll or call it again to check. Never ask for a pairing code in chat.',
+  parameters: OrchestratorMcpEnvironmentLinkInput,
+  success: OrchestratorMcpEnvironmentLinkResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: linkingDependencies,
+})
+  .annotate(Tool.Title, "Link another environment")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
+
+const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
+  description:
+    "Forget a linked environment, so agents here stop working there. The session there stays listed in that environment's Connections until it is revoked there.",
+  parameters: OrchestratorMcpEnvironmentUnlinkInput,
+  success: OrchestratorMcpEnvironmentUnlinkResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: linkingDependencies,
+})
+  .annotate(Tool.Title, "Forget a linked environment")
+  .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, true);
 
 export const OrchestratorToolkit = Toolkit.make(
@@ -309,4 +347,6 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadWaitTool,
   ThreadInterruptTool,
   EnvironmentLinksTool,
+  EnvironmentLinkTool,
+  EnvironmentUnlinkTool,
 );

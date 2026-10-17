@@ -220,6 +220,13 @@ const make = Effect.gen(function* () {
       }
     });
 
+  /**
+   * The next step for an agent whose machine is not linked: without it, an
+   * empty list reads as a dead end and agents go looking elsewhere.
+   */
+  const NOT_LISTED =
+    "A machine the user means that is not listed here is not linked yet: call t3_environment_link with a hint from their words (or the environmentId of a machine they mentioned), and the user picks it and its access in a card.";
+
   const listLinks: PeerForwarding["Service"]["links"] = (scope) =>
     Effect.gen(function* () {
       yield* callerLimits(scope);
@@ -239,6 +246,7 @@ const make = Effect.gen(function* () {
           expiresAt: DateTime.formatIso(link.expiresAt),
           lastError: link.lastError,
         })),
+        notListed: NOT_LISTED,
       };
     });
 
