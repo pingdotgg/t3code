@@ -13,6 +13,13 @@ describe("t3code/no-manual-memo", () => {
 
   rule.valid("allows other React members", `const ref = React.useRef(null);`);
 
+  rule.valid("allows other directives", `function Panel() { "use client"; return null; }`);
+
+  rule.invalid(
+    'reports a "use memo" directive',
+    `function useTotal(items) { "use memo"; return items.length; }`,
+  );
+
   rule.invalid("reports useMemo", `const total = useMemo(() => items.length, [items]);`);
 
   rule.invalid("reports useCallback", `const onClick = useCallback(() => save(), []);`);

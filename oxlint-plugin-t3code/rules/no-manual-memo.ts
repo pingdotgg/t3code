@@ -24,11 +24,21 @@ export default defineRule({
     type: "suggestion",
     docs: {
       description:
-        "Disallow useCallback and useMemo in files the React Compiler must compile; it memoizes them.",
+        'Disallow useCallback, useMemo and "use memo" directives in files the React Compiler must compile; it memoizes them.',
     },
   },
   create(context) {
     return {
+      // A "use memo" helper only exists to force a cache scope the compiler withheld,
+      // which hides the ordering or structure problem that withheld it.
+      ExpressionStatement(node) {
+        if (node.directive !== "use memo") return;
+        context.report({
+          node,
+          message:
+            'Drop "use memo": restructure so the compiler caches this on its own, e.g. move plain uses of a value before the hook call that splits its scope, or inline the helper.',
+        });
+      },
       CallExpression(node) {
         const name = manualMemoHookName(node.callee);
         if (name === null) return;

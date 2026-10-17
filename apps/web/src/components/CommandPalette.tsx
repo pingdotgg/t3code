@@ -366,13 +366,15 @@ function notifyThemeSaveFailure(): void {
   );
 }
 
-// Kept as "use memo" hooks: inlined, each result reaches the dialog's returned
-// <CommandPaletteContent> through the action and thread item arrays built after
-// the browse hooks, and the compiler leaves all of them uncached.
+// These helpers keep "use memo" until the palette's item building moves out of this
+// component: inlined, each result reaches the returned <CommandPaletteContent> through
+// the action and thread item arrays built after the browse hooks, and the compiler
+// leaves all of them uncached.
 function useThemeCards(
   customThemes: ReturnType<typeof useCustomThemes>,
   environmentThemes: ReturnType<typeof useEnvironmentThemeDefinitions>,
 ) {
+  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
   "use memo";
   const seen = new Set<string>();
   return [
@@ -388,6 +390,7 @@ function useThemeCards(
 }
 
 function useThreadContentMatchByKey(matches: ReturnType<typeof useThreadSearch>["matches"]) {
+  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
   "use memo";
   return new Map(
     matches.flatMap((match) =>
@@ -399,6 +402,7 @@ function useThreadContentMatchByKey(matches: ReturnType<typeof useThreadSearch>[
 }
 
 function useEnvironmentLookups(environments: ReturnType<typeof useEnvironments>["environments"]) {
+  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
   "use memo";
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
@@ -421,6 +425,7 @@ function useEnvironmentLookups(environments: ReturnType<typeof useEnvironments>[
 }
 
 function useProjectLookups(projects: ReturnType<typeof useProjects>) {
+  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
   "use memo";
   const projectCwdById = new Map<ProjectId, string>(
     projects.map((project) => [project.id, project.workspaceRoot]),
@@ -449,6 +454,7 @@ function useSortedProjectGroups({
   readonly environmentLabelById: ReadonlyMap<EnvironmentId, string>;
   readonly threads: ReturnType<typeof useThreadShells>;
 }) {
+  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
   "use memo";
   const projectGroupingSettings = selectProjectGroupingSettings(clientSettings);
   const orderedProjects = orderItemsByPreferredIds({
