@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  GitCommandError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -23,6 +24,8 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as JjVcsDriver from "../../../vcs/JjVcsDriver.ts";
+import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -81,6 +84,17 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(Project.ProjectService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(JjVcsDriver.JjVcsDriver)({
+        capabilities: {
+          kind: "jj",
+          supportsWorktrees: false,
+          supportsBookmarks: true,
+          supportsAtomicSnapshot: true,
+          supportsPushDefaultRemote: false,
+          ignoreClassifier: "git-compatible-fallback",
+        },
+      }),
+      Layer.mock(GitWorkflowService.GitWorkflowService)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-link-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -156,6 +170,17 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(JjVcsDriver.JjVcsDriver)({
+        capabilities: {
+          kind: "jj",
+          supportsWorktrees: false,
+          supportsBookmarks: true,
+          supportsAtomicSnapshot: true,
+          supportsPushDefaultRemote: false,
+          ignoreClassifier: "git-compatible-fallback",
+        },
+      }),
+      Layer.mock(GitWorkflowService.GitWorkflowService)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-scratch-launch-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -260,6 +285,17 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
           }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(JjVcsDriver.JjVcsDriver)({
+        capabilities: {
+          kind: "jj",
+          supportsWorktrees: false,
+          supportsBookmarks: true,
+          supportsAtomicSnapshot: true,
+          supportsPushDefaultRemote: false,
+          ignoreClassifier: "git-compatible-fallback",
+        },
+      }),
+      Layer.mock(GitWorkflowService.GitWorkflowService)({}),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -303,6 +339,8 @@ const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
+  readonly jjWorkspaces?: ReadonlyArray<JjVcsDriver.JjWorkspace>;
+  readonly listWorkspacePaths?: GitWorkflowService.GitWorkflowService["Service"]["listWorkspacePaths"];
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
@@ -357,6 +395,24 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.unwrap(
+      Effect.map(GitVcsDriver.GitVcsDriver, (git) =>
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          listWorkspacePaths:
+            input.listWorkspacePaths ??
+            ((cwd) =>
+              git.listWorktreePaths(cwd).pipe(
+                Effect.orElseSucceed((): ReadonlyArray<string> => []),
+                Effect.map((paths) => [
+                  ...paths,
+                  ...(input.jjWorkspaces ?? []).flatMap((workspace) =>
+                    workspace.root === null ? [] : [workspace.root],
+                  ),
+                ]),
+              )),
+        }),
+      ),
+    ),
     NodeServices.layer,
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
@@ -399,6 +455,46 @@ it.effect("a client launches at its ceiling with the project's default model", (
     const untargeted = yield* handle({ title: "Fix" });
     expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("checkout listing failures remain neutral and do not launch a thread", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      listWorkspacePaths: (cwd) =>
+        Effect.fail(
+          new GitCommandError({
+            operation: "test.listWorkspacePaths",
+            command: "jj workspace list",
+            cwd,
+            detail: "private workspace failure",
+          }),
+        ),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: "/projects/client-target/secondary",
+        },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message:
+        "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
+    });
+    expect(launched).toHaveLength(0);
   }),
 );
 
@@ -446,6 +542,8 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
       expect((yield* launchInto(elsewhere)).at(-1)?.result).toMatchObject({
         code: "invalid_request",
+        message:
+          "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
       });
     }
     expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([
@@ -460,6 +558,83 @@ it.effect("a launch binds only an existing checkout that is one of the project's
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+for (const colocated of [false, true]) {
+  it.effect(
+    `a launch authorizes jj workspace roots${colocated ? " and colocated Git worktrees" : ""} through realpaths`,
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-launch-jj-workspace-",
+        });
+        const repo = path.join(root, "repo");
+        const workspace = path.join(root, "secondary");
+        const alias = path.join(root, "secondary-alias");
+        const gitWorktree = path.join(root, "git-worktree");
+        const outside = path.join(root, "outside");
+        const escape = path.join(workspace, "escape");
+        for (const directory of [repo, workspace, outside]) {
+          yield* fileSystem.makeDirectory(directory);
+        }
+        yield* fileSystem.symlink(workspace, alias);
+        yield* fileSystem.symlink(outside, escape);
+        const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling: "auto",
+          launched,
+          workspaceRoot: repo,
+          jjWorkspaces: [
+            { name: "default", root: repo },
+            { name: "secondary", root: workspace },
+            { name: "deleted", root: path.join(root, "deleted") },
+          ],
+        });
+        if (colocated) {
+          const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+          for (const args of [
+            ["init", "-b", "main"],
+            ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+            ["worktree", "add", "-b", "feature", gitWorktree],
+          ]) {
+            yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
+          }
+        }
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        const launchInto = (worktreePath: string) =>
+          toolkit
+            .handle("t3_thread_launch", {
+              title: "Fix",
+              projectId,
+              workspaceStrategy: { type: "existing_worktree", worktreePath },
+            })
+            .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+        const allowedPaths = [repo, workspace, alias, ...(colocated ? [gitWorktree] : [])];
+        for (const allowed of allowedPaths) {
+          expect((yield* launchInto(allowed)).at(-1)?.result).toMatchObject({ projectId });
+        }
+        for (const denied of [outside, escape, root]) {
+          expect((yield* launchInto(denied)).at(-1)?.result).toMatchObject({
+            code: "invalid_request",
+          });
+        }
+        expect(launched.map((launch) => launch.workspaceStrategy)).toEqual(
+          allowedPaths.map((worktreePath) => ({
+            type: "existing_worktree",
+            worktreePath,
+          })),
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
 
 it.effect("a launch into a new worktree creates nothing when its base ref has no commit", () =>
   Effect.gen(function* () {

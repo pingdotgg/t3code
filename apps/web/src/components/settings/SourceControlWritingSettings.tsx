@@ -30,6 +30,7 @@ import {
   selectsPlanAgent,
 } from "../../modelSelection";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useVcsTerminology } from "../../state/vcs";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -68,7 +69,17 @@ export function SourceControlWritingSettingsSection() {
   const updateSettings = useUpdateScopedSettings();
   const mixedReviewGuidesEnabled = useScopedSettingsMixed(["reviewGuidesEnabled"]);
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, targets, target } = useSettingsScope();
+  const { environment, connectedEnvironments, targets, target, scope } = useSettingsScope();
+  const checkout =
+    scope.kind === "checkout"
+      ? scope.checkout
+      : scope.kind === "project"
+        ? scope.members.find((member) => member.id === target?.projectId)
+        : null;
+  const vcsTerminology = useVcsTerminology(
+    checkout?.environmentId ?? null,
+    checkout?.workspaceRoot ?? null,
+  );
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const serverProviders = environment?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
@@ -174,7 +185,7 @@ export function SourceControlWritingSettingsSection() {
 
   return (
     <SettingsSection id="source-control-text-generation" title="Text generation">
-      <BranchNamingSettings />
+      <BranchNamingSettings terminology={vcsTerminology} />
       <SettingsRow
         serverScoped
         settingKeys={["sourceControlWritingStyle"]}

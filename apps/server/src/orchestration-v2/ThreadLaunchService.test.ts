@@ -105,6 +105,7 @@ interface HarnessOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
+  readonly validateWorkspace?: GitWorkflow.GitWorkflowService["Service"]["validateWorkspace"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -180,6 +181,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
+      validateWorkspace: options.validateWorkspace ?? (() => Effect.succeed(true)),
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
@@ -1814,6 +1816,76 @@ it.effect("removes a worktree that failed before the thread recorded it", () => 
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect.each([null, "", "/repo", "/repo/not-a-workspace"] as const)(
+  "fails jj isolation when provisioning returns %s instead of a native workspace",
+  (worktreePath) => {
+    const harness = makeHarness({
+      validateWorkspace: () => Effect.succeed(false),
+      createWorktree: (_input, options) =>
+        (options?.progress?.onWorktreeClaimed?.(worktreePath ?? "/repo") ?? Effect.void).pipe(
+          Effect.as({
+            worktree: { path: worktreePath, refName: "isolated" },
+          } as never),
+        ),
+    });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: `command:launch:jj-missing-workspace:${worktreePath}`,
+          thread: `thread:launch:jj-missing-workspace:${worktreePath}`,
+          message: "Run in isolation",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(launched.threadId)
+          .pipe(Effect.map((projection) => projection.runs[0]?.status === "failed")),
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.worktreePath, null);
+      assert.match(
+        projection.turnItems.find((item) => item.type === "error")?.failure.message ?? "",
+        /Jujutsu isolation requires a separate native workspace/u,
+      );
+      assert.equal(harness.runSetup.mock.calls.length, 0);
+      assert.equal(harness.removeWorktree.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("uses the provisioned native jj workspace for isolated setup", () => {
+  const harness = makeHarness({
+    validateWorkspace: (projectCwd, workspacePath) => {
+      assert.equal(projectCwd, "/repo");
+      assert.equal(workspacePath, "/repo-worktrees/feature");
+      return Effect.succeed(true);
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:jj-native-workspace",
+        thread: "thread:launch:jj-native-workspace",
+        message: "Run in isolation",
+        workspace: { type: "worktree", baseRef: "main", branch: "isolated" },
+      }),
+    );
+    yield* waitUntil(() =>
+      threads
+        .getThreadProjection(launched.threadId)
+        .pipe(Effect.map((projection) => projection.runs[0]?.status === "starting")),
+    );
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+    assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/repo-worktrees/feature");
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect.each(["worktree", "setup"] as const)(
   "%s failure keeps the thread and message visible and emits failure items",
   (failurePoint) =>
@@ -2850,17 +2922,18 @@ it.effect.each(
       const terminalClosed = yield* Deferred.make<void>();
       const childInstanceId = ProviderInstanceId.make(`child-${driver}`);
       const parentWorktree = driver === "codex" ? null : "/parent-worktree";
-      const resolveCommit = vi.fn(() =>
-        failResolve
-          ? Effect.fail(
-              new GitCommandError({
-                operation: "resolveCommit",
-                command: "git",
-                cwd: "/private-checkout",
-                detail: "private Git failure details",
-              }),
-            )
-          : Effect.succeed({ commitSha: "parent-local-commit" }),
+      const resolveCommit = vi.fn(
+        (_cwd: string, _refName: string): Effect.Effect<{ commitSha: string }, GitCommandError> =>
+          failResolve
+            ? Effect.fail(
+                new GitCommandError({
+                  operation: "resolveCommit",
+                  command: "git",
+                  cwd: "/private-checkout",
+                  detail: "private Git failure details",
+                }),
+              )
+            : Effect.succeed({ commitSha: "parent-local-commit" }),
       );
       const harness = makeHarness({
         closeTerminal: () => Deferred.succeed(terminalClosed, undefined).pipe(Effect.asVoid),
@@ -2874,6 +2947,10 @@ it.effect.each(
           },
         },
         hasCommit: () => Effect.succeed(true),
+        git: {
+          committedBase: (cwd) =>
+            resolveCommit(cwd, "HEAD").pipe(Effect.map((commit) => commit.commitSha)),
+        },
         providers: [
           {
             instanceId: childInstanceId,
@@ -2923,7 +3000,6 @@ it.effect.each(
       const layerService = OrchestratorMcpService.layer.pipe(
         Layer.provide(NodeCrypto.layer),
         Layer.provide(harness.layer),
-        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({ resolveCommit })),
         Layer.provide(Layer.mock(ScheduledTasks.ScheduledTaskService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
       );
@@ -2990,9 +3066,7 @@ it.effect.each(
         assert.equal(child.runs[0]?.status, cancelAsync ? "starting" : "preparing");
         assert.equal(child.thread.modelSelection.instanceId, childInstanceId);
         assert.equal(child.thread.modelSelection.model, "child-model");
-        assert.deepEqual(resolveCommit.mock.calls, [
-          [{ cwd: parentWorktree ?? "/repo", revision: "HEAD" }],
-        ]);
+        assert.deepEqual(resolveCommit.mock.calls, [[parentWorktree ?? "/repo", "HEAD"]]);
         assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, "parent-local-commit");
         assert.equal((yield* service.delegateTask(scope, input)).taskId, delegated.taskId);
         assert.equal(harness.createWorktree.mock.calls.length, 1);

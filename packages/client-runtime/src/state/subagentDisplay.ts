@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatModelSlugName, resolveSelectableModel } from "@t3tools/shared/model";
 import { fileBasename } from "@t3tools/shared/path";
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
 import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 
 export function subagentGroupSummary(
@@ -50,6 +51,7 @@ export function formatSubagentDisplayTitle(title: string): string {
 export function resolveSubagentMetadata(input: {
   readonly model: string | null;
   readonly provider?: Pick<ServerProvider, "driver" | "models"> | null | undefined;
+  readonly terminology?: VcsTerminology | undefined;
   readonly parentThread?:
     | Pick<OrchestrationV2ThreadShell, "projectId" | "worktreePath">
     | null
@@ -88,19 +90,21 @@ export function resolveSubagentMetadata(input: {
     : reportedLabel;
   const parentWorkspace = input.parentThread?.worktreePath ?? input.parentProject?.workspaceRoot;
   const childWorkspace = input.childThread?.worktreePath ?? input.childProject?.workspaceRoot;
+  const terminology = input.terminology ?? DEFAULT_VCS_TERMINOLOGY;
   const workspace = [
     ...(input.parentThread &&
     input.childProject &&
     input.childProject.id !== input.parentThread.projectId
-      ? [{ label: "Project", value: input.childProject.title }]
+      ? [{ kind: "project" as const, label: "Project", value: input.childProject.title }]
       : []),
     ...(parentWorkspace && childWorkspace && parentWorkspace !== childWorkspace
       ? [
           {
+            kind: input.childThread?.branch ? ("ref" as const) : ("workspace" as const),
             label: input.childThread?.branch
-              ? "Branch"
+              ? terminology.refNounTitle
               : input.childThread?.worktreePath
-                ? "Worktree"
+                ? terminology.workspaceNounTitle
                 : "Workspace",
             value: input.childThread?.branch ?? fileBasename(childWorkspace),
           },

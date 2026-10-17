@@ -3,6 +3,7 @@ import { act, useEffect, useReducer } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { GIT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 
 const harness = vi.hoisted(() => ({
   selection: {
@@ -27,6 +28,7 @@ vi.mock("./use-atom-command", () => ({
       : async () => AsyncResult.success({}),
 }));
 vi.mock("./vcs", () => ({
+  useVcsTerminology: () => GIT_VCS_TERMINOLOGY,
   vcsEnvironment: { refreshStatus: "refreshStatus" },
   vcsActionManager: { runStackedAction: () => "runStackedAction", track: vi.fn() },
 }));

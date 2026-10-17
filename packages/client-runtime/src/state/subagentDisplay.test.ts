@@ -1,6 +1,7 @@
 import { ProjectId, ProviderDriverKind } from "@t3tools/contracts";
 import type { OrchestrationV2TurnItemStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { JJ_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import {
   subagentGroupSummary,
   resolveSubagentMetadata,
@@ -109,8 +110,8 @@ describe("resolveSubagentMetadata", () => {
         },
       }).workspace,
     ).toEqual([
-      { label: "Project", value: "Other project" },
-      { label: "Branch", value: "fix/agents" },
+      { kind: "project", label: "Project", value: "Other project" },
+      { kind: "ref", label: "Branch", value: "fix/agents" },
     ]);
   });
 
@@ -122,7 +123,7 @@ describe("resolveSubagentMetadata", () => {
         parentProject,
         childThread: { branch: null, worktreePath: "/worktrees/agents" },
       }).workspace,
-    ).toEqual([{ label: "Worktree", value: "agents" }]);
+    ).toEqual([{ kind: "workspace", label: "Worktree", value: "agents" }]);
     expect(
       resolveSubagentMetadata({
         model: null,
@@ -134,7 +135,28 @@ describe("resolveSubagentMetadata", () => {
           workspaceRoot: "/other",
         },
       }).workspace,
-    ).toEqual([{ label: "Workspace", value: "other" }]);
+    ).toEqual([{ kind: "workspace", label: "Workspace", value: "other" }]);
+  });
+
+  it("uses jj terminology without changing the workspace metadata kinds", () => {
+    const input = {
+      model: null,
+      parentThread,
+      parentProject,
+      terminology: JJ_VCS_TERMINOLOGY,
+    };
+    expect(
+      resolveSubagentMetadata({
+        ...input,
+        childThread: { branch: "fix/agents", worktreePath: "/workspaces/agents" },
+      }).workspace,
+    ).toEqual([{ kind: "ref", label: "Bookmark", value: "fix/agents" }]);
+    expect(
+      resolveSubagentMetadata({
+        ...input,
+        childThread: { branch: null, worktreePath: "/workspaces/agents" },
+      }).workspace,
+    ).toEqual([{ kind: "workspace", label: "Workspace", value: "agents" }]);
   });
 
   it("hides redundant workspace metadata and tolerates unavailable child shells", () => {

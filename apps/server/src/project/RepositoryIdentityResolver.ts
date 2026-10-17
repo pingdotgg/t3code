@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - synchronous marker discovery keeps the resolver layer platform-independent.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
@@ -10,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
+import { JJ_REPOSITORY_DETECTION_ENABLED, mainWorkspaceRootFromRepoPointer } from "../vcs/JjRepo.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -116,9 +121,63 @@ function buildRepositoryIdentity(input: {
   };
 }
 
+function isDirectorySync(candidate: string): boolean {
+  try {
+    return NodeFS.statSync(candidate).isDirectory();
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+// Non-colocated secondary workspaces need jj's repo pointer instead of Git discovery.
+export function resolveRepositoryRootFromMarkers(cwd: string): string | null {
+  if (!isDirectorySync(cwd)) {
+    return null;
+  }
+  let current = cwd;
+  for (;;) {
+    if (isDirectorySync(NodePath.join(current, ".jj"))) {
+      const repoPointer = NodePath.join(current, ".jj", "repo");
+      try {
+        if (isDirectorySync(repoPointer)) {
+          return current;
+        }
+        return mainWorkspaceRootFromRepoPointer(current, NodeFS.readFileSync(repoPointer, "utf8"));
+      } catch {
+        return current;
+      }
+    }
+    if (NodeFS.existsSync(NodePath.join(current, ".git"))) {
+      return null;
+    }
+    const parent = NodePath.dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
+
+    const markerRoot = JJ_REPOSITORY_DETECTION_ENABLED
+      ? yield* Effect.try(() => resolveRepositoryRootFromMarkers(cwd)).pipe(
+          Effect.orElseSucceed(() => null),
+        )
+      : null;
+    if (markerRoot !== null) {
+      return markerRoot;
+    }
 
     // git is a real executable on every platform — no cmd.exe shell mode, which
     // would split paths containing spaces during cmd's re-tokenization.

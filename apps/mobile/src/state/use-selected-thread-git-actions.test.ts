@@ -2,6 +2,7 @@ import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3t
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { GIT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
@@ -76,6 +77,7 @@ vi.mock("./threads", () => ({
   },
 }));
 vi.mock("./vcs", () => ({
+  useVcsTerminology: () => GIT_VCS_TERMINOLOGY,
   vcsEnvironment: {
     refreshStatus: async () => {
       state.statusRefreshes += 1;

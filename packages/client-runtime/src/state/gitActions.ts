@@ -3,6 +3,12 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
+import {
+  DEFAULT_VCS_TERMINOLOGY,
+  resolveVcsTerminology,
+  resolveVcsUnsupportedReason,
+  type VcsTerminology,
+} from "@t3tools/shared/vcs";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -48,6 +54,7 @@ export function buildMenuItems(
   hasOriginRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
+  isBusy ||= resolveVcsUnsupportedReason(gitStatus) !== null;
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -113,8 +120,14 @@ export function resolveQuickAction(
   isDefaultBranch = false,
   hasOriginRemote = true,
 ): GitQuickAction {
+  const vcs = resolveVcsTerminology(gitStatus);
   if (isBusy) {
-    return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
+    return {
+      label: "Commit",
+      disabled: true,
+      kind: "show_hint",
+      hint: `${vcs.systemName} action in progress.`,
+    };
   }
 
   if (!gitStatus) {
@@ -122,8 +135,12 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: "Git status is unavailable.",
+      hint: `${vcs.systemName} status is unavailable.`,
     };
+  }
+  const unsupportedReason = resolveVcsUnsupportedReason(gitStatus);
+  if (unsupportedReason !== null) {
+    return { label: "Commit", disabled: true, kind: "show_hint", hint: unsupportedReason };
   }
 
   const hasBranch = gitStatus.refName !== null;
@@ -138,7 +155,10 @@ export function resolveQuickAction(
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: "Create and checkout a branch before pushing or opening a PR.",
+      hint:
+        gitStatus.vcs?.kind === "jj"
+          ? "No bookmark here: create one before pushing or opening a PR."
+          : "Create and checkout a branch before pushing or opening a PR.",
     };
   }
 
@@ -177,7 +197,7 @@ export function resolveQuickAction(
         label: "Push",
         disabled: true,
         kind: "show_hint",
-        hint: "No local commits to push.",
+        hint: `No local ${vcs.changeNoun}s to push.`,
       };
     }
     if (hasOpenPr || isDefaultBranch) {
@@ -198,10 +218,10 @@ export function resolveQuickAction(
 
   if (isDiverged) {
     return {
-      label: "Sync branch",
+      label: `Sync ${vcs.refNoun}`,
       disabled: true,
       kind: "show_hint",
-      hint: "Branch has diverged from upstream. Rebase/merge first.",
+      hint: `${vcs.refNounTitle} has diverged from upstream. Rebase/merge first.`,
     };
   }
 
@@ -238,7 +258,7 @@ export function resolveQuickAction(
     label: "Commit",
     disabled: true,
     kind: "show_hint",
-    hint: "Branch is up to date. No action needed.",
+    hint: `${vcs.refNounTitle} is up to date. No action needed.`,
   };
 }
 
@@ -249,9 +269,12 @@ export function getGitActionDisabledReason(input: {
   hasOriginRemote: boolean;
 }): string | null {
   const { item, gitStatus, isBusy, hasOriginRemote } = input;
+  const vcs = resolveVcsTerminology(gitStatus);
   if (!item.disabled) return null;
-  if (isBusy) return "Git action in progress.";
-  if (!gitStatus) return "Git status is unavailable.";
+  if (isBusy) return `${vcs.systemName} action in progress.`;
+  if (!gitStatus) return `${vcs.systemName} status is unavailable.`;
+  const unsupportedReason = resolveVcsUnsupportedReason(gitStatus);
+  if (unsupportedReason !== null) return unsupportedReason;
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -261,26 +284,28 @@ export function getGitActionDisabledReason(input: {
 
   if (item.id === "commit") {
     if (!hasChanges) {
-      return "Worktree is clean. Make changes before committing.";
+      return `${vcs.workspaceNounTitle} is clean. Make changes before committing.`;
     }
     return "Commit is currently unavailable.";
   }
 
   if (item.id === "push") {
     if (!hasBranch) {
-      return "Detached HEAD: checkout a branch before pushing.";
+      return noRefHint(gitStatus, vcs, "pushing");
     }
     if (hasChanges) {
-      return "Commit or stash local changes before pushing.";
+      return gitStatus.vcs?.kind === "jj"
+        ? "Commit local changes before pushing."
+        : "Commit or stash local changes before pushing.";
     }
     if (isBehind) {
-      return "Branch is behind upstream. Pull/rebase before pushing.";
+      return `${vcs.refNounTitle} is behind upstream. Pull/rebase before pushing.`;
     }
     if (!gitStatus.hasUpstream && !hasOriginRemote) {
       return 'Add an "origin" remote before pushing.';
     }
     if (!isAhead) {
-      return "No local commits to push.";
+      return `No local ${vcs.changeNoun}s to push.`;
     }
     return "Push is currently unavailable.";
   }
@@ -289,18 +314,24 @@ export function getGitActionDisabledReason(input: {
     return "View PR is currently unavailable.";
   }
   if (!hasBranch) {
-    return "Detached HEAD: checkout a branch before creating a PR.";
+    return noRefHint(gitStatus, vcs, "creating a PR");
   }
   if (!gitStatus.hasUpstream && !hasOriginRemote) {
     return 'Add an "origin" remote before creating a PR.';
   }
   if ((gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) <= 0) {
-    return "No local commits to include in a PR.";
+    return `No local ${vcs.changeNoun}s to include in a PR.`;
   }
   if (isBehind) {
-    return "Branch is behind upstream. Pull/rebase before creating a PR.";
+    return `${vcs.refNounTitle} is behind upstream. Pull/rebase before creating a PR.`;
   }
   return "Create PR is currently unavailable.";
+}
+
+export function noRefHint(gitStatus: VcsStatusResult, vcs: VcsTerminology, tail: string): string {
+  return gitStatus.vcs?.kind === "jj"
+    ? `No ${vcs.refNoun} here: create one before ${tail}.`
+    : `Detached HEAD: checkout a branch before ${tail}.`;
 }
 
 export function requiresDefaultBranchConfirmation(
@@ -320,35 +351,37 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
+  vcsTerminology?: VcsTerminology;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
-  const suffix = ` on "${branchLabel}". You can continue on this branch or create a feature branch and run the same action there.`;
+  const vcs = input.vcsTerminology ?? DEFAULT_VCS_TERMINOLOGY;
+  const suffix = ` on "${branchLabel}". You can continue on this ${vcs.refNoun} or create a feature ${vcs.refNoun} and run the same action there.`;
 
   if (input.action === "push" || input.action === "commit_push") {
     if (input.includesCommit) {
       return {
-        title: "Commit & push to default branch?",
+        title: `Commit & push to default ${vcs.refNoun}?`,
         description: `This action will commit and push changes${suffix}`,
         continueLabel: `Commit & push to ${branchLabel}`,
       };
     }
     return {
-      title: "Push to default branch?",
-      description: `This action will push local commits${suffix}`,
+      title: `Push to default ${vcs.refNoun}?`,
+      description: `This action will push local ${vcs.changeNoun}s${suffix}`,
       continueLabel: `Push to ${branchLabel}`,
     };
   }
 
   if (input.includesCommit) {
     return {
-      title: "Commit, push & create PR from default branch?",
+      title: `Commit, push & create PR from default ${vcs.refNoun}?`,
       description: `This action will commit, push, and create a PR${suffix}`,
       continueLabel: "Commit, push & create PR",
     };
   }
   return {
-    title: "Push & create PR from default branch?",
-    description: `This action will push local commits and create a PR${suffix}`,
+    title: `Push & create PR from default ${vcs.refNoun}?`,
+    description: `This action will push local ${vcs.changeNoun}s and create a PR${suffix}`,
     continueLabel: "Push & create PR",
   };
 }

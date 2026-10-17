@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { getVcsTerminology } from "@t3tools/shared/vcs";
 import {
   act,
   createRef,
@@ -31,6 +32,14 @@ const activityTestState = vi.hoisted(() => ({
   expandedRuns: false,
   subagentTooltips: false,
 }));
+
+const vcsTestState = vi.hoisted(() => ({ kind: "git" as "git" | "jj" }));
+const useVcsTerminologyMock = vi.hoisted(() => vi.fn());
+
+vi.mock("~/state/vcs", () => {
+  useVcsTerminologyMock.mockImplementation(() => getVcsTerminology(vcsTestState.kind));
+  return { useVcsTerminology: useVcsTerminologyMock };
+});
 
 vi.mock("../ui/tooltip", async (importOriginal) => {
   const original = await importOriginal<typeof import("../ui/tooltip")>();
@@ -82,6 +91,8 @@ vi.mock("./MessagesTimeline.logic", async (importOriginal) => {
 });
 
 beforeEach(() => {
+  vcsTestState.kind = "git";
+  useVcsTerminologyMock.mockClear();
   activityTestState.subagentTooltips = false;
   activityTestState.expanded = false;
   activityTestState.expandedRuns = false;
@@ -492,6 +503,25 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it.each([
+    ["git", "worktree"],
+    ["jj", "workspace"],
+  ] as const)("uses %s checkout terminology while preparing", (kind, noun) => {
+    vcsTestState.kind = kind;
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        workspaceRoot="/checkout"
+        timelineEntries={[]}
+        isWorking
+        activeTurnInProgress
+        isPreparingWorktree
+      />,
+    );
+    expect(markup).toContain(`Setting up ${noun}…`);
+    expect(useVcsTerminologyMock).toHaveBeenCalledWith(ACTIVE_THREAD_ENVIRONMENT_ID, "/checkout");
+  });
+
   it("shows dynamic tool input without cached output when the row is expanded", async () => {
     activityTestState.expanded = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

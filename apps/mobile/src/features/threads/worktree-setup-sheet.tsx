@@ -3,13 +3,14 @@ import { Sheet } from "../../components/ui/Sheet";
 
 export interface WorktreeSetupSheetProps {
   children: ReactElement;
+  title: string;
   height: number;
   onClose: () => void;
 }
 
-export function WorktreeSetupSheet({ children, onClose }: WorktreeSetupSheetProps) {
+export function WorktreeSetupSheet({ children, onClose, title }: WorktreeSetupSheetProps) {
   return (
-    <Sheet title="Worktree setup" onClose={onClose}>
+    <Sheet title={title} onClose={onClose}>
       {children}
     </Sheet>
   );
