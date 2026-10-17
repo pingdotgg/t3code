@@ -26,12 +26,14 @@ export const ForgejoLabel = Schema.Struct({
 });
 export const ForgejoRepository = Schema.Struct({
   full_name: Schema.String,
+  default_branch: Schema.optional(Schema.String),
   permissions: Schema.optional(Schema.Struct({ push: Schema.Boolean, admin: Schema.Boolean })),
   archived: Schema.optional(Schema.Boolean),
   allow_merge_commits: Schema.optional(Schema.Boolean),
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
+  default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });
 const Branch = Schema.Struct({
   ref: Schema.String,
