@@ -14,6 +14,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -35,8 +36,14 @@ const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
 const DESKTOP_BACKEND_CHILD_LOG_FIBER_ID = "#backend-child";
 const DESKTOP_TRACE_BATCH_WINDOW_MS = 1_000;
+const DESKTOP_DRAIN_TIMEOUT_MS = 2_000;
 const DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_BYTES = 1024 * 1024;
 const DESKTOP_BACKEND_OUTPUT_BUFFER_MAX_CHUNKS = 256;
+
+export class DesktopTraceFlush extends Context.Service<
+  DesktopTraceFlush,
+  { readonly flush: Effect.Effect<void> }
+>()("@t3tools/desktop/app/DesktopObservability/DesktopTraceFlush") {}
 
 export interface RotatingLogFileWriter {
   readonly writeBytes: (chunk: Uint8Array) => Effect.Effect<void>;
@@ -668,8 +675,34 @@ const layerTelemetry = Layer.unwrap(
           sink,
           ...(delegate ? { delegate } : {}),
         });
+        // Each wait is bounded so a stuck disk or a collector that does not
+        // answer cannot hold up an update. The trace file write cannot be
+        // interrupted, and a timeout around it would still wait for it, so it
+        // runs to completion in its own fiber while the drain stops waiting.
+        const flushFile = Effect.forkDetach(sink.flush).pipe(
+          Effect.flatMap((fiber) =>
+            Fiber.await(fiber).pipe(Effect.timeoutOption(DESKTOP_DRAIN_TIMEOUT_MS)),
+          ),
+          Effect.asVoid,
+        );
+        // Log records and spans reach a collector only through the OTLP
+        // exporters, which send on their interval or when the scope closes.
+        // When either endpoint is set, drain them alongside the trace file,
+        // so an interval export cannot take the records while the drain
+        // waits on the disk, and the whole drain stays within the bound.
+        const otlpFlusher = yield* OtlpExporter.Flusher;
+        const flush =
+          endpoints.logs === undefined && endpoints.traces === undefined
+            ? flushFile
+            : Effect.all(
+                [flushFile, otlpFlusher.flush.pipe(Effect.timeoutOption(DESKTOP_DRAIN_TIMEOUT_MS))],
+                { concurrency: "unbounded", discard: true },
+              );
 
-        return Layer.succeed(Tracer.Tracer, tracer);
+        return Layer.mergeAll(
+          Layer.succeed(Tracer.Tracer, tracer),
+          Layer.succeed(DesktopTraceFlush, { flush }),
+        );
       }),
     ).pipe(Layer.provide(OtlpExporter.layerFlusher));
 
