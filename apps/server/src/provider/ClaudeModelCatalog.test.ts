@@ -5,6 +5,7 @@ import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import { resolveProviderCatalog, type ModelManifestData } from "./ModelManifest.ts";
 import {
   formatClaudeVersionUpgradeMessage,
+  getClaudeCatalogModelCapabilities,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogContextWindowTokens,
@@ -241,5 +242,48 @@ describe("Claude model catalog", () => {
       resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
       ["claude-synthetic-next", "claude-custom-tuned"],
     );
+  });
+  it("lifts the manifest's Ultracode effort choice into its own toggle", () => {
+    const effort = {
+      id: "effort",
+      label: "Reasoning",
+      type: "select" as const,
+      options: [
+        { id: "extreme", label: "Extreme", isDefault: true },
+        { id: "ultracode", label: "Ultracode" },
+      ],
+    };
+    const contextWindow = {
+      id: "contextWindow",
+      label: "Context Window",
+      type: "select" as const,
+      options: [{ id: "large", label: "Large", isDefault: true }],
+    };
+    const base = manifest();
+    const catalog = catalogFromManifest({
+      ...base,
+      providers: {
+        claudeAgent: {
+          ...base.providers!.claudeAgent!,
+          profiles: {
+            synthetic: { capabilities: { optionDescriptors: [effort, contextWindow] } },
+          },
+        },
+      },
+    });
+
+    assert.deepStrictEqual(getClaudeCatalogModelCapabilities(catalog, "synthetic"), {
+      optionDescriptors: [
+        { ...effort, options: [effort.options[0]!] },
+        {
+          id: "ultracode",
+          label: "Ultracode",
+          description: "Multi-agent workflow orchestration at any reasoning level",
+          type: "boolean",
+        },
+        contextWindow,
+      ],
+    });
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "ultracode"), "extreme");
   });
 });

@@ -543,6 +543,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
                 {descriptor.label}
               </div>
+              {descriptor.description ? (
+                <div className="max-w-56 text-pretty px-2 pb-1.5 text-muted-foreground/80 text-xs">
+                  {descriptor.description}
+                </div>
+              ) : null}
               <MenuRadioGroup
                 value={selectedValue}
                 onValueChange={(value) => {
@@ -583,6 +588,11 @@ export function buildTraitsTriggerDisplay(input: {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
+      continue;
+    }
+    // A mode, not a setting: name it only while it is on, like Claude Code's own model pill.
+    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+      if (descriptor.currentValue === true) labels.push(descriptor.label);
       continue;
     }
     if (

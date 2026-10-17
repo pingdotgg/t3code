@@ -26,6 +26,42 @@ import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
+const ULTRACODE = "ultracode";
+
+/**
+ * Claude Code 2.1.284 made Ultracode a session toggle that works at any effort
+ * level. Every installed release reads the remote manifest, and releases before
+ * this one only understand Ultracode as an effort choice mapped to xhigh, so the
+ * manifest keeps that shape and the choice is lifted into its own option here.
+ */
+function withUltracodeToggle<T extends ModelCapabilities | null>(capabilities: T): T {
+  const descriptors = capabilities?.optionDescriptors;
+  if (!descriptors || descriptors.some((descriptor) => descriptor.id === ULTRACODE)) {
+    return capabilities;
+  }
+  const effortIndex = descriptors.findIndex(
+    (descriptor) => descriptor.id === "effort" && descriptor.type === "select",
+  );
+  const effort = descriptors[effortIndex];
+  if (effort?.type !== "select") return capabilities;
+  const choice = effort.options.find((option) => option.id === ULTRACODE);
+  if (!choice) return capabilities;
+
+  return {
+    ...capabilities,
+    optionDescriptors: [
+      ...descriptors.slice(0, effortIndex),
+      { ...effort, options: effort.options.filter((option) => option !== choice) },
+      {
+        id: ULTRACODE,
+        label: choice.label,
+        description: "Multi-agent workflow orchestration at any reasoning level",
+        type: "boolean",
+      },
+      ...descriptors.slice(effortIndex + 1),
+    ],
+  };
+}
 
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
@@ -47,8 +83,9 @@ function tryResolveClaudeModelCatalog(
     const profile = decodeClaudeProfileAdapter(entry.profileAdapter ?? {});
     const adapter = decodeClaudeModelAdapter(entry.adapter ?? {});
     if (Option.isNone(profile) || Option.isNone(adapter)) return null;
+    const model = ModelCatalog.catalogServerModel(resolved, entry);
     models.push({
-      model: ModelCatalog.catalogServerModel(resolved, entry),
+      model: { ...model, capabilities: withUltracodeToggle(model.capabilities) },
       runtime: profile.value.claudeCode ?? {},
       compatibility: adapter.value.claudeCode ?? {},
     });
@@ -228,10 +265,6 @@ export function normalizeClaudeCatalogEffort(
   const effortMap = resolveClaudeCatalogModel(catalog, model)?.runtime.effortMap;
   if (!effortMap || !Object.prototype.hasOwnProperty.call(effortMap, effort)) return effort;
   return effortMap[effort] ?? undefined;
-}
-
-export function isClaudeCatalogUltracodeEffort(effort: string | null | undefined): boolean {
-  return effort === "ultracode";
 }
 
 function resolveClaudeCatalogContextWindow(
