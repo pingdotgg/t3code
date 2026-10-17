@@ -150,6 +150,12 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
   const [pendingWrites, setPendingWrites] = useState(0);
   const writeInFlight = useRef(false);
+  // A closing view can still save its drafts while a write is pending, after
+  // the controls disabled. Those patches run once the current write settles.
+  const queuedPatch = useRef<{ key: string; patch: ServerSettingsPatch } | null>(null);
+  const targetsKey = targets
+    .map((target) => `${target.environment.environmentId}:${target.projectId}`)
+    .join(",");
   const [pendingTargets, setPendingTargets] = useState<
     readonly ScopedMobileSettingsTarget[] | null
   >(null);
@@ -170,8 +176,15 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     reportFailure: true,
   });
   const write = (patch: ServerSettingsPatch) => {
+    if (writeInFlight.current) {
+      const queued = queuedPatch.current;
+      queuedPatch.current = {
+        key: targetsKey,
+        patch: queued?.key === targetsKey ? { ...queued.patch, ...patch } : patch,
+      };
+      return;
+    }
     if (
-      writeInFlight.current ||
       !hasConnectedSelection ||
       !targets.every((target) =>
         readEnvironmentScope(target.environment.environmentId, AuthSettingsWriteScope),
@@ -191,6 +204,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
+      const queued = queuedPatch.current;
+      queuedPatch.current = null;
+      // These targets may not show this write yet, so send it again with the
+      // queued patch; project overrides are replaced whole.
+      if (queued?.key === targetsKey) write({ ...patch, ...queued.patch });
     });
   };
   const clearProjectOverrides = () => {
@@ -212,6 +230,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       ),
     ).finally(() => {
       writeInFlight.current = false;
+      // Resending a draft over these pre-clear targets would undo the clear.
+      queuedPatch.current = null;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
     });
@@ -348,9 +368,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
               {props.page === "source-control" ? (
                 <>
                   <BranchNamingSettings
-                    key={targets
-                      .map((target) => `${target.environment.environmentId}:${target.projectId}`)
-                      .join(",")}
+                    key={targetsKey}
                     mode={uniform("branchNamingMode")}
                     prefix={uniform("branchNamePrefix")}
                     instructions={uniform("branchNameInstructions")}
