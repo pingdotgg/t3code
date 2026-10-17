@@ -1,7 +1,8 @@
 import { pullRequestHostOf, type ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useEffect, useRef, useState } from "react";
 
 import { parseChangeRequestUrl } from "~/lib/openPullRequestLink";
 import { parsePullRequestReference } from "~/pullRequestReference";
@@ -104,6 +105,33 @@ export function resolveLinkPullRequestInput(input: {
   };
 }
 
+function resolveOwnProject(
+  environmentProjects: ReturnType<typeof useProjects>,
+  projectId: LinkPullRequestDialogProps["projectId"],
+) {
+  const project = environmentProjects.find((candidate) => candidate.id === projectId);
+  const identity = project?.repositoryIdentity;
+  if (!project || !identity) return null;
+  const repository =
+    identity.displayName ??
+    (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
+  if (repository === null) return null;
+  const definition = sourceControlClients.get(identity.provider ?? "unknown");
+  const host = pullRequestHostOf(identity, definition.kind);
+  return {
+    host,
+    repository,
+    webUrl: (number: number) =>
+      definition.changeRequestUrl({
+        host,
+        repository,
+        number,
+        remoteUrl: identity.locator.remoteUrl,
+        webUrl: identity.webUrl,
+      }),
+  };
+}
+
 function LinkPullRequestDialog({
   open,
   threadRef,
@@ -115,70 +143,50 @@ function LinkPullRequestDialog({
   const [dirty, setDirty] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const projects = useProjects();
-  const environmentProjects = useMemo(
-    () => projects.filter((project) => project.environmentId === threadRef.environmentId),
-    [projects, threadRef.environmentId],
+  const ownProject = resolveOwnProject(
+    projects.filter((project) => project.environmentId === threadRef.environmentId),
+    projectId,
   );
-  const ownProject = useMemo(() => {
-    const project = environmentProjects.find((candidate) => candidate.id === projectId);
-    const identity = project?.repositoryIdentity;
-    if (!project || !identity) return null;
-    const repository =
-      identity.displayName ??
-      (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
-    if (repository === null) return null;
-    const definition = sourceControlClients.get(identity.provider ?? "unknown");
-    const host = pullRequestHostOf(identity, definition.kind);
-    return {
-      host,
-      repository,
-      webUrl: (number: number) =>
-        definition.changeRequestUrl({
-          host,
-          repository,
-          number,
-          remoteUrl: identity.locator.remoteUrl,
-          webUrl: identity.webUrl,
-        }),
-    };
-  }, [environmentProjects, projectId]);
   const linking = usePullRequestLinking(threadRef.environmentId);
   const [pending, setPending] = useState(false);
 
+  const [openSeen, setOpenSeen] = useState(open);
+  if (openSeen !== open) {
+    setOpenSeen(open);
+    if (open) {
+      setReference("");
+      setDirty(false);
+      setSubmitError(null);
+    }
+  }
   useEffect(() => {
     if (!open) return;
-    setReference("");
-    setDirty(false);
-    setSubmitError(null);
     const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
 
-  const resolved = useMemo(
-    () =>
-      resolveLinkPullRequestInput({
-        reference,
-        project: ownProject,
-        hasProject: (reference) => linking.canLink(reference.url),
-      }),
-    [linking, ownProject, reference],
-  );
+  const resolved = resolveLinkPullRequestInput({
+    reference,
+    project: ownProject,
+    hasProject: (reference) => linking.canLink(reference.url),
+  });
 
-  const submit = useCallback(async () => {
+  const submit = async () => {
     setDirty(true);
     if (resolved === null || "error" in resolved) return;
     setSubmitError(null);
     setPending(true);
-    try {
-      await linking.changeLink(threadRef, resolved.link.url, true);
-    } catch (error) {
+    const result = await settlePromise(() =>
+      linking.changeLink(threadRef, resolved.link.url, true),
+    );
+    setPending(false);
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
       setSubmitError(error instanceof Error ? error.message : "Could not link the pull request.");
       return;
-    } finally {
-      setPending(false);
     }
     onOpenChange(false);
-  }, [linking, onOpenChange, resolved, threadRef]);
+  };
 
   const validation = !dirty
     ? null
