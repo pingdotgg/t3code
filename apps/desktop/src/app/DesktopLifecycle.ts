@@ -60,6 +60,11 @@ export class DesktopLifecycle extends Context.Service<
 const { logInfo: logLifecycleInfo, logError: logLifecycleError } =
   makeComponentLogger("desktop-lifecycle");
 
+const logRelaunchFailure = (reason: string) => (cause: unknown) => {
+  const error = new DesktopLifecycleRelaunchError({ reason, cause });
+  return logLifecycleError(error.message, { error });
+};
+
 function addScopedListener<Args extends ReadonlyArray<unknown>>(
   target: unknown,
   eventName: string,
@@ -174,19 +179,14 @@ export const make = DesktopLifecycle.of({
         yield* electronApp.exit(75);
         return;
       }
-      yield* electronApp.relaunch({
-        execPath: process.execPath,
-        args: process.argv.slice(1),
-      });
+      yield* electronApp
+        .relaunch({
+          args: process.argv.slice(1),
+        })
+        .pipe(Effect.catchCause(logRelaunchFailure(reason)));
+      // Shutdown has completed even when scheduling the replacement fails.
       yield* electronApp.exit(0);
-    }).pipe(
-      Effect.catchCause((cause) => {
-        const error = new DesktopLifecycleRelaunchError({ reason, cause });
-        return logLifecycleError(error.message, { error });
-      }),
-      Effect.forkDetach,
-      Effect.asVoid,
-    );
+    }).pipe(Effect.catchCause(logRelaunchFailure(reason)), Effect.forkDetach, Effect.asVoid);
   }),
   register: Effect.gen(function* () {
     const desktopWindow = yield* DesktopWindow.DesktopWindow;

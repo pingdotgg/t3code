@@ -1,3 +1,5 @@
+import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import { beforeEach, expect, vi } from "vite-plus/test";
 import { it } from "@effect/vitest";
@@ -124,7 +126,7 @@ it.effect("validates IPC and clears on native focus, quit, and disposal", () =>
     ).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provide([
-        ElectronApp.layer,
+        ElectronApp.layer.pipe(Layer.provide(NodeServices.layer)),
         DesktopIpc.layer({
           handle: (channel, handler) => {
             handlers.set(channel, handler);
