@@ -26,7 +26,11 @@ export function AnimatedHeight({
       );
     }, HEIGHT_TRANSITION_FALLBACK_MS);
     return () => window.clearTimeout(timeoutId);
-  }, [heightState.height, heightState.isClipping]);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A height change mid-transition starts a new transition, so the fallback timer restarts.
+    heightState.height,
+    heightState.isClipping,
+  ]);
 
   useLayoutEffect(() => {
     if (holdHeight) return;
