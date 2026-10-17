@@ -253,26 +253,36 @@ it.effect("falls back to the native provider thread when every recorded session 
   ),
 );
 
-it.effect("hands off from a native provider thread after its session detaches", () =>
-  Effect.gen(function* () {
-    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-    const result = yield* service.plan({
-      projection: { ...deadNativeThreadProjection("stopped"), providerSessions: [] },
-      targetModelSelection: {
-        instanceId: ProviderInstanceId.make("codex_other"),
-        model: "gpt-5.2-codex",
-      },
-    });
-    assert.equal(result.transition.type, "create_with_handoff");
-    assert.deepEqual(result.releaseProviderSessionIds, []);
-  }).pipe(
-    Effect.provide(
-      layerTest({
-        [currentInstanceId]: { continuationKey: "codex:account:primary" },
-        codex_other: { continuationKey: "codex:account:other" },
-      }),
+it.effect.each([true, false])(
+  "hands off after its session detaches (native reference: %s)",
+  (hasNativeRef) =>
+    Effect.gen(function* () {
+      const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+      const detached = deadNativeThreadProjection("stopped");
+      const result = yield* service.plan({
+        projection: {
+          ...detached,
+          providerSessions: [],
+          providerThreads: detached.providerThreads.map((thread) => ({
+            ...thread,
+            nativeThreadRef: hasNativeRef ? thread.nativeThreadRef : null,
+          })),
+        },
+        targetModelSelection: {
+          instanceId: ProviderInstanceId.make("codex_other"),
+          model: "gpt-5.2-codex",
+        },
+      });
+      assert.equal(result.transition.type, "create_with_handoff");
+      assert.deepEqual(result.releaseProviderSessionIds, []);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          [currentInstanceId]: { continuationKey: "codex:account:primary" },
+          codex_other: { continuationKey: "codex:account:other" },
+        }),
+      ),
     ),
-  ),
 );
 
 it.effect.each(["stopped", "error"] as const)(

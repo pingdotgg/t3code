@@ -63,6 +63,58 @@ describe("thread workflows", () => {
         ...projection,
         providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
       }),
+    ).toBe(true);
+  });
+
+  it.each(["completed", "failed", "interrupted"] as const)(
+    "allows portable handoff after a %s run without a native session",
+    (status) => {
+      const projection = {
+        thread: {
+          id: "thread",
+          activeProviderThreadId: null,
+          historyOrigin: "native",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-opus-4-6" },
+        },
+        runs: [{ id: "run", status }],
+        providerSessions: [],
+        providerThreads: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+
+      expect(threadSupportsProviderHandoff(projection)).toBe(true);
+    },
+  );
+
+  it.each(["preparing", "starting", "running", "waiting"] as const)(
+    "keeps a %s run bound until its session capabilities resolve",
+    (status) => {
+      expect(
+        threadSupportsProviderHandoff({
+          thread: { id: "thread", activeProviderThreadId: null },
+          runs: [{ id: "run", status }],
+          providerSessions: [],
+          providerThreads: [],
+        } as unknown as OrchestrationV2ThreadProjection),
+      ).toBe(false);
+    },
+  );
+
+  it("honors a live session that cannot hand off", () => {
+    expect(
+      threadSupportsProviderHandoff({
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [],
+        providerThreads: [
+          { id: "provider-thread", appThreadId: "thread", providerSessionId: "session" },
+        ],
+        providerSessions: [
+          {
+            id: "session",
+            status: "ready",
+            capabilities: { sessions: { supportsProviderSwitchingViaHandoff: false } },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection),
     ).toBe(false);
   });
 

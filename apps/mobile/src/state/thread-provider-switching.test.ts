@@ -86,4 +86,30 @@ describe("threadAllowsProviderSwitch", () => {
   it("keeps a started thread bound until its projection resolves a session", () => {
     expect(threadAllowsProviderSwitch({ thread: startedThread, projection: null })).toBe(false);
   });
+
+  it("offers providers after disconnecting a thread without a native reference", () => {
+    expect(
+      threadAllowsProviderSwitch({
+        thread: startedThread,
+        projection: {
+          thread: {
+            id: "thread",
+            activeProviderThreadId: "provider-thread",
+            modelSelection: { instanceId: "claudeAgent", model: "claude-opus-4-6" },
+          },
+          runs: [{ id: "run-1", status: "failed" }],
+          providerThreads: [
+            {
+              id: "provider-thread",
+              appThreadId: "thread",
+              providerInstanceId: "claudeAgent",
+              providerSessionId: null,
+              nativeThreadRef: null,
+            },
+          ],
+          providerSessions: [],
+        } as unknown as OrchestrationV2ThreadProjection,
+      }),
+    ).toBe(true);
+  });
 });
