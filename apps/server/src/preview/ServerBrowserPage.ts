@@ -373,27 +373,15 @@ const maskTree = (tree: string, dotted: RegExp) =>
     })
     .join("\n");
 
-// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
+// Never pass a clip scale below 1: Chromium mirrors the top-left of the page into a
+// `backdrop-filter` in any capture it shrinks. Shrink the finished image instead.
 export const captureViewport = async (
-  page: Page,
   cdp: CDPSession,
-  options: { readonly format: "png" | "jpeg"; readonly quality?: number; readonly scale: number },
+  options: { readonly format: "png" | "jpeg"; readonly quality?: number },
 ) => {
-  let clip;
-  if (options.scale < 1) {
-    const viewport = page.viewportSize() ?? { width: 1280, height: 800 };
-    const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
-    clip = {
-      x: cssVisualViewport.pageX,
-      y: cssVisualViewport.pageY,
-      ...viewport,
-      scale: options.scale,
-    };
-  }
   const { data } = await cdp.send("Page.captureScreenshot", {
     format: options.format,
     ...(options.quality === undefined ? {} : { quality: options.quality }),
-    ...(clip ? { clip } : {}),
   });
   return data;
 };
@@ -402,6 +390,10 @@ type SnapshotInput = {
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly renderScale: number;
+  readonly downscale: (
+    png: string,
+    size: { readonly width: number; readonly height: number },
+  ) => Promise<string>;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
@@ -427,7 +419,7 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
+    captureViewport(input.cdp, { format: "png" }),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -452,7 +444,13 @@ const capture = async (
     void iframe.dispose().catch(constVoid);
     if (frame && unread.includes(frame)) throw tooBusy();
   }
-  const [page, data] = await pageAndScreenshot;
+  const [page, screenshot] = await pageAndScreenshot;
+  const size = {
+    width: Math.round(viewport.width * input.renderScale * scale),
+    height: Math.round(viewport.height * input.renderScale * scale),
+  };
+  // Before the generation check, which guards the synchronous ref registration below.
+  const data = scale < 1 ? await input.downscale(screenshot, size) : screenshot;
   if (state.generation !== generation) throw pageChanged();
   const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
   const accessibilityTree = (dotted ? maskTree(tree, dotted) : tree)
@@ -471,12 +469,7 @@ const capture = async (
     consoleEntries: [...input.consoleEntries],
     networkEntries: [...input.networkEntries],
     actionTimeline: [...input.actionTimeline],
-    screenshot: {
-      mimeType: "image/png",
-      data,
-      width: Math.round(viewport.width * input.renderScale * scale),
-      height: Math.round(viewport.height * input.renderScale * scale),
-    },
+    screenshot: { mimeType: "image/png", data, ...size },
   };
 };
 
@@ -791,6 +784,37 @@ const NET_ERROR_CODES: Readonly<Record<string, number>> = {
 export const parseNetError = (errorText: string) => {
   const description = /ERR_[A-Z_]+/.exec(errorText)?.[0] ?? errorText;
   return { description, code: NET_ERROR_CODES[description] ?? -2 };
+};
+
+const DOWNSCALE_SCRIPT = `window.__t3Downscale = async (base64, width, height) => {
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.imageSmoothingQuality = "high";
+  context.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  return canvas.toDataURL("image/png").slice("data:image/png;base64,".length);
+};`;
+
+interface DownscaleWindow {
+  __t3Downscale(base64: string, width: number, height: number): Promise<string>;
+}
+
+/** The server has no image library, so a scratch page's canvas does the resize. */
+export const downscalePng = async (
+  scratch: Page,
+  png: string,
+  size: { readonly width: number; readonly height: number },
+) => {
+  await scratch.evaluate(DOWNSCALE_SCRIPT);
+  return scratch.evaluate(
+    ([data, width, height]) =>
+      (globalThis as unknown as DownscaleWindow).__t3Downscale(data, width, height),
+    [png, size.width, size.height] as const,
+  );
 };
 
 export const RECORDING_ENCODER_SCRIPT = `(() => {

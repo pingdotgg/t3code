@@ -36,6 +36,7 @@ describe("server browser element refs", () => {
       page,
       cdp,
       renderScale: 1,
+      downscale: () => Promise.reject(new Error("a full-scale capture is never shrunk")),
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -328,6 +329,75 @@ describe("server browser element refs", () => {
       ServerBrowserPage.evaluate(cdp, { expression: "for (;;) {}" }, 200),
     ).rejects.toMatchObject({ tag: "PreviewAutomationTimeoutError" });
     expect(await ServerBrowserPage.evaluate(cdp, { expression: "1 + 1" }, 2_000)).toBe(2);
+  });
+});
+
+describe("server browser snapshot screenshot", () => {
+  let browser: Browser;
+
+  beforeAll(async () => {
+    // The launch flags of ServerBrowserContexts: the capture scale arithmetic assumes them.
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-device-scale-factor=2"],
+    });
+  });
+  afterAll(async () => {
+    await browser?.close();
+  });
+
+  const pixelAt = (scratch: Page, png: string, x: number, y: number) =>
+    scratch.evaluate(`(async () => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(png)}), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(bitmap, 0, 0);
+      return Array.from(context.getImageData(${x}, ${y}, 1, 1).data);
+    })()`) as Promise<[number, number, number, number]>;
+
+  it("draws a backdrop-filter once when the viewport is wider than 640 CSS px", async () => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 2,
+    });
+    const scratchContext = await browser.newContext();
+    try {
+      const scratch = await scratchContext.newPage();
+      const page = await context.newPage();
+      // Chromium mirrors the top-left quarter of the page into a backdrop it captured shrunk, so
+      // the red block on the right edge vanishes from behind the overlay.
+      await page.setContent(`
+        <style>
+          body { margin: 0; background: white; }
+          .red { position: absolute; left: 640px; top: 0; width: 640px; height: 400px; background: #ef4444; }
+          .overlay { position: fixed; inset: 0; backdrop-filter: blur(4px); }
+        </style>
+        <div class="red"></div><div class="overlay"></div>`);
+      const { screenshot } = await ServerBrowserPage.snapshot({
+        page,
+        cdp: await context.newCDPSession(page),
+        renderScale: 2,
+        downscale: (png, size) => ServerBrowserPage.downscalePng(scratch, png, size),
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      });
+
+      const png = Buffer.from(screenshot.data, "base64");
+      expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([
+        screenshot.width,
+        screenshot.height,
+      ]);
+      expect([screenshot.width, screenshot.height]).toEqual([1280, 800]);
+      const [red, green] = await pixelAt(scratch, screenshot.data, 1100, 200);
+      expect(red - green).toBeGreaterThan(100);
+    } finally {
+      await context.close();
+      await scratchContext.close();
+    }
   });
 });
 

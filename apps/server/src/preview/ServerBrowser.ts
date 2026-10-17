@@ -1431,10 +1431,9 @@ const make = Effect.gen(function* () {
       try {
         await encoder.evaluate(ServerBrowserPage.RECORDING_ENCODER_SCRIPT);
         // Seed idle pages before returning so an immediate stop has a frame to encode.
-        const firstFrame = await ServerBrowserPage.captureViewport(tab.page, tab.cdp, {
+        const firstFrame = await ServerBrowserPage.captureViewport(tab.cdp, {
           format: "jpeg",
           quality: RECORDING_SCREENCAST.quality,
-          scale: 1,
         });
         await encoder.evaluate(
           ([data, width]) =>
@@ -1486,7 +1485,18 @@ const make = Effect.gen(function* () {
     return started;
   };
 
-  // Scaled captures repaint every screencast; pause them to avoid leaking that frame.
+  const downscaleScreenshot = async (
+    png: string,
+    size: { readonly width: number; readonly height: number },
+  ) => {
+    const scratch = await contexts.scratchPage();
+    try {
+      return await ServerBrowserPage.downscalePng(scratch, png, size);
+    } finally {
+      await scratch.close().catch(constVoid);
+    }
+  };
+
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
       tab.capturing += 1;
@@ -1895,7 +1905,11 @@ const make = Effect.gen(function* () {
       }
       case "snapshot": {
         return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
+          ServerBrowserPage.snapshot({
+            ...tab,
+            renderScale: RENDER_SCALE,
+            downscale: downscaleScreenshot,
+          }),
         );
       }
       case "click": {
@@ -2258,13 +2272,11 @@ const make = Effect.gen(function* () {
       }
       broadcastControl(tab);
       pushFileChooser(tab);
-      // Full scale: a scaled capture would flash in every other viewer.
       const pushStill = async () => {
         const data = await withCaptureLock(tab, () =>
-          ServerBrowserPage.captureViewport(tab.page, session, {
+          ServerBrowserPage.captureViewport(session, {
             format: "jpeg",
             quality,
-            scale: 1,
           }),
         ).catch(() => null);
         if (data)

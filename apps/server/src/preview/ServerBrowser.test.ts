@@ -46,7 +46,13 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
-      return makeContext().page as unknown as Page;
+      const scratch = makeContext();
+      scratchContexts.push(scratch);
+      scratch.page.evaluate.mockImplementation(async () => {
+        if (scratchResult instanceof Error) throw scratchResult;
+        return scratchResult as never;
+      });
+      return scratch.page as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext();
@@ -181,6 +187,8 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
 }
 
 const contexts: ReturnType<typeof makeContext>[] = [];
+const scratchContexts: ReturnType<typeof makeContext>[] = [];
+let scratchResult: unknown = "c21hbGw=";
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
@@ -294,6 +302,8 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
 
 beforeEach(() => {
   contexts.length = 0;
+  scratchContexts.length = 0;
+  scratchResult = "c21hbGw=";
   contextRequests.length = 0;
   contextGate = null;
   contextFailure = null;
@@ -476,6 +486,50 @@ it.live("enforces provider ownership and explicit targets when a session has mul
       });
       expect(result).toBe("evaluated");
       expect(contexts).toHaveLength(2);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a snapshot captures at full scale and shrinks the image in a scratch page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const { screenshot } = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+
+      const captures = contexts[0]!.sessions
+        .flatMap((session) => session.send.mock.calls)
+        .filter(([method]) => method === "Page.captureScreenshot");
+      expect(captures).toHaveLength(1);
+      expect(captures[0]![1]).not.toHaveProperty("clip");
+      expect(screenshot).toEqual({
+        mimeType: "image/png",
+        data: "c21hbGw=",
+        width: 1280,
+        height: 800,
+      });
+      expect(scratchContexts).toHaveLength(1);
+      expect(scratchContexts[0]!.page.close).toHaveBeenCalledTimes(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a snapshot that cannot shrink its image still closes the scratch page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      scratchResult = new Error("scratch page crashed");
+      const failure = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.flip);
+
+      expect(JSON.stringify(failure)).toContain("scratch page crashed");
+      expect(scratchContexts.length).toBeGreaterThan(0);
+      for (const scratch of scratchContexts) expect(scratch.page.close).toHaveBeenCalledTimes(1);
     }),
   ).pipe(Effect.provide(layer)),
 );
