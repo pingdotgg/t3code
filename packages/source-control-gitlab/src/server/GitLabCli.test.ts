@@ -182,6 +182,106 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  const projectJson = (host: string, path: string) =>
+    JSON.stringify({
+      path_with_namespace: path,
+      web_url: `https://${host}/${path}`,
+      http_url_to_repo: `https://${host}/${path}.git`,
+      ssh_url_to_repo: `git@${host}:${path}.git`,
+    });
+
+  it.effect.each([
+    {
+      repository: "https://sourcecontrol.example.com/group/sub/project.git",
+      host: "sourcecontrol.example.com",
+      path: "group/sub/project",
+      endpoint: "projects/group%2Fsub%2Fproject",
+    },
+    {
+      repository: "git@gitlab.com:group/project.git",
+      host: "gitlab.com",
+      path: "group/project",
+      endpoint: "projects/group%2Fproject",
+    },
+    {
+      repository: "git@example.com:gitlab/team/app.git",
+      host: "example.com/gitlab",
+      path: "gitlab/team/app",
+      endpoint: "projects/gitlab%2Fteam%2Fapp",
+    },
+    {
+      repository: "ssh://git@example.com/gitlab/team/app.git",
+      host: "example.com/gitlab",
+      path: "gitlab/team/app",
+      endpoint: "projects/gitlab%2Fteam%2Fapp",
+    },
+    {
+      repository: "ssh://git@GitLab.com/group/project.git",
+      host: "gitlab.com",
+      path: "group/project",
+      endpoint: "projects/group%2Fproject",
+    },
+  ])("looks up the pasted address $repository by its project path", (row) =>
+    Effect.gen(function* () {
+      mockedRun.mockImplementation((input) =>
+        Effect.succeed(
+          processOutput(
+            input.args[0] === "config" ? `${row.host}\n` : projectJson(row.host, row.path),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository: row.repository });
+
+      expect(mockedRun).toHaveBeenLastCalledWith(
+        expect.objectContaining({ args: ["api", row.endpoint] }),
+      );
+    }),
+  );
+
+  it.effect.each(["example.com/gitlab", "https://example.com/gitlab"])(
+    "drops the install root that glab's configured host %s carries from a pasted URL",
+    (glabHost) =>
+      Effect.gen(function* () {
+        mockedRun
+          .mockReturnValueOnce(Effect.succeed(processOutput(`${glabHost}\n`)))
+          .mockReturnValueOnce(
+            Effect.succeed(processOutput(projectJson("example.com/gitlab", "group/project"))),
+          );
+
+        const glab = yield* GitLabCli.GitLabCli;
+        yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://example.com/gitlab/group/project",
+        });
+
+        expect(mockedRun).toHaveBeenLastCalledWith(
+          expect.objectContaining({ args: ["api", "projects/group%2Fproject"] }),
+        );
+      }),
+  );
+
+  it.effect("rejects a project that glab found on a different host than the pasted URL", () =>
+    Effect.gen(function* () {
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput("gitlab.com\n")))
+        .mockReturnValueOnce(
+          Effect.succeed(processOutput(projectJson("gitlab.com", "group/project"))),
+        );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const error = yield* glab
+        .getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://sourcecontrol.example.com/group/project",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));

@@ -18,7 +18,7 @@ import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
 } from "./gitLabMergeRequests.ts";
-import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -225,6 +225,25 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespa
   }
 }
 
+export class GitLabRepositoryHostMismatchError extends Schema.TaggedError<GitLabRepositoryHostMismatchError>()(
+  "GitLabRepositoryHostMismatchError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.Literal("getRepositoryCloneUrls"),
+    requestedHost: Schema.String,
+    resolvedHost: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `This URL names ${this.requestedHost}, but GitLab CLI resolved the project on ${this.resolvedHost}. Run \`glab config set host ${this.requestedHost}\` and retry, or enter the project path to use ${this.resolvedHost}.`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
@@ -235,6 +254,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
   GitLabNamespaceDecodeError,
+  GitLabRepositoryHostMismatchError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
 
@@ -349,6 +369,13 @@ function normalizeRepositoryCloneUrls(
     url: raw.web_url,
     sshUrl: raw.ssh_url_to_repo,
   };
+}
+
+// glab's host can carry a relative install root (`example.com/gitlab`) that web URLs repeat.
+function withoutInstallRoot(path: string, glabHost: string, hostname: string): string {
+  const host = URL.parse(glabHost.includes("://") ? glabHost : `https://${glabHost}`);
+  const root = host?.hostname === hostname ? host.pathname.replace(/^\/+|\/+$/gu, "") : "";
+  return root.length > 0 && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
 }
 
 function stateArgs(state: "open" | "closed" | "merged" | "all"): ReadonlyArray<string> {
@@ -519,11 +546,25 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getRepositoryCloneUrls: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
-      }).pipe(
+    getRepositoryCloneUrls: (input) => {
+      const pastedUrl = URL.parse(input.repository.trim());
+      const requestedHost = (
+        pastedUrl?.hostname ?? /^[^@/\s]+@([^:/\s]+):/u.exec(input.repository.trim())?.[1]
+      )?.toLowerCase();
+      const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
+      const projectPath =
+        !requestedHost || urlPath === null
+          ? Effect.succeed(input.repository)
+          : !/^https?:$/u.test(pastedUrl?.protocol ?? "")
+            ? Effect.succeed(urlPath)
+            : execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
+                Effect.map((result) => withoutInstallRoot(urlPath, result.stdout, requestedHost)),
+                Effect.orElseSucceed(() => urlPath),
+              );
+      return projectPath.pipe(
+        Effect.flatMap((path) =>
+          execute({ cwd: input.cwd, args: ["api", `projects/${encodeURIComponent(path)}`] }),
+        ),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           decodeGitLabRepositoryCloneUrls(raw).pipe(
@@ -540,7 +581,19 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
+        Effect.filterOrFail(
+          (urls) => !requestedHost || URL.parse(urls.url)?.hostname === requestedHost,
+          (urls) =>
+            new GitLabRepositoryHostMismatchError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "getRepositoryCloneUrls",
+              requestedHost: requestedHost ?? "",
+              resolvedHost: URL.parse(urls.url)?.hostname ?? urls.url,
+            }),
+        ),
+      );
+    },
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
