@@ -213,6 +213,14 @@ export interface AcpAdapterV2Flavor {
     readonly url: string;
     readonly message: string;
   }) => Effect.Effect<boolean>;
+  readonly extractElicitationForm?: (request: EffectAcpSchema.CreateElicitationRequest) =>
+    | {
+        readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
+        readonly respond: (
+          answers: ProviderUserInputAnswers,
+        ) => EffectAcpSchema.CreateElicitationResponse;
+      }
+    | undefined;
   readonly withRuntimeStartup?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly makeRuntime: (
     input: AcpAdapterV2RuntimeInput,
@@ -5437,31 +5445,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const requestedSchema = unknownRecord(params.requestedSchema);
               const properties = unknownRecord(requestedSchema?.properties) ?? {};
+              const nativeForm = flavor.extractElicitationForm?.(params);
               const elicitationScopeId =
                 "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
-              const questions = Object.entries(properties).map(
-                ([id, property], index): OrchestrationV2UserInputQuestion => {
-                  const record = unknownRecord(property);
-                  const enumValues = Array.isArray(record?.enum)
-                    ? record.enum.filter((value): value is string => typeof value === "string")
-                    : [];
-                  const options =
-                    enumValues.length > 0
-                      ? enumValues.map((value) => ({ label: value, description: value }))
-                      : record?.type === "boolean"
-                        ? [
-                            { label: "true", description: "Yes" },
-                            { label: "false", description: "No" },
-                          ]
-                        : [];
-                  return {
-                    id,
-                    header: nonEmptyText(record?.title, `Question ${index + 1}`),
-                    question: nonEmptyText(record?.description, params.message),
-                    options,
-                  };
-                },
-              );
+              const questions =
+                nativeForm?.questions ??
+                Object.entries(properties).map(
+                  ([id, property], index): OrchestrationV2UserInputQuestion => {
+                    const record = unknownRecord(property);
+                    const enumValues = Array.isArray(record?.enum)
+                      ? record.enum.filter((value): value is string => typeof value === "string")
+                      : [];
+                    const options =
+                      enumValues.length > 0
+                        ? enumValues.map((value) => ({ label: value, description: value }))
+                        : record?.type === "boolean"
+                          ? [
+                              { label: "true", description: "Yes" },
+                              { label: "false", description: "No" },
+                            ]
+                          : [];
+                    return {
+                      id,
+                      header: nonEmptyText(record?.title, `Question ${index + 1}`),
+                      question: nonEmptyText(record?.description, params.message),
+                      options,
+                    };
+                  },
+                );
               const userInput = yield* requestUserInputWithAdmission(
                 handlerGeneration,
                 Effect.gen(function* () {
@@ -5481,13 +5492,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const response =
                 userInput.answers === null
                   ? ({ action: "cancel" } as const)
-                  : ({
+                  : (nativeForm?.respond(userInput.answers) ??
+                    ({
                       action: "accept",
                       content: elicitationContent(
                         userInput.answers,
                         new Set(Object.keys(properties)),
                       ),
-                    } as const);
+                    } as const));
               yield* userInput.acknowledgeNativeResponse;
               return response;
             }),
