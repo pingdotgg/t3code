@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as Record from "effect/Record";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 export class LocalStorageOperationError extends Schema.TaggedError<LocalStorageOperationError>()(
   "LocalStorageOperationError",
@@ -97,93 +97,105 @@ function dispatchLocalStorageChange(key: string) {
   }
 }
 
+function readSerializedValue(key: string): string | null {
+  try {
+    return read(key);
+  } catch (error) {
+    console.error("[LOCALSTORAGE] Could not read stored value.", error);
+    return null;
+  }
+}
+
+function decodeOrInitial<T, E>(
+  key: string,
+  schema: Schema.Codec<T, E>,
+  serializedValue: string | null,
+  initialValue: T,
+): T {
+  if (serializedValue === null) {
+    return initialValue;
+  }
+  try {
+    return decode(key, schema, serializedValue);
+  } catch (error) {
+    console.error("[LOCALSTORAGE] Could not decode stored value.", error);
+    return initialValue;
+  }
+}
+
+function writeLocalStorageValue<T, E>(
+  key: string,
+  value: T | ((val: T) => T),
+  initialValue: T,
+  schema: Schema.Codec<T, E>,
+): void {
+  try {
+    let valueToStore: T;
+    if (typeof value === "function") {
+      // Like the read path, treat an unreadable stored value as the initial
+      // value, so a corrupt blob cannot block every later write.
+      let currentValue = initialValue;
+      try {
+        currentValue = getLocalStorageItem(key, schema) ?? initialValue;
+      } catch (error) {
+        console.error("[LOCALSTORAGE] Could not read stored value.", error);
+      }
+      try {
+        valueToStore = (value as (val: T) => T)(currentValue);
+      } catch (cause) {
+        throw new LocalStorageOperationError({
+          operation: "update",
+          storageKey: key,
+          cause,
+        });
+      }
+    } else {
+      valueToStore = value;
+    }
+    if (valueToStore === null) {
+      removeLocalStorageItem(key);
+    } else {
+      setLocalStorageItem(key, valueToStore, schema);
+    }
+    dispatchLocalStorageChange(key);
+  } catch (error) {
+    console.error("[LOCALSTORAGE] Could not update stored value.", error);
+  }
+}
+
 export function useLocalStorage<T, E>(
   key: string,
   initialValue: T,
   schema: Schema.Codec<T, E>,
 ): [T, (value: T | ((val: T) => T)) => void] {
-  const getSnapshot = useCallback(() => {
-    try {
-      return read(key);
-    } catch (error) {
-      console.error("[LOCALSTORAGE] Could not read stored value.", error);
-      return null;
-    }
-  }, [key]);
+  const getSnapshot = () => readSerializedValue(key);
 
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => {
-      const handleStorageChange = (event: StorageEvent) => {
-        if (event.key === key) {
-          onStoreChange();
-        }
-      };
-      const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
-        if (event.detail.key === key) {
-          onStoreChange();
-        }
-      };
+  const subscribe = (onStoreChange: () => void) => {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === key) {
+        onStoreChange();
+      }
+    };
+    const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
+      if (event.detail.key === key) {
+        onStoreChange();
+      }
+    };
 
-      window.addEventListener("storage", handleStorageChange);
-      window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-      return () => {
-        window.removeEventListener("storage", handleStorageChange);
-        window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-      };
-    },
-    [key],
-  );
+    window.addEventListener("storage", handleStorageChange);
+    window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+    };
+  };
 
   const serializedValue = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const storedValue = useMemo(() => {
-    if (serializedValue === null) {
-      return initialValue;
-    }
-    try {
-      return decode(key, schema, serializedValue);
-    } catch (error) {
-      console.error("[LOCALSTORAGE] Could not decode stored value.", error);
-      return initialValue;
-    }
-  }, [initialValue, key, schema, serializedValue]);
+  const storedValue = decodeOrInitial(key, schema, serializedValue, initialValue);
 
-  const setValue = useCallback(
-    (value: T | ((val: T) => T)) => {
-      try {
-        let valueToStore: T;
-        if (typeof value === "function") {
-          // Like the read path, treat an unreadable stored value as the initial
-          // value, so a corrupt blob cannot block every later write.
-          let currentValue = initialValue;
-          try {
-            currentValue = getLocalStorageItem(key, schema) ?? initialValue;
-          } catch (error) {
-            console.error("[LOCALSTORAGE] Could not read stored value.", error);
-          }
-          try {
-            valueToStore = (value as (val: T) => T)(currentValue);
-          } catch (cause) {
-            throw new LocalStorageOperationError({
-              operation: "update",
-              storageKey: key,
-              cause,
-            });
-          }
-        } else {
-          valueToStore = value;
-        }
-        if (valueToStore === null) {
-          removeLocalStorageItem(key);
-        } else {
-          setLocalStorageItem(key, valueToStore, schema);
-        }
-        dispatchLocalStorageChange(key);
-      } catch (error) {
-        console.error("[LOCALSTORAGE] Could not update stored value.", error);
-      }
-    },
-    [initialValue, key, schema],
-  );
+  const setValue = (value: T | ((val: T) => T)) => {
+    writeLocalStorageValue(key, value, initialValue, schema);
+  };
 
   return [storedValue, setValue];
 }
