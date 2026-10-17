@@ -32,4 +32,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/ThreadNotificationCoordinator.tsx",
   "apps/web/src/state/queries.ts",
   "apps/web/src/state/sourceControlActions.ts",
+  "apps/web/src/components/settings/ProjectFaviconPickerDialog.tsx",
 ] as const;
