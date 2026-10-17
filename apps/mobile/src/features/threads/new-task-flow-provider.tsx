@@ -1062,15 +1062,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (!target) return;
     const liveDraft = getComposerDraftSnapshot(selectedProjectDraftKey);
     if (liveDraft.attachments.length > 0) return;
+    const movesMachine = target.environmentId !== selectedProject.environmentId;
+    // The mode on screen travels even when it is only this machine's default,
+    // as on web, so wait until that default has settled.
+    const workspaceSelection =
+      liveDraft.workspaceSelection ??
+      (defaultWorkspaceModeSettled
+        ? { mode: workspaceMode, branch: null, worktreePath: null }
+        : undefined);
+    if (movesMachine && workspaceSelection === undefined) return;
     // The machine was checked for the model on screen, which is not always
     // the draft's stored one: it may be an unwritten default, or stand in for
     // a pick this machine cannot run. Write it down so it is what travels.
-    if (selectedModel !== null && target.environmentId !== selectedProject.environmentId) {
+    if (selectedModel !== null && movesMachine) {
       updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selectedModel });
     }
-    const workspaceSelection = liveDraft.workspaceSelection;
     carryDraftContentTo(target);
-    if (target.environmentId !== selectedProject.environmentId) {
+    if (movesMachine) {
       releaseWorkspaceSelectionFromMachine(selectedProjectDraftKey, workspaceSelection);
     }
     setSelectedEnvironmentId(target.environmentId);
@@ -1083,19 +1091,22 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     submitting,
     balancedProjects,
     carryDraftContentTo,
+    defaultWorkspaceModeSettled,
     releaseWorkspaceSelectionFromMachine,
     selectedModel,
     selectedProject,
     selectedProjectDraftKey,
     selectedProjectKey,
     setSelectedProjectKey,
+    workspaceMode,
   ]);
   const autoBalanceStatus = resolveAutoBalanceStatus({
     canAutoBalance,
     environmentPinned,
     hasAttachments: attachments.length > 0,
     loadBalancedEnvironmentId,
-    pending: loadBalancing.pending,
+    // Routing also waits for the workspace default it carries.
+    pending: loadBalancing.pending || !defaultWorkspaceModeSettled,
   });
   const refreshLoadBalancing = loadBalancing.refresh;
   const selectAutoBalance = useCallback(() => {
