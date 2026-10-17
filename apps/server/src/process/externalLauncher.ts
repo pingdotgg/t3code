@@ -553,7 +553,11 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     args:
       command === "explorer.exe" && env.WSL_DISTRO_NAME !== undefined
         ? [resolveWslFileManagerPath(input.cwd, env.WSL_DISTRO_NAME)]
-        : [input.cwd],
+        : platform === "win32"
+          ? // Explorer reads `/` as a switch, so `C:/repo` silently opens
+            // a default folder instead of the target.
+            [normalizeWindowsFileManagerPath(input.cwd)]
+          : [input.cwd],
   };
 });
 
