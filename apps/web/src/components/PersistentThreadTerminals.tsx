@@ -293,7 +293,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   );
 });
 
-interface PersistentThreadTerminalPanelProps {
+export interface PersistentThreadTerminalPanelProps {
   visible: boolean;
   threadRef: ScopedThreadRef;
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
