@@ -2,6 +2,8 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
+  GitCommandError,
+  GitManagerError,
   ProjectId,
   PullRequestAction,
   type PullRequestCheck,
@@ -49,6 +51,7 @@ import {
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  checkoutFailureDescription,
   readableFailure,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
@@ -1048,6 +1051,29 @@ describe("what to say when an action fails", () => {
     ).toBe(hint);
     expect(readableFailure(new Error("exited with code 1"), hint)).toBe(hint);
     expect(readableFailure(undefined, hint)).toBe(hint);
+  });
+
+  it("explains a failed checkout with the server's reason, without a git command's cwd wrapper", () => {
+    const reason = "This PR branch is already checked out in the main repo. Use Local.";
+    expect(
+      checkoutFailureDescription(
+        new GitManagerError({
+          cwd: "/server/private-project",
+          operation: "preparePullRequestThread",
+          detail: reason,
+        }),
+      ),
+    ).toContain(reason);
+    const gitFailure = checkoutFailureDescription(
+      new GitCommandError({
+        cwd: "/server/private-project",
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        detail: reason,
+      }),
+    );
+    expect(gitFailure).toBe(reason);
+    expect(checkoutFailureDescription(undefined)).toContain("not checked out elsewhere");
   });
 
   it("bounds a host that answers with a page of output", () => {
