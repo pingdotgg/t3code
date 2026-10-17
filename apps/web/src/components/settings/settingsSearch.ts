@@ -723,6 +723,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["preview color scheme light dark system os"],
   },
   {
+    id: "browser-default-audio-muted",
+    title: "Mute preview tabs by default",
+    to: "/settings/integrations",
+    searchTerms: ["browser audio sound silence speaker volume new tabs"],
+  },
+  {
     id: "browser-recording-frame-rate",
     title: "Browser recording frame rate",
     to: "/settings/integrations",

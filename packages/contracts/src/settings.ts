@@ -337,6 +337,8 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW)),
   ),
 
+  browserDefaultAudioMuted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+
   browserProfiles: Schema.Array(BrowserProfile).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1536,6 +1538,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserRecordingShowMousePresses: Schema.optionalKey(Schema.Boolean),
   browserLinkTarget: Schema.optionalKey(BrowserLinkTarget),
   browserAutoShowFloatingPreview: Schema.optionalKey(Schema.Boolean),
+  browserDefaultAudioMuted: Schema.optionalKey(Schema.Boolean),
   browserProfiles: Schema.optionalKey(Schema.Array(BrowserProfile)),
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),

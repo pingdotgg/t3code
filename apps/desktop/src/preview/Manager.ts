@@ -1671,7 +1671,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           pictureInPicture: false,
           colorScheme: defaults?.colorScheme ?? "system",
           ...(defaults?.serverTab === undefined ? {} : { serverTab: defaults.serverTab }),
-          audioMuted: false,
+          audioMuted: defaults?.audioMuted ?? false,
           audible: false,
           controller: "none",
           updatedAt,

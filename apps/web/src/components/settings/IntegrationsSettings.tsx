@@ -547,6 +547,28 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
+function BrowserAudioMutedSetting({ disabled }: { readonly disabled: boolean }) {
+  const audioMuted = useClientSettings((settings) => settings.browserDefaultAudioMuted);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("browser-default-audio-muted")}
+      description="Start new browser tabs muted. Unmute a tab from its tab menu."
+      control={
+        <Switch
+          disabled={disabled}
+          checked={audioMuted}
+          aria-label="Mute new browser tabs"
+          onCheckedChange={(checked) =>
+            updateSettings({ browserDefaultAudioMuted: Boolean(checked) })
+          }
+        />
+      }
+    />
+  );
+}
+
 function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolean }) {
   const showKeys = useClientSettings((settings) => settings.browserRecordingShowKeyPresses);
   const showMouse = useClientSettings((settings) => settings.browserRecordingShowMousePresses);
@@ -1479,6 +1501,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserViewportSetting disabled={previewDefaultsDisabled} />
       <BrowserZoomSetting disabled={previewDefaultsDisabled} />
       <BrowserAppearanceSetting disabled={previewDefaultsDisabled} />
+      <BrowserAudioMutedSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
       <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />

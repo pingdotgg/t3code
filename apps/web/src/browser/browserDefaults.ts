@@ -20,6 +20,7 @@ export interface BrowserDefaults {
   readonly zoomFactor: number;
   readonly appearance: PreviewAppearancePreference;
   readonly autoShowFloatingPreview: boolean;
+  readonly audioMuted: boolean;
   readonly profiles: ReadonlyArray<BrowserProfile>;
   readonly profileId: string;
 }
@@ -29,6 +30,7 @@ const toBrowserDefaults = (settings: {
   readonly browserDefaultZoomFactor: number;
   readonly browserDefaultAppearance: PreviewAppearancePreference;
   readonly browserAutoShowFloatingPreview: boolean;
+  readonly browserDefaultAudioMuted: boolean;
   readonly browserProfiles: ReadonlyArray<BrowserProfile>;
   readonly browserDefaultProfileId: string;
 }): BrowserDefaults => {
@@ -38,6 +40,7 @@ const toBrowserDefaults = (settings: {
     zoomFactor: settings.browserDefaultZoomFactor,
     appearance: settings.browserDefaultAppearance,
     autoShowFloatingPreview: settings.browserAutoShowFloatingPreview,
+    audioMuted: settings.browserDefaultAudioMuted,
     profiles,
     profileId:
       profiles.find(
@@ -69,7 +72,11 @@ export function useBrowserDefaults(): BrowserDefaults {
 export function browserDefaultTabState(
   defaults: BrowserDefaults = getBrowserDefaults(),
 ): DesktopPreviewTabDefaults {
-  return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
+  return {
+    zoomFactor: defaults.zoomFactor,
+    colorScheme: defaults.appearance,
+    audioMuted: defaults.audioMuted,
+  };
 }
 
 export function browserDefaultOpenViewport(

@@ -2038,6 +2038,36 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("starts a tab muted when created with the mute default", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAudioWebContents(42);
+        fromId.mockReturnValue(guest.wc);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.createTab("tab_audio_default", { audioMuted: true });
+        expect(states.at(-1)?.audioMuted).toBe(true);
+
+        yield* manager.registerWebview("tab_audio_default", 42);
+        yield* Effect.yieldNow;
+
+        expect(guest.setAudioMuted).toHaveBeenCalledWith(true);
+        expect(guest.setAudioMuted).not.toHaveBeenCalledWith(false);
+        expect(states.at(-1)?.audioMuted).toBe(true);
+
+        yield* manager.setAudioMuted("tab_audio_default", false);
+
+        expect(guest.setAudioMuted).toHaveBeenLastCalledWith(false);
+        expect(states.at(-1)?.audioMuted).toBe(false);
+      }),
+    ),
+  );
+
   effectIt.effect("fails and rolls back when the guest refuses a mute", () =>
     withManager((manager) =>
       Effect.gen(function* () {
