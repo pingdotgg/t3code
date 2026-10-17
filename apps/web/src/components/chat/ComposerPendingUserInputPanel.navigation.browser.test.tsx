@@ -8,8 +8,9 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
 
-vi.mock("../ChatMarkdown", () => ({
-  default: ({ text }: { text: string }) => <p>{text}</p>,
+vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
 }));
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
