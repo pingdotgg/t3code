@@ -1095,6 +1095,7 @@ describe("deriveMessagesTimelineRows", () => {
         id: "compaction-entry",
         createdAt: "2026-01-01T00:00:00Z",
         label: "Compacted context 899K → 19K tokens",
+        tokenCounts: null,
         active: false,
       },
     ]);
@@ -1148,6 +1149,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(completedRows.find((row) => row.kind === "context-compaction")).toMatchObject({
       active: false,
       label: "Context compacted 899K → 19K tokens",
+      tokenCounts: { before: "899K", after: "19K" },
     });
     expect(completedRows.at(-1)?.kind).toBe("thinking");
 

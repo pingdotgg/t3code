@@ -20,6 +20,7 @@ import {
   summarizeToolGroup,
   toolGroupAction,
   toolGroupSummaryKind,
+  contextCompactionTokenCounts,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
 export {
@@ -554,6 +555,7 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string;
       label: string;
+      tokenCounts: ReturnType<typeof contextCompactionTokenCounts>;
       active: boolean;
     }
   | {
@@ -1562,11 +1564,14 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       const active = workEntryIsInActiveRun(timelineEntry.entry);
       hasActiveCompaction ||= active;
+      const compaction = timelineEntry.entry.structuredPayload;
       nextRows.push({
         kind: "context-compaction",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         label: timelineEntry.entry.label,
+        tokenCounts:
+          compaction?.type === "compaction" ? contextCompactionTokenCounts(compaction) : null,
         active,
       });
       continue;
