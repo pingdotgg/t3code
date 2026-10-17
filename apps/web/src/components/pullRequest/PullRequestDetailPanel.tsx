@@ -14,10 +14,8 @@ import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
   type PullRequestAction,
-  type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestMergeMethod,
-  type PullRequestSummary,
   type PullRequestListEntry,
   type PullRequestUpdateMethod,
   type PullRequestRef,
@@ -400,21 +398,78 @@ function resolvePullRequestReference(
       };
 }
 
+function pullRequestRefKey(reference: PullRequestRef) {
+  return `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
+}
+
 function pullRequestDetailSummary(data: PullRequestDetail | null) {
   return data === null ? null : { ...data, checksState: pullRequestChecksState(data.checks) };
 }
 
-function useDisplayedPullRequestDetail(
-  resolvedCoreDetail: PullRequestDetail | null,
-  observedSummary: PullRequestSummary | null,
+/**
+ * Loads a pull request's detail and activity and merges them, with the snapshot cache, the shared
+ * summary and the list row, into the detail the panel shows.
+ */
+function usePullRequestDetail(
+  environmentId: EnvironmentId,
+  reference: PullRequestRef,
   listEntry: PullRequestListEntry | null,
-  activity: PullRequestActivity | null,
-  canWriteSourceControl: boolean,
 ) {
-  // Kept: hooks consume `detail` (the branch refs query keyed on `detail.workspaceRoot`, the stack
-  // query, the guide writer) and plain calls read it afterwards (`isStackedPullRequestBase`), so a
-  // body-level derivation gets no cache scope. A hook's return value is frozen and stays cached.
-  "use memo";
+  const scopeKey = `${environmentId}:${pullRequestRefKey(reference)}`;
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
+  const detailQuery = useEnvironmentQuery(
+    pullRequestEnvironment.detail({ environmentId, input: reference }),
+  );
+  const activityQuery = useEnvironmentQuery(
+    pullRequestEnvironment.activity({ environmentId, input: reference }),
+  );
+  const [cachedDetail, setCachedDetail] = useState(() =>
+    readPullRequestDetailSnapshot(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      environmentId,
+      reference,
+    ),
+  );
+  const [cachedDetailKey, setCachedDetailKey] = useState(scopeKey);
+  if (cachedDetailKey !== scopeKey) {
+    setCachedDetailKey(scopeKey);
+    setCachedDetail(
+      detailQuery.data ??
+        readPullRequestDetailSnapshot(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          environmentId,
+          reference,
+        ),
+    );
+  } else if (detailQuery.data !== null && detailQuery.data !== cachedDetail) {
+    setCachedDetail(detailQuery.data);
+  }
+  const saveDetailSnapshot = useEffectEvent((data: PullRequestDetail) => {
+    writePullRequestDetailSnapshot(
+      typeof window === "undefined" ? undefined : window.localStorage,
+      environmentId,
+      reference,
+      data,
+    );
+  });
+  useEffect(() => {
+    if (detailQuery.data !== null) saveDetailSnapshot(detailQuery.data);
+  }, [detailQuery.data]);
+  const detailSummary = pullRequestDetailSummary(detailQuery.data);
+  const observedSummary = useSharedPullRequestSummary(
+    environmentId,
+    reference,
+    detailSummary,
+    detailQuery.dataUpdatedAt,
+  );
+  const activity = activityQuery.data;
+  const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
+    live: detailQuery.data,
+    cached: cachedDetail,
+    reference,
+  });
+  // Every hook runs above this line: a hook between the merge and the panel's plain readers of
+  // `detail` would cost it its cache scope.
   const listSummary = listEntry === null ? null : pullRequestListEntryToSummary(listEntry);
   // The list row is also published to the shared cache, but only after this commit's layout
   // effects run, so it is compared directly rather than trusted to be there already.
@@ -480,7 +535,15 @@ function useDisplayedPullRequestDetail(
           commits: activity?.commits ?? [],
           reactions: activity?.reactions ?? [],
         };
-  return { sharedSummary, coreDetail, detail };
+  return {
+    canWriteSourceControl,
+    detailQuery,
+    activityQuery,
+    activity,
+    sharedSummary,
+    coreDetail,
+    detail,
+  };
 }
 
 function pullRequestMarkdownContext(
@@ -556,7 +619,7 @@ export function PullRequestDetailPanel({
     reference.repository,
     reference.number,
   );
-  const pullRequestKey = `${reference.projectId}:${reference.host ?? ""}:${reference.repository}#${reference.number}`;
+  const pullRequestKey = pullRequestRefKey(reference);
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
     listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
@@ -666,66 +729,16 @@ export function PullRequestDetailPanel({
   };
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const [handoff, setHandoff] = useState<string | null>(null);
-  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
-  const detailQuery = useEnvironmentQuery(
-    pullRequestEnvironment.detail({ environmentId, input: reference }),
-  );
-  const activityQuery = useEnvironmentQuery(
-    pullRequestEnvironment.activity({ environmentId, input: reference }),
-  );
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
-  const [cachedDetail, setCachedDetail] = useState(() =>
-    readPullRequestDetailSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      environmentId,
-      reference,
-    ),
-  );
-  const [cachedDetailKey, setCachedDetailKey] = useState(tabScopeKey);
-  if (cachedDetailKey !== tabScopeKey) {
-    setCachedDetailKey(tabScopeKey);
-    setCachedDetail(
-      detailQuery.data ??
-        readPullRequestDetailSnapshot(
-          typeof window === "undefined" ? undefined : window.localStorage,
-          environmentId,
-          reference,
-        ),
-    );
-  } else if (detailQuery.data !== null && detailQuery.data !== cachedDetail) {
-    setCachedDetail(detailQuery.data);
-  }
-  const saveDetailSnapshot = useEffectEvent((data: PullRequestDetail) => {
-    writePullRequestDetailSnapshot(
-      typeof window === "undefined" ? undefined : window.localStorage,
-      environmentId,
-      reference,
-      data,
-    );
-  });
-  useEffect(() => {
-    if (detailQuery.data !== null) saveDetailSnapshot(detailQuery.data);
-  }, [detailQuery.data]);
-  const resolvedCoreDetail = resolveDisplayedPullRequestDetail({
-    live: detailQuery.data,
-    cached: cachedDetail,
-    reference,
-  });
-  const detailSummary = pullRequestDetailSummary(detailQuery.data);
-  const observedSummary = useSharedPullRequestSummary(
-    environmentId,
-    reference,
-    detailSummary,
-    detailQuery.dataUpdatedAt,
-  );
-  const activity = activityQuery.data;
-  const { sharedSummary, coreDetail, detail } = useDisplayedPullRequestDetail(
-    resolvedCoreDetail,
-    observedSummary,
-    matchingListEntry,
-    activity,
+  const {
     canWriteSourceControl,
-  );
+    detailQuery,
+    activityQuery,
+    activity,
+    sharedSummary,
+    coreDetail,
+    detail,
+  } = usePullRequestDetail(environmentId, reference, matchingListEntry);
   const handoffSummary = detail ?? sharedSummary;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({
