@@ -49,6 +49,11 @@ import * as ServerConfig from "../config.ts";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const gitProcesses = Semaphore.makeUnsafe(8);
 const WORKTREE_ADD_TIMEOUT_MS = 300_000;
+// The fetch before `git worktree add` downloads everything the remote gained
+// since the last fetch. On busy repositories (thousands of commits a day) that
+// alone passes 30s after a few days without fetching, so it gets the same
+// headroom as the checkout.
+const FETCH_REMOTE_TIMEOUT_MS = WORKTREE_ADD_TIMEOUT_MS;
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -3683,6 +3688,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const options = {
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
+        timeoutMs: FETCH_REMOTE_TIMEOUT_MS,
       };
       // Another fetch in the same repository, such as the background status
       // poll, can win the race for a remote-tracking ref. The loser fails, but

@@ -3953,8 +3953,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(started);
           if (failure === "timeout") {
-            yield* TestClock.adjust("31 seconds");
-            yield* TestClock.adjust("31 seconds");
+            yield* TestClock.adjust("301 seconds");
+            yield* TestClock.adjust("301 seconds");
           }
           const result = yield* Fiber.join(fetching);
           assert.isTrue(Result.isFailure(result));
@@ -3970,6 +3970,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             );
           }
         }),
+    );
+
+    it.effect("allows remote fetches to run longer than the default command timeout", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchStarted = yield* Deferred.make<void>();
+        const delayedFetchSpawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (ChildProcess.isStandardCommand(command) && command.args[0] === "fetch") {
+              yield* Deferred.succeed(fetchStarted, undefined);
+              yield* Effect.sleep("31 seconds");
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, delayedFetchSpawner),
+          Effect.provide(layerServerConfig),
+        );
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", initialBranch]);
+        yield* git(cwd, ["update-ref", "-d", `refs/remotes/origin/${initialBranch}`]);
+
+        const fetching = yield* driver
+          .fetchRemote({ cwd, remoteName: "origin", refName: initialBranch })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(fetchStarted);
+        yield* TestClock.adjust("31 seconds");
+        yield* Fiber.join(fetching);
+
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          yield* git(cwd, ["rev-parse", initialBranch]),
+        );
+      }),
     );
 
     it.effect("creates a worktree from the latest fetched remote commit", () =>
