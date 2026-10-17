@@ -96,7 +96,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
 
-  const gitStatusQuery = useEnvironmentQuery(
+  const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
@@ -107,19 +107,18 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const repositoryKey = selectedThreadProject?.repositoryIdentity?.canonicalKey;
   const gitStatusForActions = useMemo(
-    () => resolveThreadGitStatus(gitStatusQuery.data, selectedThread?.pullRequests, repositoryKey),
-    [gitStatusQuery.data, selectedThread?.pullRequests, repositoryKey],
+    () => resolveThreadGitStatus(gitStatus.data, selectedThread?.pullRequests, repositoryKey),
+    [gitStatus.data, selectedThread?.pullRequests, repositoryKey],
   );
 
-  const currentBranchLabel =
-    gitStatusForActions?.refName ?? selectedThread?.branch ?? "Detached HEAD";
+  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatusForActions);
   const currentWorktreePath = selectedThreadWorktreePath;
   const gitOperationLabel = gitState.gitOperationLabel;
   const busy = gitOperationLabel !== null;
-  const isRepo = gitStatusForActions?.isRepo ?? true;
-  const hasPrimaryRemote = gitStatusForActions?.hasPrimaryRemote ?? false;
-  const isDefaultRef = gitStatusForActions?.isDefaultRef ?? false;
+  const isRepo = gitStatus.data?.isRepo ?? true;
+  const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
+  const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
   const menuItems = useMemo(
     () => (isRepo ? buildMenuItems(gitStatusForActions, busy, hasPrimaryRemote) : []),
@@ -167,7 +166,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         input.action === "commit_push_pr"
           ? input.action
           : null;
-      const branchName = gitStatusForActions?.refName;
+      const branchName = gitStatus.data?.refName;
       if (
         branchName &&
         confirmableAction &&
@@ -195,7 +194,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       canWriteSourceControl,
       environmentId,
       gitActions,
-      gitStatusForActions,
+      gitStatus.data,
       isDefaultRef,
       isInspector,
       navigation,
@@ -258,7 +257,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     [gitStatusForActions, menuItems],
   );
 
-  const behindCount = gitStatusForActions?.behindCount ?? 0;
+  const behindCount = gitStatus.data?.behindCount ?? 0;
 
   // Tying RefreshControl to the query's isPending flag left the spinner stuck
   // (the status query reports pending during quiet background refreshes too).
