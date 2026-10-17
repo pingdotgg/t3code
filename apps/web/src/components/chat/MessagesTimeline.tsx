@@ -177,6 +177,8 @@ import { McpAppFrame } from "./McpAppFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
+import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
+import { resolveCivilizationContextSettingsLink } from "./civilizationContextInspectorLink";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
@@ -2614,6 +2616,8 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             className="mt-1.5"
             projectedItem={row.projectedItem}
             message={row.message}
+            attemptId={row.attemptId}
+            providerTurnOrdinal={row.providerTurnOrdinal}
             showCopyButton={row.showAssistantCopyButton}
             copyStreaming={row.assistantCopyStreaming}
           />
@@ -2680,6 +2684,8 @@ function AssistantMetaTimelineRow({
         className="mt-0.5"
         projectedItem={row.projectedItem}
         message={row.message}
+        attemptId={row.attemptId}
+        providerTurnOrdinal={row.providerTurnOrdinal}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
         alwaysVisible
@@ -2692,6 +2698,8 @@ function AssistantMessageMeta({
   className,
   projectedItem,
   message,
+  attemptId,
+  providerTurnOrdinal,
   showCopyButton,
   copyStreaming,
   alwaysVisible = false,
@@ -2699,6 +2707,8 @@ function AssistantMessageMeta({
   className?: string;
   projectedItem?: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
   message: ChatMessage;
+  attemptId?: RunAttemptId | undefined;
+  providerTurnOrdinal?: number | undefined;
   showCopyButton: boolean;
   copyStreaming: boolean;
   alwaysVisible?: boolean;
@@ -2728,6 +2738,12 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
+      <CivilizationContextInspectionLink
+        projectedItem={projectedItem}
+        message={message}
+        attemptId={attemptId}
+        providerTurnOrdinal={providerTurnOrdinal}
+      />
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -2739,6 +2755,67 @@ function AssistantMessageMeta({
         </Tooltip>
       )}
     </div>
+  );
+}
+
+function CivilizationContextInspectionLink({
+  projectedItem,
+  message,
+  attemptId,
+  providerTurnOrdinal,
+}: {
+  readonly projectedItem?: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
+  readonly message: ChatMessage;
+  readonly attemptId?: RunAttemptId | undefined;
+  readonly providerTurnOrdinal?: number | undefined;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const sourceThreadId = projectedItem?.sourceThreadId ?? null;
+  const sourceThread = useThreadShell(
+    sourceThreadId === null ? null : scopeThreadRef(ctx.activeThreadEnvironmentId, sourceThreadId),
+  );
+  const sourceProjectId = sourceThread?.projectId ?? null;
+  const projectGroups = useSettingsProjectGroups();
+  const search = (() => {
+    if (
+      sourceThreadId === null ||
+      sourceProjectId === null ||
+      message.runId === null ||
+      attemptId === undefined ||
+      providerTurnOrdinal === undefined
+    ) {
+      return null;
+    }
+    return resolveCivilizationContextSettingsLink({
+      groups: projectGroups,
+      environmentId: ctx.activeThreadEnvironmentId,
+      projectId: sourceProjectId,
+      threadId: sourceThreadId,
+      runId: message.runId,
+      attemptId,
+      providerTurnOrdinal,
+    });
+  })();
+
+  if (search === null) return null;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Link
+            to="/settings/civilization"
+            search={search}
+            hash="civilization-context-inspector"
+            className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            aria-label="Inspect Civilization context for this turn"
+          >
+            <EyeIcon className="size-3.5" aria-hidden="true" />
+          </Link>
+        }
+      />
+      <TooltipPopup>Inspect Civilization context for this provider turn</TooltipPopup>
+    </Tooltip>
   );
 }
 

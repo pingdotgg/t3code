@@ -151,6 +151,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./state/civilization": {
+      "types": "./src/state/civilization.ts",
+      "default": "./src/state/civilization.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"

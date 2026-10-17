@@ -7,6 +7,7 @@ import {
   EventId,
   MessageId,
   NodeId,
+  ProjectId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
   type OrchestrationV2DomainEvent,
@@ -39,6 +40,7 @@ import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CivilizationContext from "../civilization/ContextService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -679,6 +681,221 @@ it.effect("rechecks run ownership immediately before calling the provider", () =
     assert.equal(yield* Ref.get(guardCalls), 2);
     assert.equal(yield* Ref.get(providerStarts), 0);
   }).pipe(Effect.provide(layerRunExecutionTest)),
+);
+
+it.effect("forwards Civilization turn context only after the ownership gate", () =>
+  Effect.gen(function* () {
+    const order = yield* Ref.make<ReadonlyArray<string>>([]);
+    const started = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+    const projectId = ProjectId.make("project:run-execution-civilization-context");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+
+    const runCase = (key: "packet" | "null" | "failed" | "provider-failed") =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(`thread:run-execution-civilization-${key}`);
+        const attemptId = RunAttemptId.make(`attempt:run-execution-civilization-${key}`);
+        const guardCalls = yield* Ref.make(0);
+        yield* RunExecutionService.RunExecutionServiceV2.pipe(
+          Effect.flatMap((runExecution) =>
+            runExecution.startRootRun({
+              commandId: CommandId.make(`command:run-execution-civilization-${key}`),
+              appThread: { id: threadId, projectId } as OrchestrationV2AppThread,
+              providerSessionId: ProviderSessionId.make(
+                `session:run-execution-civilization-${key}`,
+              ),
+              session: {
+                events: Stream.never,
+                startTurn: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  Ref.update(order, (entries) => [...entries, `${key}:start`]).pipe(
+                    Effect.andThen(Ref.update(started, (entries) => [...entries, input])),
+                    Effect.andThen(
+                      key === "provider-failed"
+                        ? Effect.fail(
+                            new ProviderAdapter.ProviderAdapterTurnStartError({
+                              driver,
+                              threadId,
+                              providerThreadId: ProviderThreadId.make(
+                                `provider-thread:run-execution-civilization-${key}`,
+                              ),
+                              runId: RunId.make(`run:run-execution-civilization-${key}`),
+                              cause: "provider start sentinel",
+                            }),
+                          )
+                        : Effect.void,
+                    ),
+                  ),
+              } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+              run: {
+                id: RunId.make(`run:run-execution-civilization-${key}`),
+                threadId,
+                ordinal: 1,
+                providerInstanceId,
+              } as OrchestrationV2Run,
+              rootNode: {
+                id: NodeId.make(`node:run-execution-civilization-${key}`),
+              } as OrchestrationV2ExecutionNode,
+              checkpointScope: {
+                id: CheckpointScopeId.make(`checkpoint-scope:run-execution-civilization-${key}`),
+              } as OrchestrationV2CheckpointScope,
+              providerThread: {
+                id: ProviderThreadId.make(`provider-thread:run-execution-civilization-${key}`),
+                driver,
+              } as OrchestrationV2ProviderThread,
+              attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+              attemptId,
+              providerTurnOrdinal: 1,
+              shouldStartProviderTurn: () =>
+                Ref.getAndUpdate(guardCalls, (calls) => calls + 1).pipe(
+                  Effect.tap((calls) =>
+                    Ref.update(order, (entries) => [...entries, `${key}:guard:${calls + 1}`]),
+                  ),
+                  Effect.flatMap((calls) =>
+                    key === "failed" && calls > 0
+                      ? Effect.die("ownership changed")
+                      : Effect.succeed(true),
+                  ),
+                ),
+              message: {
+                messageId: MessageId.make(`message:run-execution-civilization-${key}`),
+                text: "Use the current Civilization context.",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+              },
+              modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+              runtimePolicy: {
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: process.cwd(),
+              },
+            }),
+          ),
+        );
+      });
+
+    const layerTest = RunExecutionService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          McpAppModelContext.layerEmpty,
+          Layer.succeed(CivilizationContext.CivilizationContextService, {
+            listCapabilities: () => Effect.succeed([]),
+            forTurn: (input) =>
+              Ref.update(order, (entries) => [
+                ...entries,
+                `${input.threadId.endsWith("null") ? "null" : "packet"}:context`,
+              ]).pipe(
+                Effect.as(
+                  input.threadId.endsWith("null")
+                    ? {
+                        capability: {
+                          providerInstanceId: input.providerInstanceId,
+                          support: "full" as const,
+                          contextInjection: true,
+                          keyedContextReplacement: true,
+                          actionablePromptRefresh: true,
+                          providerContinuationRefresh: true,
+                          messaging: false,
+                        },
+                        packet: null,
+                      }
+                    : {
+                        capability: {
+                          providerInstanceId: input.providerInstanceId,
+                          support: "full" as const,
+                          contextInjection: true,
+                          keyedContextReplacement: true,
+                          actionablePromptRefresh: true,
+                          providerContinuationRefresh: true,
+                          messaging: false,
+                        },
+                        packet: {
+                          revision: "civilization-revision-sentinel",
+                          text: "civilization packet sentinel",
+                          bytes: 29,
+                          reference: {
+                            referenceId: "context-reference:sentinel",
+                            projectId: input.projectId,
+                            threadId: input.threadId,
+                            runId: input.runId,
+                            attemptId: input.attemptId,
+                            providerTurnOrdinal: input.providerTurnOrdinal,
+                            providerInstanceId: input.providerInstanceId,
+                            environmentRevision: 1,
+                            projectRevision: 2,
+                            citizenRevision: 3,
+                            censusRevision: 4,
+                            notesRevision: 5,
+                            inboxRevision: 6,
+                            packetHash: "sentinel-hash",
+                            packetBytes: 29,
+                            selectedCitizenIds: [],
+                            selectedNoteIds: [],
+                            selectedInboxIds: [],
+                            createdAt: "2026-10-16T10:00:00.000Z",
+                          },
+                        },
+                      },
+                ),
+              ),
+            forExplicitRead: () => Effect.die("unused explicit Civilization context read"),
+            listInspections: () => Effect.die("unused Civilization inspection list"),
+            readInspection: () => Effect.die("unused Civilization inspection detail"),
+            markProviderStartAccepted: (input) =>
+              Ref.update(order, (entries) => [
+                ...entries,
+                `${String(input.attemptId).split("-").at(-1)}:mark-accepted`,
+              ]),
+            markProviderStartFailed: (input) =>
+              Ref.update(order, (entries) => [
+                ...entries,
+                `${String(input.attemptId).split("-").at(-1)}:mark-failed`,
+              ]),
+          }),
+          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(EventSink.EventSinkV2)({}),
+          IdAllocator.layer,
+          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            ingestNormalized: () => Effect.succeed([]),
+          }),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      yield* runCase("packet");
+      yield* runCase("null");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runCase("failed"))));
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runCase("provider-failed"))));
+    }).pipe(Effect.provide(layerTest));
+
+    const calls = yield* Ref.get(order);
+    assert.deepEqual(calls, [
+      "packet:guard:1",
+      "packet:guard:2",
+      "packet:context",
+      "packet:start",
+      "packet:mark-accepted",
+      "null:guard:1",
+      "null:guard:2",
+      "null:context",
+      "null:start",
+      "null:mark-accepted",
+      "failed:guard:1",
+      "failed:guard:2",
+      "provider-failed:guard:1",
+      "provider-failed:guard:2",
+      "packet:context",
+      "provider-failed:start",
+      "failed:mark-failed",
+    ]);
+    const inputs = yield* Ref.get(started);
+    assert.deepEqual(inputs[0]?.civilizationPacket, {
+      revision: "civilization-revision-sentinel",
+      text: "civilization packet sentinel",
+    });
+    assert.isUndefined(inputs[1]?.civilizationPacket);
+  }),
 );
 
 it.effect("passes the thread's MCP app context to the provider under a safe key", () =>

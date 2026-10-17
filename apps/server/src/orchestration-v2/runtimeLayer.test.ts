@@ -1724,6 +1724,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const projectionAfterStaleWorkspaceUpdate = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.branch, "feature/v2");
       assert.equal(projectionAfterStaleWorkspaceUpdate.thread.worktreePath, "/tmp/t3-v2-worktree");
+      const staleTitleUpdate = yield* orchestrator
+        .dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("runtime-layer-lifecycle-stale-title"),
+          threadId,
+          title: "Civilization restore should not win",
+          expectedTitle: "Lifecycle thread",
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(staleTitleUpdate, Orchestrator.OrchestratorDispatchError);
+      const projectionAfterStaleTitleUpdate = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projectionAfterStaleTitleUpdate.thread.title, "Renamed lifecycle thread");
       const pullRequestSnapshot = yield* orchestrator.getShellSnapshot();
       const pullRequest = {
         projectId,

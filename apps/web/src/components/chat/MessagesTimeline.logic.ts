@@ -567,6 +567,8 @@ type MessagesTimelineRowContent =
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
+      attemptId?: RunAttemptId | undefined;
+      providerTurnOrdinal?: number | undefined;
       revertTurnCount?: number | undefined;
     }
   | {
@@ -577,6 +579,8 @@ type MessagesTimelineRowContent =
       message: ChatMessage;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
+      attemptId?: RunAttemptId | undefined;
+      providerTurnOrdinal?: number | undefined;
     }
   | {
       kind: "event";
@@ -1213,6 +1217,10 @@ function attachTrailingToolGroupsToAssistant(
       message: row.message,
       showAssistantCopyButton: row.showAssistantCopyButton,
       assistantCopyStreaming: row.assistantCopyStreaming,
+      ...(row.attemptId === undefined ? {} : { attemptId: row.attemptId }),
+      ...(row.providerTurnOrdinal === undefined
+        ? {}
+        : { providerTurnOrdinal: row.providerTurnOrdinal }),
     });
   }
 
@@ -1804,6 +1812,10 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
+      ...(timelineEntry.attempt === undefined ? {} : { attemptId: timelineEntry.attempt.id }),
+      ...(timelineEntry.providerTurnOrdinal === undefined
+        ? {}
+        : { providerTurnOrdinal: timelineEntry.providerTurnOrdinal }),
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
           ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)

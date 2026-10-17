@@ -543,6 +543,16 @@ try {
     modelSelection: {
       ...CLAUDE_MODEL_SELECTION,
       model: process.env.T3_CLAUDE_REPLAY_MODEL ?? CLAUDE_MODEL_SELECTION.model,
+      ...(process.env.T3_CLAUDE_REPLAY_EFFORT === undefined
+        ? {}
+        : {
+            options: [
+              {
+                id: "effort",
+                value: process.env.T3_CLAUDE_REPLAY_EFFORT,
+              },
+            ],
+          }),
     },
     cwd,
     ...(process.env.T3_CLAUDE_REPLAY_SESSION_ID === undefined

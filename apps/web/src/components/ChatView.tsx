@@ -2781,6 +2781,7 @@ export default function ChatView(props: ChatViewProps) {
           attempts: serverProjection.attempts,
           nodes: serverProjection.nodes,
           plans: serverProjection.plans,
+          providerTurns: serverProjection.providerTurns,
         }),
   });
   const draftTimelineEntries = optimisticUserMessages.map(

@@ -38,6 +38,17 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+
+export const recoverOptionalCivilizationStartup = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.failCause(cause)
+        : Effect.logWarning(
+            "Civilization startup catch-up failed; continuing host startup without optional catch-up.",
+          ).pipe(Effect.as(undefined)),
+    ),
+  );
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
@@ -47,6 +58,7 @@ import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as CivilizationCitizens from "./civilization/CitizenService.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -440,6 +452,7 @@ const make = (options?: StartupOptions) =>
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+    const civilizationCitizens = yield* CivilizationCitizens.CivilizationCitizenService;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
 
@@ -530,7 +543,33 @@ const make = (options?: StartupOptions) =>
             ),
           ),
         ),
-        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+        recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover).pipe(
+          Effect.tap(() =>
+            runStartupPhase(
+              "civilization.reconcile",
+              civilizationCitizens.reconcileExisting(),
+            ).pipe(
+              Effect.tap((summary) =>
+                summary.appliedEventCount === 0
+                  ? Effect.void
+                  : Effect.logInfo("Civilization lifecycle catch-up completed", summary),
+              ),
+              Effect.andThen(
+                runStartupPhase(
+                  "civilization.adopt-existing",
+                  civilizationCitizens.adoptExisting(),
+                ).pipe(
+                  Effect.tap((summary) =>
+                    summary.adopted === 0
+                      ? Effect.void
+                      : Effect.logInfo("Civilization existing-thread adoption resumed", summary),
+                  ),
+                ),
+              ),
+              recoverOptionalCivilizationStartup,
+            ),
+          ),
+        ),
         recoverDelegatedTasks: runStartupPhase(
           "orchestration-v2.delegated-tasks.recover",
           orchestrator.recoverDelegatedTasks,

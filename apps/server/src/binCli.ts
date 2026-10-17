@@ -13,6 +13,7 @@ import { authCommand } from "./cli/auth.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { connectCommand } from "./cli/connect.ts";
+import { civilizationCommand } from "./cli/civilization.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
@@ -75,6 +76,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       pairCommand,
       authCommand,
       browserCommand,
+      civilizationCommand,
       projectCommand,
       serviceCommand,
       updateCommand,

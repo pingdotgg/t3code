@@ -46,6 +46,9 @@ import {
 import {
   DpopFailureReason,
   AuthSessionId,
+  ProjectId,
+  RunAttemptId,
+  RunId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
@@ -57,12 +60,64 @@ import {
   OrchestrationV2ThreadTranscript,
 } from "./orchestrationV2.ts";
 import { Project, ProjectMutation, ProjectSnapshot } from "./project.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   PullRequestDiffInput,
   PullRequestDiffResult,
   PullRequestOperationError,
   PullRequestUnavailableError,
 } from "./pullRequest.ts";
+import {
+  CivilizationConfigDescription,
+  CivilizationConfigDiffResult,
+  CivilizationConfigExportResult,
+  CivilizationConfigImportRequest,
+  CivilizationConfigInvalidError,
+  CivilizationConfigConflictError,
+  CivilizationConfigResetRequest,
+  CivilizationConfigRevisionResult,
+  CivilizationConfigScope,
+  CivilizationConfigSetRequest,
+  CivilizationConfigValidateRequest,
+  CivilizationConfigValidationResult,
+  CivilizationAgentAccessError,
+  CivilizationAdminMailPage,
+  CivilizationAdminMailRecord,
+  CivilizationCensusCursor,
+  CivilizationCensusPage,
+  CivilizationCapabilitiesResult,
+  CivilizationCitizenNotFoundError,
+  CivilizationCitizenReassignmentPreview,
+  CivilizationCitizenReassignmentRequest,
+  CivilizationCitizenSummary,
+  CivilizationCitizenTitleRequest,
+  CivilizationCitizenTitleResult,
+  CivilizationEffectiveConfig,
+  CivilizationKnowledgeConflictError,
+  CivilizationInboxCursor,
+  CivilizationContextInspectionCursor,
+  CivilizationContextInspectionDetail,
+  CivilizationContextInspectionId,
+  CivilizationContextInspectionOutcome,
+  CivilizationContextInspectionPage,
+  CivilizationMailConflictError,
+  CivilizationMailInvalidError,
+  CivilizationMailNotFoundError,
+  CivilizationMessageId,
+  CivilizationNoteBody,
+  CivilizationNoteId,
+  CivilizationNoteNotFoundError,
+  CivilizationNotesCursor,
+  CivilizationNotesPage,
+  CivilizationOperationInvalidError,
+  CivilizationProjectDataExport,
+  CivilizationPurgeApplyRequest,
+  CivilizationPurgeConflictError,
+  CivilizationPurgePreview,
+  CivilizationPurgeProgress,
+  CivilizationStatus,
+  CivilizationUnavailableError,
+} from "./civilization.ts";
 import {
   RelayCloudEnvironmentHealthRequest,
   RelayCloudMintCredentialRequest,
@@ -650,6 +705,372 @@ class EnvironmentProjectsHttpApi extends HttpApiGroup.make("projects")
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 
+const EnvironmentCivilizationErrors = [
+  EnvironmentScopeRequiredError,
+  EnvironmentInternalError,
+  CivilizationConfigInvalidError,
+  CivilizationConfigConflictError,
+  CivilizationUnavailableError,
+  CivilizationOperationInvalidError,
+  CivilizationCitizenNotFoundError,
+  CivilizationPurgeConflictError,
+] as const;
+
+const EnvironmentCivilizationKnowledgeReadErrors = [
+  ...EnvironmentCivilizationErrors,
+  EnvironmentHttpBadRequestError,
+  CivilizationAgentAccessError,
+  CivilizationKnowledgeConflictError,
+  CivilizationNoteNotFoundError,
+] as const;
+
+const EnvironmentCivilizationAdminMailErrors = [
+  ...EnvironmentCivilizationErrors,
+  EnvironmentHttpBadRequestError,
+  CivilizationMailInvalidError,
+  CivilizationMailConflictError,
+  CivilizationMailNotFoundError,
+] as const;
+
+const EnvironmentCivilizationCensusQuery = Schema.Struct({
+  projectId: ProjectId,
+  cursor: Schema.optionalKey(CivilizationCensusCursor),
+  limit: Schema.optionalKey(TrimmedNonEmptyString),
+});
+
+const EnvironmentCivilizationNotesQuery = Schema.Struct({
+  projectId: ProjectId,
+  cursor: Schema.optionalKey(CivilizationNotesCursor),
+  limit: Schema.optionalKey(TrimmedNonEmptyString),
+  includeResolved: Schema.optionalKey(Schema.Literals(["true", "false"])),
+});
+
+const EnvironmentCivilizationNoteParams = Schema.Struct({
+  noteId: CivilizationNoteId,
+});
+
+const EnvironmentCivilizationNoteReadQuery = Schema.Struct({
+  projectId: ProjectId,
+});
+
+const EnvironmentCivilizationInboxQuery = Schema.Struct({
+  projectId: ProjectId,
+  cursor: Schema.optionalKey(CivilizationInboxCursor),
+  limit: Schema.optionalKey(TrimmedNonEmptyString),
+});
+
+const EnvironmentCivilizationInboxMessageParams = Schema.Struct({
+  messageId: CivilizationMessageId,
+});
+
+const EnvironmentCivilizationInboxMessageQuery = Schema.Struct({
+  projectId: ProjectId,
+});
+
+const EnvironmentCivilizationProjectQuery = Schema.Struct({
+  projectId: ProjectId,
+});
+
+const EnvironmentCivilizationContextInspectionQuery = Schema.Struct({
+  projectId: ProjectId,
+  threadId: Schema.optionalKey(ThreadId),
+  providerInstanceId: Schema.optionalKey(ProviderInstanceId),
+  outcome: Schema.optionalKey(CivilizationContextInspectionOutcome),
+  runId: Schema.optionalKey(RunId),
+  attemptId: Schema.optionalKey(RunAttemptId),
+  providerTurnOrdinal: Schema.optionalKey(TrimmedNonEmptyString),
+  cursor: Schema.optionalKey(CivilizationContextInspectionCursor),
+  limit: Schema.optionalKey(TrimmedNonEmptyString),
+});
+
+const EnvironmentCivilizationContextInspectionParams = Schema.Struct({
+  inspectionId: CivilizationContextInspectionId,
+});
+
+const EnvironmentCivilizationContextInspectionReadQuery = Schema.Struct({
+  projectId: ProjectId,
+});
+
+const CivilizationRetentionPolicy = Schema.Struct({
+  noteRetentionDays: Schema.Number,
+  diagnosticRetentionDays: Schema.Number,
+  tombstoneRetentionDays: Schema.Number,
+});
+
+const CivilizationRetentionPreview = Schema.Struct({
+  projectId: ProjectId,
+  previewToken: TrimmedNonEmptyString,
+  environmentRevision: Schema.Number,
+  projectRevision: Schema.Number,
+  current: CivilizationRetentionPolicy,
+  configured: CivilizationRetentionPolicy,
+  proposed: CivilizationRetentionPolicy,
+  newlyEligible: Schema.Struct({
+    resolvedNotes: Schema.Number,
+    resolvedNoteBodyBytes: Schema.Number,
+    diagnosticReferences: Schema.Number,
+    diagnosticInspections: Schema.Number,
+    tombstones: Schema.Number,
+  }),
+  samples: Schema.Struct({
+    noteIds: Schema.Array(Schema.String),
+    contextReferenceIds: Schema.Array(Schema.String),
+    contextInspectionIds: Schema.Array(Schema.String),
+    tombstoneThreadIds: Schema.Array(Schema.String),
+    partial: Schema.Boolean,
+  }),
+  warnings: Schema.Array(Schema.String),
+});
+
+const CivilizationRetentionApplyRequest = Schema.Struct({
+  projectId: ProjectId,
+  expectedPreviewToken: TrimmedNonEmptyString,
+});
+
+const CivilizationRetentionApplyResult = Schema.Struct({
+  projectId: ProjectId,
+  applied: CivilizationRetentionPolicy,
+  newlyEligible: Schema.Struct({
+    resolvedNotes: Schema.Number,
+    resolvedNoteBodyBytes: Schema.Number,
+    diagnosticReferences: Schema.Number,
+    diagnosticInspections: Schema.Number,
+    tombstones: Schema.Number,
+  }),
+});
+
+class EnvironmentCivilizationHttpApi extends HttpApiGroup.make("civilization")
+  .add(
+    HttpApiEndpoint.get("status", "/api/civilization/status", {
+      headers: OptionalBearerHeaders,
+      query: CivilizationConfigScope,
+      success: CivilizationStatus,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("capabilities", "/api/civilization/capabilities", {
+      headers: OptionalBearerHeaders,
+      success: CivilizationCapabilitiesResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("configDescribe", "/api/civilization/config/describe", {
+      headers: OptionalBearerHeaders,
+      success: CivilizationConfigDescription,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("configGet", "/api/civilization/config", {
+      headers: OptionalBearerHeaders,
+      query: CivilizationConfigScope,
+      success: CivilizationEffectiveConfig,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("configValidate", "/api/civilization/config/validate", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationConfigValidateRequest,
+      success: CivilizationConfigValidationResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("configDiff", "/api/civilization/config/diff", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationConfigValidateRequest,
+      success: CivilizationConfigDiffResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("configSet", "/api/civilization/config/set", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationConfigSetRequest,
+      success: CivilizationConfigRevisionResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("configReset", "/api/civilization/config/reset", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationConfigResetRequest,
+      success: CivilizationConfigRevisionResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("configImport", "/api/civilization/config/import", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationConfigImportRequest,
+      success: CivilizationConfigRevisionResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("configExport", "/api/civilization/config/export", {
+      headers: OptionalBearerHeaders,
+      query: CivilizationConfigScope,
+      success: CivilizationConfigExportResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "citizenReassignmentPreview",
+      "/api/civilization/citizens/reassignment/preview",
+      {
+        headers: OptionalBearerHeaders,
+        payload: CivilizationCitizenReassignmentRequest,
+        success: CivilizationCitizenReassignmentPreview,
+        error: EnvironmentCivilizationErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "citizenReassignmentApply",
+      "/api/civilization/citizens/reassignment/apply",
+      {
+        headers: OptionalBearerHeaders,
+        payload: CivilizationCitizenReassignmentRequest,
+        success: CivilizationCitizenSummary,
+        error: EnvironmentCivilizationErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("citizenTitleRestore", "/api/civilization/citizens/title/restore", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationCitizenTitleRequest,
+      success: CivilizationCitizenTitleResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("citizenTitleReclaim", "/api/civilization/citizens/title/reclaim", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationCitizenTitleRequest,
+      success: CivilizationCitizenTitleResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("census", "/api/civilization/census", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationCensusQuery,
+      success: CivilizationCensusPage,
+      error: EnvironmentCivilizationKnowledgeReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("noteList", "/api/civilization/notes", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationNotesQuery,
+      success: CivilizationNotesPage,
+      error: EnvironmentCivilizationKnowledgeReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("noteRead", "/api/civilization/notes/:noteId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentCivilizationNoteParams,
+      query: EnvironmentCivilizationNoteReadQuery,
+      success: CivilizationNoteBody,
+      error: EnvironmentCivilizationKnowledgeReadErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("inboxList", "/api/civilization/inbox", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationInboxQuery,
+      success: CivilizationAdminMailPage,
+      error: EnvironmentCivilizationAdminMailErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("inboxRead", "/api/civilization/inbox/:messageId", {
+      headers: OptionalBearerHeaders,
+      params: EnvironmentCivilizationInboxMessageParams,
+      query: EnvironmentCivilizationInboxMessageQuery,
+      success: CivilizationAdminMailRecord,
+      error: EnvironmentCivilizationAdminMailErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("contextInspectionList", "/api/civilization/context-inspections", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationContextInspectionQuery,
+      success: CivilizationContextInspectionPage,
+      error: [...EnvironmentCivilizationErrors, EnvironmentHttpBadRequestError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get(
+      "contextInspectionRead",
+      "/api/civilization/context-inspections/:inspectionId",
+      {
+        headers: OptionalBearerHeaders,
+        params: EnvironmentCivilizationContextInspectionParams,
+        query: EnvironmentCivilizationContextInspectionReadQuery,
+        success: Schema.NullOr(CivilizationContextInspectionDetail),
+        error: [...EnvironmentCivilizationErrors, EnvironmentHttpBadRequestError],
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("dataExport", "/api/civilization/export", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationProjectQuery,
+      success: CivilizationProjectDataExport,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("purgePreview", "/api/civilization/purge/preview", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationProjectQuery,
+      success: CivilizationPurgePreview,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("purgeApply", "/api/civilization/purge/apply", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationPurgeApplyRequest,
+      success: CivilizationPurgeProgress,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("retentionGet", "/api/civilization/retention", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationProjectQuery,
+      success: CivilizationRetentionPolicy,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("retentionPreview", "/api/civilization/retention/preview", {
+      headers: OptionalBearerHeaders,
+      query: EnvironmentCivilizationProjectQuery,
+      success: CivilizationRetentionPreview,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("retentionApply", "/api/civilization/retention/apply", {
+      headers: OptionalBearerHeaders,
+      payload: CivilizationRetentionApplyRequest,
+      success: CivilizationRetentionApplyResult,
+      error: EnvironmentCivilizationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
+/** Large, compressible pull-request payloads travel over HTTP rather than the RPC socket. */
 class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
   HttpApiEndpoint.post("diff", "/api/pull-requests/diff", {
     headers: OptionalBearerHeaders,
@@ -757,5 +1178,6 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentProjectsHttpApi)
+  .add(EnvironmentCivilizationHttpApi)
   .add(EnvironmentConnectHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}

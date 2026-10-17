@@ -11,6 +11,7 @@ import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as CivilizationCitizens from "./civilization/CitizenService.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -41,6 +42,7 @@ it.effect("parks automatic pull until activation without delaying command readin
       const commitTrial = yield* Deferred.make<void>();
       const statusCalled = yield* Deferred.make<string>();
       const statusInterrupted = yield* Deferred.make<void>();
+      const civilizationAdoptionCompleted = yield* Deferred.make<void>();
       const cwd = "/auto-pull-project";
       const updatedAt = "2026-01-01T00:00:00.000Z";
       const snapshot = {
@@ -114,10 +116,26 @@ it.effect("parks automatic pull until activation without delaying command readin
           prepareForShutdown: Effect.void,
           reconcile: () => Effect.succeed(recovery),
         }),
+        Layer.mock(CivilizationCitizens.CivilizationCitizenService)({
+          reconcileExisting: () =>
+            Effect.succeed({ citizenCount: 0, caughtUpCitizenCount: 0, appliedEventCount: 0 }),
+          adoptExisting: () =>
+            Deferred.succeed(civilizationAdoptionCompleted, undefined).pipe(
+              Effect.as({ candidates: 0, adopted: 0, skipped: 0 }),
+            ),
+        }),
         Layer.mock(Orchestrator.OrchestratorV2)({ recoverDelegatedTasks: Effect.void }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ shutdown: Effect.void }),
         Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ start: () => Effect.void }),
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.never }),
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runOnce: Deferred.isDone(civilizationAdoptionCompleted).pipe(
+            Effect.flatMap((done) =>
+              done
+                ? Effect.never
+                : Effect.die("effect worker started before Civilization adoption resume"),
+            ),
+          ),
+        }),
         Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({
           publish: (event) => Effect.succeed({ ...event, sequence: 1 }),
         }),
@@ -185,6 +203,7 @@ it.effect("parks automatic pull until activation without delaying command readin
         yield* Deferred.await(activation);
         expect(yield* Deferred.await(statusCalled)).toBe(cwd);
         yield* startup.awaitCommandReady;
+        expect(yield* Deferred.isDone(civilizationAdoptionCompleted)).toBe(true);
       }).pipe(
         Effect.provide(
           ServerRuntimeStartup.layerWithOptions({

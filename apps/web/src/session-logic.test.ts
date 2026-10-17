@@ -7,6 +7,7 @@ import {
   PlanId,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   ScheduledTaskId,
@@ -42,6 +43,95 @@ import {
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
 import type { ChatMessage } from "./types";
+
+describe("Civilization timeline inspection identity", () => {
+  it("preserves the exact run attempt and provider-turn ordinal on projected messages", () => {
+    const now = DateTime.makeUnsafe("2026-10-16T22:15:00.000Z");
+    const threadId = ThreadId.make("thread-context-inspector-link");
+    const runId = RunId.make("run-context-inspector-link");
+    const attemptId = RunAttemptId.make("attempt-context-inspector-link");
+    const nodeId = NodeId.make("node-context-inspector-link");
+    const providerThreadId = ProviderThreadId.make("provider-thread-context-inspector-link");
+    const providerTurnId = ProviderTurnId.make("provider-turn-context-inspector-link");
+    const item = {
+      id: TurnItemId.make("item-context-inspector-link"),
+      threadId,
+      runId,
+      nodeId,
+      providerThreadId,
+      providerTurnId,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "assistant_message" as const,
+      messageId: MessageId.make("message-context-inspector-link"),
+      text: "done",
+      streaming: false,
+    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "assistant_message" }>;
+    const attempt: OrchestrationV2RunAttempt = {
+      id: attemptId,
+      runId,
+      attemptOrdinal: 1,
+      rootNodeId: nodeId,
+      providerInstanceId: ProviderInstanceId.make("codex-main"),
+      providerThreadId,
+      providerTurnId,
+      reason: "initial",
+      status: "completed",
+      startedAt: now,
+      completedAt: now,
+    };
+    const providerTurn = {
+      id: providerTurnId,
+      providerThreadId,
+      nodeId,
+      runAttemptId: attemptId,
+      nativeTurnRef: null,
+      ordinal: 3,
+      status: "completed" as const,
+      startedAt: now,
+      completedAt: now,
+    };
+    const [entry] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          item,
+          position: 0,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+        },
+      ],
+      optimisticMessages: [],
+      attempts: [attempt],
+      providerTurns: [providerTurn],
+    });
+    expect(entry?.attempt?.id).toBe(attemptId);
+    expect(entry?.providerTurnOrdinal).toBe(3);
+
+    const [mismatch] = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          item,
+          position: 0,
+          visibility: "local",
+          sourceThreadId: threadId,
+          sourceItemId: item.id,
+        },
+      ],
+      optimisticMessages: [],
+      attempts: [attempt],
+      providerTurns: [{ ...providerTurn, runAttemptId: RunAttemptId.make("attempt-other") }],
+    });
+    expect(mismatch?.attempt?.id).toBe(attemptId);
+    expect(mismatch?.providerTurnOrdinal).toBeUndefined();
+  });
+});
 
 describe("V2 session presentation", () => {
   it("uses run status as the settlement boundary", () => {

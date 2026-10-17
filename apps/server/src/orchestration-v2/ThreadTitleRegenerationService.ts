@@ -1,10 +1,10 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  ThreadId,
   type ChatAttachment,
   type MessageId,
   type ServerSettingsError,
-  type ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -21,6 +22,25 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 import { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
 export { formatThreadTitleContext } from "@t3tools/provider-core/server/threadTitleContext";
+
+export class ThreadTitleRegenerationTransformError extends Schema.TaggedError<ThreadTitleRegenerationTransformError>()(
+  "ThreadTitleRegenerationTransformError",
+  {
+    threadId: ThreadId,
+    requestId: CommandId,
+    cause: Schema.Defect(),
+  },
+) {}
+
+export class ThreadTitleRegenerationTransform extends Context.Reference<{
+  readonly transform: (input: {
+    readonly threadId: ThreadId;
+    readonly requestId: CommandId;
+    readonly generatedTitle: string;
+  }) => Effect.Effect<string, ThreadTitleRegenerationTransformError>;
+}>("t3/orchestration-v2/ThreadTitleRegenerationTransform", {
+  defaultValue: () => ({ transform: (input) => Effect.succeed(input.generatedTitle) }),
+}) {}
 
 export class ThreadTitleRegenerationService extends Context.Service<
   ThreadTitleRegenerationService,
@@ -46,6 +66,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const titleTransform = yield* ThreadTitleRegenerationTransform;
 
   const complete = (input: {
     readonly threadId: ThreadId;
@@ -141,9 +162,27 @@ const make = Effect.gen(function* () {
     if (outcome.type === "stale") {
       return;
     }
+    const transformedTitle =
+      outcome.title === undefined
+        ? undefined
+        : yield* titleTransform
+            .transform({
+              threadId: input.threadId,
+              requestId: input.requestId,
+              generatedTitle: outcome.title,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Thread title transform failed", {
+                  threadId: input.threadId,
+                  requestId: input.requestId,
+                  cause,
+                }).pipe(Effect.as(outcome.title!)),
+              ),
+            );
     yield* complete({
       ...input,
-      ...(outcome.title === undefined ? {} : { title: outcome.title }),
+      ...(transformedTitle === undefined ? {} : { title: transformedTitle }),
     });
   });
 

@@ -66,6 +66,13 @@ import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
 import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
+import Migration0064 from "./Migrations/064_Civilization.ts";
+import Migration0065 from "./Migrations/065_CivilizationKnowledge.ts";
+import Migration0066 from "./Migrations/066_CivilizationMail.ts";
+import Migration0067 from "./Migrations/067_CivilizationOperations.ts";
+import Migration0068 from "./Migrations/068_CivilizationContextInspection.ts";
+import Migration0069 from "./Migrations/069_CivilizationPersonalityV2.ts";
+import Migration0070 from "./Migrations/070_CivilizationContextInspectionReferenceSync.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -132,6 +139,13 @@ export const migrationEntries = [
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
   [63, "DropUnusedV1Projections", Migration0063],
+  [64, "Civilization", Migration0064],
+  [65, "CivilizationKnowledge", Migration0065],
+  [66, "CivilizationMail", Migration0066],
+  [67, "CivilizationOperations", Migration0067],
+  [68, "CivilizationContextInspection", Migration0068],
+  [69, "CivilizationPersonalityV2", Migration0069],
+  [70, "CivilizationContextInspectionReferenceSync", Migration0070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -21,6 +21,7 @@ import {
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -76,6 +77,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/civilization": UsersIcon,
   "/settings/diagnostics": Settings2Icon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,

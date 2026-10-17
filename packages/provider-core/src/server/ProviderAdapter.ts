@@ -421,6 +421,15 @@ export interface ProviderAdapterV2TurnInput {
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+  /**
+   * Bounded Civilization packet for this turn: the latest self-describing
+   * snapshot (revision header included in `text`). Adapters translate it per
+   * turn; absence means the feature is disabled or the thread is unadopted.
+   */
+  readonly civilizationPacket?: {
+    readonly revision: string;
+    readonly text: string;
+  };
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -633,6 +642,12 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
+    /** Adapter-owned description of how a Civilization packet enters one native provider turn. */
+    readonly civilizationContextTransport?: {
+      readonly kind: string;
+      readonly description: string;
+      readonly trust: "untrusted";
+    };
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error

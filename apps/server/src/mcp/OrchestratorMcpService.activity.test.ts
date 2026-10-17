@@ -603,3 +603,129 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     expect(stopped.code).toBe("parent_not_active");
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
+
+it("readThread reads an inactive ancestor without starting it and rejects a deleted ancestor", async () => {
+  const ancestorThreadId = ThreadId.make("thread-mcp-orchestrator-ancestor");
+  const parentProjection = {
+    thread: {
+      ...baseThread({
+        threadId: parentThreadId,
+        title: "Child",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      lineage: {
+        parentThreadId: ancestorThreadId,
+        relationshipToParent: "fork" as const,
+        rootThreadId: ancestorThreadId,
+      },
+    },
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const ancestorProjection = {
+    thread: baseThread({
+      threadId: ancestorThreadId,
+      title: "Ancestor",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [],
+    visibleTurnItems: [
+      {
+        position: 0,
+        visibility: "direct",
+        sourceThreadId: ancestorThreadId,
+        sourceItemId: "ancestor-item-1",
+        item: {
+          id: "ancestor-item-1",
+          type: "assistant_message",
+          messageId: "ancestor-message-1",
+          status: "completed",
+          title: null,
+          text: "Ancestor history",
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    ],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  let deleted = false;
+  let sends = 0;
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            threadId === parentThreadId
+              ? Effect.succeed(parentProjection)
+              : threadId === ancestorThreadId
+                ? Effect.succeed(ancestorProjection)
+                : Effect.die(`unexpected thread ${threadId}`),
+          getThreadShell: (threadId) =>
+            Effect.succeed(
+              threadId === ancestorThreadId
+                ? ({
+                    ...ancestorProjection.thread,
+                    deletedAt: deleted ? now : null,
+                  } as unknown as OrchestrationV2ThreadShell)
+                : null,
+            ),
+          getProjectThreadRecords: (input) =>
+            input.threadId === ancestorThreadId && input.projectId === projectId
+              ? Effect.succeed(ancestorProjection)
+              : Effect.die(`unexpected thread ${input.threadId}`),
+          getTimelinePage: () =>
+            Effect.succeed({
+              items: ancestorProjection.visibleTurnItems,
+              totalItems: 1,
+              hasMore: false,
+            }),
+          sendToThread: () => {
+            sends += 1;
+            return Effect.die("readThread must not start or send to the ancestor");
+          },
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const read = yield* service.readThread(makeScope(), { threadId: ancestorThreadId, limit: 1 });
+    expect(read.items.map((item) => item.text)).toEqual(["Ancestor history"]);
+    expect(sends).toBe(0);
+
+    deleted = true;
+    const unavailable = yield* service
+      .readThread(makeScope(), { threadId: ancestorThreadId })
+      .pipe(Effect.flip);
+    expect(unavailable.code).toBe("thread_not_found");
+    expect(unavailable.message).toContain("no longer available");
+    expect(sends).toBe(0);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});

@@ -53,6 +53,16 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import { civilizationPersistenceParticipant } from "../civilization/PersistenceParticipant.ts";
+import * as CivilizationConfig from "../civilization/ConfigService.ts";
+import * as CivilizationCitizens from "../civilization/CitizenService.ts";
+import * as CivilizationAdministration from "../civilization/AdministrationService.ts";
+import * as CivilizationContext from "../civilization/ContextService.ts";
+import * as CivilizationKnowledge from "../civilization/KnowledgeService.ts";
+import * as CivilizationMailCleanup from "../civilization/MailCleanupService.ts";
+import * as CivilizationMail from "../civilization/MailService.ts";
+import * as CivilizationOperations from "../civilization/OperationsService.ts";
+import * as CivilizationTitleOwnership from "../civilization/TitleOwnership.ts";
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -80,11 +90,24 @@ const layerStores = Layer.mergeAll(
   TurnItemPositionStore.layer,
 );
 
-export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));
+const layerCivilizationPersistenceParticipants = Layer.succeed(
+  EventSink.EventSinkPersistenceParticipants,
+  [civilizationPersistenceParticipant],
+);
+
+export const layerEventSink = EventSink.layerFromStores.pipe(
+  Layer.provide(layerStores),
+  Layer.provide(layerCivilizationPersistenceParticipants),
+);
 const layerEventSinkProvided = layerEventSink;
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStores),
 );
+const layerCivilizationConfigProvided = CivilizationConfig.layer;
+const layerCivilizationCitizensProvided = CivilizationCitizens.layer.pipe(
+  Layer.provide(layerStores),
+);
+const layerCivilizationKnowledgeProvided = CivilizationKnowledge.layer;
 const layerLegacyV1ThreadImporterProvided = LegacyV1ThreadImporter.layer.pipe(
   Layer.provide(layerEventSinkProvided),
 );
@@ -122,6 +145,30 @@ const layerContextHandoffServiceProvided = ContextHandoffService.layer.pipe(
 
 const layerProviderAdapterRegistryProvided =
   ProviderAdapterRegistry.layerFromProviderInstanceRegistry;
+const layerCivilizationMailProvided = CivilizationMail.layer.pipe(
+  Layer.provide(layerProviderAdapterRegistryProvided),
+);
+const layerCivilizationOperationsProvided = CivilizationOperations.layer.pipe(
+  Layer.provide(layerCivilizationConfigProvided),
+);
+const layerCivilizationMailCleanupProvided = CivilizationMailCleanup.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerCivilizationConfigProvided,
+      layerCivilizationMailProvided,
+      layerCivilizationOperationsProvided,
+    ),
+  ),
+);
+const layerCivilizationContextProvided = CivilizationContext.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerCivilizationConfigProvided,
+      layerProviderAdapterRegistryProvided,
+      layerCivilizationMailProvided,
+    ),
+  ),
+);
 const layerProviderSwitchServiceProvided = ProviderSwitchService.layer.pipe(
   Layer.provide(layerProviderAdapterRegistryProvided),
 );
@@ -155,6 +202,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
       layerEventSinkProvided,
       IdAllocator.layer,
       layerProviderEventIngestorProvided,
+      layerCivilizationContextProvided,
     ),
   ),
 );
@@ -256,6 +304,9 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
     ),
   ),
 );
+const layerCivilizationAdministrationProvided = CivilizationAdministration.layer.pipe(
+  Layer.provide(Layer.mergeAll(layerCivilizationConfigProvided, layerThreadManagementProvided)),
+);
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),
 );
@@ -300,7 +351,12 @@ const layerProviderContinuationWorkerProvided = ProviderContinuationService.laye
 );
 const layerThreadTitleRegenerationProvided = ThreadTitleRegenerationService.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(layerThreadManagementProvided, ProjectStore.layer, TextGeneration.layer),
+    Layer.mergeAll(
+      layerThreadManagementProvided,
+      ProjectStore.layer,
+      TextGeneration.layer,
+      CivilizationTitleOwnership.layerTitleTransform,
+    ),
   ),
 );
 const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
@@ -353,6 +409,13 @@ export const layer = Layer.mergeAll(
   layerProviderAuthServiceProvided,
   layerProviderRuntimeRecoveryProvided,
   layerProjectionMaintenanceProvided,
+  layerCivilizationConfigProvided,
+  layerCivilizationCitizensProvided,
+  layerCivilizationKnowledgeProvided,
+  layerCivilizationMailProvided,
+  layerCivilizationContextProvided,
+  layerCivilizationAdministrationProvided,
+  layerCivilizationOperationsProvided,
   layerLegacyV1ThreadImporterProvided,
 );
 
@@ -367,6 +430,7 @@ export const layerProduction = Layer.mergeAll(
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided)),
   ),
+  layerCivilizationMailCleanupProvided,
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),

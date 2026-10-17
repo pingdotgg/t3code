@@ -115,6 +115,24 @@ describe("searchSettings", () => {
     expect(searchSettings("administrative access")[0]?.id).toBe("connections-environment");
   });
 
+  it.each([
+    ["civilization", "civilization-status"],
+    ["name pool", "civilization-names"],
+    ["personality rendering", "civilization-personality"],
+    ["context packet", "civilization-context"],
+    ["agent mail", "civilization-messaging"],
+    ["civilization diagnostics", "civilization-diagnostics"],
+    ["provider capabilities", "civilization-providers"],
+    ["civilization inheritance", "civilization-config"],
+    ["citizen census", "civilization-citizens"],
+    ["resolved notes", "civilization-notes"],
+    ["retained mail body", "civilization-retained-mail"],
+    ["purge project data", "civilization-data-retention"],
+  ])("finds Civilization settings for %s", (query, id) => {
+    expect(searchSettings(query).map((item) => item.id)).toContain(id);
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === id)?.to).toBe("/settings/civilization");
+  });
+
   it("lists thread confirmations in panel order", () => {
     expect(searchSettings("confirmation").map((item) => item.id)).toEqual([
       "unpin-confirmation",

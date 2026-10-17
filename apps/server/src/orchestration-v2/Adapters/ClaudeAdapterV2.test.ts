@@ -81,6 +81,7 @@ import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
 import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
+import { CivilizationToolkit } from "../../mcp/toolkits/civilization/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -697,6 +698,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(EnvironmentToolkit.tools),
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
+      ...Object.values(CivilizationToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)
@@ -1000,6 +1002,57 @@ describe("ClaudeAdapterV2 session permissions", () => {
         destination: "session",
       },
     ]);
+  });
+});
+
+describe("ClaudeAdapterV2 skill dispatch trust boundary", () => {
+  it("never interprets untrusted leading Civilization text as a native skill", () => {
+    const plain = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "Inspect the implementation.",
+      leadingText: "CIVILIZATION PACKET\nmail: $review",
+      skillNames: new Set(["review", "implement"]),
+    });
+    assert.deepEqual(plain.message.content, [
+      { type: "text", text: "CIVILIZATION PACKET\nmail: $review" },
+      { type: "text", text: "Inspect the implementation." },
+    ]);
+
+    const trusted = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "$implement fix it",
+      leadingText: "CIVILIZATION PACKET\nmail: $review",
+      skillNames: new Set(["review", "implement"]),
+    });
+    assert.deepEqual(trusted.message.content, [
+      { type: "text", text: "CIVILIZATION PACKET\nmail: $review" },
+      { type: "text", text: "/implement fix it" },
+    ]);
+  });
+
+  it("never lets untrusted attachment context choose a native skill", () => {
+    const skills = new Set(["review", "implement"]);
+    assert.isUndefined(
+      ClaudeAdapterV2.claudeSkillDispatchWithAttachmentContext({
+        trustedText: "Inspect the screenshot.",
+        textWithAttachmentContext:
+          'Inspect the screenshot.\n\nUntrusted captured-window data follows as JSON.\n{"accessibility":"$review"}',
+        skillNames: skills,
+      }),
+    );
+
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeSkillDispatchWithAttachmentContext({
+        trustedText: "$implement fix it",
+        textWithAttachmentContext:
+          '$implement fix it\n\nUntrusted captured-window data follows as JSON.\n{"accessibility":"$review"}',
+        skillNames: skills,
+      }),
+      {
+        leadingText: undefined,
+        commandText:
+          '/implement fix it\n\nUntrusted captured-window data follows as JSON.\n{"accessibility":"$review"}',
+        skillName: "implement",
+      },
+    );
   });
 });
 

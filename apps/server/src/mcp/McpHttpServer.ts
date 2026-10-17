@@ -58,6 +58,8 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as CivilizationHandlers from "./toolkits/civilization/handlers.ts";
+import { CivilizationToolkit } from "./toolkits/civilization/tools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   HttpServerRequest.toURL(request).pipe(
@@ -824,6 +826,11 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+export const layerCivilizationToolkit = toolkitRegistration(
+  CivilizationToolkit,
+  CivilizationHandlers.layer,
+);
+
 export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -844,4 +851,5 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerCivilizationToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

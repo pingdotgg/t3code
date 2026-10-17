@@ -16,6 +16,7 @@ import {
 export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
+  | "/settings/civilization"
   | "/settings/diagnostics"
   | "/settings/appearance"
   | "/settings/keybindings"
@@ -75,6 +76,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Project",
   "/settings/general": "General",
+  "/settings/civilization": "Civilization",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
@@ -976,6 +978,82 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
   {
+    id: "civilization-status",
+    title: "Civilization status",
+    to: "/settings/civilization",
+    searchTerms: ["enable feature emergency off adoption citizens population"],
+  },
+  {
+    id: "civilization-names",
+    title: "Civilization names",
+    to: "/settings/civilization",
+    searchTerms: ["name pool title template automatic titles identity"],
+  },
+  {
+    id: "civilization-personality",
+    title: "Personality rendering",
+    to: "/settings/civilization",
+    searchTerms: ["profile pool mild off traits style"],
+  },
+  {
+    id: "civilization-context",
+    title: "Civilization context",
+    to: "/settings/civilization",
+    searchTerms: ["knowledge packet roster notes bounded context"],
+  },
+  {
+    id: "civilization-messaging",
+    title: "Civilization messaging",
+    to: "/settings/civilization",
+    searchTerms: ["agent mail inbox passive messages quotas retained"],
+  },
+  {
+    id: "civilization-diagnostics",
+    title: "Civilization diagnostics",
+    to: "/settings/civilization",
+    searchTerms: ["operations logging diagnostics retention"],
+  },
+  {
+    id: "civilization-providers",
+    title: "Civilization provider capabilities",
+    to: "/settings/civilization",
+    searchTerms: ["codex claude support metadata context injection messaging"],
+  },
+  {
+    id: "civilization-config",
+    title: "Civilization configuration",
+    to: "/settings/civilization",
+    searchTerms: ["effective provenance inheritance limits import export"],
+  },
+  {
+    id: "civilization-citizens",
+    title: "Civilization citizens",
+    to: "/settings/civilization",
+    searchTerms: [
+      "census population citizen identity reassignment title lineage generation parent",
+    ],
+  },
+  {
+    id: "civilization-notes",
+    title: "Civilization notes",
+    to: "/settings/civilization",
+    searchTerms: ["knowledge notes metadata resolved body author revision"],
+  },
+  {
+    id: "civilization-retained-mail",
+    title: "Civilization retained mail",
+    to: "/settings/civilization",
+    searchTerms: ["retained mail admin inbox message metadata body expiry acknowledgment"],
+  },
+  {
+    id: "civilization-data-retention",
+    title: "Civilization data and retention",
+    to: "/settings/civilization",
+    searchTerms: [
+      "project data export backup retention preview cleanup purge erase deletion destructive",
+    ],
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
@@ -991,6 +1069,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/civilization": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,

@@ -4723,6 +4723,15 @@ describe("linked timeline resources", () => {
         kind: "message" as const,
         id: "final",
         createdAt: "2026-09-08T10:00:04Z",
+        attempt: {
+          id: RunAttemptId.make("attempt-context-inspector-meta"),
+          runId,
+          attemptOrdinal: 1,
+          rootNodeId: NodeId.make("node-context-inspector-meta"),
+          status: "completed" as const,
+          completedAt: null,
+        },
+        providerTurnOrdinal: 4,
         message: {
           id: MessageId.make("final"),
           role: "assistant" as const,
@@ -4743,6 +4752,10 @@ describe("linked timeline resources", () => {
     ]);
     expect(collapsed.find((row) => row.id === "summary:created")).toMatchObject({
       resourceSummary: true,
+    });
+    expect(collapsed.find((row) => row.id === "assistant-meta:final")).toMatchObject({
+      attemptId: "attempt-context-inspector-meta",
+      providerTurnOrdinal: 4,
     });
     const expanded = deriveMessagesTimelineRows({
       ...common,

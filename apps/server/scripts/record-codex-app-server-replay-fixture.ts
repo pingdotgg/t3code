@@ -77,6 +77,15 @@ const CODEX_CLIENT_CAPABILITIES = {
 } as const;
 const CODEX_REPLAY_DEFAULT_MODEL = "gpt-6-luna";
 const CODEX_REPLAY_MODEL_OVERRIDE = readArgValue("--model") ?? process.env.T3_CODEX_REPLAY_MODEL;
+const CODEX_REPLAY_REASONING_EFFORT = process.env.T3_CODEX_REPLAY_REASONING_EFFORT;
+const CODEX_REPLAY_PROMPT_OVERRIDE = process.env.T3_CODEX_REPLAY_PROMPT;
+const CODEX_REPLAY_ADDITIONAL_CONTEXT = process.env.T3_CODEX_REPLAY_ADDITIONAL_CONTEXT_JSON
+  ? (JSON.parse(process.env.T3_CODEX_REPLAY_ADDITIONAL_CONTEXT_JSON) as Record<
+      string,
+      CodexSchema.V2TurnStartParams__AdditionalContextEntry
+    >)
+  : undefined;
+const CODEX_REPLAY_WORKSPACE_WRITE = process.env.T3_CODEX_REPLAY_WORKSPACE_WRITE === "1";
 
 const SCENARIO_NAMES = [
   "simple",
@@ -356,6 +365,7 @@ function planCollaborationMode(model: string): CodexSchema.V2TurnStartParams__Co
 }
 
 function scenarios(): ReadonlyArray<ReplayScenario> {
+  const simplePrompt = CODEX_REPLAY_PROMPT_OVERRIDE ?? SIMPLE_PROMPT;
   return [
     {
       name: "simple",
@@ -365,8 +375,8 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
         {
           name: "simple",
           description: "Single text-only turn.",
-          prompt: SIMPLE_PROMPT,
-          steps: [{ type: "turn", label: "simple", prompt: SIMPLE_PROMPT }],
+          prompt: simplePrompt,
+          steps: [{ type: "turn", label: "simple", prompt: simplePrompt }],
         },
       ],
     },
@@ -1405,11 +1415,22 @@ function runReplaySession({
       Effect.gen(function* () {
         const turnParams: TurnStartParams = {
           approvalPolicy: "never",
-          sandboxPolicy: { type: "dangerFullAccess" },
+          sandboxPolicy: CODEX_REPLAY_WORKSPACE_WRITE
+            ? workspaceWriteSandbox()
+            : { type: "dangerFullAccess" },
           cwd: process.cwd(),
           model,
           summary: "detailed",
           approvalsReviewer: "user",
+          ...(CODEX_REPLAY_REASONING_EFFORT === undefined
+            ? {}
+            : {
+                effort:
+                  CODEX_REPLAY_REASONING_EFFORT as CodexSchema.V2TurnStartParams__ReasoningEffort,
+              }),
+          ...(CODEX_REPLAY_ADDITIONAL_CONTEXT === undefined
+            ? {}
+            : { additionalContext: CODEX_REPLAY_ADDITIONAL_CONTEXT }),
           ...(run.interactionMode === "plan"
             ? { collaborationMode: planCollaborationMode(model) }
             : {}),

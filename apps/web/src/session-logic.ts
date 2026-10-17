@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -167,6 +168,8 @@ export type TimelineEntry = (
     }
 ) & {
   readonly attempt?: TimelineAttempt;
+  /** Exact native provider-turn ordinal for historical context inspection, when projected. */
+  readonly providerTurnOrdinal?: number;
 };
 
 export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
@@ -570,6 +573,7 @@ export interface TimelineEntriesInput {
   readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
   readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
   readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
+  readonly providerTurns?: ReadonlyArray<OrchestrationV2ProviderTurn>;
 }
 
 export interface TimelineEntriesProjection {
@@ -587,6 +591,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   );
   const nodeById = new Map((input.nodes ?? []).map((node) => [node.id, node] as const));
   const planById = new Map((input.plans ?? []).map((plan) => [plan.id, plan] as const));
+  const providerTurnById = new Map(
+    (input.providerTurns ?? []).map((turn) => [turn.id, turn] as const),
+  );
 
   const resolveAttempt = (item: OrchestrationV2TurnItem): TimelineAttempt | undefined => {
     if (item.nodeId === null || item.runId === null) return undefined;
@@ -620,6 +627,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
+    const providerTurn =
+      item.providerTurnId === null ? undefined : providerTurnById.get(item.providerTurnId);
+    const providerTurnMetadata =
+      providerTurn === undefined ||
+      (attempt !== undefined && providerTurn.runAttemptId !== attempt.id)
+        ? {}
+        : { providerTurnOrdinal: providerTurn.ordinal };
     if (item.type === "notification") {
       entries.push({
         id: item.id,
@@ -636,6 +650,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
           projectedItem: row,
         },
         ...attemptMetadata,
+        ...providerTurnMetadata,
       });
       continue;
     }
@@ -677,6 +692,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         message,
         projectedItem: row,
         ...attemptMetadata,
+        ...providerTurnMetadata,
       });
       continue;
     }
@@ -697,6 +713,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         proposedPlan,
         ...attemptMetadata,
+        ...providerTurnMetadata,
       });
       continue;
     }
@@ -713,6 +730,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         runId: item.runId,
         htmlRender,
         ...attemptMetadata,
+        ...providerTurnMetadata,
       });
       continue;
     }
@@ -732,6 +750,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         revision: turnItemDetailRevision(item),
         mcpApp,
         ...attemptMetadata,
+        ...providerTurnMetadata,
       });
       continue;
     }
@@ -743,6 +762,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         projectedItem: row,
         ...attemptMetadata,
+        ...providerTurnMetadata,
       });
       continue;
     }
@@ -922,7 +942,8 @@ function reuseTimelineEntries(
     !shallow(input.attachmentUrlById, before.attachmentUrlById) ||
     !shallow(input.attempts, before.attempts) ||
     !shallow(input.nodes, before.nodes) ||
-    !shallow(input.plans, before.plans)
+    !shallow(input.plans, before.plans) ||
+    !shallow(input.providerTurns, before.providerTurns)
   ) {
     return null;
   }

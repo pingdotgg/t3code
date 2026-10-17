@@ -723,6 +723,8 @@ export function buildCodexTurnStartParams(input: {
   /** ChatGPT token sharing does not accept service tiers. */
   readonly omitServiceTier?: boolean;
   readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
+  /** Bounded Civilization packet; delivered as keyed context so the latest replaces the old. */
+  readonly civilizationPacket?: ProviderAdapter.ProviderAdapterV2TurnInput["civilizationPacket"];
 }) {
   return Effect.gen(function* () {
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
@@ -767,10 +769,24 @@ export function buildCodexTurnStartParams(input: {
             },
           )
         : undefined;
-    const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+    // The civilization packet is world state written by other agents and the
+    // host, so it rides the same untrusted channel as app context. The key is
+    // fixed: each turn's packet replaces the previous one under this key.
+    const civilizationContext =
+      input.civilizationPacket === undefined
         ? undefined
-        : { ...t3Context, ...appContext };
+        : {
+            t3_civilization: {
+              kind: "untrusted" as const,
+              value: input.civilizationPacket.text,
+            },
+          };
+    const additionalContext =
+      t3Context === undefined &&
+      Object.keys(appContext).length === 0 &&
+      civilizationContext === undefined
+        ? undefined
+        : { ...t3Context, ...appContext, ...civilizationContext };
     const collaborationMode: CodexSchema.ClientRequest__CollaborationMode | undefined =
       input.runtimePolicy.interactionMode !== "plan" && developerInstructions === undefined
         ? undefined
@@ -1686,6 +1702,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CODEX_PROVIDER,
+    civilizationContextTransport: {
+      kind: "codex.additional_context",
+      description: "turn/start params.additionalContext.t3_civilization.value",
+      trust: "untrusted",
+    },
     getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: (input) =>
@@ -6195,6 +6216,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+              ...(turnInput.civilizationPacket === undefined
+                ? {}
+                : { civilizationPacket: turnInput.civilizationPacket }),
             });
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);

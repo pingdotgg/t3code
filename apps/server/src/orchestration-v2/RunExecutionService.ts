@@ -38,6 +38,7 @@ import * as Stream from "effect/Stream";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CivilizationContext from "../civilization/ContextService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -573,6 +574,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const civilizationContext = yield* CivilizationContext.CivilizationContextService;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
@@ -1376,6 +1378,45 @@ export const layer: Layer.Layer<
             key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
             text: entry.text,
           }));
+          // Check after the context read: ingestion can settle the run while
+          // it awaits. A failed ownership read fails the start below.
+          const shouldStart =
+            input.shouldStartProviderTurn === undefined
+              ? Exit.succeed(true)
+              : yield* Effect.exit(input.shouldStartProviderTurn());
+          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
+            yield* Fiber.interrupt(providerEventFiber);
+            return;
+          }
+
+          // Civilization context is fail-soft for an ordinary coding turn:
+          // an optional packet that cannot be built must never block the
+          // provider. Build it only after the ownership gate above so the
+          // durable provenance row means this turn was actually offered a
+          // provider start.
+          const civilization = Exit.isSuccess(shouldStart)
+            ? yield* civilizationContext
+                .forTurn({
+                  projectId: input.appThread.projectId,
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  attemptId: input.attemptId,
+                  providerTurnOrdinal: input.providerTurnOrdinal,
+                  providerInstanceId: input.run.providerInstanceId,
+                  runtimeMode: input.runtimePolicy.runtimeMode,
+                  interactionMode: input.runtimePolicy.interactionMode,
+                  message: input.message,
+                })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to build Civilization turn context.", {
+                      runId: input.run.id,
+                      threadId: input.run.threadId,
+                      cause,
+                    }).pipe(Effect.as(null)),
+                  ),
+                )
+            : null;
           const turnInput = {
             appThread: input.appThread,
             threadId: input.run.threadId,
@@ -1397,17 +1438,15 @@ export const layer: Layer.Layer<
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
             ...(appContext.length === 0 ? {} : { appContext }),
+            ...(civilization?.packet === null || civilization === null
+              ? {}
+              : {
+                  civilizationPacket: {
+                    revision: civilization.packet.revision,
+                    text: civilization.packet.text,
+                  },
+                }),
           };
-          // Check after the context read: ingestion can settle the run while
-          // it awaits. A failed ownership read fails the start below.
-          const shouldStart =
-            input.shouldStartProviderTurn === undefined
-              ? Exit.succeed(true)
-              : yield* Effect.exit(input.shouldStartProviderTurn());
-          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-            yield* Fiber.interrupt(providerEventFiber);
-            return;
-          }
 
           const compact =
             input.message.attachments.length === 0 &&
@@ -1424,7 +1463,22 @@ export const layer: Layer.Layer<
                 }),
               ))
             : input.session.startTurn(turnInput);
-          yield* Effect.andThen(shouldStart, startTurn).pipe(
+          const inspectionTurnKey = {
+            runId: input.run.id,
+            attemptId: input.attemptId,
+            providerTurnOrdinal: input.providerTurnOrdinal,
+            packetText: civilization?.packet?.text ?? null,
+          } as const;
+          const trackedStartTurn = Effect.exit(startTurn).pipe(
+            Effect.flatMap((startExit) =>
+              Exit.isSuccess(startExit)
+                ? civilizationContext.markProviderStartAccepted(inspectionTurnKey)
+                : civilizationContext
+                    .markProviderStartFailed(inspectionTurnKey)
+                    .pipe(Effect.andThen(Effect.failCause(startExit.cause))),
+            ),
+          );
+          yield* Effect.andThen(shouldStart, trackedStartTurn).pipe(
             Effect.catchCause((cause) =>
               Effect.logError("orchestration V2 provider turn start failed", {
                 runId: input.run.id,

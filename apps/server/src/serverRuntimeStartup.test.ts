@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -69,6 +70,21 @@ it.effect("interrupts the effect worker when awareness relay startup fails", () 
       assert.isNull(yield* Ref.get(workerFiberRef));
     }),
   ),
+);
+
+it.effect("degrades optional Civilization startup failures but preserves interruption", () =>
+  Effect.gen(function* () {
+    assert.isUndefined(
+      yield* ServerRuntimeStartup.recoverOptionalCivilizationStartup(Effect.fail("corrupt")),
+    );
+    const interrupted = yield* ServerRuntimeStartup.recoverOptionalCivilizationStartup(
+      Effect.interrupt,
+    ).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(interrupted));
+    if (Exit.isFailure(interrupted)) {
+      assert.isTrue(Cause.hasInterruptsOnly(interrupted.cause));
+    }
+  }),
 );
 
 it.effect("queues commands until startup signals readiness", () =>

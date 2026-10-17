@@ -110,7 +110,10 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
-import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
+import {
+  type ClaudeSkillDispatch,
+  planClaudeSkillDispatch,
+} from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import {
   compileClaudeModelSelection,
@@ -1195,6 +1198,11 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_queue_read",
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
+  "mcp__t3-code__civilization_context",
+  "mcp__t3-code__civilization_census",
+  "mcp__t3-code__civilization_note_list",
+  "mcp__t3-code__civilization_note_read",
+  "mcp__t3-code__civilization_inbox_list",
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")
@@ -1541,6 +1549,7 @@ function isSupportedClaudeImageMimeType(
 
 export function makeClaudeUserMessage(input: {
   readonly text: string;
+  readonly leadingText?: string;
   readonly priority?: SDKUserMessage["priority"];
   readonly skillNames?: ReadonlySet<string>;
   readonly uuid?: SDKUserMessage["uuid"];
@@ -1553,18 +1562,23 @@ export function makeClaudeUserMessage(input: {
     input.skillNames === undefined
       ? undefined
       : planClaudeSkillDispatch(input.text, input.skillNames);
+  const leadingBlocks =
+    input.leadingText === undefined ? [] : [{ type: "text" as const, text: input.leadingText }];
   return {
     type: "user",
     message: {
       role: "user",
       content: dispatch
         ? [
+            ...leadingBlocks,
             ...(dispatch.leadingText === undefined
               ? []
               : [{ type: "text" as const, text: dispatch.leadingText }]),
             { type: "text" as const, text: dispatch.commandText },
           ]
-        : input.text,
+        : input.leadingText === undefined
+          ? input.text
+          : [...leadingBlocks, { type: "text" as const, text: input.text }],
     },
     parent_tool_use_id: null,
     ...(input.priority === undefined ? {} : { priority: input.priority }),
@@ -1574,6 +1588,7 @@ export function makeClaudeUserMessage(input: {
 
 const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input: {
   readonly text: string;
+  readonly leadingText?: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly priority?: SDKUserMessage["priority"];
   readonly uuid?: SDKUserMessage["uuid"];
@@ -1584,6 +1599,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   if (input.attachments.length === 0) {
     return makeClaudeUserMessage({
       text: input.text,
+      ...(input.leadingText === undefined ? {} : { leadingText: input.leadingText }),
       ...(input.skillNames === undefined ? {} : { skillNames: input.skillNames }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
       ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
@@ -1596,12 +1612,18 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     resolveAttachmentPath: (attachment) =>
       resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment }),
   });
-
   const dispatch =
     input.skillNames === undefined
       ? undefined
-      : planClaudeSkillDispatch(textWithAttachmentPaths, input.skillNames);
+      : claudeSkillDispatchWithAttachmentContext({
+          trustedText: input.text,
+          textWithAttachmentContext: textWithAttachmentPaths,
+          skillNames: input.skillNames,
+        });
   const content: Array<ClaudeUserContentBlock> = [];
+  if (input.leadingText !== undefined) {
+    content.push({ type: "text", text: input.leadingText });
+  }
   if (dispatch?.leadingText !== undefined) {
     content.push({ type: "text", text: dispatch.leadingText });
   }
@@ -1667,6 +1689,22 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
     ...(input.uuid === undefined ? {} : { uuid: input.uuid }),
   } satisfies SDKUserMessage;
 });
+
+export function claudeSkillDispatchWithAttachmentContext(input: {
+  readonly trustedText: string;
+  readonly textWithAttachmentContext: string;
+  readonly skillNames: ReadonlySet<string>;
+}): ClaudeSkillDispatch | undefined {
+  const dispatch = planClaudeSkillDispatch(input.trustedText, input.skillNames);
+  if (dispatch === undefined) return undefined;
+  const attachmentContext = input.textWithAttachmentContext.startsWith(input.trustedText)
+    ? input.textWithAttachmentContext.slice(input.trustedText.length)
+    : "";
+  return {
+    ...dispatch,
+    commandText: `${dispatch.commandText}${attachmentContext}`,
+  };
+}
 
 const sha256Hex = Effect.fnUntraced(function* (crypto: Crypto.Crypto, value: string) {
   return Hex.encode(
@@ -2672,6 +2710,28 @@ function isClaudeProviderContinuationTurn(
   return input.message.createdBy === "agent" && input.message.creationSource === "provider";
 }
 
+// Slash commands must stay the first token so the CLI runs them; same rule as
+// applyClaudePromptEffortPrefix: a leading token with no second slash.
+function isClaudeSlashCommand(text: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/u.test(text.trim());
+}
+
+// Claude keeps ordinary history, so the packet is the latest bounded snapshot
+// with its own revision header, prepended to each new actionable prompt and
+// replaced (never concatenated) on the next one. Continuation turns have no
+// prompt at all and slash commands must stay first, so both stay untouched.
+// Runs before the effort prefix so "Ultrathink:" remains the first line.
+function claudeCivilizationLeadingText(
+  input: ProviderAdapter.ProviderAdapterV2TurnInput,
+): string | undefined {
+  if (input.civilizationPacket === undefined) return undefined;
+  if (isClaudeSlashCommand(input.message.text)) return undefined;
+  return input.civilizationPacket.text;
+}
+
+// Root turn output whose owner (the offered prompt or a queued wake turn)
+// the prompt echo decides. Subagent frames, lifecycle frames, and anything
+// else not produced by the root model turn pass straight through.
 function isClaudePromptEchoGatedFrame(message: SDKMessage): boolean {
   switch (message.type) {
     case "assistant":
@@ -3382,6 +3442,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
     driver: CLAUDE_PROVIDER,
+    civilizationContextTransport: {
+      kind: "claude.actionable_prompt_context",
+      description: "Inserted before actionable user text; Claude effort prefixing may precede it.",
+      trust: "untrusted",
+    },
     getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: Effect.fn("ClaudeAdapterV2.openSession")(
@@ -8339,16 +8404,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const userMessage =
               promptUuid === null
                 ? null
-                : yield* makeClaudeUserMessageWithAttachments({
-                    text: applyClaudePromptEffortPrefix(
-                      turnInput.message.text,
-                      compileClaudeModelSelection(turnInput.modelSelection).promptEffort,
-                    ),
-                    attachments: turnInput.message.attachments,
-                    attachmentsDir,
-                    fileSystem,
-                    skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
-                    uuid: promptUuid,
+                : yield* Effect.gen(function* () {
+                    const promptEffort = compileClaudeModelSelection(
+                      turnInput.modelSelection,
+                    ).promptEffort;
+                    const civilizationLeadingText = claudeCivilizationLeadingText(turnInput);
+                    return yield* makeClaudeUserMessageWithAttachments({
+                      text:
+                        civilizationLeadingText === undefined
+                          ? applyClaudePromptEffortPrefix(turnInput.message.text, promptEffort)
+                          : turnInput.message.text,
+                      ...(civilizationLeadingText === undefined
+                        ? {}
+                        : {
+                            leadingText: applyClaudePromptEffortPrefix(
+                              civilizationLeadingText,
+                              promptEffort,
+                            ),
+                          }),
+                      attachments: turnInput.message.attachments,
+                      attachmentsDir,
+                      fileSystem,
+                      skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
+                      uuid: promptUuid,
+                    });
                   });
             const querySession = yield* openQuery(turnInput, nativeThreadId);
             const attachTurn = Effect.gen(function* () {

@@ -1,4 +1,5 @@
 import {
+  type ApplicationProjectEvent,
   CommandId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
@@ -65,17 +66,44 @@ export class EventSinkStreamError extends Schema.TaggedError<EventSinkStreamErro
 export const EventSinkV2Error = Schema.Union([EventSinkWriteError, EventSinkStreamError]);
 export type EventSinkV2Error = typeof EventSinkV2Error.Type;
 
+/**
+ * A feature-owned persistence participant. The sink runs it inside the same
+ * transaction that commits the host write, after the host projections are
+ * applied, so feature bookkeeping and host lifecycle state commit or roll back
+ * together. A participant uses the ambient SqlClient (the transaction's own
+ * connection) and must not open a nested transaction. Any error rolls the
+ * whole write back.
+ */
+export interface EventSinkPersistenceParticipant {
+  readonly name: string;
+  readonly apply: (committed: {
+    readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    readonly projectEvents: ReadonlyArray<ApplicationProjectEvent>;
+  }) => Effect.Effect<void, unknown, SqlClient.SqlClient>;
+}
+
+export class EventSinkPersistenceParticipants extends Context.Reference<
+  ReadonlyArray<EventSinkPersistenceParticipant>
+>("t3/orchestration-v2/EventSink/EventSinkPersistenceParticipants", {
+  defaultValue: () => [],
+}) {}
+
+/**
+ * SERVICE DEFINITION
+ */
 export interface EventSinkV2Shape {
   readonly write: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+    readonly participants?: ReadonlyArray<EventSinkPersistenceParticipant>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeWithEffects: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
+    readonly participants?: ReadonlyArray<EventSinkPersistenceParticipant>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
   readonly writeIfRunCurrent: (input: {
     readonly guardPendingUserInputCancellations?: boolean;
@@ -163,6 +191,7 @@ export interface EventSinkV2Shape {
     readonly commandType: string;
     readonly acceptedAt: DateTime.Utc;
     readonly event: UnsequencedProjectEvent;
+    readonly participants?: ReadonlyArray<EventSinkPersistenceParticipant>;
   }) => Effect.Effect<
     { readonly receipt: CommandReceiptStore.ProjectCommandReceiptV2; readonly committed: boolean },
     EventSinkV2Error
@@ -213,6 +242,7 @@ const layerBase: Layer.Layer<
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const registeredParticipants = yield* EventSinkPersistenceParticipants;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
     const liveEventsByType = new Map<
       OrchestrationV2DomainEvent["type"],
@@ -358,6 +388,23 @@ const layerBase: Layer.Layer<
         }
       });
 
+    const runParticipants = (
+      participants: ReadonlyArray<EventSinkPersistenceParticipant> | undefined,
+      committed: {
+        readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+        readonly projectEvents: ReadonlyArray<ApplicationProjectEvent>;
+      },
+    ) =>
+      Effect.forEach(
+        [
+          ...new Map(
+            [...registeredParticipants, ...(participants ?? [])].map((item) => [item.name, item]),
+          ).values(),
+        ],
+        (participant) => participant.apply(committed),
+        { concurrency: 1 },
+      ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
     ) {
@@ -379,6 +426,10 @@ const layerBase: Layer.Layer<
             events: normalized,
           });
           yield* applyStoredEvents(committed);
+          yield* runParticipants(input.participants, {
+            storedEvents: committed,
+            projectEvents: [],
+          });
           yield* effectOutbox.enqueue(input.effects);
           return committed;
         }).pipe(Effect.withTracerEnabled(false)),
@@ -437,6 +488,7 @@ const layerBase: Layer.Layer<
               events: normalized,
             });
             yield* applyStoredEvents(storedEvents);
+            yield* runParticipants(undefined, { storedEvents, projectEvents: [] });
             yield* effectOutbox.enqueue(input.effects ?? []);
             return { committed: true as const, storedEvents };
           }),
@@ -502,6 +554,7 @@ const layerBase: Layer.Layer<
             events: normalized,
           });
           yield* applyStoredEvents(storedEvents);
+          yield* runParticipants(undefined, { storedEvents, projectEvents: [] });
           return { committed: true as const, storedEvents };
         }),
         (result) => (result.committed ? publishStoredEvents(result.storedEvents) : Effect.void),
@@ -535,6 +588,7 @@ const layerBase: Layer.Layer<
           const normalized = yield* normalizeEvents(input.events);
           const storedEvents = yield* eventStore.append({ events: normalized });
           yield* applyStoredEvents(storedEvents);
+          yield* runParticipants(undefined, { storedEvents, projectEvents: [] });
           return { committed: true as const, storedEvents };
         }),
         (result) => (result.committed ? publishStoredEvents(result.storedEvents) : Effect.void),
@@ -587,6 +641,7 @@ const layerBase: Layer.Layer<
             );
           }
           yield* applyStoredEvents(storedEvents);
+          yield* runParticipants(undefined, { storedEvents, projectEvents: [] });
           yield* effectOutbox.enqueue(input.effects);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
@@ -680,6 +735,10 @@ const layerBase: Layer.Layer<
             yield* projectStore.apply(event);
             const receipt = { ...reserved, resultSequence: event.sequence };
             yield* commandReceipts.upsert(receipt);
+            yield* runParticipants(input.participants, {
+              storedEvents: [],
+              projectEvents: [event],
+            });
             return { receipt, event };
           }),
           (result) =>
