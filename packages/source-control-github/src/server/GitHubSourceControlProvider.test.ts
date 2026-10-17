@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, VcsProcessSpawnError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -696,6 +696,42 @@ describe("GitHubSourceControlProvider writes", () => {
     });
   });
 });
+
+it.effect("prefers the protocol gh's git_protocol sets for the repository's host", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = [];
+    const missing = new VcsProcessSpawnError({ operation: "", command: "gh", cwd: "", cause: 0 });
+    const cases = [
+      [Effect.succeed(processOutput("https\n")), "https"],
+      [Effect.succeed(processOutput("ssh\n")), "ssh"],
+      [Effect.succeed(processOutput("git\n")), null],
+      [Effect.fail(missing), null],
+    ] as const;
+    for (const [output, expected] of cases) {
+      const protocol = yield* Effect.gen(function* () {
+        const gh = yield* GitHubSourceControlProvider.make;
+        return yield* gh.preferredCloneProtocol!({ cwd: "/repo", url: "https://ghe.test/a/b" });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) => {
+                  calls.push(`${input.command} ${input.args.join(" ")}`);
+                  return output;
+                },
+              },
+            }),
+            Layer.mock(GitHubApi.GitHubApi)({}),
+            NodeServices.layer,
+          ),
+        ),
+      );
+      assert.strictEqual(protocol, expected);
+    }
+    assert.deepStrictEqual(new Set(calls), new Set(["gh config get -h ghe.test git_protocol"]));
+  }),
+);
 
 describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
   const repository = (fullName: string, defaultBranch = "main") =>

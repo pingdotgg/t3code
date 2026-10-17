@@ -28,6 +28,7 @@ import {
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
@@ -154,6 +155,21 @@ function selectRemoteUrl(
   }
 }
 
+/** An explicit protocol wins; `auto` follows the provider's CLI setting, else SSH. */
+function resolveRemoteUrl(
+  provider: SourceControlProvider.SourceControlProvider["Service"],
+  cwd: string,
+  urls: SourceControlRepositoryCloneUrls,
+  protocol: SourceControlCloneProtocol | undefined,
+) {
+  if ((protocol ?? "auto") !== "auto" || provider.preferredCloneProtocol === undefined) {
+    return Effect.succeed(selectRemoteUrl(urls, protocol));
+  }
+  return provider
+    .preferredCloneProtocol({ cwd, url: urls.url })
+    .pipe(Effect.map((preferred) => selectRemoteUrl(urls, preferred ?? "ssh")));
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
@@ -260,7 +276,12 @@ export const make = Effect.gen(function* () {
         repository: input.repository,
         cwd: preparedDestination.parentPath,
       });
-      remoteUrl = selectRemoteUrl(repository, input.protocol);
+      remoteUrl = yield* resolveRemoteUrl(
+        yield* providers.get(input.provider),
+        preparedDestination.parentPath,
+        repository,
+        input.protocol,
+      );
       provider = input.provider;
     }
 
@@ -405,7 +426,7 @@ export const make = Effect.gen(function* () {
         repository: input.repository.trim(),
         visibility: input.visibility,
       });
-      const remoteUrl = selectRemoteUrl(urls, input.protocol);
+      const remoteUrl = yield* resolveRemoteUrl(provider, input.cwd, urls, input.protocol);
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
         preferredName: input.remoteName?.trim() || "origin",

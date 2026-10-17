@@ -698,3 +698,65 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
     ),
   );
 });
+
+it.effect("publishes over the protocol the provider's CLI prefers unless one was chosen", () =>
+  Effect.gen(function* () {
+    const cases = [
+      { cli: "https", protocol: undefined, expected: CLONE_URLS.url },
+      { cli: "https", protocol: "auto", expected: CLONE_URLS.url },
+      { cli: "ssh", protocol: undefined, expected: CLONE_URLS.sshUrl },
+      { cli: null, protocol: undefined, expected: CLONE_URLS.sshUrl },
+      { cli: "https", protocol: "ssh", expected: CLONE_URLS.sshUrl },
+      { cli: "ssh", protocol: "https", expected: CLONE_URLS.url },
+    ] as const;
+    for (const { cli, protocol, expected } of cases) {
+      const asked: Array<{ cwd: string; url: string }> = [];
+      const provider = makeProvider({
+        preferredCloneProtocol: (input) =>
+          Effect.sync(() => {
+            asked.push(input);
+            return cli;
+          }),
+      });
+      const result = yield* Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        return yield* service.publishRepository({
+          cwd: "/workspace",
+          provider: SourceControlProviderKind.make("github"),
+          repository: "octocat/t3code",
+          visibility: "private",
+          ...(protocol === undefined ? {} : { protocol }),
+        });
+      }).pipe(Effect.provide(layer({ provider })));
+
+      assert.strictEqual(result.remoteUrl, expected);
+      assert.deepStrictEqual(
+        asked,
+        protocol === undefined || protocol === "auto"
+          ? [{ cwd: "/workspace", url: CLONE_URLS.url }]
+          : [],
+      );
+    }
+  }),
+);
+
+it.effect("clones over the protocol the provider's CLI prefers when asked for auto", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-protocol-" });
+    const provider = makeProvider({ preferredCloneProtocol: () => Effect.succeed("https") });
+
+    const prepared = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.prepareClone({
+        provider: SourceControlProviderKind.make("github"),
+        repository: "octocat/t3code",
+        destinationPath: path.join(parent, "t3code"),
+        protocol: "auto",
+      });
+    }).pipe(Effect.provide(layer({ provider })));
+
+    assert.strictEqual(prepared.cloneUrl, CLONE_URLS.url);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
