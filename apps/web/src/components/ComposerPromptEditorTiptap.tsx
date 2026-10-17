@@ -68,6 +68,7 @@ import {
   caretTakesMarksBefore,
   convertBulletItemToTask,
   ComposerCodeExtension,
+  ComposerItalicExtension,
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
   flatToCollapsed,
@@ -791,7 +792,8 @@ function createComposerExtensions(richText: boolean) {
       code: false,
       listKeymap: false,
       undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
-      ...(richText ? {} : { bold: false, italic: false, strike: false }),
+      italic: false,
+      ...(richText ? {} : { bold: false, strike: false }),
     }),
     ComposerUndoGroupingExtension,
     ComposerMentionExtension,
@@ -801,6 +803,7 @@ function createComposerExtensions(richText: boolean) {
     ComposerMarkersExtension,
     ...(richText
       ? [
+          ComposerItalicExtension,
           ComposerCodeExtension,
           ComposerCodeBlockExtension.extend({
             addNodeView() {
