@@ -95,4 +95,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/ThemeColorPicker.tsx",
   "apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx",
   "apps/web/src/components/ThreadTerminalDrawer.tsx",
+  "apps/web/src/components/settings/SettingsPanels.tsx",
 ] as const;
