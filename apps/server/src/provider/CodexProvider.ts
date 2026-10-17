@@ -75,6 +75,7 @@ const CODEX_CLIENT_NAME = "T3 Code";
 // (most often reported on Windows). Give Codex its own longer budget instead of raising the
 // timeout for every provider.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
+const CODEX_DISCOVERY_MARGIN_MS = 250;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -88,6 +89,7 @@ export interface CodexAppServerProviderSnapshot {
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly modelCatalogTimedOut?: boolean;
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -360,22 +362,36 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   readonly client: CodexClient.CodexAppServerClient["Service"];
   readonly codexHome: string;
   readonly spawnedAtMs: number;
+  readonly deadlineMs: number;
 }) {
-  const models = yield* requestAllCodexModels(input.client);
-  const refreshed = yield* readCodexModelsCacheFetchedAt(input.codexHome).pipe(
-    Effect.repeat({
-      schedule: Schedule.spaced(CODEX_CATALOG_REFRESH_POLL),
-      until: (fetchedAtMs) => fetchedAtMs >= input.spawnedAtMs,
-    }),
-    Effect.timeoutOption(CODEX_CATALOG_REFRESH_TIMEOUT),
+  const timeLeftMs = Math.max(0, input.deadlineMs - DateTime.toEpochMillis(yield* DateTime.now));
+  if (timeLeftMs === 0) return undefined;
+  const firstList = yield* requestAllCodexModels(input.client).pipe(
+    Effect.timeoutOption(Duration.millis(timeLeftMs)),
   );
-  if (Option.isNone(refreshed)) {
-    yield* Effect.logWarning(
-      "Codex did not refresh its model catalog in time; using the cached catalog.",
+  if (Option.isNone(firstList)) return undefined;
+  const models = firstList.value;
+  const refreshTimeLeftMs = input.deadlineMs - DateTime.toEpochMillis(yield* DateTime.now);
+  if (refreshTimeLeftMs <= 0) return models;
+  return yield* Effect.gen(function* () {
+    const refreshed = yield* readCodexModelsCacheFetchedAt(input.codexHome).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced(CODEX_CATALOG_REFRESH_POLL),
+        until: (fetchedAtMs) => fetchedAtMs >= input.spawnedAtMs,
+      }),
+      Effect.timeoutOption(CODEX_CATALOG_REFRESH_TIMEOUT),
     );
-    return models;
-  }
-  return yield* requestAllCodexModels(input.client);
+    if (Option.isNone(refreshed)) {
+      yield* Effect.logWarning(
+        "Codex did not refresh its model catalog in time; using the cached catalog.",
+      );
+      return models;
+    }
+    return yield* requestAllCodexModels(input.client);
+  }).pipe(
+    Effect.timeoutOption(Duration.millis(refreshTimeLeftMs)),
+    Effect.map(Option.getOrElse(() => models)),
+  );
 });
 
 /**
@@ -480,15 +496,33 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
+  // Optional discovery must finish before the outer timeout can discard the account result.
+  const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
+  const timeLeftMs = Math.max(0, deadlineMs - DateTime.toEpochMillis(yield* DateTime.now));
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
-      client.request("skills/list", {
-        cwds: [input.cwd],
-      }),
-      accountResponse.account?.type === "chatgpt"
-        ? requestCodexChatGptModels({ client, codexHome: initialize.codexHome, spawnedAtMs })
-        : requestAllCodexModels(client),
-      input.skipNativeUsage
+      timeLeftMs === 0
+        ? Effect.succeed(undefined)
+        : client
+            .request("skills/list", { cwds: [input.cwd] })
+            .pipe(
+              Effect.timeoutOption(Duration.millis(timeLeftMs)),
+              Effect.map(Option.getOrUndefined),
+            ),
+      timeLeftMs === 0
+        ? Effect.succeed(undefined)
+        : accountResponse.account?.type === "chatgpt"
+          ? requestCodexChatGptModels({
+              client,
+              codexHome: initialize.codexHome,
+              spawnedAtMs,
+              deadlineMs,
+            })
+          : requestAllCodexModels(client).pipe(
+              Effect.timeoutOption(Duration.millis(timeLeftMs)),
+              Effect.map(Option.getOrUndefined),
+            ),
+      input.skipNativeUsage || timeLeftMs === 0
         ? Effect.succeed(undefined)
         : client.request("account/rateLimits/read", null).pipe(
             Effect.map((response): CodexRateLimitsProbe => ({
@@ -497,7 +531,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
               resetCredits: response.rateLimitResetCredits,
               accountId: response.accountId,
             })),
-            Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+            Effect.timeoutOption(
+              Duration.millis(Math.min(RATE_LIMITS_PROBE_TIMEOUT_MS, timeLeftMs)),
+            ),
             Effect.map(
               Option.getOrElse((): CodexRateLimitsProbe => ({
                 failure: "Codex did not answer the usage request.",
@@ -518,9 +554,10 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
-      appendCustomCodexModels(models, input.customModels ?? []),
+      appendCustomCodexModels(models ?? [], input.customModels ?? []),
     ),
-    skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
+    skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
+    modelCatalogTimedOut: models === undefined,
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -663,8 +700,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     environment: resolvedEnvironment,
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
-    Effect.scoped,
+    // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.scoped,
     Effect.result,
   );
 
@@ -751,9 +789,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probe: {
       installed: true,
       version: snapshot.version ?? null,
-      status: accountStatus.status,
+      status: snapshot.modelCatalogTimedOut ? "warning" : accountStatus.status,
       auth: accountStatus.auth,
-      ...(accountStatus.message ? { message: accountStatus.message } : {}),
+      ...(accountStatus.message
+        ? { message: accountStatus.message }
+        : snapshot.modelCatalogTimedOut
+          ? { message: "Codex did not return its model catalog in time." }
+          : {}),
       ...(managedAuth ? {} : { usageLimits }),
     },
   });

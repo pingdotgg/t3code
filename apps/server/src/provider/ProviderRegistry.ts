@@ -175,7 +175,9 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
-  const didInstalledProviderProbeFail = provider.installed && provider.status === "error";
+  const didInstalledProviderProbeFail =
+    provider.installed &&
+    (provider.status === "error" || (isCodex && provider.status === "warning"));
   return (
     isPendingAntigravityAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail
   );

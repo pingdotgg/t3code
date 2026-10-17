@@ -1172,7 +1172,11 @@ it.layer(
       });
 
       it("keeps discovered models during startup and failed probes without restoring removed custom models", () => {
-        for (const provider of [pendingProvider, failedProvider]) {
+        for (const provider of [
+          pendingProvider,
+          failedProvider,
+          { ...failedProvider, status: "warning", auth: { status: "authenticated" } },
+        ] satisfies ReadonlyArray<ServerProvider>) {
           assert.deepStrictEqual(
             ProviderRegistry.mergeProviderSnapshot(
               {
