@@ -428,6 +428,18 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
+/**
+ * Why the default-ref dialog cannot check out a feature branch, or null when it can.
+ * The server names that branch from the uncommitted changes, so a clean tree cannot use it.
+ */
+export function resolveFeatureBranchUnavailableReason(input: {
+  branchName: string;
+  hasWorkingTreeChanges: boolean;
+}): string | null {
+  if (input.hasWorkingTreeChanges) return null;
+  return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+}
+
 export function resolveThreadBranchUpdate(
   result: GitRunStackedActionResult,
 ): { branch: string } | null {
