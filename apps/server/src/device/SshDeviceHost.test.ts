@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,6 +11,7 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
@@ -23,6 +25,8 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const platform = yield* HostProcess.Platform;
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -61,6 +65,18 @@ it.effect("preserves installed status after probes and cleans failed agent activ
             ),
           );
           const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
+          if (!mode) {
+            expect(command.args.slice(-2)).toEqual(["sh", "-s"]);
+            return yield* nativeSpawner.spawn(
+              ChildProcess.make(
+                platform === "win32" ? "powershell.exe" : "sh",
+                platform === "win32"
+                  ? ["-NoProfile", "-NonInteractive", "-Command", command.args.slice(-2).join(" ")]
+                  : ["-c", command.args.slice(-2).join(" ")],
+                { stdin },
+              ),
+            );
+          }
           modes.push(mode);
           owners.push(/const owner = "([^"]+)"/.exec(script)?.[1] ?? "");
           output = JSON.stringify({
@@ -110,7 +126,17 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         ),
       ),
     );
-    yield* host.ensureReady(() => Effect.void);
+    const ready = yield* host.ensureReady(() => Effect.void);
+    const value = "quotes ' \" $HOME `literal`\nno trailing newline";
+    const input = `${value}\r\nCR\rNUL\0backslash \\ \\0015 %s`;
+    const code =
+      "process.stdout.write(JSON.stringify({args:process.argv.slice(1),input:require('node:fs').readFileSync(0,'utf8')}))";
+    const result = yield* ready.run(process.execPath.replaceAll("\\", "/"), ["-e", code, value], {
+      stdin: input,
+    });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({ args: [value], input });
     yield* SshDeviceHost.probe({ id: "test", label: "Test", target: "test.example" }).pipe(
       Effect.provide(ServerConfig.layerTest(home, home)),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
