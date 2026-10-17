@@ -244,6 +244,7 @@ export const layer: Layer.Layer<
         (handoff) =>
           handoff.status === "ready" &&
           (handoff.targetRunId === run.id ||
+            (handoff.deferred === true && handoff.toProviderThreadId === run.providerThreadId) ||
             (handoff.toProviderThreadId === run.providerThreadId &&
               projection.runs.some(
                 (source) =>
@@ -1061,6 +1062,18 @@ export const layer: Layer.Layer<
           !deliveredAttemptIds.has(source.activeAttemptId),
       );
       const missedRunIds = new Set(missedRuns.map((source) => source.id));
+      // Deferred history is still delivered below; do not allocate another
+      // recovery handoff for the same missed input on every low-budget turn.
+      const deferredItemIds = new Set(
+        effectiveHandoffs.flatMap((handoff) =>
+          handoff.deferred === true
+            ? [
+                ...(handoff.history?.messages.map((message) => message.itemId) ?? []),
+                ...(handoff.history?.omittedItemIds ?? []),
+              ]
+            : [],
+        ),
+      );
       const missedItems =
         missedRunIds.size === 0
           ? []
@@ -1069,6 +1082,7 @@ export const layer: Layer.Layer<
                 item.runId !== null &&
                 missedRunIds.has(item.runId) &&
                 !coveredItemIds.has(item.id) &&
+                !deferredItemIds.has(item.id) &&
                 historicalMessage(item) !== null,
             );
       const startWithHandoffs = (

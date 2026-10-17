@@ -925,6 +925,8 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
     "manual_context",
   ]),
   status: Schema.Literals(["pending", "ready", "failed", "superseded"]),
+  // Known unsent because it did not fit; retry on later turns.
+  deferred: Schema.optional(Schema.Literal(true)),
   summaryMessageId: Schema.NullOr(MessageId),
   summaryText: Schema.String,
   history: Schema.optional(

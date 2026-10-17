@@ -16,7 +16,6 @@ import {
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
-  ContextHandoffBudgetError,
 } from "./failure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -93,11 +92,11 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
     threadId: ThreadId.make("thread:handoff-error"),
     providerThreadId: ProviderThreadId.make("provider-thread:handoff-error"),
     runId: RunId.make("run:handoff-error"),
-    cause: new ContextHandoffBudgetError(),
+    cause: { _tag: "ContextHandoffDeliveryUncertainError" },
   });
   assert.equal(
     makeProviderFailure({ cause: Cause.fail(cause) }).message,
-    new ContextHandoffBudgetError().message,
+    "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
   );
 });
 

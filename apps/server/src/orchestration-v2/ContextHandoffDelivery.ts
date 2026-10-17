@@ -3,7 +3,6 @@ import type {
   OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -76,7 +75,17 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     });
     if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
-      return yield* new ContextHandoffBudgetError();
+      yield* Effect.forEach(
+        pending.filter((handoff) => handoff.deferred !== true),
+        (handoff) => input.persist({ ...handoff, deferred: true }),
+        { discard: true },
+      );
+      yield* Effect.logDebug("Deferring context handoffs that exceed the delivery budget", {
+        providerThreadId: input.providerThread.id,
+        handoffCount: pending.length,
+        budget,
+      });
+      return { context: "", delivered: Effect.void, unsent: Effect.void };
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
     const persist = (status: "pending" | "injected" | "inline") =>
@@ -85,6 +94,9 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         (handoff) =>
           input.persist({
             ...handoff,
+            // Keep retries selectable until delivery settles, including after
+            // an ambiguous send forces replacement of the native thread.
+            ...(status === "pending" ? {} : { deferred: undefined }),
             ...(nativeThreadId === undefined
               ? {}
               : {

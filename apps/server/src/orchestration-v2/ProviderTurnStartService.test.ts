@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -288,6 +289,7 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly nativeTurn?: boolean;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -511,6 +513,7 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const startTurn = vi.fn((_input: ProviderAdapter.ProviderAdapterV2TurnInput) => Effect.void);
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
@@ -532,7 +535,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.failReadsAfterRunning === true || input.nativeTurn === true
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -548,15 +551,50 @@ function makeLocalCommandHarness(input: {
                     lastError: null,
                   },
                   ensureThread: () => Effect.succeed(providerThread),
+                  resumeThread: () => Effect.succeed(projection.providerThreads.at(-1)!),
+                  startTurn,
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
-  const startRootRun = vi.fn<
-    (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
-  >(() =>
-    input.failReadsAfterRunning === true
-      ? Effect.void
-      : Effect.die("A local command must not start a native turn."),
+  const startRootRun = vi.fn((turn: RunExecutionService.RunExecutionServiceV2StartRootRunInput) =>
+    input.nativeTurn === true
+      ? turn.session
+          .startTurn({
+            appThread: turn.appThread,
+            threadId,
+            runId: turn.run.id,
+            runOrdinal: turn.run.ordinal,
+            providerTurnOrdinal: turn.run.ordinal,
+            attemptId: turn.attemptId,
+            rootNodeId: turn.rootNode.id,
+            providerThread: turn.providerThread,
+            message: {
+              messageId,
+              text: input.text,
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+            modelSelection: turn.run.modelSelection,
+            runtimePolicy: {
+              cwd: "/tmp/native-account-command",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            },
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new RunExecutionService.RunExecutionStartError({
+                  commandId: turn.commandId,
+                  runId: turn.run.id,
+                  cause,
+                }),
+            ),
+          )
+      : input.failReadsAfterRunning === true
+        ? Effect.void
+        : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
     input.failReadsAfterRunning === true &&
@@ -625,7 +663,18 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          write: ({ events: incoming }) =>
+            Effect.sync(() => {
+              for (const event of incoming) {
+                expect(isDomainEvent(event)).toBe(true);
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
+              return [];
+            }),
+        }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
@@ -685,6 +734,12 @@ function makeLocalCommandHarness(input: {
     newInstanceId,
     attemptId,
     projection: () => projection,
+    updateProjection: (
+      update: (current: OrchestrationV2ThreadProjection) => OrchestrationV2ThreadProjection,
+    ) => {
+      projection = update(projection);
+    },
+    startTurn,
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
     }).pipe(Effect.provide(layer)),
@@ -854,6 +909,83 @@ effectIt.effect("starts another provider in the same checkout while a turn is pe
     yield* Deferred.succeed(releaseTurn, undefined);
     yield* Fiber.join(pending);
   }),
+);
+
+effectIt.effect.each([
+  { deferred: true, sameThread: true, usedTokens: 0, delivers: true },
+  { deferred: true, sameThread: true, usedTokens: 32_000, delivers: false },
+  { deferred: true, sameThread: false, usedTokens: 0, delivers: false },
+  { deferred: undefined, sameThread: true, usedTokens: 0, delivers: false },
+] as const)(
+  "retries completed ordinary-turn handoffs only when deferred on this provider thread: %j",
+  (scenario) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue", nativeTurn: true });
+      harness.updateProjection((projection) => {
+        const run = projection.runs[0]!;
+        const providerThread = projection.providerThreads[0]!;
+        const previousRunId = RunId.make("completed-ordinary-handoff-run");
+        return {
+          ...projection,
+          runs: [
+            {
+              ...run,
+              id: previousRunId,
+              ordinal: 1,
+              status: "completed",
+              startedAt: run.requestedAt,
+              completedAt: run.requestedAt,
+            },
+            run,
+          ],
+          providerThreads: [
+            {
+              ...providerThread,
+              nativeThreadRef: {
+                driver: providerThread.driver,
+                nativeId: "native-handoff-target",
+                strength: "strong",
+              },
+              contextUsage: { usedTokens: scenario.usedTokens, maxTokens: 32_000 },
+            },
+          ],
+          contextHandoffs: [
+            {
+              id: ContextHandoffId.make("completed-ordinary-handoff"),
+              threadId: run.threadId,
+              targetRunId: previousRunId,
+              fromProviderThreadIds: [],
+              toProviderThreadId: scenario.sameThread
+                ? providerThread.id
+                : ProviderThreadId.make("another-provider-thread"),
+              coveredRunOrdinals: { from: 1, to: 1 },
+              strategy: "full_thread_summary",
+              status: "ready",
+              deferred: scenario.deferred,
+              summaryMessageId: null,
+              summaryText: "Remember the original constraints.",
+              createdByProviderInstanceId: null,
+              createdAt: run.requestedAt,
+              updatedAt: run.requestedAt,
+            },
+          ],
+        };
+      });
+
+      yield* harness.start;
+
+      expect(harness.startTurn).toHaveBeenCalledOnce();
+      const text = harness.startTurn.mock.calls[0]![0].message.text;
+      expect(text.includes("Remember the original constraints.")).toBe(scenario.delivers);
+      expect(text.endsWith("Continue")).toBe(true);
+      const handoff = harness.projection().contextHandoffs[0]!;
+      expect(handoff.delivery?.status).toBe(scenario.delivers ? "inline" : undefined);
+      expect(handoff.deferred).toBe(scenario.delivers ? undefined : scenario.deferred);
+      expect(harness.projection().runs.at(-1)?.status).toBe("running");
+      expect(
+        harness.events.filter((event) => event.type === "context-handoff.updated"),
+      ).toHaveLength(scenario.delivers ? 2 : 0);
+    }),
 );
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>

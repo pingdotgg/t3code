@@ -725,19 +725,18 @@ describe("orchestration v2 provider switching", () => {
           }
           if (reasoningScenario && replaceNative) {
             const replaced = yield* orchestrator.getThreadProjection(threadId);
-            assert.equal(
-              replaced.runs.at(-1)?.status,
-              scenario.includes("small") ? "failed" : "completed",
-            );
+            assert.equal(replaced.runs.at(-1)?.status, "completed");
             const target = replaced.providerThreads.find(
               (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
             )!;
             assert.isNull(target.contextUsage);
             assert.equal(yield* Ref.get(generation), 2);
-            assert.equal(
-              (yield* Ref.get(capturedTurns)).at(-1)!.driver,
-              scenario.includes("small") ? CODEX_DRIVER : CLAUDE_DRIVER,
-            );
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
+            if (scenario.includes("small")) {
+              const handoff = replaced.contextHandoffs.at(-1)!;
+              assert.equal(handoff.deferred, true);
+              assert.isUndefined(handoff.delivery);
+            }
             return;
           }
           if (replaceNative) {
@@ -1191,12 +1190,13 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
-  it.live("keeps the native session after turns refused before reaching the provider", () =>
+  it.live.each([false, true])("reuses native sessions after refused turns (%s)", (deferred) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const refuseStarts = yield* Ref.make(0);
+        let modelWindow = 32_000;
         const generation = yield* Ref.make(0);
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
@@ -1207,6 +1207,7 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: {},
             capturedTurns,
             refuseStarts,
+            ...(deferred ? { getModelContextWindow: () => modelWindow } : {}),
             nativeThreadGeneration: generation,
           }),
         ]);
@@ -1253,8 +1254,35 @@ describe("orchestration v2 provider switching", () => {
             worktreePath: null,
           });
           assert.equal(yield* run(1), "completed");
-          yield* Ref.set(refuseStarts, 2);
+          yield* Ref.set(refuseStarts, deferred ? 1 : 2);
           assert.equal(yield* run(2), "failed");
+          if (deferred) {
+            modelWindow = 16_000;
+            assert.equal(yield* run(3), "completed");
+            const first = (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs;
+            assert.lengthOf(first, 1);
+            assert.equal(first[0]!.deferred, true);
+            assert.equal(yield* run(4), "completed");
+            const later = (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs;
+            assert.lengthOf(later, 1);
+            assert.equal(later[0]!.id, first[0]!.id);
+            assert.equal(later[0]!.deferred, true);
+
+            modelWindow = 32_000;
+            assert.equal(yield* run(5), "completed");
+            const delivered = (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs;
+            assert.lengthOf(delivered, 1);
+            assert.equal(delivered[0]!.id, first[0]!.id);
+            assert.isUndefined(delivered[0]!.deferred);
+            assert.equal(delivered[0]!.delivery?.status, "inline");
+            const accepted = (yield* Ref.get(capturedTurns)).at(-1)!;
+            assert.equal(accepted.text.split("Request 2").length - 1, 1);
+            assert.equal(yield* run(6), "completed");
+            assert.notInclude((yield* Ref.get(capturedTurns)).at(-1)!.text, "Request 2");
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).contextHandoffs, 1);
+            assert.equal(yield* Ref.get(generation), 1);
+            return;
+          }
           assert.equal(yield* run(3), "failed");
           assert.equal(yield* run(4), "completed");
 
