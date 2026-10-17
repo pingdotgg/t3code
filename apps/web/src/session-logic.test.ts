@@ -27,6 +27,7 @@ import {
   deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
+  countFilesChangedAfterTurnCount,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   findLatestProposedPlan,
@@ -292,6 +293,55 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  it("counts only files in the scope the rewind targets", () => {
+    const checkpoint = (turnCount: number, scope: string, paths: string[]) => ({
+      scopeId: scope as never,
+      runId: RunId.make(`run-${scope}-${turnCount}`),
+      checkpointTurnCount: turnCount,
+      checkpointRef: `checkpoint-${scope}-${turnCount}` as never,
+      status: "ready" as const,
+      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:00.000Z",
+    });
+    const checkpoints = [
+      checkpoint(1, "root", ["a.ts"]),
+      checkpoint(2, "root", ["b.ts"]),
+      checkpoint(2, "other", ["x.ts", "y.ts"]),
+      checkpoint(3, "root", ["c.ts"]),
+    ];
+
+    expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(2);
+    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(3);
+  });
+
+  it("counts each file changed after the rewind point once", () => {
+    const checkpoint = (
+      turnCount: number,
+      paths: string[],
+      status: "ready" | "stale" = "ready",
+    ) => ({
+      runId: RunId.make(`run-${turnCount}`),
+      checkpointTurnCount: turnCount,
+      checkpointRef: `checkpoint-${turnCount}` as never,
+      status,
+      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:00.000Z",
+    });
+    const checkpoints = [
+      checkpoint(1, ["a.ts"]),
+      checkpoint(2, ["b.ts", "c.ts"]),
+      checkpoint(3, ["c.ts", "d.ts"]),
+      // Discarded by an earlier rewind, so its files are already restored.
+      checkpoint(4, ["e.ts"], "stale"),
+    ];
+
+    expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(3);
+    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(4);
+    expect(countFilesChangedAfterTurnCount(checkpoints, 3)).toBe(0);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

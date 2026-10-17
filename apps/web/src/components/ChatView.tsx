@@ -177,6 +177,7 @@ import {
   selectHandoffImageResources,
   deriveActivePlanState,
   deriveActiveWorkStartedAt,
+  countFilesChangedAfterTurnCount,
   deriveCanInterruptRunningThread,
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -5770,6 +5771,10 @@ export default function ChatView(props: ChatViewProps) {
   if (pendingRevert && pendingRevert.routeThreadKey !== routeThreadKey) {
     setPendingRevert(null);
   }
+  const pendingRevertChangedFileCount =
+    pendingRevert === null
+      ? 0
+      : countFilesChangedAfterTurnCount(turnDiffSummaries, pendingRevert.turnCount);
 
   const onRevertToTurnCount = async (
     turnCount: number,
@@ -8748,12 +8753,15 @@ export default function ChatView(props: ChatViewProps) {
             <AlertDialogDescription>
               Rewind chat to before this message. Your prompt and attachments return to the
               composer.
+              {pendingRevertChangedFileCount > 0
+                ? ` The agent changed ${pendingRevertChangedFileCount} ${pendingRevertChangedFileCount === 1 ? "file" : "files"} since then.`
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
-              variant="destructive"
+              variant="destructive-outline"
               onClick={() => {
                 if (!pendingRevert || pendingRevert.routeThreadKey !== routeThreadKey) return;
                 setPendingRevert(null);

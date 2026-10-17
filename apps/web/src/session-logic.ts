@@ -1045,6 +1045,30 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+/**
+ * Counts distinct files the agent changed in turns a rewind to `turnCount` would undo.
+ * Only the scope of the rollback target counts, matched the way `revertThreadCheckpoint`
+ * picks it; a rewind to before the first turn targets the first turn's scope. Stale
+ * checkpoints belong to history an earlier rewind already discarded. File restore resets
+ * the whole workspace, so a zero here does not mean restoring files is a no-op.
+ */
+export function countFilesChangedAfterTurnCount(
+  checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
+  turnCount: number,
+): number {
+  const scopeId = (
+    checkpoints.findLast((checkpoint) => checkpoint.checkpointTurnCount === turnCount) ??
+    checkpoints.find((checkpoint) => checkpoint.checkpointTurnCount === turnCount + 1)
+  )?.scopeId;
+  const paths = new Set<string>();
+  for (const checkpoint of checkpoints) {
+    if (checkpoint.checkpointTurnCount <= turnCount || checkpoint.status === "stale") continue;
+    if (checkpoint.scopeId !== scopeId) continue;
+    for (const file of checkpoint.files) paths.add(file.path);
+  }
+  return paths.size;
+}
+
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (
