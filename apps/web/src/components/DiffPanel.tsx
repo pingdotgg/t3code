@@ -468,9 +468,20 @@ export default function DiffPanel({
     preview: renderablePatch,
   });
   const refreshBranchDiffPreview = refreshPreviewQuery;
+  // Reopening within the query's idle TTL reuses its cached result, which SWR
+  // only revalidates when the atom is built. A fresh atom is already fetching,
+  // and once the thread has a workspace mutation, useWorkspaceMutationRefresh
+  // below refreshes on mount, so this covers threads without one.
+  const revalidateCachedPreviewOnOpenRef = useRef(
+    workspaceMutationId === null && branchDiffPreview.data !== null && !branchDiffPreview.isPending,
+  );
 
   useEffect(() => {
     if (!canRefreshGitDiff) return;
+    if (revalidateCachedPreviewOnOpenRef.current) {
+      revalidateCachedPreviewOnOpenRef.current = false;
+      refreshBranchDiffPreview();
+    }
     const refreshOnFocus = () => refreshBranchDiffPreview();
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
