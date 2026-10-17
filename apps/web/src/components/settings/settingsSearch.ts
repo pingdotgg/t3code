@@ -17,6 +17,7 @@ export type SettingsPath =
   | "/settings/projects"
   | "/settings/general"
   | "/settings/diagnostics"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/snap-shot"
@@ -84,6 +85,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  "/settings/voice": "Voice",
   "/settings/archived": "Archive",
 };
 
@@ -323,6 +325,60 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "dictation-shortcut-mode",
+    title: "Dictation shortcut mode",
+    to: "/settings/voice",
+    searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
+  },
+  {
+    id: "transcription-environment",
+    title: "Transcription environment",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt server machine device"],
+  },
+  {
+    id: "local-voice-input",
+    title: "Transcription models",
+    to: "/settings/voice",
+    searchTerms: ["speech voice stt download local whisper parakeet canary moonshine"],
+  },
+  {
+    id: "microphone",
+    title: "Microphone",
+    to: "/settings/voice",
+    searchTerms: ["mic test record playback input audio"],
+  },
+  {
+    id: "transcription-test",
+    title: "Transcription test",
+    to: "/settings/voice",
+    searchTerms: ["test voice speech model transcription"],
+  },
+  {
+    id: "dictionary",
+    title: "Dictionary",
+    to: "/settings/voice",
+    searchTerms: ["speech voice transcription vocabulary names glossary"],
+  },
+  {
+    id: "remove-filler-words",
+    title: "Remove filler words",
+    to: "/settings/voice",
+    searchTerms: ["voice speech transcription hesitation um uh cleanup"],
+  },
+  {
+    id: "speech-acceleration",
+    title: "Transcription acceleration",
+    to: "/settings/voice",
+    searchTerms: ["voice speech gpu cpu hardware transcription"],
+  },
+  {
+    id: "speech-model-unload",
+    title: "Model unload",
+    to: "/settings/voice",
+    searchTerms: ["voice speech transcription memory idle timeout never"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
@@ -550,6 +606,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "telemetry-export",
     scope: "environment",
     searchTerms: ["OTel OTLP telemetry export endpoints logs traces metrics Grafana"],
+  },
+  {
+    id: "speech-post-processing",
+    title: "Voice post-processing",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription polish clean provider"],
+  },
+  {
+    id: "speech-post-processing-model",
+    title: "Voice post-processing model",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription provider model"],
+  },
+  {
+    id: "speech-correction-word",
+    title: "Explicit correction cue",
+    to: "/settings/voice",
+    searchTerms: ["speech voice self correction revise err"],
+  },
+  {
+    id: "speech-post-processing-prompt",
+    title: "Voice post-processing prompt",
+    to: "/settings/voice",
+    searchTerms: ["speech transcription instructions cleanup"],
   },
   {
     id: "diagnostics",
@@ -991,6 +1071,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diagnostics": "environment",
   "/settings/projects": "project",
   "/settings/general": null,
+  "/settings/voice": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,

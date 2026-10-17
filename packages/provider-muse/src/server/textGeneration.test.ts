@@ -114,6 +114,21 @@ const finish =
   };
 
 it.layer(NodeServices.layer)("Muse text generation", (it) => {
+  it.effect("cleans a transcript and closes the isolated host", () =>
+    Effect.gen(function* () {
+      const test = fixture(finish('{"transcription":"Fix the OAuth redirect."}'));
+      const service = yield* test.make;
+      expect(
+        yield* service.generateTranscriptionPostProcessing({
+          cwd: titleInput.cwd,
+          prompt: "Clean this transcript: fix the oauth redirect",
+          modelSelection,
+        }),
+      ).toEqual({ transcription: "Fix the OAuth redirect." });
+      expect(test.host.close).toHaveBeenCalledOnce();
+    }),
+  );
+
   it.effect("validates the final item once and closes an isolated restrictive host", () =>
     Effect.gen(function* () {
       const test = fixture(finish('{"title":"Fix login form"}'));

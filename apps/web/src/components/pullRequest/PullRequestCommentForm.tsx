@@ -1,7 +1,9 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { SendIcon } from "lucide-react";
-import { useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
+
+import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
@@ -12,6 +14,7 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestCommentForm({
   environmentId,
+  active,
   reference,
   detail,
   actionPending,
@@ -21,6 +24,7 @@ export function PullRequestCommentForm({
   onClose,
 }: {
   environmentId: EnvironmentId;
+  active: boolean;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
   actionPending: boolean;
@@ -34,9 +38,24 @@ export function PullRequestCommentForm({
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, {
-    reportFailure: false,
+  const speech = useTextFieldSpeech({
+    environmentId,
+    projectId: reference.projectId,
+    ownerKey: JSON.stringify(["pr-comment", environmentId, reference]),
+    text: body,
+    textareaRef,
+    onTextChange: setBody,
+    disabled: !active || submitting !== null || actionPending,
   });
+  const { cancel } = speech;
+  const closeSetup = speech.setup.setOpen;
+  useEffect(() => {
+    if (!active) {
+      cancel();
+      closeSetup(false);
+    }
+  }, [active, cancel, closeSetup]);
+  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
   const followUpAction =
     detail.state === "open" &&
     detail.capabilities.actions.includes("close") &&
@@ -48,8 +67,8 @@ export function PullRequestCommentForm({
         ? ("reopen" as const)
         : null;
 
-  const submit = async (action: "comment" | "close" | "reopen") => {
-    const trimmed = body.trim();
+  const submit = async (action: "comment" | "close" | "reopen", text: string) => {
+    const trimmed = text.trim();
     if (trimmed.length === 0 || submitting !== null || actionPending) return;
     setSubmitting(action);
     if (action !== "comment") {
@@ -86,6 +105,7 @@ export function PullRequestCommentForm({
         // Locked while posting: the body is cleared on success, which would otherwise throw
         // away a new draft typed while the request was still in flight.
         disabled={submitting !== null || actionPending}
+        readOnly={speech.freezesEditor}
         value={body}
         rows={3}
         placeholder="Leave a comment"
@@ -101,17 +121,28 @@ export function PullRequestCommentForm({
           ) {
             event.preventDefault();
             event.stopPropagation();
-            if (!event.repeat) void submit("comment");
+            if (!event.repeat) speech.submitAfterDictation((text) => void submit("comment", text));
           }
         }}
       />
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="mr-auto flex min-w-0 flex-wrap items-center gap-1">
+          <TextFieldSpeechControls
+            speech={speech}
+            disabled={submitting !== null || actionPending}
+          />
+        </div>
         {followUpAction === null ? null : (
           <Button
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
-            disabled={body.trim().length === 0 || submitting !== null || actionPending}
-            onClick={() => void submit(followUpAction)}
+            disabled={
+              speech.preparing ||
+              (body.trim().length === 0 && !speech.blocksSubmission) ||
+              submitting !== null ||
+              actionPending
+            }
+            onClick={() => speech.submitAfterDictation((text) => void submit(followUpAction, text))}
           >
             {followUpAction === "close" ? (
               <PullRequestGlyph.closed className="size-3.5" />
@@ -130,8 +161,13 @@ export function PullRequestCommentForm({
         <Button
           size="xs"
           variant="outline"
-          disabled={body.trim().length === 0 || submitting !== null || actionPending}
-          onClick={() => void submit("comment")}
+          disabled={
+            speech.preparing ||
+            (body.trim().length === 0 && !speech.blocksSubmission) ||
+            submitting !== null ||
+            actionPending
+          }
+          onClick={() => speech.submitAfterDictation((text) => void submit("comment", text))}
         >
           <SendIcon className="size-3.5" />
           {submitting === "comment" ? "Posting..." : "Comment"}

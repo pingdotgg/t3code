@@ -1,3 +1,4 @@
+import { normalizeEventKey } from "@t3tools/shared/keybindingMatching";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KeybindingCommand,
@@ -17,11 +18,7 @@ import {
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
 } from "@t3tools/shared/htmlRender";
-import {
-  isMacPlatform,
-  matchesKeybindingShortcut,
-  normalizeEventKey,
-} from "@t3tools/shared/keybindings";
+import { isMacPlatform, matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";

@@ -3,6 +3,12 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { previewStreamDownloadUrl } from "@t3tools/client-runtime/preview/server-browser-stream";
+import { randomUUID } from "~/lib/utils";
+import { useAtomValue } from "@effect/atom-react";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { PreviewAnnotationSpeech } from "./PreviewAnnotationSpeech";
+import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
+
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -150,8 +156,11 @@ export function PreviewView({
   const canSendAnnotation =
     useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
     Boolean(onSendAnnotation);
+  const [annotationVoice, setAnnotationVoice] =
+    useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
-  const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
+  const pickActiveRef = useRef<{ cancelled: boolean; ownerKey: string } | null>(null);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
@@ -768,15 +777,20 @@ export function PreviewView({
     // guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-    const pickRequest = { cancelled: false };
+    const pickRequest = { cancelled: false, ownerKey: scopedThreadKey(threadRef) };
     let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
+    const voice = { sessionId: randomUUID(), keybindings };
+    setAnnotationVoice(voice);
     const finishPick = () => {
       const isCurrentPick = pickActiveRef.current === pickRequest;
       if (isCurrentPick) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        if (isMountedRef.current) {
+          setPickActive(false);
+          setAnnotationVoice(null);
+        }
       }
       if (
         (isCurrentPick || submitted) &&
@@ -798,14 +812,17 @@ export function PreviewView({
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
       );
       if (pickRequest.cancelled) return;
-      const result = await bridge.pickElement(runtimeTabId);
+      const result = await bridge.pickElement(runtimeTabId, voice);
       if (!result || pickRequest.cancelled) return;
       // Nothing that happens after this point (a second picker click, a tab
       // change, unmount) may discard it, so the pick stops being cancellable
       // here rather than in finishPick.
       if (pickActiveRef.current === pickRequest) {
         pickActiveRef.current = null;
-        if (isMountedRef.current) setPickActive(false);
+        if (isMountedRef.current) {
+          setPickActive(false);
+          setAnnotationVoice(null);
+        }
         submitted = true;
       }
       const { annotation: picked, submission, screenshotFailed = false } = result;
@@ -859,17 +876,21 @@ export function PreviewView({
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  const pickOwnerKey = scopedThreadKey(threadRef);
   useEffect(() => {
     return () => {
-      if (!pickActiveRef.current) return;
+      if (!pickActiveRef.current || pickActiveRef.current.ownerKey !== pickOwnerKey) return;
       pickActiveRef.current.cancelled = true;
       pickActiveRef.current = null;
       if (previewBridge && runtimeTabId) {
         void previewBridge.cancelPickElement(runtimeTabId).catch(() => undefined);
       }
-      if (isMountedRef.current) setPickActive(false);
+      if (isMountedRef.current) {
+        setPickActive(false);
+        setAnnotationVoice(null);
+      }
     };
-  }, [runtimeTabId]);
+  }, [runtimeTabId, pickOwnerKey]);
 
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
@@ -906,6 +927,14 @@ export function PreviewView({
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
     >
+      {pickActive && runtimeTabId && annotationVoice ? (
+        <PreviewAnnotationSpeech
+          key={JSON.stringify([annotationVoice.sessionId, threadRef])}
+          threadRef={threadRef}
+          tabId={runtimeTabId}
+          config={annotationVoice}
+        />
+      ) : null}
       <PreviewChromeRow
         url={url}
         loading={loading || serverStreamPending}

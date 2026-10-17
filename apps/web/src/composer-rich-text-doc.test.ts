@@ -5,6 +5,7 @@ import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { describe, expect, it } from "vite-plus/test";
+import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
 import { collapseExpandedComposerCursor, pastedPathQueryLength } from "./composer-logic";
 
@@ -854,6 +855,24 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(plain, collapsedToFlat(plain, 3))).toBe(3);
     expect(flatToMarkdown(rich, collapsedToFlat(rich, 3))).toBe(4);
   });
+  it.each(["@README.md", "[Checkout](t3-context://v1/preview-annotation/pa-1)"])(
+    "replaces a dictated selection across %s using stored text offsets",
+    (reference) => {
+      const map = roundTrip(`before ${reference} after`);
+      const token = map.runs.find((run) => run.kind === "token");
+      expect(token).toBeDefined();
+      if (!token) throw new Error("Expected an inline mention");
+      const selection = {
+        start: flatToMarkdown(map, pmToFlat(map, token.pmPos)),
+        end: flatToMarkdown(map, pmToFlat(map, token.pmPos + 1)),
+      };
+      expect(
+        replaceTextRange(map.value, selection.start, selection.end, "replacement"),
+      ).toMatchObject({
+        text: "before replacement after",
+      });
+    },
+  );
 
   it("maps markdown offsets at styled edges onto document text", () => {
     const value = "a **bold** c";

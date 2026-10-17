@@ -1,10 +1,13 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
-import { useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
+
+import { useTextFieldSpeech, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
+import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger } from "../ui/select";
 import { Textarea } from "../ui/textarea";
@@ -43,6 +46,7 @@ const VERDICTS: ReadonlyArray<{
 
 export function PullRequestReviewForm({
   environmentId,
+  active,
   reference,
   verdicts,
   requestChangesSummaryRequired,
@@ -52,6 +56,7 @@ export function PullRequestReviewForm({
   onSubmitted,
 }: {
   environmentId: EnvironmentId;
+  active: boolean;
   reference: PullRequestRef;
   verdicts: ReadonlyArray<PullRequestReviewVerdict>;
   requestChangesSummaryRequired: boolean;
@@ -69,6 +74,23 @@ export function PullRequestReviewForm({
   const body = usePullRequestReviewStore((store) => store.summaries[reviewKey] ?? "");
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
+  const speech = useTextFieldSpeech({
+    environmentId,
+    projectId: reference.projectId,
+    ownerKey: JSON.stringify(["pr-review", environmentId, reviewKey]),
+    text: body,
+    textareaRef,
+    onTextChange: (text) => setSummary(reviewKey, text),
+    disabled: !active || pending,
+  });
+  const { cancel } = speech;
+  const closeSetup = speech.setup.setOpen;
+  useEffect(() => {
+    if (!active) {
+      cancel();
+      closeSetup(false);
+    }
+  }, [active, cancel, closeSetup]);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
   const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
@@ -78,9 +100,9 @@ export function PullRequestReviewForm({
   const selectedVerdict =
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
-  const submit = async (verdict: (typeof VERDICTS)[number]) => {
-    if (pending) return;
-    const submittedBody = body;
+  const submit = async (verdict: (typeof VERDICTS)[number], text: string) => {
+    if (pending || !canSubmit(verdict.value, text)) return;
+    const submittedBody = text;
     const submittedComments = comments;
     onPendingChange(true);
     const result = await submitReview({
@@ -109,7 +131,7 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string) =>
+  const canSubmit = (verdict: PullRequestReviewVerdict, summary = body) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
       : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
@@ -125,49 +147,73 @@ export function PullRequestReviewForm({
       <Textarea
         ref={textareaRef}
         rows={3}
+        readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
         aria-label="Review summary"
         onChange={(event) => setSummary(reviewKey, event.target.value)}
+        onKeyDown={(event) => {
+          if (
+            event.nativeEvent.isComposing ||
+            event.keyCode === 229 ||
+            event.repeat ||
+            selectedVerdict === undefined
+          )
+            return;
+          if (isCommentSubmitShortcut(event, body, pending || speech.preparing, true)) {
+            event.preventDefault();
+            event.stopPropagation();
+            speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
+          }
+        }}
       />
-      <div className="mt-2 flex justify-end gap-2">
-        {offered.length > 1 ? (
-          <Select
-            value={selectedVerdict?.value ?? null}
-            disabled={pending}
-            onValueChange={(value) => {
-              if (value !== null) setRequestedVerdict(value);
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          <TextFieldSpeechControls speech={speech} disabled={pending} />
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {offered.length > 1 ? (
+            <Select
+              value={selectedVerdict?.value ?? null}
+              disabled={pending}
+              onValueChange={(value) => {
+                if (value !== null) setRequestedVerdict(value);
+              }}
+            >
+              <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
+                <span className="flex items-center gap-1.5">
+                  {selectedVerdict?.icon}
+                  {selectedVerdict?.label}
+                </span>
+              </SelectTrigger>
+              <SelectPopup side="top" alignItemWithTrigger={false}>
+                {offered.map((verdict) => (
+                  <SelectItem key={verdict.value} value={verdict.value}>
+                    <span className="flex items-center gap-1.5">
+                      {verdict.icon}
+                      {verdict.label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          ) : null}
+          <Button
+            size="xs"
+            disabled={
+              speech.preparing ||
+              pending ||
+              selectedVerdict === undefined ||
+              (!canSubmit(selectedVerdict.value) && !speech.blocksSubmission)
+            }
+            onClick={() => {
+              if (selectedVerdict !== undefined)
+                speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
             }}
           >
-            <SelectTrigger size="xs" className="mr-auto w-auto min-w-0" aria-label="Review verdict">
-              <span className="flex items-center gap-1.5">
-                {selectedVerdict?.icon}
-                {selectedVerdict?.label}
-              </span>
-            </SelectTrigger>
-            <SelectPopup side="top" alignItemWithTrigger={false}>
-              {offered.map((verdict) => (
-                <SelectItem key={verdict.value} value={verdict.value}>
-                  <span className="flex items-center gap-1.5">
-                    {verdict.icon}
-                    {verdict.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        ) : null}
-        <Button
-          size="xs"
-          disabled={
-            pending || selectedVerdict === undefined || !canSubmit(selectedVerdict.value, body)
-          }
-          onClick={() => {
-            if (selectedVerdict !== undefined) void submit(selectedVerdict);
-          }}
-        >
-          {pending ? "Submitting..." : "Submit review"}
-        </Button>
+            {pending ? "Submitting..." : "Submit review"}
+          </Button>
+        </div>
       </div>
     </>
   );

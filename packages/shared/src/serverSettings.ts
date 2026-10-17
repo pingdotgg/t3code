@@ -4,6 +4,7 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  DEFAULT_SPEECH_POST_PROCESSING_MODELS,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
@@ -178,6 +179,64 @@ export function resolveReviewGuideModelSelection(
     }
   }
   return resolveSourceControlWriterModelSelection(settings, providers, projectId);
+}
+
+/** Resolve voice cleanup without changing the user's persisted selection. */
+export function resolveSpeechPostProcessingModelSelection(
+  settings: ServerSettings,
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection {
+  const canUse = (selection: ModelSelection) => {
+    if (!isModelSelectionProviderEnabled(settings, selection)) return false;
+    if (settings.providerInstances[selection.instanceId]?.driver === "acpRegistry") return false;
+    if (providers === undefined) return true;
+    const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+    return (
+      provider?.enabled === true &&
+      provider.installed &&
+      isProviderAvailable(provider) &&
+      provider.supportsTextGeneration !== false
+    );
+  };
+  let selection = settings.speechPostProcessingModelSelection;
+  if (!canUse(selection)) {
+    for (const [driver, defaults] of Object.entries(DEFAULT_SPEECH_POST_PROCESSING_MODELS)) {
+      if (!defaults) continue;
+      const instanceIds = [
+        ProviderInstanceId.make(driver),
+        ...Object.entries(settings.providerInstances)
+          .filter(([id, instance]) => instance.driver === driver && id !== driver)
+          .map(([id]) => ProviderInstanceId.make(id)),
+      ];
+      const instanceId = instanceIds.find((id) =>
+        canUse({ instanceId: id, model: defaults.model }),
+      );
+      if (instanceId) {
+        selection = createModelSelection(instanceId, defaults.model, defaults.options);
+        break;
+      }
+    }
+  }
+  if (providers === undefined || !selection.options?.length) return selection;
+  const provider = providers.find((entry) => entry.instanceId === selection.instanceId);
+  const model =
+    provider?.models.find(
+      (model) => model.slug === selection.model || model.aliases?.includes(selection.model),
+    ) ??
+    (provider?.driver === "grok" && selection.model === "grok-build"
+      ? provider.models.find((entry) => entry.isDefault)
+      : undefined);
+  const descriptors = model?.capabilities?.optionDescriptors ?? [];
+  const options = selection.options.filter((option) =>
+    descriptors.some(
+      (descriptor) =>
+        descriptor.id === option.id &&
+        (descriptor.type === "boolean"
+          ? typeof option.value === "boolean"
+          : descriptor.options.some((choice) => choice.id === option.value)),
+    ),
+  );
+  return createModelSelection(selection.instanceId, selection.model, options);
 }
 
 export interface PersistedServerObservabilitySettings {
@@ -383,6 +442,8 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    // Already translated into `projectSettingsOverrides` above; the legacy
+    // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,

@@ -39,6 +39,10 @@ const mocks = vi.hoisted(() => ({
   recordVisitForThread: vi.fn(),
 }));
 
+vi.mock("./PreviewAnnotationSpeech", () => ({
+  PreviewAnnotationSpeech: () => null,
+}));
+
 const STUB_BROWSER_DEFAULTS = {
   viewport: FILL_PREVIEW_VIEWPORT,
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,

@@ -5,6 +5,10 @@ also lists the command IDs and defaults available in your version.
 
 ## Composer controls
 
+Use `mod+shift+d` to dictate into the composer or a focused supported editor, and
+`Esc` to discard voice input. Change the shortcut in **Settings → Keybindings**.
+See [Voice input](./voice-input.md#dictate-into-a-draft) for Auto, Hold, and Toggle modes.
+
 In **Settings → General → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.

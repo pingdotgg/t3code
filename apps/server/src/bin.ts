@@ -17,6 +17,11 @@ if (
   if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
+  } else if (command === "__speech-worker") {
+    const mode = process.argv[3];
+    if (mode !== "discover" && mode !== "model") throw new Error("Unknown speech worker mode.");
+    const { runNativeSpeechWorker } = await import("./speech/native.ts");
+    await runNativeSpeechWorker(mode, process.argv[4]);
   } else {
     // Before anything reads stdin: the desktop app's Windows launcher starts
     // the CLI without one. Never for the fast paths, whose stdin is a pipe.

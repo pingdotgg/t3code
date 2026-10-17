@@ -167,6 +167,12 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on web and desktop
+
+Use the composer's microphone to dictate into your draft, then review and edit
+the transcript before sending. Set up a transcription model in **Settings → Voice**.
+See [Voice input](./voice-input.md) for setup, shortcuts, and recognition options.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

@@ -46,6 +46,7 @@ import {
   deriveLegacyProjectOverrides,
   fallbackTextGenerationModelSelection,
   isModelSelectionProviderEnabled,
+  resolveSpeechPostProcessingModelSelection,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import {
@@ -418,10 +419,15 @@ function selectionSupportsTextGeneration(
 }
 
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
+  const resolved =
+    isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection) &&
     selectionSupportsTextGeneration(settings, settings.textGenerationModelSelection)
-    ? settings
-    : fallbackTextGenerationProvider(settings);
+      ? settings
+      : fallbackTextGenerationProvider(settings);
+  const speechPostProcessingModelSelection = resolveSpeechPostProcessingModelSelection(resolved);
+  return speechPostProcessingModelSelection === resolved.speechPostProcessingModelSelection
+    ? resolved
+    : { ...resolved, speechPostProcessingModelSelection };
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
@@ -443,6 +449,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "textGenerationModelSelection",
+  "speechPostProcessingModelSelection",
   "pullRequestMergeMethod",
 ]);
 

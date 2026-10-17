@@ -1388,6 +1388,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2748,8 +2750,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
         NSLocalNetworkUsageDescription:
           "T3 Code connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
-        NSScreenCaptureUsageDescription:
-          "T3 Code captures the active window when you use the window capture shortcut.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
@@ -2760,6 +2760,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             LSItemContentTypes: ["public.html", "public.xhtml"],
           },
         ],
+        NSMicrophoneUsageDescription:
+          "T3 Code uses your microphone for voice input. Audio is transcribed on your T3 environment.",
+        NSScreenCaptureUsageDescription:
+          "T3 Code captures the active window when you use the window capture shortcut.",
       },
       protocols: [
         {
