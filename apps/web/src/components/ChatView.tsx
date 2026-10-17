@@ -5130,6 +5130,8 @@ export default function ChatView(props: ChatViewProps) {
     if (presentation === null || !activeThread) {
       return null;
     }
+    const onlyItem = presentation.items.length === 1 ? presentation.items[0] : undefined;
+    const onlyChildThreadId = onlyItem?.childThreadId;
     return {
       id: `background-work:${activeThread.id}`,
       variant: "default",
@@ -5145,34 +5147,44 @@ export default function ChatView(props: ChatViewProps) {
       ),
       title: presentation.title,
       description:
-        presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
-          ? undefined
-          : presentation.items.map((item, index) => {
-              const childThreadId = item.childThreadId;
-              const separator = index < presentation.items.length - 1 ? "," : null;
-              return (
-                <Fragment key={item.taskId}>
-                  {index > 0 ? " " : null}
-                  {childThreadId === undefined ? (
-                    <>
+        onlyItem !== undefined ? (
+          onlyChildThreadId === undefined ? undefined : (
+            <InlineButton
+              tone="muted"
+              aria-label={`Show subagent ${onlyItem.label}`}
+              onClick={() => onOpenRelatedThreadStable(onlyChildThreadId)}
+            >
+              Show
+            </InlineButton>
+          )
+        ) : (
+          presentation.items.map((item, index) => {
+            const childThreadId = item.childThreadId;
+            const separator = index < presentation.items.length - 1 ? "," : null;
+            return (
+              <Fragment key={item.taskId}>
+                {index > 0 ? " " : null}
+                {childThreadId === undefined ? (
+                  <>
+                    {item.label}
+                    {separator}
+                  </>
+                ) : (
+                  <span className="whitespace-nowrap">
+                    <InlineButton
+                      tone="muted"
+                      aria-label={`Open subagent ${item.label}`}
+                      onClick={() => onOpenRelatedThreadStable(childThreadId)}
+                    >
                       {item.label}
-                      {separator}
-                    </>
-                  ) : (
-                    <span className="whitespace-nowrap">
-                      <InlineButton
-                        tone="muted"
-                        aria-label={`Open subagent ${item.label}`}
-                        onClick={() => onOpenRelatedThreadStable(childThreadId)}
-                      >
-                        {item.label}
-                      </InlineButton>
-                      {separator}
-                    </span>
-                  )}
-                </Fragment>
-              );
-            }),
+                    </InlineButton>
+                    {separator}
+                  </span>
+                )}
+              </Fragment>
+            );
+          })
+        ),
       actions: (
         <Button
           size="xs"
