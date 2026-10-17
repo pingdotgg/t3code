@@ -54,6 +54,8 @@ function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
         respondingRequestIds={[]}
         answers={answers}
         questionIndex={questionIndex}
+        isAnswering
+        onToggleAnswering={() => {}}
         onAdvance={advance}
         onToggleOption={(questionId, value) => {
           const question = prompt.questions.find((entry) => entry.id === questionId)!;

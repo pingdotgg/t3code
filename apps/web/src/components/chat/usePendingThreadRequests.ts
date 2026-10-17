@@ -456,8 +456,11 @@ export function usePendingThreadRequests(input: {
         },
       };
     });
-    promptRef.current = "";
-    composerRef.current?.resetCursorState({ cursor: 0 });
+    // Only an answering composer shows the custom answer the option cleared.
+    if (composerRef.current?.getSendContext().answeringPendingUserInput !== false) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState({ cursor: 0 });
+    }
   };
   const onSelectActivePendingUserInputOptionStable = useStableCallback(
     onSelectActivePendingUserInputOption,
