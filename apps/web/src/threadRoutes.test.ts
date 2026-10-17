@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { ThreadId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { DraftId } from "./composerDraftStore";
+import { makeThreadProjectionFixture } from "./test-fixtures";
 
 import {
   buildDraftThreadRouteParams,
   buildThreadRouteParams,
   isThreadRouteSnapshotAuthoritative,
+  isUnlistedThreadUnavailable,
   resolveActiveThreadRouteRef,
   resolveThreadRouteRenderState,
   resolveThreadRouteRef,
@@ -108,6 +113,7 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadExists: true,
         serverThreadDeleted: false,
+        serverThreadUnavailable: false,
         draftThreadExists: false,
       }),
     ).toBe("ready");
@@ -119,6 +125,7 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadExists: true,
         serverThreadDeleted: false,
+        serverThreadUnavailable: false,
         draftThreadExists: false,
       }),
     ).toBe("ready");
@@ -127,6 +134,7 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadExists: false,
         serverThreadDeleted: false,
+        serverThreadUnavailable: false,
         draftThreadExists: true,
       }),
     ).toBe("ready");
@@ -145,6 +153,7 @@ describe("threadRoutes", () => {
           bootstrapComplete: isThreadRouteSnapshotAuthoritative(status),
           serverThreadExists: source === "server thread",
           serverThreadDeleted: false,
+          serverThreadUnavailable: false,
           draftThreadExists: source === "draft",
         }),
       ).toBe("ready");
@@ -157,6 +166,7 @@ describe("threadRoutes", () => {
         bootstrapComplete: false,
         serverThreadExists: false,
         serverThreadDeleted: false,
+        serverThreadUnavailable: true,
         draftThreadExists: false,
       }),
     ).toBe("loading");
@@ -165,9 +175,57 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadExists: false,
         serverThreadDeleted: false,
+        serverThreadUnavailable: true,
         draftThreadExists: false,
       }),
     ).toBe("missing");
+  });
+
+  it("waits for a thread the live shell does not list yet while its own load is pending", () => {
+    expect(
+      resolveThreadRouteRenderState({
+        bootstrapComplete: isThreadRouteSnapshotAuthoritative("live"),
+        serverThreadExists: false,
+        serverThreadDeleted: false,
+        serverThreadUnavailable: false,
+        draftThreadExists: false,
+      }),
+    ).toBe("loading");
+  });
+
+  it("reads an unlisted thread as unavailable only once its own load settles that way", () => {
+    const projection = makeThreadProjectionFixture();
+    const pending = [
+      EMPTY_ENVIRONMENT_THREAD_STATE,
+      { ...EMPTY_ENVIRONMENT_THREAD_STATE, status: "synchronizing" as const },
+      {
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        status: "live" as const,
+        data: Option.some(projection),
+      },
+    ];
+    for (const detail of pending) {
+      expect(isUnlistedThreadUnavailable(detail)).toBe(false);
+    }
+
+    const unavailable = [
+      { ...EMPTY_ENVIRONMENT_THREAD_STATE, status: "deleted" as const },
+      {
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        error: Option.some("Could not synchronize the thread."),
+      },
+      {
+        ...EMPTY_ENVIRONMENT_THREAD_STATE,
+        status: "live" as const,
+        data: Option.some({
+          ...projection,
+          thread: { ...projection.thread, archivedAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z") },
+        }),
+      },
+    ];
+    for (const detail of unavailable) {
+      expect(isUnlistedThreadUnavailable(detail)).toBe(true);
+    }
   });
 
   it("redirects deleted server threads", () => {
@@ -176,6 +234,7 @@ describe("threadRoutes", () => {
         bootstrapComplete: true,
         serverThreadExists: true,
         serverThreadDeleted: true,
+        serverThreadUnavailable: false,
         draftThreadExists: false,
       }),
     ).toBe("missing");
@@ -187,6 +246,7 @@ describe("threadRoutes", () => {
         bootstrapComplete: isThreadRouteSnapshotAuthoritative("cached"),
         serverThreadExists: true,
         serverThreadDeleted: true,
+        serverThreadUnavailable: false,
         draftThreadExists: false,
       }),
     ).toBe("loading");

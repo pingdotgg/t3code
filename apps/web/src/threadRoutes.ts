@@ -1,6 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =
@@ -27,16 +29,35 @@ export function isThreadRouteSnapshotAuthoritative(
   return status === "live";
 }
 
+/**
+ * Whether the thread's own load says a thread the shell does not list cannot
+ * be opened: the server has no such thread, the load failed, or the thread is
+ * archived (the active shell leaves archived threads out).
+ */
+export function isUnlistedThreadUnavailable(detail: EnvironmentThreadState): boolean {
+  return (
+    detail.status === "deleted" ||
+    Option.isSome(detail.error) ||
+    Option.exists(detail.data, (projection) => projection.thread.archivedAt !== null)
+  );
+}
+
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
   serverThreadExists: boolean;
   serverThreadDeleted: boolean;
+  serverThreadUnavailable: boolean;
   draftThreadExists: boolean;
 }): ThreadRouteRenderState {
   if (input.draftThreadExists || (input.serverThreadExists && !input.serverThreadDeleted)) {
     return "ready";
   }
   if (!input.bootstrapComplete) {
+    return "loading";
+  }
+  // A thread another client created a moment ago can reach this route before
+  // the live shell lists it, so the shell alone cannot tell it from a missing one.
+  if (!input.serverThreadExists && !input.serverThreadUnavailable) {
     return "loading";
   }
   return "missing";
