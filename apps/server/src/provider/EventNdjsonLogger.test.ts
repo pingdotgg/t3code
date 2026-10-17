@@ -435,6 +435,60 @@ it.layer(NodeServices.layer)("EventNdjsonLogger", (it) => {
     }),
   );
 
+  it.effect(
+    "drops Claude thinking-token counters while keeping system and terminal usage records",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
+        const basePath = NodePath.join(tempDir, "events.log");
+        const threadId = ThreadId.make("claude-thinking-tokens");
+        const counter = {
+          direction: "incoming",
+          stage: "decoded",
+          payload: {
+            type: "system",
+            subtype: "thinking_tokens",
+            estimated_tokens: 50,
+            estimated_tokens_delta: 50,
+          },
+        };
+        const retained = [
+          { type: "system", subtype: "init", session_id: "claude-session" },
+          {
+            type: "stream_event",
+            event: { type: "message_delta", usage: { output_tokens: 10 } },
+          },
+          {
+            type: "result",
+            subtype: "success",
+            usage: { output_tokens: 10, output_tokens_details: { thinking_tokens: 5 } },
+          },
+        ].map((payload) => ({ event: { direction: "incoming", stage: "decoded", payload } }));
+
+        try {
+          const store = yield* makeEventNdjsonLogStore(basePath, { batchWindowMs: 0 });
+          const native = store.logger("native");
+          yield* native.write(counter, threadId);
+          yield* native.write({ provider: "claudeAgent", event: counter }, threadId);
+          for (const event of retained) {
+            yield* native.write(event, threadId);
+          }
+          yield* store.close();
+
+          const records = NodeFS.readFileSync(
+            ownedLogPath(basePath, "claude-thinking-tokens"),
+            "utf8",
+          )
+            .trim()
+            .split("\n")
+            .map((line) => decodeUnknownJson(parseLogLine(line).payload));
+          assert.deepEqual(records, retained);
+        } finally {
+          NodeFS.rmSync(tempDir, { recursive: true, force: true });
+        }
+      }),
+  );
+
   it.effect("summarizes large histories without reading their items", () =>
     Effect.gen(function* () {
       const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-provider-log-"));
