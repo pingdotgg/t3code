@@ -413,6 +413,93 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
+  const parsedToolCall = (update: EffectAcpSchema.SessionNotification["update"]) => {
+    const event = parseSessionUpdateEvent({ sessionId: "session-1", update }).events[0];
+    if (event?._tag !== "ToolCallUpdated") throw new Error("expected a tool call update");
+    return event.toolCall;
+  };
+
+  it("reads a terminal command from a `$ command` content line", () => {
+    // Hermes' shape: no rawInput, the command shown the way Zed renders a terminal call.
+    const started = parsedToolCall({
+      sessionUpdate: "tool_call",
+      toolCallId: "terminal-1",
+      title: "terminal: git --version",
+      kind: "execute",
+      status: "pending",
+      content: [{ type: "content", content: { type: "text", text: "$ git --version" } }],
+    });
+    const completed = mergeToolCallState(
+      started,
+      parsedToolCall({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "terminal-1",
+        kind: "execute",
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "git version 2.43.0" } }],
+      }),
+    );
+
+    expect(started).toMatchObject({ title: "Ran command", command: "git --version" });
+    expect(completed).toMatchObject({ title: "Ran command", command: "git --version" });
+  });
+
+  it("keeps the agent's title through an update that omits it", () => {
+    const describeCall = parsedToolCall({
+      sessionUpdate: "tool_call",
+      toolCallId: "describe-1",
+      title: "tool_describe: Reading tool details · 1 tool",
+      kind: "other",
+      status: "pending",
+    });
+    const skillCall = parsedToolCall({
+      sessionUpdate: "tool_call",
+      toolCallId: "skill-1",
+      title: "skill_view: moveit-pro",
+      kind: "read",
+      status: "pending",
+    });
+    const finish = (toolCallId: string, kind: EffectAcpSchema.ToolKind) =>
+      parsedToolCall({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        kind,
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "result" } }],
+      });
+
+    expect(mergeToolCallState(describeCall, finish("describe-1", "other")).title).toBe(
+      "tool_describe: Reading tool details · 1 tool",
+    );
+    expect(skillCall.title).toBe("skill_view: moveit-pro");
+    expect(mergeToolCallState(skillCall, finish("skill-1", "read")).title).toBe(
+      "skill_view: moveit-pro",
+    );
+  });
+
+  it("shows a path that a title-less update adds to a read call", () => {
+    const readCall = (title: string) =>
+      parsedToolCall({
+        sessionUpdate: "tool_call",
+        toolCallId: "read-1",
+        title,
+        kind: "read",
+        status: "pending",
+      });
+    const addPath = parsedToolCall({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "read-1",
+      kind: "read",
+      status: "completed",
+      locations: [{ path: "README.md" }],
+    });
+
+    expect(mergeToolCallState(readCall("read_file: README.md"), addPath).title).toBe(
+      "Read README.md",
+    );
+    expect(mergeToolCallState(readCall("Read file"), addPath).title).toBe("Read README.md");
+  });
+
   it("trims padded current mode updates before emitting a mode change", () => {
     const result = parseSessionUpdateEvent({
       sessionId: "session-1",

@@ -64,6 +64,25 @@ describe("toolActivity", () => {
     });
   });
 
+  it("keeps a descriptive agent title when no command or path is available", () => {
+    const present = (kind: string, title: string) =>
+      deriveToolActivityPresentation({
+        itemType: kind === "execute" ? "command_execution" : "dynamic_tool_call",
+        title,
+        data: { kind },
+        fallbackSummary: title,
+      });
+
+    expect(present("execute", "execute_code: Running Python helper script")).toEqual({
+      summary: "Ran command",
+      detail: "execute_code: Running Python helper script",
+    });
+    expect(present("execute", "Terminal")).toEqual({ summary: "Ran command" });
+    expect(present("read", "skill_view: moveit-pro")).toEqual({
+      summary: "skill_view: moveit-pro",
+    });
+  });
+
   it("classifies from kind and toolName without sniffing titles", () => {
     expect(classifyToolActivity({ data: { kind: "read" } })).toBe("read");
     expect(classifyToolActivity({ data: { toolName: "Grep" } })).toBe("search");

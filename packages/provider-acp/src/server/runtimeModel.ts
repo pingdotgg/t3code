@@ -525,6 +525,7 @@ function extractToolCallCommand(
   rawInput: unknown,
   title: string | undefined,
   kind: string | undefined,
+  textContent: string | undefined,
 ): string | undefined {
   if (isRecord(rawInput)) {
     const directCommand = normalizeCommandValue(rawInput.command);
@@ -545,7 +546,11 @@ function extractToolCallCommand(
   if (kind !== "execute") {
     return undefined;
   }
-  return extractCommandFromTitle(title);
+  // Hermes leaves rawInput off its terminal calls and shows the command as a
+  // single `$ <command>` content line, which is how Zed renders it.
+  const promptLine =
+    textContent === undefined ? undefined : /^\$ (?<command>[^\n]+)$/u.exec(textContent);
+  return extractCommandFromTitle(title) ?? (promptLine?.groups?.command?.trim() || undefined);
 }
 
 function filePathFromToolValue(value: unknown): string | undefined {
@@ -806,9 +811,9 @@ function makeToolCallState(
   }
   const title = input.title?.trim() || undefined;
   const kind = normalizeToolKind(input.kind);
-  const command = extractToolCallCommand(input.rawInput, title, kind);
   const extractedContent = extractTextContentFromToolCallContent(input.content);
   const textContent = extractedContent.text;
+  const command = extractToolCallCommand(input.rawInput, title, kind, textContent);
   const normalizedTitle =
     title && title.toLowerCase() !== "terminal" && title.toLowerCase() !== "tool call"
       ? title
@@ -903,11 +908,25 @@ export function mergeToolCallState(
 ): AcpToolCallState {
   const nextKind = next.kind ?? (typeof next.data.kind === "string" ? next.data.kind : undefined);
   const kind = nextKind ?? previous?.kind;
-  const title = next.title ?? previous?.title;
+  const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
+  // ACP updates omit an unchanged title, and the summary derived without it is only a category
+  // label. Derive the summary again from the agent's own title and the merged data, so a path the
+  // update adds still wins. A title T3 derived from input the update has just changed gives way.
+  const agentTitle =
+    next.data.title === undefined && previous?.title === previous?.data.title
+      ? previous?.title
+      : undefined;
+  const title = agentTitle
+    ? deriveToolActivityPresentation({
+        itemType: canonicalItemTypeFromAcpToolKind(kind),
+        title: agentTitle,
+        data,
+        fallbackSummary: agentTitle,
+      }).summary
+    : (next.title ?? previous?.title);
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
-  const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),

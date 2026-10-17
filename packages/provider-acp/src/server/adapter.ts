@@ -3160,7 +3160,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 turnItem = {
                   ...base,
                   type: "command_execution",
-                  input: toolCall.command ?? monitorCommand ?? toolCall.title ?? "Command",
+                  // `detail` holds the agent's own title when no command line could be found.
+                  input:
+                    toolCall.command ??
+                    monitorCommand ??
+                    toolCall.detail ??
+                    toolCall.title ??
+                    "Command",
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
