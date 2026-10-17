@@ -56,6 +56,7 @@ import {
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
+import { sessionModelStateFromInitialize } from "@t3tools/provider-acp/server/runtimeModel";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -249,6 +250,19 @@ export function makeGrokAcpAdapterFlavor(
     supportsImagePrompts: true,
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
+    getModelContextWindow: (selection, session) => {
+      if (selection.instanceId !== options.instanceId) return undefined;
+      const modelId = resolveGrokAcpBaseModelId(selection.model);
+      const models =
+        session.sessionSetupResult.models ??
+        sessionModelStateFromInitialize(session.initializeResult);
+      const window = models?.availableModels.find((model) => model.modelId === modelId)?._meta
+        ?.totalContextTokens;
+      // contextWindows includes selectable larger windows; totalContextTokens is the default.
+      return typeof window === "number" && Number.isSafeInteger(window) && window > 0
+        ? window
+        : undefined;
+    },
     applyModelSelection: ({ runtime, startResult, modelSelection }) =>
       Effect.gen(function* () {
         const legacy = startResult.initializeResult.protocolVersion === 1;

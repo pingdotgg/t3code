@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -27,6 +28,8 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
@@ -312,6 +315,94 @@ describe("Grok permission prompts", () => {
       "ask",
     );
   });
+});
+
+describe("Grok model context windows", () => {
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
+
+  it.effect("budgets handoffs with the selected Grok model's window", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok-window-test");
+      const threadId = ThreadId.make("grok-window-test");
+      const modelSelection = { instanceId, model: "grok-build" };
+      const policy = runtimePolicy({ runtimeMode: "full-access" });
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "linux",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          Effect.gen(function* () {
+            const context = yield* Layer.build(
+              AcpSessionRuntime.layer({
+                ...input,
+                spawn: {
+                  command: process.execPath,
+                  args: [mockAgentPath],
+                  cwd: process.cwd(),
+                  env: {
+                    T3_ACP_SESSION_LIFECYCLE: "1",
+                    T3_ACP_GROK_MODEL: "grok-4.7",
+                    T3_ACP_GROK_CONTEXT_TOKENS: "256000",
+                  },
+                },
+                authMethodId: "test",
+              }),
+            );
+            return yield* AcpSessionRuntime.AcpSessionRuntime.pipe(Effect.provide(context));
+          }),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-window-test"),
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const budgetInput = {
+        tokenCap: 16_000,
+        userText: "Continue",
+        attachments: [],
+        providerThread,
+        nativeContextEstimate: 160_684,
+      };
+      assert.isNull(providerThread.contextUsage);
+      assert.equal(handoffBudget(budgetInput), 0);
+      assert.equal(
+        handoffBudget({
+          ...budgetInput,
+          modelContextWindow: runtime.getModelContextWindow?.({ instanceId, model: "grok-4.7" }),
+        }),
+        16_000,
+      );
+      assert.equal(runtime.getModelContextWindow?.({ instanceId, model: "grok-4.7" }), 256_000);
+      assert.equal(runtime.getModelContextWindow?.({ instanceId, model: " grok-4.7 " }), 256_000);
+      for (const model of ["custom-model", "grok-build", "toString"]) {
+        assert.isUndefined(runtime.getModelContextWindow?.({ instanceId, model }));
+      }
+      assert.isUndefined(
+        runtime.getModelContextWindow?.({
+          instanceId: ProviderInstanceId.make("another-grok"),
+          model: "grok-4.7",
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
 });
 
 describe("Grok launch permission mode", () => {
