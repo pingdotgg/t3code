@@ -53,4 +53,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/chat/QueuedRunsControl.tsx",
   "apps/web/src/components/preview/PreviewView.tsx",
   "apps/web/src/components/CommandPalette.tsx",
+  "apps/web/src/components/ServerUpdateAction.tsx",
 ] as const;
