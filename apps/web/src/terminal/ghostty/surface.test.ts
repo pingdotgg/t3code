@@ -777,6 +777,50 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it("pastes once per shortcut whichever of the clipboard read and native paste lands first", async () => {
+    const harness = createHarness();
+    const readText = vi.fn(async () => "echo hi");
+    vi.stubGlobal("navigator", { platform: "MacIntel", clipboard: { readText } });
+    const surface = await harness.create({ beforeKey: () => true });
+    const paste = (text: string) =>
+      surface.input.dispatchEvent(
+        Object.assign(new Event("paste", { cancelable: true }), {
+          clipboardData: { getData: () => text },
+        }),
+      );
+    const settleRead = async (reads: number) => {
+      expect(readText).toHaveBeenCalledTimes(reads);
+      await readText.mock.results[reads - 1]?.value;
+    };
+
+    // Read first (Chromium menu paste): the native paste that follows is dropped.
+    key(surface, "v", "KeyV", { metaKey: true });
+    await settleRead(1);
+    paste("echo hi");
+    key(surface, "v", "KeyV", { metaKey: true }, "keyup");
+    expect(harness.onData).toHaveBeenCalledTimes(1);
+
+    // Native first: the read that settles afterwards is dropped.
+    key(surface, "v", "KeyV", { metaKey: true });
+    paste("echo hi");
+    await settleRead(2);
+    key(surface, "v", "KeyV", { metaKey: true }, "keyup");
+    expect(harness.onData).toHaveBeenCalledTimes(2);
+
+    // A shortcut served only by the read must not swallow a later Edit → Paste
+    // of the same text, after the keyup or after a blur.
+    key(surface, "v", "KeyV", { metaKey: true });
+    await settleRead(3);
+    key(surface, "v", "KeyV", { metaKey: true }, "keyup");
+    paste("echo hi");
+    key(surface, "v", "KeyV", { metaKey: true });
+    await settleRead(4);
+    surface.input.dispatchEvent(new Event("blur"));
+    paste("echo hi");
+    expect(harness.onData).toHaveBeenCalledTimes(6);
+    expect(new Set(harness.onData.mock.calls.map(([data]) => data))).toEqual(new Set(["echo hi"]));
+  });
+
   it("starts a selection when dragging from a link", async () => {
     const harness = createHarness();
     const onLinkActivate = vi.fn();
