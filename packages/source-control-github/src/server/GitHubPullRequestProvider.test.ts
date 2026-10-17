@@ -23,6 +23,7 @@ const coreFields = {
     canUpdate: true,
     didAuthor: false,
     mergeCapabilities: { merge: true, squash: true, rebase: true },
+    autoMergeAllowed: true,
   },
 };
 
@@ -93,6 +94,7 @@ it.effect("advertises standalone branch deletion for source repository writers",
       canUpdate: false,
       didAuthor: false,
       canDeleteBranch: true,
+      autoMergeAllowed: true,
     };
     expect(gitHubViewerPermissions(access).actions).toContain("delete-branch");
     expect(
@@ -264,6 +266,7 @@ describe("gitHubViewerPermissions", () => {
         canTriage: true,
         canUpdate: true,
         didAuthor: false,
+        autoMergeAllowed: true,
       }),
     ).toEqual({
       actions: [
@@ -287,6 +290,20 @@ describe("gitHubViewerPermissions", () => {
     });
   });
 
+  it("withholds arming auto-merge where the repository has it switched off", () => {
+    const { actions } = gitHubViewerPermissions({
+      canWrite: true,
+      canTriage: true,
+      canUpdate: true,
+      didAuthor: false,
+      autoMergeAllowed: false,
+    });
+    expect(actions).not.toContain("enable-auto-merge");
+    // An arming made before the switch was turned off can still be taken back.
+    expect(actions).toContain("disable-auto-merge");
+    expect(actions).toContain("merge");
+  });
+
   it("leaves a passer-by on a repository they can only read nothing but the review", () => {
     expect(
       gitHubViewerPermissions({
@@ -294,6 +311,7 @@ describe("gitHubViewerPermissions", () => {
         canTriage: false,
         canUpdate: false,
         didAuthor: false,
+        autoMergeAllowed: true,
       }),
     ).toEqual({
       actions: [],
@@ -311,6 +329,7 @@ describe("gitHubViewerPermissions", () => {
       canTriage: true,
       canUpdate: false,
       didAuthor: false,
+      autoMergeAllowed: true,
     });
     expect(permissions.labels).toBe(true);
     expect(permissions.requestReviewers).toBe(false);
@@ -324,6 +343,7 @@ describe("gitHubViewerPermissions", () => {
         canTriage: false,
         canUpdate: true,
         didAuthor: true,
+        autoMergeAllowed: true,
       }),
     ).toEqual({
       actions: ["ready", "draft", "close", "reopen"],
@@ -531,6 +551,7 @@ describe("gitHubViewerPermissions", () => {
               canUpdate: true,
               didAuthor: false,
               mergeCapabilities: { merge: true, squash: true, rebase: true },
+              autoMergeAllowed: true,
             }),
         }),
       ),
@@ -630,6 +651,7 @@ it.effect("does not classify same-repository gates as fork workflow approvals", 
             canUpdate: true,
             didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
           }),
       }),
     ),
@@ -677,6 +699,7 @@ it.effect("keeps an unsafe workflow approval scope visible as unknown", () =>
             canUpdate: true,
             didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
           }),
       }),
     ),
@@ -716,6 +739,7 @@ it.effect("propagates workflow discovery rate limits", () =>
             canUpdate: true,
             didAuthor: false,
             mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
           }),
       }),
     ),
@@ -729,6 +753,7 @@ describe("getViewerPermissions", () => {
     canUpdate: true,
     didAuthor: false,
     mergeCapabilities: { merge: true, squash: true, rebase: true },
+    autoMergeAllowed: true,
   };
 
   it.effect("checks fresh access without reading branch details for unrelated operations", () => {
