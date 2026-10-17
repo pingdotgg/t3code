@@ -93,8 +93,11 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   font-family: var(--font-sans) !important;
   font-size: 12px !important;
   line-height: 1 !important;
+  /* Collapsed items are never remeasured: the painted header must match diffHeaderHeight.
+     Center controls in that height instead of adding padding to their intrinsic height. */
+  height: 32px !important;
   min-height: 32px !important;
-  padding-block: 6px !important;
+  padding-block: 0 !important;
   padding-inline: 8px 12px !important;
 }
 
@@ -142,8 +145,7 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 }
 
 /* Pierre clips file names with overflow: hidden for its start ellipsis. A 1em line box cuts off
-   descenders. Only the clipped names get room: 16px plus the header's 12px of padding stays
-   inside its 32px min-height, which diffHeaderHeight assumes. */
+   descenders; give the clipped names room inside the fixed-height header. */
 [data-diffs-header] :is([data-title], [data-prev-name]) {
   line-height: 16px !important;
 }
