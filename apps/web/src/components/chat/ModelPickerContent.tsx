@@ -61,7 +61,11 @@ import {
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import {
+  partitionLegacyModels,
+  providerModelKey,
+  sortProviderModelItems,
+} from "../../modelOrdering";
 
 type ModelPickerItem = {
   slug: string;
@@ -429,16 +433,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
-  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
-    () =>
-      new Set<ProviderInstanceId>(
+  const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
+  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(() => {
+    // Auto-expand the legacy group only when the active model actually lives
+    // there. A favorited legacy model is hoisted into the main list, so
+    // expanding the group for it would open an unrelated section.
+    const activeIsFavorite = favoritesSet.has(
+      providerModelKey(props.activeInstanceId, activeModelSlug),
+    );
+    return new Set<ProviderInstanceId>(
+      !activeIsFavorite &&
         modelOptionsByInstance
           .get(props.activeInstanceId)
           ?.some((model) => model.slug === activeModelSlug && model.isLegacy)
-          ? [props.activeInstanceId]
-          : [],
-      ),
-  );
+        ? [props.activeInstanceId]
+        : [],
+    );
+  });
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
@@ -515,9 +526,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const lockedProvider = props.lockedProvider;
   const lockedContinuationGroupKey = props.lockedContinuationGroupKey;
   const canOpenProviderSetup = onOpenProviderSetup !== undefined;
-  const favoritesSet = (() => {
-    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  })();
 
   const entryByInstanceId = new Map(instanceEntries.map((entry) => [entry.instanceId, entry]));
   const matchesLockedProvider = (
@@ -660,8 +668,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (isSearching || selectedInstanceId === "favorites") {
       return null;
     }
-    const currentModels = filteredModels.filter((model) => !model.isLegacy);
-    const legacyModels = filteredModels.filter((model) => model.isLegacy);
+    // Favorited models are hoisted to the top, and that hoist has to win over
+    // the legacy split: a favorited legacy model stays in the main list rather
+    // than being buried in the collapsed legacy group. Unfavoriting it drops it
+    // back into the legacy section on the next render.
+    const { current: currentModels, legacy: legacyModels } = partitionLegacyModels(
+      filteredModels,
+      (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
+    );
     if (legacyModels.length === 0) {
       return null;
     }
