@@ -580,6 +580,52 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("ignores the per-read token in the author's avatar URL", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        let reads = 0;
+        let avatarPath = "/u/1";
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+          summary: (input) =>
+            Effect.succeed(
+              makeSummary(input, {
+                author: {
+                  login: "octocat",
+                  name: null,
+                  avatarUrl: `https://avatars.example.ghe.com${avatarPath}?token=read-${++reads}`,
+                },
+              }),
+            ),
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          const firstSweep = yield* Ref.get(fixture.syncCommands);
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
+
+          yield* sweepAgain(fixture, reactor);
+
+          assert.strictEqual(reads, 2);
+          assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
+          assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+
+          avatarPath = "/u/2";
+          yield* sweepAgain(fixture, reactor);
+
+          assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 2);
+          const commands = yield* Ref.get(fixture.syncCommands);
+          assert.strictEqual(commands.length, 2);
+          assert.strictEqual(
+            commands.at(-1)?.snapshot.author?.avatarUrl,
+            "https://avatars.example.ghe.com/u/2?token=read-3",
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("refreshes closed links through the reactor's project after reopening elsewhere", () =>
     Effect.scoped(
       Effect.gen(function* () {
