@@ -7,6 +7,7 @@ import {
   buildKeybindingCommandOptions,
   buildWhenVariableOptions,
   commandLabel,
+  filterKeybindingRows,
   groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
@@ -19,7 +20,7 @@ import {
 
 describe("KeybindingsSettings.logic", () => {
   it("lists composer, provider, and pull request commands with editable defaults", () => {
-    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
     for (const command of [
       "composer.sendAlternate",
       "composer.sendBackground",
@@ -43,24 +44,34 @@ describe("KeybindingsSettings.logic", () => {
     }
   });
   it("finds the editable shortcut for sending the first queued message", () => {
-    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "first queued")).toContainEqual(
+    expect(
+      filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), "first queued"),
+    ).toContainEqual(
       expect.objectContaining({
         command: "thread.steerQueuedMessage",
         key: "mod+shift+enter",
       }),
     );
   });
+  it("filtering keeps the row objects so unchanged rows skip rendering", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
+    const filtered = filterKeybindingRows(rows, "terminal");
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(filtered.length).toBeLessThan(rows.length);
+    for (const row of filtered) expect(rows).toContain(row);
+    expect(filterKeybindingRows(rows, "  ")).toBe(rows);
+  });
   it.each(["pu", "pull request", "copy link", "thread id"])(
     "finds the copy link shortcut with %s",
     (query) => {
-      const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query);
+      const rows = filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), query);
       expect(rows).toContainEqual(
         expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
       );
     },
   );
   it("groups rows by command area in page order and drops empty groups", () => {
-    const groups = groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, ""));
+    const groups = groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS));
     expect(groups.map((group) => group.title)).toEqual([
       "Navigation",
       "Threads",
@@ -74,9 +85,11 @@ describe("KeybindingsSettings.logic", () => {
     expect(composer?.rows.map((row) => row.command)).toEqual(
       expect.arrayContaining(["composer.host", "modelPicker.toggle"]),
     );
-    expect(groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "split"))).toEqual(
-      [expect.objectContaining({ id: "terminal" })],
-    );
+    expect(
+      groupKeybindingRows(
+        filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), "split"),
+      ),
+    ).toEqual([expect.objectContaining({ id: "terminal" })]);
   });
   it("orders Usage bindings and command choices like the page", () => {
     const expected = [
@@ -93,7 +106,9 @@ describe("KeybindingsSettings.logic", () => {
       DEFAULT_RESOLVED_KEYBINDINGS,
       DEFAULT_RESOLVED_KEYBINDINGS.toReversed(),
     ]) {
-      expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+      expect(
+        filterKeybindingRows(buildKeybindingRows(bindings), "usage").map((row) => row.command),
+      ).toEqual(expected);
       expect(
         buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
       ).toEqual(expected);
@@ -101,8 +116,8 @@ describe("KeybindingsSettings.logic", () => {
   });
 
   it("builds searchable rows with readable key and when values", () => {
-    const rows = buildKeybindingRows(
-      [
+    const rows = filterKeybindingRows(
+      buildKeybindingRows([
         {
           command: "terminal.toggle",
           shortcut: {
@@ -118,7 +133,7 @@ describe("KeybindingsSettings.logic", () => {
             node: { type: "identifier", name: "terminalFocus" },
           },
         },
-      ] satisfies ResolvedKeybindingsConfig,
+      ] satisfies ResolvedKeybindingsConfig),
       "terminal",
     );
 
@@ -345,81 +360,75 @@ describe("KeybindingsSettings.logic", () => {
   });
 
   it("marks each default shortcut for multi-binding commands as default", () => {
-    const rows = buildKeybindingRows(
-      [
-        {
-          command: "chat.new",
-          shortcut: {
-            key: "n",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: false,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+    const rows = buildKeybindingRows([
+      {
+        command: "chat.new",
+        shortcut: {
+          key: "n",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
         },
-        {
-          command: "chat.new",
-          shortcut: {
-            key: "o",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: true,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
         },
-      ] satisfies ResolvedKeybindingsConfig,
-      "",
-    );
+      },
+      {
+        command: "chat.new",
+        shortcut: {
+          key: "o",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+    ] satisfies ResolvedKeybindingsConfig);
 
     expect(rows.map((row) => row.source)).toEqual(["Default", "Default"]);
   });
 
   it("reports conflicting shortcuts that share an active when context", () => {
-    const rows = buildKeybindingRows(
-      [
-        {
-          command: "chat.new",
-          shortcut: {
-            key: "n",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: false,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+    const rows = buildKeybindingRows([
+      {
+        command: "chat.new",
+        shortcut: {
+          key: "n",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
         },
-        {
-          command: "chat.newLocal",
-          shortcut: {
-            key: "n",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: false,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
         },
-      ] satisfies ResolvedKeybindingsConfig,
-      "",
-    );
+      },
+      {
+        command: "chat.newLocal",
+        shortcut: {
+          key: "n",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+    ] satisfies ResolvedKeybindingsConfig);
 
     expect(rows[0]?.conflicts).toEqual(["Chat: New Local"]);
     expect(
