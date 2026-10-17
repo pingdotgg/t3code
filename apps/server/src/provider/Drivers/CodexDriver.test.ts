@@ -1,11 +1,13 @@
 import * as CodexInstallation from "../CodexInstallation.ts";
+import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -59,6 +61,11 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   ),
   Layer.provideMerge(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
   Layer.provideMerge(
+    Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
+      endpoint: Effect.succeed("unused-private-pipe"),
+    }),
+  ),
+  Layer.provideMerge(
     Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
     }),
@@ -96,10 +103,11 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
-  it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
+  const checkManagedAccount = (profileChange: "unchanged" | "before-probe" | "during-probe") =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
       const credentials = new Map<string, Uint8Array>();
+      const catalogRequests: Array<string | undefined> = [];
       const secrets = ServerSecretStore.ServerSecretStore.of({
         get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
         set: (key, value) =>
@@ -126,6 +134,19 @@ it.layer(layerTest)("CodexDriver", (it) => {
           email: "account@example.test",
         });
         yield* store.set(new TextEncoder().encode(json));
+        const replacement = yield* encodeCredentials({
+          clientId: "oaiapp_other",
+          accessToken: "dummy-other-access",
+          refreshToken: "dummy-other-refresh",
+          expiresAt: Number.MAX_SAFE_INTEGER,
+          earliestRefreshAt: null,
+          scopes: ["chatgpt.tokens.use.direct"],
+          subject: "other-user",
+          email: "other@example.test",
+        });
+        const replaceProfile = store.set(new TextEncoder().encode(replacement));
+        const probeEntered = yield* Deferred.make<void>();
+        const resumeProbe = yield* Deferred.make<void>();
         const executable = {
           executablePath: "/user/bin/codex",
           managedVersionDirectory: null,
@@ -143,7 +164,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const startupChecksInterrupted = yield* Deferred.make<void>();
         const acquire = () =>
           Effect.suspend(() => {
-            if (interruptedChecks === 2) return Effect.succeed(executable);
+            if (interruptedChecks === 2)
+              return (
+                profileChange === "before-probe" ? replaceProfile.pipe(Effect.orDie) : Effect.void
+              ).pipe(Effect.as(executable));
             interruptedChecks += 1;
             return (
               interruptedChecks === 2
@@ -179,13 +203,15 @@ it.layer(layerTest)("CodexDriver", (it) => {
           Effect.provideService(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
-              Effect.fail(
-                PlatformError.badArgument({
+              Effect.gen(function* () {
+                yield* Deferred.succeed(probeEntered, undefined);
+                yield* Deferred.await(resumeProbe);
+                return yield* PlatformError.badArgument({
                   module: "ChildProcessSpawner",
                   method: "spawn",
                   description: "The fixture app-server is unavailable",
-                }),
-              ),
+                });
+              }),
             ),
           ),
         );
@@ -201,11 +227,24 @@ it.layer(layerTest)("CodexDriver", (it) => {
           Effect.forkScoped,
         );
         yield* Deferred.await(startupChecksInterrupted);
-        const restored = yield* instance.snapshot.refresh;
+        const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(probeEntered);
+        if (profileChange === "during-probe") yield* replaceProfile;
+        yield* Deferred.succeed(resumeProbe, undefined);
+        const restored = yield* Fiber.join(refresh);
+        if (profileChange !== "unchanged") {
+          expect(catalogRequests).toEqual([]);
+          expect(restored.auth.email).toBe("other@example.test");
+          expect(restored.auth.profileId).toBe("oaiapp_other");
+          expect(restored.models).toEqual([]);
+          expect(restored.message).toContain("Could not check Codex right now");
+          return;
+        }
+        expect(catalogRequests).toEqual(["Bearer dummy-owned-access"]);
         expect(restored.auth.email).toBe("account@example.test");
         expect(restored.runtimePaths?.homePath).toBe(sharedHome);
         expect(restored.runtimePaths?.shadowHomePath).toContain(
-          `providers/codex/${instanceId}/shadow`,
+          NodePath.join("providers", "codex", instanceId, "shadow"),
         );
         yield* Deferred.await(observedAccount);
 
@@ -226,7 +265,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const launch = launches[0]!;
         expect(launch.settings.binaryPath).toBe(executable.executablePath);
         expect(launch.settings.launchArgs).toContain("openai_token_sharing");
-        expect(launch.environment.ACCESS_TOKEN).toBe("dummy-owned-access");
+        expect(launch.settings.launchArgs).toContain("__managed-chatgpt-token");
+        expect(launch.settings.launchArgs).not.toContain("dummy-owned-access");
+        expect(launch.environment.ACCESS_TOKEN).toBeUndefined();
         expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
         expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
         const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);
@@ -249,8 +290,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
                 "https://auth.openai.com/revoke",
                 "https://api.openai.com/v1/models",
               ]).toContain(request.url);
-              if (request.url.endsWith("/models"))
+              if (request.url.endsWith("/models")) {
+                catalogRequests.push(request.headers.authorization);
                 return HttpClientResponse.fromWeb(request, Response.json({ models: [] }));
+              }
               return HttpClientResponse.fromWeb(
                 request,
                 request.url.endsWith("/revoke")
@@ -267,7 +310,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
           ),
         ),
       );
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped);
+  it.effect.each(["unchanged", "before-probe", "during-probe"] as const)(
+    "managed account check keeps token and label consistent: %s",
+    checkManagedAccount,
   );
 
   it.effect.skipIf(windowsHost)(
@@ -309,6 +355,36 @@ it.layer(layerTest)("CodexDriver", (it) => {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
         Effect.scoped,
       ),
+  );
+
+  it.effect("constructs external Codex with a root broker whose listener cannot start", () =>
+    Effect.gen(function* () {
+      const listen = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+        this: NodeNet.Server,
+      ) {
+        queueMicrotask(() => this.emit("error", new Error("IPC unavailable")));
+        return this;
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => listen.mockRestore()));
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("external-without-ipc"),
+          displayName: "External Codex",
+          enabled: false,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            setupMode: "existing",
+            binaryPath: NodePath.join(config.stateDir, "missing-codex"),
+            homePath: NodePath.join(config.stateDir, "external-codex-home"),
+          },
+        });
+        expect(instance.instanceId).toBe("external-without-ipc");
+        expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
+      }).pipe(Effect.provide(CodexManagedTokenBroker.layer));
+      expect(listen).toHaveBeenCalledOnce();
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
   );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>

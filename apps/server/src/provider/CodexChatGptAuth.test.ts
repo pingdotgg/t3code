@@ -276,6 +276,16 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     );
     yield* store.set(new TextEncoder().encode(JSON.stringify({ ...record, expiresAt: 0 })));
   });
+  const recreateAuth = (expectedProfileKey?: string) =>
+    makeCodexChatGptAuth({
+      instanceId,
+      discoveryUrl: `${origin}/discovery`,
+      resource: `${origin}/v1`,
+      ...(expectedProfileKey !== undefined ? { expectedProfileKey } : {}),
+    }).pipe(
+      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
+    );
   return {
     auth,
     analyticsEvents,
@@ -321,14 +331,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
       );
       return { auth: destination, bytes: destinationBytes };
     }),
-    recreateAuth: makeCodexChatGptAuth({
-      instanceId,
-      discoveryUrl: `${origin}/discovery`,
-      resource: `${origin}/v1`,
-    }).pipe(
-      Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
-      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
-    ),
+    recreateAuth: recreateAuth(),
+    bindProfile: recreateAuth,
     startRemote,
     signIn: signInWithMethod(),
     changeAccount: signInWithMethod("chatgpt-change-account"),
@@ -770,6 +774,39 @@ it.effect(
       }),
     ),
 );
+it.effect(
+  "profile-bound access survives rotation but rejects account changes, logout, and reconnect",
+  () =>
+    provision(
+      Effect.gen(function* () {
+        const h = yield* makeHarness;
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        const key = yield* h.auth.profileKey(Option.getOrThrow(yield* h.auth.read));
+        const bound = yield* h.bindProfile(key);
+        const replacement = yield* h.bindProfile(key);
+        yield* h.seedExpired;
+        const records = yield* Effect.all([bound.access, replacement.access], {
+          concurrency: "unbounded",
+        });
+        assert.equal(h.refreshes(), 1);
+        assert.deepEqual(records[0], records[1]);
+        assert.equal(yield* h.auth.profileKey(records[0]), key);
+        h.setCallbackClientId("oaiapp_other_account");
+        yield* h.changeAccount;
+        yield* h.phase("succeeded");
+        assert.equal((yield* bound.access.pipe(Effect.flip)).operation, "access");
+        yield* h.auth.controller.logout(Effect.void);
+        assert.equal((yield* bound.access.pipe(Effect.flip)).operation, "access");
+        h.setCallbackClientId("oaiapp_test");
+        yield* h.reconnectProfile("oaiapp_test");
+        yield* h.phase("succeeded");
+        assert.equal((yield* bound.access.pipe(Effect.flip)).operation, "access");
+        assert.equal(h.refreshes(), 1);
+      }),
+    ),
+);
+
 it.effect("rejects invalid ID token nonce without saving credentials", () =>
   provision(
     Effect.gen(function* () {

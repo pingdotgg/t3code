@@ -15,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
+import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
@@ -44,17 +45,19 @@ it.effect("managed home defaults to the global Codex home and honors configured 
       ProviderInstanceId.make("codex-work"),
       decodeSettings({ homePath: "/custom/shared", shadowHomePath: "/custom/shadow" }),
     );
-    assert.equal(configured.sharedHomePath, "/custom/shared");
-    assert.equal(configured.effectiveHomePath, "/custom/shadow");
+    assert.equal(configured.sharedHomePath, path.resolve("/custom/shared"));
+    assert.equal(configured.effectiveHomePath, path.resolve("/custom/shadow"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 it.effect.each(
   (["managed", "local"] as const).flatMap((source) =>
-    (["primary", "additional"] as const).map((account) => ({ source, account })),
+    (["primary", "additional"] as const).flatMap((account) =>
+      (["node", "electron"] as const).map((runtimeHost) => ({ source, account, runtimeHost })),
+    ),
   ),
 )(
-  "$source Codex $account account shares home state without routing owned tokens through ambient CLI overrides",
-  ({ source, account }) =>
+  "$source Codex $account account ($runtimeHost host) shares home state without routing owned tokens through ambient CLI overrides",
+  ({ source, account, runtimeHost }) =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make(
         account === "primary" ? "codex" : "codex-personal",
@@ -113,11 +116,13 @@ it.effect.each(
           email: null,
         });
         yield* store.set(new TextEncoder().encode(json));
-        const ambient = {
+        const ambient: NodeJS.ProcessEnv = {
+          ...(runtimeHost === "electron" ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
           CODEX_HOME: "/user/.codex",
           OPENAI_API_KEY: "dummy-global-key",
           OPENAI_BASE_URL: "https://user-proxy.test",
           T3CODE_CODEX_LAUNCH_ARGS: "--config model_provider=global-proxy",
+          ACCESS_TOKEN: "ambient-token-must-not-reach-child",
           PATH: "/usr/bin",
         };
         const runtime = yield* makeCodexManagedRuntime({
@@ -137,7 +142,7 @@ it.effect.each(
             assert.equal(runtime.homeLayout.mode, "direct");
           } else {
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, "userdata/providers/codex");
+            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
             assert.equal(runtime.homeLayout.mode, "authOverlay");
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),
@@ -149,26 +154,31 @@ it.effect.each(
             );
             assert.isFalse(yield* fs.exists(path.join(effective.config.homePath, "auth.json")));
           }
-          assert.strictEqual(effective.environment.ACCESS_TOKEN, "dummy-owned-access");
+          assert.isUndefined(effective.environment.ACCESS_TOKEN);
+          assert.strictEqual(
+            effective.environment.ELECTRON_RUN_AS_NODE,
+            ambient.ELECTRON_RUN_AS_NODE,
+          );
           assert.isUndefined(effective.environment.OPENAI_API_KEY);
           assert.isUndefined(effective.environment.OPENAI_BASE_URL);
           assert.isUndefined(effective.environment.T3CODE_CODEX_LAUNCH_ARGS);
           const args = codexAppServerArgs(effective.config.launchArgs);
-          assert.include(
-            args,
-            'model_providers.openai_token_sharing.base_url="https://api.openai.com/v1"',
-          );
-          assert.include(
-            args,
-            'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
-          );
+          const provider = args.find((arg) =>
+            arg.startsWith("model_providers.openai_token_sharing_"),
+          )!;
+          assert.include(provider, 'base_url="https://api.openai.com/v1"');
+          assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
+          assert.include(provider, "__managed-chatgpt-token");
+          assert.include(provider, "refresh_interval_ms=0");
+          assert.include(provider, "timeout_ms=80000");
+          assert.notInclude(provider, "env_key");
           assert.include(args, "features.api_key_model_discovery=true");
           assert.include(args, "features.multi_agent=false");
           assert.include(args, "features.multi_agent_v2=false");
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
-          assert.include(args, "model_providers.openai_token_sharing.supports_websockets=false");
-          assert.include(args, "model_providers.openai_token_sharing.requires_openai_auth=false");
+          assert.include(provider, "supports_websockets=false");
+          assert.include(provider, "requires_openai_auth=false");
           assert.notInclude(effective.config.launchArgs, "dummy-owned-access");
           assert.strictEqual(ambient.CODEX_HOME, "/user/.codex");
         }).pipe(Effect.scoped);
@@ -186,6 +196,10 @@ it.effect.each(
           ),
         }),
         Effect.provide(layerInstaller),
+        Effect.provideService(CodexManagedTokenBroker.CodexManagedTokenBroker, {
+          endpoint: Effect.succeed("private-pipe"),
+          awaitIdle: Effect.void,
+        }),
         Effect.provideService(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
