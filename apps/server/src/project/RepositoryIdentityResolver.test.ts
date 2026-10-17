@@ -318,6 +318,88 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
+  it.effect("finds the repositories a workspace folder holds in its child folders", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-workspace-",
+      });
+      const checkout = Effect.fn(function* (relativePath: string, remoteUrl: string) {
+        const directory = path.join(workspace, relativePath);
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+        yield* git(directory, ["init"]);
+        yield* git(directory, ["remote", "add", "origin", remoteUrl]);
+      });
+      yield* checkout("infra", "git@github.com:acme/infra.git");
+      yield* checkout("app", "https://github.com/acme/app.git");
+      yield* checkout(".worktrees/app-feature", "https://github.com/acme/app.git");
+      yield* fileSystem.makeDirectory(path.join(workspace, "notes"));
+      // Checkouts that can't be read are left out without hiding the others.
+      yield* fileSystem.makeDirectory(path.join(workspace, "scratch"));
+      yield* git(path.join(workspace, "scratch"), ["init"]);
+      yield* fileSystem.makeDirectory(path.join(workspace, "broken"));
+      yield* fileSystem.writeFileString(path.join(workspace, "broken", ".git"), "not a gitdir\n");
+      // A symlink to a checkout elsewhere would run reads outside the folder.
+      const elsewhere = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-elsewhere-",
+      });
+      yield* git(elsewhere, ["init"]);
+      yield* git(elsewhere, ["remote", "add", "origin", "https://github.com/acme/elsewhere.git"]);
+      yield* fileSystem.symlink(elsewhere, path.join(workspace, "linked"));
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const repositories = yield* resolver.resolveWorkspace(workspace);
+
+      expect(yield* resolver.resolve(workspace)).toBeNull();
+      expect(repositories.map((identity) => identity.canonicalKey)).toEqual([
+        "github.com/acme/app",
+        "github.com/acme/infra",
+      ]);
+      expect(
+        repositories.map((identity) =>
+          normalizeResolvedPath(NodeFS.realpathSync.native(identity.rootPath ?? "")),
+        ),
+      ).toEqual(
+        ["app", "infra"].map((name) =>
+          normalizeResolvedPath(NodeFS.realpathSync.native(path.join(workspace, name))),
+        ),
+      );
+
+      // A checkout cloned later is read on refresh rather than waiting out the cache.
+      yield* checkout("docs", "https://github.com/acme/docs.git");
+      expect(yield* resolver.resolveWorkspace(workspace)).toHaveLength(2);
+      const refreshed = yield* resolver.resolveWorkspace(workspace, { refresh: true });
+      expect(refreshed.map((identity) => identity.canonicalKey)).toEqual([
+        "github.com/acme/app",
+        "github.com/acme/docs",
+        "github.com/acme/infra",
+      ]);
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("reads no workspace repositories inside a repository", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repoRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-workspace-in-repo-",
+      });
+      const vendored = path.join(repoRoot, "vendor", "lib");
+      yield* fileSystem.makeDirectory(vendored, { recursive: true });
+      yield* git(repoRoot, ["init"]);
+      yield* git(vendored, ["init"]);
+      yield* git(vendored, ["remote", "add", "origin", "https://github.com/acme/lib.git"]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+
+      // The root has no remote, so it has no identity, but it is still a repository.
+      expect(yield* resolver.resolve(repoRoot)).toBeNull();
+      expect(yield* resolver.resolveWorkspace(repoRoot)).toEqual([]);
+      expect(yield* resolver.resolveWorkspace(path.join(repoRoot, "vendor"))).toEqual([]);
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("ignores local-path remotes such as GitButler's gb-local", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

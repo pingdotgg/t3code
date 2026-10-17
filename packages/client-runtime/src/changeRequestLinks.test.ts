@@ -18,6 +18,32 @@ describe("findProjectForChangeRequest", () => {
   const project = (identity: Record<string, unknown>) =>
     ({ id: "p1", repositoryIdentity: identity }) as never;
 
+  it("matches a workspace folder by the repositories checked out in it", () => {
+    const repository = (owner: string, name: string) => ({
+      canonicalKey: `github.com/${owner}/${name}`,
+      provider: "github",
+      owner,
+      name,
+      displayName: `${owner}/${name}`,
+    });
+    const workspace = {
+      id: "sandbox",
+      repositoryIdentity: null,
+      workspaceRepositories: [repository("acme", "app"), repository("acme", "infra")],
+    } as never;
+    const reference = { host: "github.com", repository: "acme/infra", number: 7 };
+
+    expect(findProjectForChangeRequest([workspace], reference)).toBe(workspace);
+    expect(findProjectOnChangeRequestHost([workspace], reference)).toBe(workspace);
+    // Another repository on the host is read with the folder's credentials, but is not its own.
+    const elsewhere = { ...reference, repository: "acme/other" };
+    expect(findProjectForChangeRequest([workspace], elsewhere)).toBeUndefined();
+    expect(findProjectOnChangeRequestHost([workspace], elsewhere)).toBe(workspace);
+    // A plain folder serves no links.
+    const plain = { id: "notes", repositoryIdentity: null } as never;
+    expect(findProjectOnChangeRequestHost([plain], reference)).toBeUndefined();
+  });
+
   it("matches a nested GitLab group by the whole path below the host", () => {
     const projects = [
       project({

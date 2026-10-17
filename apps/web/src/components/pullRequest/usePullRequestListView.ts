@@ -1,4 +1,3 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
@@ -12,7 +11,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "~/state/entities";
-import { useEnvironments } from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import {
   applyPullRequestOverrides,
   findProjectForRepository,
@@ -36,12 +35,10 @@ import {
 } from "./pullRequestList.logic";
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
 import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
-import {
-  pullRequestProjectQueries,
-  type PullRequestHostAvailability,
-} from "./pullRequestProjectAssignment.logic";
+import type { PullRequestHostAvailability } from "./pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { pullRequestListEntryId } from "./pullRequestListGroups.logic";
+import { workspacePullRequestQueries } from "./workspaceRepositoryAssignment.logic";
 
 export interface PullRequestsSearch extends PullRequestListPreferences {
   readonly selectedUrl?: string;
@@ -56,12 +53,6 @@ export interface PullRequestsSearch extends PullRequestListPreferences {
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
-const UNREACHABLE_PHASES: ReadonlySet<EnvironmentConnectionPhase> = new Set([
-  "offline",
-  "reconnecting",
-  "error",
-  "unsupported",
-]);
 
 /** Which servers and projects the page reads, from the URL and what this client knows. */
 export function usePullRequestScope(
@@ -128,9 +119,16 @@ export function usePullRequestScope(
     scopedProjectId,
     projectsKnown,
   );
+  // Fork: only a connected server counts as reachable, so a stopped Sandbox, which reads as
+  // available rather than offline, doesn't keep a shared repository the running ones then skip.
+  // The primary serves this page, so it always is.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const unreachable = new Set(
     environments.flatMap((environment) =>
-      UNREACHABLE_PHASES.has(environment.connection.phase) ? [environment.environmentId] : [],
+      environment.environmentId !== primaryEnvironmentId &&
+      environment.connection.phase !== "connected"
+        ? [environment.environmentId]
+        : [],
     ),
   );
   const queriesFor = (
@@ -138,16 +136,20 @@ export function usePullRequestScope(
   ): ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly projectIds?: ReadonlyArray<ProjectId>;
+    readonly excludeRepositories?: ReadonlyArray<string>;
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    return pullRequestProjectQueries(projects, queryEnvironmentIds, availability, unreachable);
+    return workspacePullRequestQueries(projects, queryEnvironmentIds, availability, unreachable);
   };
   const environmentQueries = queriesFor(hostAvailability);
   // What the page reads once a refresh forgets host reads; refresh must refetch these too.
   const preferredEnvironmentQueries = queriesFor();
   const assignmentKey = environmentQueries
-    .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)
+    .map(
+      ({ environmentId, projectIds, excludeRepositories }) =>
+        `${environmentId}#${projectIds?.join("+") ?? "*"}-${excludeRepositories?.join("+") ?? ""}`,
+    )
     .join("|");
   // The URL is user-controlled and stands in for the PR link until detail loads.
   const selectedLink = search.selectedUrl

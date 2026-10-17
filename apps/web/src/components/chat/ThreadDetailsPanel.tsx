@@ -59,6 +59,11 @@ interface ThreadDetailsPanelProps extends Pick<
   draftId?: DraftId;
   composerDraftTarget: ComposerThreadTarget;
   activeProjectName: string | undefined;
+  /**
+   * The project's folder is no repository but holds checkouts. Initializing Git there would turn
+   * the folder into a repository and hide them, so Version Control is not offered.
+   */
+  projectHoldsRepositories?: boolean;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -175,6 +180,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           git:
             offersGit &&
             props.activeProjectName !== undefined &&
+            (props.isGitRepo || !props.projectHoldsRepositories) &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
         };
         return (

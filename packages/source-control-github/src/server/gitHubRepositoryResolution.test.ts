@@ -38,6 +38,7 @@ describe("selectGitHubBaseRepository", () => {
       select({ remotes: partialClone, resolved: "remote.origin.gh-resolved base" }),
       { owner: "me", name: "web" },
     );
+    // gh ranks remote names in any case.
     assert.deepStrictEqual(
       select({
         remotes: remotes(

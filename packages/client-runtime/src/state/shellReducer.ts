@@ -14,6 +14,9 @@ const sameLinks = Schema.toEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPul
 const sameRepositoryIdentity = Schema.toEquivalence(
   Schema.UndefinedOr(Schema.NullOr(RepositoryIdentity)),
 );
+const sameWorkspaceRepositories = Schema.toEquivalence(
+  Schema.UndefinedOr(Schema.Array(RepositoryIdentity)),
+);
 
 export function sameThreadPullRequests(
   left: OrchestrationV2ThreadShell["pullRequests"],
@@ -56,16 +59,41 @@ function upsertById<T extends { readonly id: unknown }>(
   return items.map((candidate, candidateIndex) => (candidateIndex === index ? item : candidate));
 }
 
+/** The identity a resolved enrichment carries: the repository, or a folder's checkouts. */
+function repositoriesOf(
+  project: OrchestrationProjectShell,
+): Pick<OrchestrationProjectShell, "repositoryIdentity" | "workspaceRepositories"> {
+  return {
+    repositoryIdentity: project.repositoryIdentity ?? null,
+    ...(project.workspaceRepositories === undefined
+      ? {}
+      : { workspaceRepositories: project.workspaceRepositories }),
+  };
+}
+
+function hasRepositories(project: OrchestrationProjectShell): boolean {
+  return project.repositoryIdentity != null || project.workspaceRepositories !== undefined;
+}
+
+function withRepositoriesOf(
+  project: OrchestrationProjectShell,
+  source: OrchestrationProjectShell,
+): OrchestrationProjectShell {
+  const { workspaceRepositories: _replaced, ...rest } = project;
+  return { ...rest, ...repositoriesOf(source) };
+}
+
 function retainRepositoryIdentity(
   previous: OrchestrationProjectShell | undefined,
   next: OrchestrationProjectShell,
 ): OrchestrationProjectShell {
   if (
-    next.repositoryIdentity == null &&
-    previous?.repositoryIdentity != null &&
+    !hasRepositories(next) &&
+    previous !== undefined &&
+    hasRepositories(previous) &&
     previous.workspaceRoot === next.workspaceRoot
   ) {
-    return { ...next, repositoryIdentity: previous.repositoryIdentity };
+    return withRepositoriesOf(next, previous);
   }
   return next;
 }
@@ -101,13 +129,16 @@ export function mergeShellSnapshotProjects(
       if (resolvedRootSet?.has(project.workspaceRoot) === true) {
         // Refreshes re-resolve every root; an unchanged identity keeps the project's identity
         // so every subscriber (each pull request row, the sidebar) skips re-rendering.
-        if (sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity)) {
+        if (
+          sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity) &&
+          sameWorkspaceRepositories(project.workspaceRepositories, candidate.workspaceRepositories)
+        ) {
           return project;
         }
-        return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+        return withRepositoriesOf(project, candidate);
       }
-      if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-        return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+      if (!hasRepositories(project) && hasRepositories(candidate)) {
+        return withRepositoriesOf(project, candidate);
       }
       return project;
     });

@@ -25,7 +25,7 @@ describe("filterComposerPullRequestMatches", () => {
       keyOf,
       entries: [entry(1234, "2026-01-03"), entry(123, "2026-01-01"), entry(1230, "2026-01-02")],
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "123",
       limit: 10,
     });
@@ -37,7 +37,7 @@ describe("filterComposerPullRequestMatches", () => {
       keyOf,
       entries: [entry(401, "2026-10-25T02:50:00+02:00"), entry(499, "2026-10-25T02:10:00+01:00")],
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "4",
       limit: 1,
     });
@@ -76,7 +76,7 @@ describe("linked pull requests", () => {
       entries: [entry(4, "2026-01-03"), { ...entry(4, "2026-01-04"), repository: "owner/other" }],
       linked: composerPullRequestsFromLinks([link("owner/repo-b", 4)], "p1"),
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "4",
       limit: 10,
     });
@@ -97,11 +97,32 @@ describe("linked pull requests", () => {
       entries: [],
       linked: composerPullRequestsFromLinks([github, gitlab], "p1"),
       projectId: "p1",
-      repository: "wireshark/wireshark",
+      repositories: ["wireshark/wireshark"],
       query: "1",
       limit: 10,
     });
     expect(result.map((match) => match.url)).toEqual([github.url, gitlab.url]);
+  });
+
+  it("combines workspace repositories and linked suggestions while preserving exact-number priority", () => {
+    const result = filterComposerPullRequestMatches({
+      keyOf,
+      entries: [
+        entry(4, "2026-01-03"),
+        { ...entry(14, "2026-01-05"), repository: "owner/workspace-b" },
+        { ...entry(4, "2026-01-06"), repository: "owner/unrelated" },
+      ],
+      linked: composerPullRequestsFromLinks([link("owner/linked", 14)], "p1"),
+      projectId: "p1",
+      repositories: ["owner/repo", "owner/workspace-b"],
+      query: "4",
+      limit: 10,
+    });
+    expect(result.map((match) => `${match.repository}#${match.number}`)).toEqual([
+      "owner/repo#4",
+      "owner/linked#14",
+      "owner/workspace-b#14",
+    ]);
   });
 
   it("keeps one row for a linked pull request the project listing already has", () => {
@@ -110,7 +131,7 @@ describe("linked pull requests", () => {
       entries: [entry(4, "2026-01-03")],
       linked: composerPullRequestsFromLinks([link("Owner/Repo", 4)], "p1"),
       projectId: "p1",
-      repository: "owner/repo",
+      repositories: ["owner/repo"],
       query: "",
       limit: 10,
     });

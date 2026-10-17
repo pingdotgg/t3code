@@ -326,6 +326,7 @@ function makeService(input: {
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
   readonly resolveRepositoryIdentity?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolve"];
   readonly onProjectRead?: () => void;
+  readonly resolveWorkspaceRepositories?: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"]["resolveWorkspace"];
 }) {
   // Build in the test scope; per-call Effect.provide would close the marks database on service acquisition.
   return Effect.flatMap(
@@ -363,6 +364,7 @@ function makeService(input: {
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: input.resolveRepositoryIdentity ?? (() => Effect.succeed(null)),
+          resolveWorkspace: input.resolveWorkspaceRepositories ?? (() => Effect.succeed([])),
         }),
         SourceControlRateLimit.layer,
         PullRequestFilesViewed.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -375,6 +377,232 @@ function makeService(input: {
     (context) => Effect.provideContext(PullRequestService.make, context),
   );
 }
+
+it.effect("serves a workspace folder's repositories from their own checkouts", () =>
+  Effect.gen(function* () {
+    const listed: Array<readonly [string, string]> = [];
+    const summarized: Array<readonly [string, string]> = [];
+    const repositories = ["acme/app", "acme/infra"].map(
+      (repository) =>
+        project({ id: "member", title: "", workspaceRoot: "", repository }).repositoryIdentity!,
+    );
+    const service = yield* makeService({
+      projects: [project({ id: "sandbox", title: "sandbox", workspaceRoot: "/workspace" })],
+      resolveWorkspaceRepositories: (cwd) =>
+        Effect.succeed(
+          cwd === "/workspace"
+            ? repositories.map((identity) => ({
+                ...identity,
+                rootPath: `/workspace/${identity.displayName!.split("/")[1]}`,
+              }))
+            : [],
+        ),
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ cwd, repository }) =>
+            Effect.sync(() => {
+              listed.push([repository, cwd]);
+              // The same number in both, as two repositories' first pull requests would be.
+              return {
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              };
+            }),
+          getChangeRequestSummary: ({ cwd, repository }) =>
+            Effect.sync(() => {
+              summarized.push([repository, cwd]);
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+          listChangeRequestStats: ({ changeRequests }) =>
+            Effect.succeed(
+              changeRequests.map(({ repository, number }) => ({
+                repository,
+                number,
+                additions: repository === "acme/app" ? 3 : 5,
+                deletions: 0,
+              })),
+            ),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open" });
+    assert.deepStrictEqual(
+      result.entries
+        .map(({ projectId, repository, number }) => [projectId, repository, number])
+        .toSorted(),
+      [
+        ["sandbox", "acme/app", 1],
+        ["sandbox", "acme/infra", 1],
+      ],
+    );
+    assert.deepStrictEqual(listed.toSorted(), [
+      ["acme/app", "/workspace/app"],
+      ["acme/infra", "/workspace/infra"],
+    ]);
+
+    // A linked pull request is read from the checkout of its own repository, named by host or not.
+    yield* service.summary(
+      {
+        projectId: "sandbox" as ProjectId,
+        host: "github.com",
+        repository: "acme/infra",
+        number: 1,
+      },
+      { recoverTransientFailure: false },
+    );
+    yield* service.summary(
+      { projectId: "sandbox" as ProjectId, repository: "acme/app", number: 1 },
+      { recoverTransientFailure: false },
+    );
+    assert.deepStrictEqual(summarized, [
+      ["acme/infra", "/workspace/infra"],
+      ["acme/app", "/workspace/app"],
+    ]);
+    // A repository the folder doesn't hold is refused, not read from one it does.
+    const refused = yield* Effect.flip(
+      service.summary(
+        { projectId: "sandbox" as ProjectId, repository: "acme/other", number: 1 },
+        { recoverTransientFailure: false },
+      ),
+    );
+    assert.strictEqual(refused._tag, "PullRequestOperationError");
+
+    const { stats } = yield* service.listStats({
+      refs: result.entries.map(({ projectId, repository, number }) => ({
+        projectId,
+        repository,
+        number,
+      })),
+    });
+    assert.deepStrictEqual(
+      stats.map(({ repository, additions }) => [repository, additions]).toSorted(),
+      [
+        ["acme/app", 3],
+        ["acme/infra", 5],
+      ],
+    );
+  }),
+);
+
+it.effect("leaves out the repositories another connection lists", () =>
+  Effect.gen(function* () {
+    const listed: Array<string> = [];
+    const repositories = ["acme/app", "acme/infra"].map(
+      (repository) =>
+        project({ id: "member", title: "", workspaceRoot: "", repository }).repositoryIdentity!,
+    );
+    const service = yield* makeService({
+      projects: [project({ id: "sandbox", title: "sandbox", workspaceRoot: "/workspace" })],
+      resolveWorkspaceRepositories: () =>
+        Effect.succeed(
+          repositories.map((identity) => ({
+            ...identity,
+            rootPath: `/workspace/${identity.displayName!.split("/")[1]}`,
+          })),
+        ),
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) =>
+            Effect.sync(() => {
+              listed.push(repository);
+              return {
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              };
+            }),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({
+      state: "open",
+      excludeRepositories: ["GitHub.com/Acme/Infra"],
+    });
+    assert.deepStrictEqual(
+      result.entries.map(({ repository }) => repository),
+      ["acme/app"],
+    );
+    // Not read from the host at all, rather than read and dropped.
+    assert.deepStrictEqual(listed, ["acme/app"]);
+  }),
+);
+
+it.effect("searches filter options only in the repositories its listing reads", () =>
+  Effect.gen(function* () {
+    const searched: Array<string> = [];
+    const repositories = ["acme/app", "acme/infra"].map(
+      (repository) =>
+        project({ id: "member", title: "", workspaceRoot: "", repository }).repositoryIdentity!,
+    );
+    const service = yield* makeService({
+      projects: [project({ id: "sandbox", title: "sandbox", workspaceRoot: "/workspace" })],
+      resolveWorkspaceRepositories: () =>
+        Effect.succeed(
+          repositories.map((identity) => ({
+            ...identity,
+            rootPath: `/workspace/${identity.displayName!.split("/")[1]}`,
+          })),
+        ),
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listRepositoryLabels: ({ repository }) =>
+            Effect.sync(() => {
+              searched.push(repository);
+              return { items: [], truncated: false };
+            }),
+        }),
+      ],
+    });
+
+    yield* service.filterOptions({
+      kind: "labels",
+      excludeRepositories: ["GitHub.com/Acme/Infra"],
+    });
+
+    assert.deepStrictEqual(searched, ["acme/app"]);
+  }),
+);
+
+it.effect(
+  "lists a repository through the project rooted in it, not a workspace that holds it",
+  () =>
+    Effect.gen(function* () {
+      const app = project({
+        id: "app",
+        title: "app",
+        workspaceRoot: "/workspace/app",
+        repository: "acme/app",
+      });
+      const service = yield* makeService({
+        projects: [project({ id: "sandbox", title: "sandbox", workspaceRoot: "/workspace" }), app],
+        resolveWorkspaceRepositories: (cwd) =>
+          Effect.succeed(
+            cwd === "/workspace"
+              ? [{ ...app.repositoryIdentity!, rootPath: "/workspace/app" }]
+              : [],
+          ),
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              }),
+          }),
+        ],
+      });
+
+      const result = yield* service.list({ state: "open" });
+      assert.deepStrictEqual(
+        result.entries.map(({ projectId, repository }) => [projectId, repository]),
+        [["app", "acme/app"]],
+      );
+    }),
+);
 
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {

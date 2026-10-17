@@ -401,6 +401,7 @@ it.effect("returns from the post-turn refresh while the identity resolver is sti
   const releaseResolver = Deferred.makeUnsafe<void>();
   let remoteAdded = false;
   const resolver = Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+    resolveWorkspace: () => Effect.succeed([]),
     resolve: (_cwd, options) =>
       options?.refresh
         ? Deferred.await(releaseResolver).pipe(

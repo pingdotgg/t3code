@@ -1,7 +1,7 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
-  pullRequestLinkProject,
+  pullRequestLinkRepositories,
   resolveLinkPullRequestInput,
 } from "@t3tools/client-runtime/pull-request-link-input";
 import { useAtomValue } from "@effect/atom-react";
@@ -72,10 +72,10 @@ function LinkPullRequestDialog({
   const [dirty, setDirty] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const projects = useProjects();
-  const ownProject = pullRequestLinkProject(
+  const ownRepositories = pullRequestLinkRepositories(
     projects.find(
       (project) => project.environmentId === threadRef.environmentId && project.id === projectId,
-    )?.repositoryIdentity,
+    ),
   );
   const linking = usePullRequestLinking(threadRef.environmentId);
   const [pending, setPending] = useState(false);
@@ -92,7 +92,7 @@ function LinkPullRequestDialog({
 
   const resolved = resolveLinkPullRequestInput({
     reference,
-    project: ownProject,
+    repositories: ownRepositories,
     hasProject: (reference) => linking.canLink(reference.url),
   });
 
@@ -113,12 +113,18 @@ function LinkPullRequestDialog({
     onOpenChange(false);
   };
 
+  // A folder holding several repositories names one with repo#123 instead of a bare number.
+  const severalRepositories = ownRepositories.length > 1;
   const validation = !dirty
     ? null
     : reference.trim().length === 0
-      ? gt("Paste a pull request URL or enter 123 / #123.")
+      ? severalRepositories
+        ? "Paste a pull request URL or enter repo#123."
+        : gt("Paste a pull request URL or enter 123 / #123.")
       : resolved === null
-        ? gt("Use a pull request URL, 123, or #123.")
+        ? severalRepositories
+          ? "Use a pull request URL or repo#123."
+          : gt("Use a pull request URL, 123, or #123.")
         : "error" in resolved
           ? resolved.error
           : null;
@@ -131,10 +137,15 @@ function LinkPullRequestDialog({
             <T>Link pull request</T>
           </DialogTitle>
           <DialogDescription>
-            <T>
-              Attach a pull request to this thread by its URL, or by its number for this thread's
-              repository.
-            </T>
+            {severalRepositories ? (
+              // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's workspace folder copy is English
+              "Attach a pull request to this thread by its URL, or as repo#123 for one of the repositories in this thread's folder."
+            ) : (
+              <T>
+                Attach a pull request to this thread by its URL, or by its number for this thread's
+                repository.
+              </T>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

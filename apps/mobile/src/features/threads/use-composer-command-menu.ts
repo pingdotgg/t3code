@@ -16,6 +16,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 const EMPTY_ENVIRONMENTS: ReadonlyArray<ComposerEnvironmentCandidate> = [];
+const EMPTY_REPOSITORIES: ReadonlyArray<string> = [];
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import {
@@ -258,7 +259,7 @@ export function useComposerCommandMenu({
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
-  pullRequestRepository = null,
+  pullRequestRepositories = EMPTY_REPOSITORIES,
   threadPullRequests,
   selectedProviderStatus,
   hasThread,
@@ -283,7 +284,8 @@ export function useComposerCommandMenu({
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
-  readonly pullRequestRepository?: string | null;
+  /** The project's own repositories: its own, or a workspace folder's checkouts. */
+  readonly pullRequestRepositories?: ReadonlyArray<string>;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
@@ -366,7 +368,7 @@ export function useComposerCommandMenu({
   const pullRequestSearch = useComposerPullRequestSearch({
     environmentId,
     projectId: pullRequestProjectId,
-    repository: pullRequestRepository,
+    repositories: pullRequestRepositories,
     threadPullRequests,
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
@@ -389,7 +391,8 @@ export function useComposerCommandMenu({
         },
         label: `#${entry.number}`,
         description: `${entry.isDraft ? gt("Draft", { $context: "pull request state" }) : messages(PULL_REQUEST_STATE_LABELS[entry.state])} · ${
-          entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
+          pullRequestRepositories.length === 1 &&
+          entry.repository.trim().toLowerCase() === pullRequestRepositories[0]?.trim().toLowerCase()
             ? ""
             : `${entry.repository} · `
         }${entry.title}`,
@@ -700,7 +703,7 @@ export function useComposerCommandMenu({
       trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
     error:
       trigger?.kind === "pull-request"
-        ? pullRequestProjectId === null || pullRequestRepository === null
+        ? pullRequestProjectId === null || pullRequestRepositories.length === 0
           ? gt("Pull requests are unavailable for this project.")
           : pullRequestSearch.error
         : null,

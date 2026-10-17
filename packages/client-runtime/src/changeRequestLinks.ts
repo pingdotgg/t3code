@@ -12,6 +12,14 @@ interface ChangeRequestProject {
   readonly id: ProjectId;
   readonly environmentId: EnvironmentId;
   readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+  readonly workspaceRepositories?: ReadonlyArray<RepositoryIdentity> | undefined;
+}
+
+/** The repositories a project serves: its own, or those checked out in a workspace folder. */
+function projectRepositories(project: ChangeRequestProject): ReadonlyArray<RepositoryIdentity> {
+  return project.repositoryIdentity != null
+    ? [project.repositoryIdentity]
+    : (project.workspaceRepositories ?? []);
 }
 
 /** The project whose own repository holds the change request, not just one on its host. */
@@ -19,13 +27,13 @@ export function findProjectForChangeRequest<Project extends ChangeRequestProject
   projects: ReadonlyArray<Project>,
   link: ChangeRequestLink,
 ): Project | undefined {
-  return projects.find((project) => {
-    const identity = project.repositoryIdentity;
-    return (
-      identity?.provider !== undefined &&
-      sourceControlClients.get(identity.provider).isChangeRequestInRepository(identity, link)
-    );
-  });
+  return projects.find((project) =>
+    projectRepositories(project).some(
+      (identity) =>
+        identity.provider !== undefined &&
+        sourceControlClients.get(identity.provider).isChangeRequestInRepository(identity, link),
+    ),
+  );
 }
 
 /** Prefers the project checked out from the link's repository, else lends any project on its host. */
@@ -35,13 +43,13 @@ export function findProjectOnChangeRequestHost<Project extends ChangeRequestProj
 ): Project | undefined {
   return (
     findProjectForChangeRequest(projects, link) ??
-    projects.find((project) => {
-      const identity = project.repositoryIdentity;
-      return (
-        identity?.provider !== undefined &&
-        sourceControlClients.get(identity.provider).canReadChangeRequestOnHost(identity, link)
-      );
-    })
+    projects.find((project) =>
+      projectRepositories(project).some(
+        (identity) =>
+          identity.provider !== undefined &&
+          sourceControlClients.get(identity.provider).canReadChangeRequestOnHost(identity, link),
+      ),
+    )
   );
 }
 

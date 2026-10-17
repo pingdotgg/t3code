@@ -1,5 +1,5 @@
 import {
-  pullRequestLinkProject,
+  pullRequestLinkRepositories,
   resolveLinkPullRequestInput,
 } from "@t3tools/client-runtime/pull-request-link-input";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
@@ -94,15 +94,21 @@ export function useLinkedPullRequestActions(input: {
 
   const promptLink = () => {
     const term = changeRequestTermKind(terminology);
+    const repositories = pullRequestLinkRepositories(project);
+    // A folder holding several repositories names one with repo#123 instead of a bare number.
+    const severalRepositories = repositories.length > 1;
     Dialog.prompt({
       title: gt(
         "{term, select, mr {Link merge request} cr {Link change request} other {Link pull request}}",
         { term },
       ),
-      message: gt(
-        "{term, select, mr {Paste a merge request URL, or enter 123 / #123 for this thread's repository.} cr {Paste a change request URL, or enter 123 / #123 for this thread's repository.} other {Paste a pull request URL, or enter 123 / #123 for this thread's repository.}}",
-        { term },
-      ),
+      message: severalRepositories
+        ? // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's workspace folder copy is English
+          `Paste a ${terminology.singular} URL, or enter repo#123 for one of the repositories in this thread's folder.`
+        : gt(
+            "{term, select, mr {Paste a merge request URL, or enter 123 / #123 for this thread's repository.} cr {Paste a change request URL, or enter 123 / #123 for this thread's repository.} other {Paste a pull request URL, or enter 123 / #123 for this thread's repository.}}",
+            { term },
+          ),
       placeholder: gt(
         "{term, select, mr {Merge request URL or #42} cr {Change request URL or #42} other {Pull request URL or #42}}",
         { term },
@@ -113,7 +119,7 @@ export function useLinkedPullRequestActions(input: {
         const resolved = resolveLinkPullRequestInput(
           {
             reference,
-            project: pullRequestLinkProject(project?.repositoryIdentity),
+            repositories,
             hasProject: () => true,
           },
           m,
@@ -124,10 +130,13 @@ export function useLinkedPullRequestActions(input: {
               "{term, select, mr {Couldn't link this merge request} cr {Couldn't link this change request} other {Couldn't link this pull request}}",
               { term },
             ),
-            gt(
-              "{term, select, mr {Use a merge request URL, 123, or #123.} cr {Use a change request URL, 123, or #123.} other {Use a pull request URL, 123, or #123.}}",
-              { term },
-            ),
+            severalRepositories
+              ? // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's workspace folder copy is English
+                `Use a ${terminology.singular} URL or repo#123.`
+              : gt(
+                  "{term, select, mr {Use a merge request URL, 123, or #123.} cr {Use a change request URL, 123, or #123.} other {Use a pull request URL, 123, or #123.}}",
+                  { term },
+                ),
           );
           return;
         }

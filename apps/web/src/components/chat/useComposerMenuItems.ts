@@ -70,7 +70,7 @@ export function useComposerMenuItems({
   gitCwd,
   activeThreadId,
   pullRequestProjectId,
-  pullRequestRepository,
+  pullRequestRepositories,
   threadPullRequests,
   sideChatAvailable,
   sideChatDisabledReason,
@@ -90,7 +90,8 @@ export function useComposerMenuItems({
   readonly gitCwd: string | null;
   readonly activeThreadId: ThreadId | null;
   readonly pullRequestProjectId: ProjectId | null;
-  readonly pullRequestRepository: string | null;
+  /** The project's own repositories: its own, or a workspace folder's checkouts. */
+  readonly pullRequestRepositories: ReadonlyArray<string>;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
@@ -177,6 +178,10 @@ export function useComposerMenuItems({
     return Number.isSafeInteger(number) && number > 0 ? number : null;
   })();
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
+  // A number typed in full is looked up directly only where it can name one repository.
+  const pullRequestRepository =
+    pullRequestRepositories.length === 1 ? (pullRequestRepositories[0] ?? null) : null;
+  const pullRequestsAvailable = pullRequestProjectId !== null && pullRequestRepositories.length > 0;
   const settledPullRequestNumber =
     pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
   const recentHasExactPullRequest =
@@ -341,11 +346,10 @@ export function useComposerMenuItems({
           (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : gt("Run provider skill")),
       }));
     }
-    if (
-      composerTrigger.kind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null
-    ) {
+    if (composerTrigger.kind === "pull-request" && pullRequestsAvailable) {
+      const repositories = new Set(
+        pullRequestRepositories.map((repository) => repository.trim().toLowerCase()),
+      );
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
           ? [
@@ -362,7 +366,7 @@ export function useComposerMenuItems({
             entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
             linked: linkedPullRequests,
             projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
+            repositories: pullRequestRepositories,
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
           })
@@ -372,8 +376,7 @@ export function useComposerMenuItems({
               (pullRequestLookup.data?.entries ?? []).filter((entry) => {
                 if (
                   entry.projectId !== pullRequestProjectId ||
-                  entry.repository.trim().toLowerCase() !==
-                    pullRequestRepository.trim().toLowerCase()
+                  !repositories.has(entry.repository.trim().toLowerCase())
                 ) {
                   return false;
                 }
@@ -405,7 +408,7 @@ export function useComposerMenuItems({
         },
         label: `#${pullRequest.number}`,
         description:
-          pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
+          repositories.size === 1 && repositories.has(pullRequest.repository.trim().toLowerCase())
             ? pullRequest.title
             : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
@@ -417,8 +420,7 @@ export function useComposerMenuItems({
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null &&
+      pullRequestsAvailable &&
       (pullRequestLookup.isPending ||
         pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
@@ -428,7 +430,7 @@ export function useComposerMenuItems({
       return gt("No skills found. Try / to browse provider commands.");
     }
     if (composerTriggerKind === "pull-request") {
-      if (pullRequestProjectId === null || pullRequestRepository === null) {
+      if (!pullRequestsAvailable) {
         return gt("Pull requests are not available for this project.");
       }
       if (

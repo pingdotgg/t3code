@@ -364,7 +364,7 @@ export function PullRequestsPage() {
   }
 
   const listTargetsFor = (queries: typeof environmentQueries) =>
-    queries.flatMap(({ environmentId, projectIds }) => {
+    queries.flatMap(({ environmentId, projectIds, excludeRepositories }) => {
       const cursors = sentCursors?.[environmentId];
       if (sentCursors !== null && cursors === undefined && !sentRegrown.includes(environmentId)) {
         return [];
@@ -378,6 +378,7 @@ export function PullRequestsPage() {
             limit: pageSize,
             ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
             ...(projectIds ? { projectIds } : {}),
+            ...(excludeRepositories ? { excludeRepositories } : {}),
             ...(search.host ? { host: search.host } : {}),
             ...(hasFilters ? { filters } : {}),
             ...(sentParsed.text ? { query: sentParsed.text } : {}),
@@ -395,7 +396,7 @@ export function PullRequestsPage() {
    * not, and a search's answer would file itself under the workspace.
    */
   const baselineTargetsFor = (queries: typeof environmentQueries) =>
-    queries.map(({ environmentId, projectIds }) => ({
+    queries.map(({ environmentId, projectIds, excludeRepositories }) => ({
       environmentId,
       input: {
         state: search.state,
@@ -403,6 +404,7 @@ export function PullRequestsPage() {
         limit: PAGE_SIZE,
         ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
+        ...(excludeRepositories ? { excludeRepositories } : {}),
         ...(search.host ? { host: search.host } : {}),
         ...(menuFiltered ? { filters: menuFilters } : {}),
       } satisfies PullRequestListInput,
@@ -421,7 +423,7 @@ export function PullRequestsPage() {
     baselineQuery.error === null;
   const facetTargets = (() => {
     if (!filtersOpen) return NO_LIST_TARGETS;
-    return environmentQueries.map(({ environmentId, projectIds }) => ({
+    return environmentQueries.map(({ environmentId, projectIds, excludeRepositories }) => ({
       environmentId,
       input: {
         state: "all",
@@ -429,19 +431,23 @@ export function PullRequestsPage() {
         limit: PAGE_SIZE,
         ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(projectIds ? { projectIds } : {}),
+        ...(excludeRepositories ? { excludeRepositories } : {}),
         ...(search.host ? { host: search.host } : {}),
       } satisfies PullRequestListInput,
     }));
   })();
   const facetQuery = usePullRequestHostList(facetTargets);
-  const filterOptionScope = environmentQueries.map(({ environmentId, projectIds }) => ({
-    environmentId,
-    input: {
-      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
-      ...(projectIds ? { projectIds } : {}),
-      ...(search.host ? { host: search.host } : {}),
-    },
-  }));
+  const filterOptionScope = environmentQueries.map(
+    ({ environmentId, projectIds, excludeRepositories }) => ({
+      environmentId,
+      input: {
+        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
+        ...(projectIds ? { projectIds } : {}),
+        ...(excludeRepositories ? { excludeRepositories } : {}),
+        ...(search.host ? { host: search.host } : {}),
+      },
+    }),
+  );
   const partitionsWanted = search.involvement === "all" && typedQuery.length === 0;
   const partitionTargets = (() => {
     // The main list goes first. Besides putting the visible rows on screen sooner, it proves
@@ -455,7 +461,7 @@ export function PullRequestsPage() {
       return { authored: NO_LIST_TARGETS, reviewing: NO_LIST_TARGETS };
     }
     const targetsFor = (involvement: PullRequestInvolvement) =>
-      environmentQueries.map(({ environmentId, projectIds }) => ({
+      environmentQueries.map(({ environmentId, projectIds, excludeRepositories }) => ({
         environmentId,
         input: {
           state: search.state,
@@ -463,6 +469,7 @@ export function PullRequestsPage() {
           limit: PAGE_SIZE,
           ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
           ...(projectIds ? { projectIds } : {}),
+          ...(excludeRepositories ? { excludeRepositories } : {}),
           ...(search.host ? { host: search.host } : {}),
           ...(menuFiltered ? { filters: menuFilters } : {}),
         } satisfies PullRequestListInput,

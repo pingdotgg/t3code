@@ -37,6 +37,7 @@ import {
   pullRequestOverrideAfterAction,
   reusePullRequestEntries,
   settlePullRequestOverrides,
+  withDiffStat,
 } from "./pullRequestList.logic";
 import { pullRequestGroups } from "./pullRequestListGroups.logic";
 import {
@@ -87,6 +88,7 @@ describe("visible pull request line-count targets", () => {
       {
         environmentId: ENV_1,
         projectId: "project-1",
+        repository: "pingdotgg/t3code",
         number: 1,
         additions: 1,
         deletions: 1,
@@ -354,6 +356,38 @@ describe("blocked-on-me ranking", () => {
         newerFailing,
       ]).map((row) => row.number),
     ).toEqual([1, 3, 9, 2, 5, 6, 4, 8, 7]);
+  });
+});
+
+describe("line counts keyed by repository", () => {
+  it("keeps the same number from two repositories of one project apart", () => {
+    const held = mergePullRequestDiffStats(new Map(), [
+      {
+        environmentId: "env-1",
+        projectId: "project-1",
+        repository: "acme/app",
+        number: 1,
+        additions: 3,
+        deletions: 0,
+      },
+      {
+        environmentId: "env-1",
+        projectId: "project-1",
+        repository: "acme/infra",
+        number: 1,
+        additions: 5,
+        deletions: 0,
+      },
+    ]);
+    expect(
+      withDiffStat(entry({ repository: "acme/app", number: 1, additions: 0, deletions: 0 }), held),
+    ).toMatchObject({ additions: 3 });
+    expect(
+      withDiffStat(
+        entry({ repository: "acme/infra", number: 1, additions: 0, deletions: 0 }),
+        held,
+      ),
+    ).toMatchObject({ additions: 5 });
   });
 });
 

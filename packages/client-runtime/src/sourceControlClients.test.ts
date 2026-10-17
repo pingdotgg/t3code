@@ -1,7 +1,11 @@
 import { ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { appSignInTargetForRemote, sourceControlClients } from "./sourceControlClients.ts";
+import {
+  appSignInTargetForRemote,
+  projectRepositorySelectors,
+  sourceControlClients,
+} from "./sourceControlClients.ts";
 import { normalizeThreadPullRequestKey } from "./threadPullRequests.ts";
 
 const parse = (url: string) => {
@@ -434,5 +438,31 @@ describe("appSignInTargetForRemote", () => {
   it("skips hosts the app is not registered on", () => {
     expect(appSignInTargetForRemote("https://ghe.acme.test/acme/web.git")).toBeNull();
     expect(appSignInTargetForRemote("https://gitlab.com/acme/web.git")).toBeNull();
+  });
+});
+
+describe("projectRepositorySelectors", () => {
+  const identity = (displayName: string) => ({
+    canonicalKey: `github.com/${displayName.toLowerCase()}`,
+    locator: {
+      source: "git-remote" as const,
+      remoteName: "origin",
+      remoteUrl: `https://github.com/${displayName}.git`,
+    },
+    provider: SourceControlProviderKind.make("github"),
+    displayName,
+  });
+
+  it("names a workspace folder's repositories once each", () => {
+    expect(
+      projectRepositorySelectors({
+        repositoryIdentity: null,
+        workspaceRepositories: [identity("acme/app"), identity("Acme/App"), identity("acme/infra")],
+      }),
+    ).toEqual(["acme/app", "acme/infra"]);
+    expect(projectRepositorySelectors({ repositoryIdentity: identity("acme/app") })).toEqual([
+      "acme/app",
+    ]);
+    expect(projectRepositorySelectors({ repositoryIdentity: null })).toEqual([]);
   });
 });

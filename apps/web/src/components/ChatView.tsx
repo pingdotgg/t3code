@@ -3,7 +3,10 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  projectRepositorySelectors,
+  sourceControlClients,
+} from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
@@ -407,6 +410,7 @@ import {
 } from "./ChatView.logic";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_REPOSITORIES: ReadonlyArray<string> = [];
 const EMPTY_PROVIDER_MODELS: ServerProvider["models"] = [];
 const EMPTY_USAGE_LIMIT_SOURCES: UsageLimitSourceSnapshots = [];
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -2039,6 +2043,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectRepository = sourceControlClients.repositorySelector(
     activeProject?.repositoryIdentity,
   );
+  const activeProjectRepositories = activeProject ? projectRepositorySelectors(activeProject) : [];
   const {
     linked: linkedThreadPullRequest,
     linkedKey: linkedThreadPullRequestKey,
@@ -3804,8 +3809,10 @@ export default function ChatView(props: ChatViewProps) {
                                 pullRequestProjectId={
                                   supportsPullRequests ? (activeProject?.id ?? null) : null
                                 }
-                                pullRequestRepository={
-                                  supportsPullRequests ? activeProjectRepository : null
+                                pullRequestRepositories={
+                                  supportsPullRequests
+                                    ? activeProjectRepositories
+                                    : EMPTY_REPOSITORIES
                                 }
                                 threadPullRequests={
                                   (activeThreadShell ?? activeThread)?.pullRequests
@@ -3971,6 +3978,7 @@ export default function ChatView(props: ChatViewProps) {
                   {...(draftId ? { draftId } : {})}
                   composerDraftTarget={composerDraftTarget}
                   activeProjectName={activeProject?.title}
+                  projectHoldsRepositories={(activeProject?.workspaceRepositories?.length ?? 0) > 0}
                   activeProjectScripts={activeProject ? activeProjectScripts : undefined}
                   preferredScriptId={
                     activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null

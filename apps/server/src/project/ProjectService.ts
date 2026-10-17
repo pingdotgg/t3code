@@ -610,12 +610,9 @@ export const make = Effect.gen(function* () {
   );
 
   const enrichShell = (shell: OrchestrationProjectShell) =>
-    projectEnrichment.getAvailable(shell.workspaceRoot).pipe(
-      Effect.map((enrichment) => ({
-        ...shell,
-        repositoryIdentity: enrichment.repositoryIdentity,
-      })),
-    );
+    projectEnrichment
+      .getAvailable(shell.workspaceRoot)
+      .pipe(Effect.map((enrichment) => ProjectEnrichmentService.withEnrichment(shell, enrichment)));
 
   const getShell: ProjectService["Service"]["getShell"] = Effect.fn("ProjectService.getShell")(
     function* (projectId) {

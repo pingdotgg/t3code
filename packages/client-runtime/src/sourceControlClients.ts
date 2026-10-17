@@ -5,7 +5,11 @@ import {
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/source-control-core/shared/definition";
-import type { ServerSettings, SourceControlAppAccessInput } from "@t3tools/contracts";
+import type {
+  RepositoryIdentity,
+  ServerSettings,
+  SourceControlAppAccessInput,
+} from "@t3tools/contracts";
 import { parseGitRemoteRepository } from "@t3tools/shared/git";
 
 export {
@@ -31,6 +35,29 @@ export function readHostCredentialSettings(
   kind: string,
 ): HostCredentialSettings {
   return readSourceControlHostSettings(HostCredentialSettings, settings.sourceControlHosts[kind]);
+}
+
+/**
+ * The repositories a project's pull requests come from, as `repositorySelector` names them: its
+ * own, or for a folder that is no repository, the checkouts it holds. Two checkouts of one
+ * repository name it once.
+ */
+export function projectRepositorySelectors(project: {
+  readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+  readonly workspaceRepositories?: ReadonlyArray<RepositoryIdentity> | undefined;
+}): ReadonlyArray<string> {
+  const identities =
+    project.repositoryIdentity != null
+      ? [project.repositoryIdentity]
+      : (project.workspaceRepositories ?? []);
+  const selectors = new Map<string, string>();
+  for (const identity of identities) {
+    const selector = sourceControlClients.repositorySelector(identity);
+    if (selector !== null && !selectors.has(selector.toLowerCase())) {
+      selectors.set(selector.toLowerCase(), selector);
+    }
+  }
+  return [...selectors.values()];
 }
 
 /** A host's change request term where it opens a sentence: "Merge request merged". */

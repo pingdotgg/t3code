@@ -1,4 +1,4 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import type { OrchestrationProjectShell, RepositoryIdentity } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -25,6 +25,8 @@ const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 
 export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
+  /** For a folder that is no repository, the ones checked out in its immediate subfolders. */
+  readonly workspaceRepositories: ReadonlyArray<RepositoryIdentity>;
   readonly faviconPath: string | null;
   readonly repositoryIdentityResolved: boolean;
 }
@@ -72,6 +74,21 @@ function availableValue<A, E>(cached: Option.Option<Exit.Exit<A, E>>): A | null 
   });
 }
 
+/** A project shell with its enrichment applied. `workspaceRepositories` is left out when empty. */
+export function withEnrichment(
+  project: OrchestrationProjectShell,
+  enrichment: Pick<ProjectEnrichment, "repositoryIdentity" | "workspaceRepositories">,
+): OrchestrationProjectShell {
+  const { workspaceRepositories: _previous, ...rest } = project;
+  return {
+    ...rest,
+    repositoryIdentity: enrichment.repositoryIdentity,
+    ...(enrichment.workspaceRepositories.length > 0
+      ? { workspaceRepositories: enrichment.workspaceRepositories }
+      : {}),
+  };
+}
+
 function isSuccessfullyResolved<A, E>(cached: Option.Option<Exit.Exit<A, E>>): boolean {
   return Option.match(cached, {
     onNone: () => false,
@@ -93,6 +110,17 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
 
+  // A folder that is no repository reads the checkouts in its subfolders instead.
+  const resolveRepositories = Effect.fnUntraced(function* (
+    workspaceRoot: string,
+  ): Effect.fn.Return<Pick<ProjectEnrichment, "repositoryIdentity" | "workspaceRepositories">> {
+    const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
+    if (repositoryIdentity !== null) return { repositoryIdentity, workspaceRepositories: [] };
+    return {
+      repositoryIdentity: null,
+      workspaceRepositories: yield* repositoryIdentityResolver.resolveWorkspace(workspaceRoot),
+    };
+  });
   // Outlives the cache entry so an expired or refreshing identity still reads as its last value.
   const lastRepositoryIdentities = new Map<string, RepositoryIdentity>();
   // `invalidate` drops a root's in-flight lookup so its late result cannot overwrite a newer one.
@@ -116,11 +144,11 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         const lookup = {};
         lookupsInFlight.set(workspaceRoot, lookup);
         const isCurrent = () => lookupsInFlight.get(workspaceRoot) === lookup;
-        return Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)).pipe(
+        return Effect.exit(resolveRepositories(workspaceRoot)).pipe(
           Effect.tap((result) =>
             Effect.sync(() => {
               if (Exit.isSuccess(result) && isCurrent()) {
-                rememberRepositoryIdentity(workspaceRoot, result.value);
+                rememberRepositoryIdentity(workspaceRoot, result.value.repositoryIdentity);
               }
             }),
           ),
@@ -200,11 +228,13 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
+      const repositories = availableValue(Option.some(repositoryIdentity));
       yield* PubSub.publish(changes, {
         workspaceRoot,
         repositoryIdentityResolved,
         enrichment: {
-          repositoryIdentity: availableValue(Option.some(repositoryIdentity)),
+          repositoryIdentity: repositories?.repositoryIdentity ?? null,
+          workspaceRepositories: repositories?.workspaceRepositories ?? [],
           faviconPath: availableValue(faviconPath),
           repositoryIdentityResolved,
         },
@@ -277,10 +307,12 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
         { concurrency: "unbounded" },
       );
       const repositoryIdentityResolved = isSuccessfullyResolved(repositoryIdentity);
+      const repositories = availableValue(repositoryIdentity);
       return {
         repositoryIdentity: repositoryIdentityResolved
-          ? availableValue(repositoryIdentity)
+          ? (repositories?.repositoryIdentity ?? null)
           : (lastRepositoryIdentities.get(workspaceRoot) ?? null),
+        workspaceRepositories: repositories?.workspaceRepositories ?? [],
         faviconPath: availableValue(faviconPath),
         repositoryIdentityResolved,
       };
@@ -316,7 +348,7 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const readRepositoryIdentity: ProjectEnrichmentService["Service"]["readRepositoryIdentity"] =
     Effect.fn("ProjectEnrichmentService.readRepositoryIdentity")(function* (workspaceRoot) {
       const resolved = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
-      return Exit.isSuccess(resolved) ? resolved.value : null;
+      return Exit.isSuccess(resolved) ? resolved.value.repositoryIdentity : null;
     });
 
   const invalidate: ProjectEnrichmentService["Service"]["invalidate"] = Effect.fn(

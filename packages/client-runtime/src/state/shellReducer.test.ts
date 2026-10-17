@@ -66,6 +66,34 @@ describe("applyShellStreamEvent", () => {
     expect(withoutIdentity.projects[0]?.repositoryIdentity).toEqual(repositoryIdentity);
   });
 
+  it("keeps a workspace folder's repositories when a delta arrives without them", () => {
+    const workspace = applyShellStreamEvent(v2ShellSnapshot, {
+      kind: "project.updated",
+      sequence: 1,
+      project: {
+        ...v2Project,
+        repositoryIdentity: null,
+        workspaceRepositories: [repositoryIdentity, otherIdentity],
+      },
+    });
+    const renamed = applyShellStreamEvent(workspace, {
+      kind: "project.updated",
+      sequence: 2,
+      project: { ...v2Project, title: "Renamed", repositoryIdentity: null },
+    });
+    expect(renamed.projects[0]?.title).toBe("Renamed");
+    expect(renamed.projects[0]?.workspaceRepositories).toEqual([repositoryIdentity, otherIdentity]);
+
+    // A resolved enrichment with no checkouts left clears them.
+    const emptied = mergeShellSnapshotProjects(
+      renamed,
+      { ...renamed, projects: [{ ...v2Project, repositoryIdentity: null }] },
+      { resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot] },
+    );
+    expect(emptied.projects[0]?.workspaceRepositories).toBeUndefined();
+    expect(emptied.projects[0]?.title).toBe("Renamed");
+  });
+
   it("does not keep prior repositoryIdentity after a workspace root move", () => {
     const withIdentity = applyShellStreamEvent(v2ShellSnapshot, {
       kind: "project.updated",
