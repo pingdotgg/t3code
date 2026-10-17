@@ -9,6 +9,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -218,12 +219,18 @@ export class GitHubRequestPolicy extends Context.Service<
   {
     /**
      * Sends one request. `send` receives the headers it must carry (the token and GitHub's API
-     * version) and reports the answer; a failure of its own passes through untouched.
+     * version), records response headers with `observeResponse` before reading its body, and
+     * reports the answer; a failure of its own passes through untouched.
      */
     readonly request: <A, E, R>(
       input: GitHubRequest,
       send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
     ) => Effect.Effect<A, E | GitHubApiError, R>;
+    /** Records response headers before reading a body that can fail or be interrupted. */
+    readonly observeResponse: (
+      host: string,
+      headers: Readonly<Record<string, string | undefined>>,
+    ) => Effect.Effect<void>;
     /** The credential a request to `host` would carry right now. */
     readonly credential: (
       host: string,
@@ -240,6 +247,15 @@ export const make = Effect.gen(function* () {
   const quota = yield* GitHubQuota.GitHubQuota;
   const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const slots = yield* Semaphore.make(CONCURRENCY);
+  const backgroundAdmission = yield* Semaphore.make(1);
+  const tryBackgroundAdmission = backgroundAdmission.takeIfAvailable(1);
+  const waitForBackgroundAdmission = backgroundAdmission.withPermit(Effect.void);
+  let backgroundPending = 0;
+
+  const observeResponse: GitHubRequestPolicy["Service"]["observeResponse"] = (host, headers) =>
+    quota
+      .observe(host, headers)
+      .pipe(Effect.andThen(Effect.annotateCurrentSpan(rateLimitAttributes(headers))));
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = Effect.fn(
     "GitHubRest.credential",
@@ -279,11 +295,9 @@ export const make = Effect.gen(function* () {
 
       const settle = (lease: number, answer: GitHubAnswer<A>) =>
         Effect.gen(function* () {
-          yield* quota.observe(host, answer.headers);
-          yield* Effect.annotateCurrentSpan({
-            ...(answer.status === undefined ? {} : { "http.response.status_code": answer.status }),
-            ...rateLimitAttributes(answer.headers),
-          });
+          if (answer.status !== undefined) {
+            yield* Effect.annotateCurrentSpan({ "http.response.status_code": answer.status });
+          }
           switch (answer._tag) {
             case "Ok":
               yield* limits.recordSuccess({ ...key, lease });
@@ -346,12 +360,61 @@ export const make = Effect.gen(function* () {
         return yield* settle(lease, answer);
       });
       // The rate-limit scope follows the credential, so a pause on one account never blocks another.
-      return yield* slots
-        .withPermit(run)
-        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint));
+      const background = yield* SourceControlReadContext.Background;
+      const gated = background
+        ? Effect.uninterruptibleMask((restore) =>
+            Effect.suspend(() => {
+              backgroundPending++;
+              let pending = true;
+              let admissionHeld = false;
+              const releaseAdmission = Effect.suspend(() => {
+                if (pending) {
+                  pending = false;
+                  backgroundPending--;
+                }
+                if (!admissionHeld) return Effect.void;
+                admissionHeld = false;
+                return backgroundAdmission.release(1).pipe(Effect.asVoid);
+              });
+              // Record ownership while masked: cancellation after a restored manual take can
+              // otherwise lose the admission ticket before its finalizer knows it was acquired.
+              const acquireAdmission: Effect.Effect<void> = tryBackgroundAdmission.pipe(
+                Effect.flatMap((available) => {
+                  if (!available) {
+                    return restore(waitForBackgroundAdmission).pipe(
+                      Effect.andThen(acquireAdmission),
+                    );
+                  }
+                  admissionHeld = true;
+                  return Effect.void;
+                }),
+              );
+              return acquireAdmission.pipe(
+                Effect.flatMap(() =>
+                  restore(
+                    slots.withPermit(
+                      // Only one background read waits at the shared gate. Return its ticket
+                      // before HTTP starts so background reads can still fill all eight slots.
+                      Effect.uninterruptible(releaseAdmission).pipe(Effect.andThen(run)),
+                    ),
+                  ),
+                ),
+                Effect.ensuring(releaseAdmission),
+              );
+            }),
+          )
+        : Effect.suspend(() =>
+            // Give a woken admission waiter a turn before a fresh ordinary read retakes a slot.
+            backgroundPending > 0
+              ? Effect.yieldNow.pipe(Effect.andThen(slots.withPermit(run)))
+              : slots.withPermit(run),
+          );
+      return yield* gated.pipe(
+        Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint),
+      );
     });
 
-  return GitHubRequestPolicy.of({ request, credential });
+  return GitHubRequestPolicy.of({ request, credential, observeResponse });
 });
 
 export const layer = Layer.effect(GitHubRequestPolicy, make);

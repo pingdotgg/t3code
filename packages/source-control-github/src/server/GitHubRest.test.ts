@@ -1,6 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as PlatformError from "effect/PlatformError";
@@ -8,7 +11,12 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
-import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientResponse,
+  type HttpClientRequest,
+} from "effect/http";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -20,7 +28,12 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  transformResponse: (
+    response: HttpClientResponse.HttpClientResponse,
+  ) => HttpClientResponse.HttpClientResponse = (response) => response,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let tokens = ["first", "second"];
   let invalidations = 0;
@@ -49,7 +62,9 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
     HttpClient.HttpClient,
     HttpClient.make((request) => {
       requests.push(request);
-      return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+      return Effect.succeed(
+        transformResponse(HttpClientResponse.fromWeb(request, respond(request))),
+      );
     }),
   );
   const layer = GitHubRest.layer.pipe(
@@ -106,6 +121,109 @@ describe("environmentToken", () => {
 });
 
 describe("GitHubRest", () => {
+  it.effect.each(["failure", "cancellation"] as const)(
+    "retains quota headers after body %s and refuses another HTTP request",
+    (mode) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const started = yield* Deferred.make<void>();
+        const reset = Math.floor(NOW / 1000) + 600;
+        const { layer, requests } = harness(
+          () =>
+            json(
+              {},
+              {
+                headers: {
+                  "x-ratelimit-resource": "core",
+                  "x-ratelimit-limit": "5000",
+                  "x-ratelimit-remaining": "0",
+                  "x-ratelimit-reset": String(reset),
+                },
+              },
+            ),
+          (response) =>
+            Object.defineProperty(response, "stream", {
+              value: Stream.fromEffect(
+                Deferred.succeed(started, undefined).pipe(
+                  Effect.andThen(
+                    mode === "cancellation"
+                      ? Effect.never
+                      : Effect.fail(
+                          new HttpClientError.HttpClientError({
+                            reason: new HttpClientError.DecodeError({
+                              request: response.request,
+                              response,
+                              description: "Fixture body failed.",
+                            }),
+                          }),
+                        ),
+                  ),
+                ),
+              ),
+            }),
+        );
+        yield* Effect.gen(function* () {
+          const api = yield* GitHubRest.GitHubRest;
+          const read = { host: "github.com", operation: "quota-body", path: "user" };
+          const fiber = yield* api.rest(read).pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(started);
+          if (mode === "cancellation") yield* Fiber.interrupt(fiber);
+          else expect((yield* Effect.flip(Fiber.join(fiber)))._tag).toBe("GitHubApiRequestError");
+          const refusal = yield* Effect.flip(api.rest(read));
+          expect(refusal).toMatchObject({
+            _tag: "SourceControlRateLimitPausedError",
+            retryAt: reset * 1000,
+          });
+          expect(requests).toHaveLength(1);
+        }).pipe(Effect.provide(layer));
+      }),
+  );
+
+  it.effect("a late body cannot overwrite a newer response's quota headers", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const reset = Math.floor(NOW / 1000) + 600;
+      const { layer, requests } = harness(
+        (request) =>
+          json(
+            {},
+            {
+              headers: {
+                "x-ratelimit-resource": "core",
+                "x-ratelimit-limit": "5000",
+                "x-ratelimit-remaining": request.url.endsWith("/older") ? "499" : "4800",
+                "x-ratelimit-reset": String(reset),
+              },
+            },
+          ),
+        (response) =>
+          response.request.url.endsWith("/older")
+            ? Object.defineProperty(response, "stream", {
+                value: Stream.fromEffect(
+                  Deferred.succeed(started, undefined).pipe(
+                    Effect.andThen(Deferred.await(release)),
+                    Effect.as(new TextEncoder().encode("{}")),
+                  ),
+                ),
+              })
+            : response,
+      );
+      yield* Effect.gen(function* () {
+        const api = yield* GitHubRest.GitHubRest;
+        const read = { host: "github.com", operation: "quota-order", path: "older" };
+        const older = yield* api.rest(read).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(started);
+        yield* api.rest({ ...read, path: "newer", allowReserve: true });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(older);
+        yield* api.rest({ ...read, path: "probe" });
+        expect(requests).toHaveLength(3);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("traces the operation, path and quota, never the query string or the token", () => {
     const spans: Array<Tracer.NativeSpan> = [];
     const tracer = Tracer.make({

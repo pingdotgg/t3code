@@ -2,6 +2,7 @@ import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMes
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Context from "effect/Context";
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as Option from "effect/Option";
 import { GraphQLClient, GraphQLClientError, GraphQLGroup, GraphQLResolver } from "effect/graphql";
 import { HttpClient } from "effect/http";
 import * as RequestResolver from "effect/RequestResolver";
+import type * as Request from "effect/Request";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -51,6 +53,7 @@ import { PullRequestReadsGraphQLGroup } from "./pullRequestReads.graphql.ts";
 import { PullRequestReviewsGraphQLGroup } from "./pullRequestReviews.graphql.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 import {
   buildReviewSubmission,
   buildReviewerRequest,
@@ -871,6 +874,39 @@ const PullRequestGraphQLGroup = GraphQLGroup.merge(
   PullRequestMutationsGraphQLGroup,
 ).middleware(GitHubGraphQlClient.GitHubGraphQlAuth);
 
+/** The generated resolver uses each host/credential group's first context; mixed groups are ordinary. */
+const withReadPriority = <A extends Request.Any>(resolver: RequestResolver.RequestResolver<A>) =>
+  RequestResolver.makeWith<A>({
+    ...resolver,
+    runAll: (entries, key) => {
+      const backgroundGroups = new Map<string, boolean>();
+      const groups = entries.map((entry) => {
+        const target = Context.getUnsafe(entry.context, GitHubGraphQlClient.GitHubGraphQlTarget);
+        const group = JSON.stringify([
+          GitHubRequestPolicy.gitHubApiUrls(target.host).graphql,
+          GitHubGraphQlClient.batchKey(entry.context),
+        ]);
+        backgroundGroups.set(
+          group,
+          (backgroundGroups.get(group) ?? true) &&
+            Context.get(entry.context, SourceControlReadContext.Background),
+        );
+        return group;
+      });
+      return resolver.runAll(
+        Arr.map(entries, (entry, index) => ({
+          ...entry,
+          context: Context.add(
+            entry.context,
+            SourceControlReadContext.Background,
+            backgroundGroups.get(groups[index]!)!,
+          ),
+        })),
+        key,
+      );
+    },
+  });
+
 /** States in which `gh pr merge --auto` merges at once instead of arming auto-merge. */
 const IMMEDIATELY_MERGEABLE = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
@@ -898,6 +934,7 @@ export const make = Effect.gen(function* () {
       }),
     ),
   );
+
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
     function* (input: { readonly cwd: string; readonly host: string }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
@@ -1587,6 +1624,7 @@ export const make = Effect.gen(function* () {
   const summaryResolver = GraphQLResolver.aliased(client.PullRequestSummary, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
+    withReadPriority,
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
   );
@@ -1618,6 +1656,7 @@ export const make = Effect.gen(function* () {
   const watchFingerprintResolver = GraphQLResolver.aliased(client.PullRequestWatchFingerprint, {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
+    withReadPriority,
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
   );
@@ -1639,10 +1678,10 @@ export const make = Effect.gen(function* () {
   // their lookups share aliased requests of twenty-five, four at a time.
   const statsResolver = GraphQLResolver.aliased(client.PullRequestStats, {
     batchKey: GitHubGraphQlClient.batchKey,
-  }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
+  }).pipe(withReadPriority, RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
   const stackMembershipResolver = GraphQLResolver.aliased(client.PullRequestStackMembership, {
     batchKey: GitHubGraphQlClient.batchKey,
-  }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
+  }).pipe(withReadPriority, RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
   // A burst of ticks is one request, each file under its own alias. GitHub has no bulk form of
   // `markFileAsViewed`/`unmarkFileAsViewed`, which each take a single path.
   const setFileViewedResolver = GraphQLResolver.aliased(client.SetFileViewed, {

@@ -18,6 +18,7 @@ import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
@@ -74,6 +75,9 @@ type ApiCall =
   | {
       readonly kind: "graphql";
       readonly partial?: boolean;
+      readonly background?: boolean;
+      readonly authorization?: string | undefined;
+      readonly credentialScope?: string;
       /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
       readonly host: string;
@@ -128,6 +132,9 @@ const mockHttp = Layer.succeed(
         query: sent.query,
         variables: sent.variables,
         partial: true,
+        background: yield* SourceControlReadContext.Background,
+        authorization: request.headers["authorization"],
+        credentialScope: yield* SourceControlRateLimit.CredentialScope,
       };
       // A mocked failure with a status is what GitHub would have answered with it.
       const answer = yield* (
@@ -852,6 +859,209 @@ layer("GitHubPullRequestApi.layer", (it) => {
       }),
   );
 
+  it.effect.each([
+    [true, true],
+    [true, false],
+    [false, true],
+    [false, false],
+  ] as const)("keeps one summary batch for read priorities %s", ([first, second]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { _0_repository: { pullRequest: null }, _1_repository: { pullRequest: null } },
+            }),
+          ),
+        ),
+      );
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const reads = yield* Effect.forEach(
+        [first, second],
+        (background, index) =>
+          api
+            .getPullRequestSummary({
+              cwd: "/w",
+              host: "github.com",
+              repository: "acme/web",
+              number: 7 + index,
+            })
+            .pipe(
+              Effect.provideService(SourceControlReadContext.Background, background),
+              Effect.result,
+            ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const results = yield* Fiber.join(reads);
+      expect(
+        results.every(
+          (result) => Result.isFailure(result) && result.failure._tag === "GitHubApiNotFoundError",
+        ),
+      ).toBe(true);
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(callAt(0)).toMatchObject({ kind: "graphql", background: first && second });
+      expect(varsAt(0)).toMatchObject({ _0_number: 7, _1_number: 8 });
+    }),
+  );
+
+  it.effect.each([
+    [true, true],
+    [true, false],
+    [false, true],
+  ] as const)("keeps one watch batch for read priorities %s", ([first, second]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { _0_repository: { pullRequest: null }, _1_repository: { pullRequest: null } },
+            }),
+          ),
+        ),
+      );
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const reads = yield* Effect.forEach(
+        [first, second],
+        (background, index) =>
+          api
+            .getPullRequestWatchFingerprint({
+              cwd: "/w",
+              host: "github.com",
+              repository: "acme/web",
+              number: 17 + index,
+            })
+            .pipe(Effect.provideService(SourceControlReadContext.Background, background)),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      expect(yield* Fiber.join(reads)).toEqual([null, null]);
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(callAt(0)).toMatchObject({ kind: "graphql", background: first && second });
+    }),
+  );
+
+  it.effect("a foreground reader of the same summary promotes its shared background batch", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { _0_repository: { pullRequest: null } },
+            }),
+          ),
+        ),
+      );
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const read = api.getPullRequestSummary({
+        cwd: "/w",
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+      });
+      const readers = yield* Effect.all(
+        [
+          read.pipe(
+            Effect.provideService(SourceControlReadContext.Background, true),
+            Effect.result,
+          ),
+          read.pipe(Effect.result),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      expect((yield* Fiber.join(readers)).every(Result.isFailure)).toBe(true);
+      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(callAt(0)).toMatchObject({ kind: "graphql", background: false });
+      expect(varsAt(0)).toMatchObject({ _0_number: 7 });
+      expect(varsAt(0)).not.toHaveProperty("_1_number");
+    }),
+  );
+
+  it.effect.each(["hosts", "credentials", "scopes"] as const)(
+    "classifies each generated batch independently across %s",
+    (separation) =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation((call) =>
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: Object.fromEntries(
+                  Object.keys(call.kind === "graphql" ? (call.variables ?? {}) : {}).flatMap(
+                    (name) => {
+                      const alias = /^(_\d+_)number$/.exec(name)?.[1];
+                      return alias === undefined
+                        ? []
+                        : [[`${alias}repository`, { pullRequest: null }]];
+                    },
+                  ),
+                ),
+              }),
+            ),
+          ),
+        );
+        const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        for (const reverse of [false, true]) {
+          const from = mockedExecute.mock.calls.length;
+          const entries = [
+            { group: "a", background: true },
+            { group: "b", background: true },
+            { group: "b", background: false },
+            { group: "a", background: true },
+          ];
+          if (reverse) entries.reverse();
+          const readers = yield* Effect.forEach(
+            entries,
+            ({ group, background }, index) => {
+              const host = separation === "hosts" ? `github.${group}.test` : "github.com";
+              const credential = separation === "credentials" ? group : "shared";
+              return api
+                .getPullRequestSummary({
+                  cwd: "/w",
+                  host,
+                  repository: "acme/web",
+                  number: 30 + index,
+                })
+                .pipe(
+                  Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+                    host,
+                    token: Redacted.make(credential),
+                    credentialFingerprint: credential,
+                  }),
+                  Effect.provideService(
+                    SourceControlRateLimit.CredentialScope,
+                    separation === "scopes" ? group : "",
+                  ),
+                  Effect.provideService(SourceControlReadContext.Background, background),
+                  Effect.result,
+                );
+            },
+            { concurrency: "unbounded" },
+          ).pipe(Effect.forkChild);
+          yield* TestClock.adjust("10 millis");
+          expect((yield* Fiber.join(readers)).every(Result.isFailure)).toBe(true);
+          const calls = mockedExecute.mock.calls.slice(from).map(([call]) => call);
+          expect(calls).toHaveLength(2);
+          const groupOf = (call: ApiCall) =>
+            call.kind !== "graphql"
+              ? null
+              : separation === "hosts"
+                ? call.host.split(".")[1]
+                : separation === "credentials"
+                  ? call.authorization?.replace("Bearer ", "")
+                  : call.credentialScope;
+          expect(calls.find((call) => groupOf(call) === "a")).toMatchObject({
+            kind: "graphql",
+            background: true,
+          });
+          expect(calls.find((call) => groupOf(call) === "b")).toMatchObject({
+            kind: "graphql",
+            background: false,
+          });
+        }
+      }),
+  );
+
   it.effect("reads linked pull requests on one host together, filed back by position", () =>
     Effect.gen(function* () {
       const node = (number: number) => ({
@@ -995,16 +1205,19 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "fails only the pull request GitHub cannot find, and answers the rest of its batch",
-    () =>
+  it.effect.each([
+    { path: ["_0_repository", "pullRequest"], missing: null },
+    { path: ["_0_repository", "pullRequest", "title"], missing: { title: null } },
+  ] as const)(
+    "fails only the pull request GitHub cannot find at %s, and answers the rest of its batch",
+    ({ path, missing }) =>
       Effect.gen(function* () {
         mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
               encodeJson({
                 data: {
-                  _0_repository: { pullRequest: null },
+                  _0_repository: { pullRequest: missing },
                   _1_repository: {
                     pullRequest: {
                       number: 8,
@@ -1033,7 +1246,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 errors: [
                   {
                     type: "NOT_FOUND",
-                    path: ["_0_repository", "pullRequest"],
+                    path,
                     message: "Could not resolve to a PullRequest with the number of 7.",
                   },
                 ],

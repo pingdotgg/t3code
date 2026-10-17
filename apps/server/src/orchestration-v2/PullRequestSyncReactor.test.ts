@@ -39,7 +39,10 @@ import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
-import type { PullRequestTestThread } from "./testkit/pullRequestFixtures.ts";
+import {
+  makeGitHubReadAdmissionFixture,
+  type PullRequestTestThread,
+} from "./testkit/pullRequestFixtures.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("sync-project");
@@ -384,6 +387,39 @@ function applySync(
 }
 
 describe("PullRequestSyncReactor", () => {
+  it.effect(
+    "sync summary and stack reads yield to ordinary HTTP while retaining the synced stack",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const admission = yield* makeGitHubReadAdmissionFixture;
+          const nativeStack: PullRequestStack = {
+            id: "stack-7",
+            number: 3,
+            url: "https://github.com/owner/repository/stack/3",
+            base: "main",
+            layers: [{ number: 7, headBranch: "feature", state: "open" }],
+          };
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("admission", { pullRequests: [makeLink(7)] })]),
+            summary: (input) =>
+              admission.proveBackgroundRead("summary", Effect.succeed(makeSummary(input))),
+            stack: () => admission.proveBackgroundRead("stack", Effect.succeed(nativeStack)),
+          });
+          yield* Effect.gen(function* () {
+            yield* startAndSweep(fixture);
+            assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+            assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
+            assert.deepStrictEqual((yield* Ref.get(fixture.syncCommands)).at(-1)?.stack, {
+              kind: "native",
+              ...nativeStack,
+            });
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
     Effect.scoped(
       Effect.gen(function* () {

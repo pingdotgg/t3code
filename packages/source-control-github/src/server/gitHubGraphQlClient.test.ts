@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
@@ -16,7 +19,10 @@ import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts"
 
 const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 
-function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Response) {
+function harness(
+  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  responseStream: () => Stream.Stream<Uint8Array> | undefined = () => undefined,
+) {
   const requests: Array<HttpClientRequest.HttpClientRequest> = [];
   let invalidations = 0;
   const services = Layer.mergeAll(
@@ -37,7 +43,10 @@ function harness(respond: (request: HttpClientRequest.HttpClientRequest) => Resp
       HttpClient.HttpClient,
       HttpClient.make((request) => {
         requests.push(request);
-        return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request)));
+        const response = HttpClientResponse.fromWeb(request, respond(request));
+        const stream = responseStream();
+        if (stream !== undefined) Object.defineProperty(response, "stream", { value: stream });
+        return Effect.succeed(response);
       }),
     ),
     GitHubQuota.layer,
@@ -242,6 +251,107 @@ const callStats = (target: Partial<GitHubGraphQlClient.GitHubGraphQlTarget["Serv
   });
 
 describe("call", () => {
+  it.effect("keeps exhausted GraphQL headers when its body is interrupted", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const reset = Math.floor(NOW / 1000) + 600;
+      const h = harness(
+        () =>
+          json(
+            {},
+            {
+              headers: {
+                "x-ratelimit-resource": "graphql",
+                "x-ratelimit-limit": "5000",
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": String(reset),
+              },
+            },
+          ),
+        () =>
+          Stream.fromEffect(Deferred.succeed(entered, undefined)).pipe(
+            Stream.flatMap(() => Stream.fromEffect(Effect.never)),
+          ),
+      );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const held = yield* callStats().pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* Fiber.interrupt(held);
+        const refused = yield* Effect.flip(callStats({ allowReserve: true }));
+        expect(refused).toMatchObject({
+          _tag: "SourceControlRateLimitPausedError",
+          retryAt: reset * 1000,
+        });
+        expect(h.requests).toHaveLength(1);
+      }).pipe(Effect.provide(h.layer));
+    }),
+  );
+
+  it.effect("keeps exhausted GraphQL headers when its body exceeds the cap", () => {
+    const reset = Math.floor(NOW / 1000) + 600;
+    const h = harness(() =>
+      json(
+        { padding: "x".repeat(200) },
+        {
+          headers: {
+            "x-ratelimit-resource": "graphql",
+            "x-ratelimit-limit": "5000",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": String(reset),
+          },
+        },
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const first = yield* Effect.flip(callStats({ maxResponseBytes: 64 }));
+      expect(first._tag).toBe("GitHubApiResponseError");
+      expect((yield* Effect.flip(callStats({ allowReserve: true })))._tag).toBe(
+        "SourceControlRateLimitPausedError",
+      );
+      expect(h.requests).toHaveLength(1);
+    }).pipe(Effect.provide(h.layer));
+  });
+
+  it.effect("an older GraphQL body cannot overwrite a newer quota response", () =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let responses = 0;
+      const body = JSON.stringify({ data: { repository: { pullRequest: stats } } });
+      const reset = Math.floor(NOW / 1000) + 600;
+      const h = harness(
+        () =>
+          json(JSON.parse(body), {
+            headers: {
+              "x-ratelimit-resource": "graphql",
+              "x-ratelimit-limit": "5000",
+              "x-ratelimit-remaining": String(++responses === 1 ? 499 : 4800),
+              "x-ratelimit-reset": String(reset),
+            },
+          }),
+        () =>
+          responses === 1
+            ? Stream.fromEffect(Deferred.succeed(entered, undefined)).pipe(
+                Stream.flatMap(() => Stream.fromEffect(Deferred.await(release))),
+                Stream.flatMap(() => Stream.make(new TextEncoder().encode(body))),
+              )
+            : undefined,
+      );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const held = yield* callStats().pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* callStats({ allowReserve: true });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(held);
+        yield* callStats();
+        expect(h.requests).toHaveLength(3);
+      }).pipe(Effect.provide(h.layer));
+    }),
+  );
+
   it.effect("fails an answer whose errors all say NOT_FOUND as a missing resource", () => {
     const { layer } = harness(() =>
       json({

@@ -31,6 +31,7 @@ import {
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -312,11 +313,9 @@ export const make = Effect.gen(function* () {
           while (cursor !== null) {
             if (cursors.has(cursor)) return null;
             cursors.add(cursor);
-            const page: PullRequestThreadCommentsResult = yield* pullRequests.threadComments({
-              ...reference,
-              threadId: thread.id,
-              cursor,
-            });
+            const page: PullRequestThreadCommentsResult = yield* pullRequests
+              .threadComments({ ...reference, threadId: thread.id, cursor })
+              .pipe(Effect.provideService(SourceControlReadContext.Background, true));
             for (const comment of page.comments) {
               comments.set(comment.id, {
                 ...comment,
@@ -388,6 +387,7 @@ export const make = Effect.gen(function* () {
 
   const fingerprintOf = (group: WatchGroup) =>
     pullRequests.watchFingerprint(referenceOf(group)).pipe(
+      Effect.provideService(SourceControlReadContext.Background, true),
       Effect.catchCause(
         (cause): Effect.Effect<ProviderChangeRequestWatchFingerprint | null | "paused"> =>
           Cause.hasInterruptsOnly(cause)
@@ -422,7 +422,7 @@ export const make = Effect.gen(function* () {
             : Effect.succeed(Option.none<PullRequestActivity>()),
         ],
         { concurrency: 2 },
-      ),
+      ).pipe(Effect.provideService(SourceControlReadContext.Background, true)),
     );
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);

@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 import * as TestClock from "effect/testing/TestClock";
 import type {
   OrchestrationProjectShell,
@@ -7712,6 +7713,334 @@ it.effect.each([
         action,
       });
       assert.deepStrictEqual(calls, [expected]);
+    }),
+);
+
+type CachedHostRead = "detail" | "activity" | "summary";
+
+// Only the provider DTO is controlled. Calls traverse the real service caches and
+// GitHub API, so priority and cancellation are observed at actual HTTP admission.
+const cachedHostReadHarness = Effect.gen(function* () {
+  const requests: Array<{ path: string; background: boolean }> = [];
+  const pending = new Map<
+    string,
+    {
+      started: Deferred.Deferred<void>;
+      requested: Deferred.Deferred<void>;
+      release: Deferred.Deferred<void>;
+      interrupted: Deferred.Deferred<void>;
+    }
+  >();
+  const http = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.suspend(() => {
+        const path = new URL(request.url).pathname.slice(1);
+        const entry = pending.get(path)!;
+        return Effect.gen(function* () {
+          requests.push({ path, background: yield* SourceControlReadContext.Background });
+          yield* Deferred.succeed(entry.started, undefined);
+          yield* Deferred.await(entry.release);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response("{}", {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }).pipe(Effect.onInterrupt(() => Deferred.succeed(entry.interrupted, undefined)));
+      }),
+    ),
+  );
+  const credentials = Layer.succeed(
+    GitHubCredentials.GitHubCredentials,
+    GitHubCredentials.GitHubCredentials.of({
+      get: (host) =>
+        Effect.succeed({
+          host,
+          token: Redacted.make("cache-test"),
+          source: "gh",
+          fingerprint: host + ":cache-test",
+        }),
+      invalidate: () => Effect.void,
+    }),
+  );
+  const context = yield* Layer.build(
+    GitHubRest.layer.pipe(
+      Layer.provide(Layer.mergeAll(http, credentials)),
+      Layer.provideMerge(GitHubQuota.layer),
+      Layer.provideMerge(SourceControlRateLimit.layer),
+    ),
+  );
+  const api = yield* GitHubRest.GitHubRest.pipe(Effect.provideContext(context));
+  const hostRead = (path: string) =>
+    Deferred.succeed(pending.get(path)!.requested, undefined).pipe(
+      Effect.andThen(
+        api.rest({
+          host: "github.com",
+          operation: "cache-admission-test",
+          path,
+        }),
+      ),
+      Effect.orDie,
+    );
+  const service = yield* makeService({
+    projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+    providers: [
+      fakeProvider(SourceControlProviderKind.make("github"), {
+        getChangeRequest: ({ number }) =>
+          hostRead("detail-" + number).pipe(
+            Effect.as({ ...hostedChangeRequest("Description"), number }),
+          ),
+        getChangeRequestSummary: ({ number }) =>
+          hostRead("summary-" + number).pipe(
+            Effect.as(changeRequest(number, "2026-07-02T00:00:00Z")),
+          ),
+        getChangeRequestActivity: ({ number }) =>
+          hostRead("activity-" + number).pipe(
+            Effect.as({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+          ),
+      }),
+    ],
+  });
+  const reference = {
+    projectId: "p1" as ProjectId,
+    repository: "acme/web",
+    host: "github.com",
+    number: 1,
+    allowStale: false,
+  };
+  const read = (operation: CachedHostRead) => {
+    switch (operation) {
+      case "detail":
+        return service.detail(reference).pipe(Effect.map((value) => value.title));
+      case "summary":
+        return service.summary(reference).pipe(Effect.map((value) => value.title));
+      case "activity":
+        return service.activity(reference).pipe(Effect.map((value) => String(value.commentCount)));
+    }
+  };
+  const prepare = Effect.fnUntraced(function* (path: string) {
+    const entry = {
+      started: yield* Deferred.make<void>(),
+      requested: yield* Deferred.make<void>(),
+      release: yield* Deferred.make<void>(),
+      interrupted: yield* Deferred.make<void>(),
+    };
+    pending.set(path, entry);
+    return entry;
+  });
+  return { requests, service, reference, read, prepare, hostRead };
+});
+
+it.effect.each(["detail", "activity", "summary"] as const)(
+  "the real %s cache preserves the first producer's background context",
+  (operation) =>
+    Effect.gen(function* () {
+      for (const background of [true, false]) {
+        const h = yield* cachedHostReadHarness;
+        const entry = yield* h.prepare(operation + "-1");
+        const first = yield* h
+          .read(operation)
+          .pipe(
+            Effect.provideService(SourceControlReadContext.Background, background),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* Deferred.await(entry.started);
+        const second = yield* h
+          .read(operation)
+          .pipe(
+            Effect.provideService(SourceControlReadContext.Background, !background),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* Deferred.succeed(entry.release, undefined);
+        const expected = operation === "activity" ? "0" : "Change request 1";
+        assert.strictEqual(yield* Fiber.join(first), expected);
+        assert.strictEqual(yield* Fiber.join(second), expected);
+        assert.deepStrictEqual(h.requests, [{ path: operation + "-1", background }]);
+      }
+    }),
+);
+
+it.effect.each(["detail", "activity", "summary"] as const)(
+  "canceling the creating %s subscriber leaves the shared HTTP read alive",
+  (operation) =>
+    Effect.gen(function* () {
+      const h = yield* cachedHostReadHarness;
+      const entry = yield* h.prepare(operation + "-1");
+      const first = yield* h
+        .read(operation)
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(entry.started);
+      // Node's digest and memory KVS are synchronous, so this cache hit reaches
+      // its shared pending producer before the immediate fork returns.
+      const second = yield* h.read(operation).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Fiber.interrupt(first);
+      assert.isFalse(yield* Deferred.isDone(entry.interrupted));
+      yield* Deferred.succeed(entry.release, undefined);
+      assert.strictEqual(
+        yield* Fiber.join(second),
+        operation === "activity" ? "0" : "Change request 1",
+      );
+      assert.deepStrictEqual(h.requests, [{ path: operation + "-1", background: true }]);
+    }),
+);
+
+it.effect.each(["detail", "activity", "summary"] as const)(
+  "canceling the last %s subscriber stops HTTP and lets the same key retry",
+  (operation) =>
+    Effect.gen(function* () {
+      const h = yield* cachedHostReadHarness;
+      const entry = yield* h.prepare(operation + "-1");
+      const first = yield* h
+        .read(operation)
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(entry.started);
+      yield* Fiber.interrupt(first);
+      yield* Deferred.await(entry.interrupted);
+      const next = yield* h.prepare(operation + "-1");
+      const second = yield* h.read(operation).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(next.started);
+      yield* Deferred.succeed(next.release, undefined);
+      assert.strictEqual(
+        yield* Fiber.join(second),
+        operation === "activity" ? "0" : "Change request 1",
+      );
+      assert.deepStrictEqual(h.requests, [
+        { path: operation + "-1", background: true },
+        { path: operation + "-1", background: false },
+      ]);
+    }),
+);
+
+it.effect.each(["detail", "activity"] as const)(
+  "invalidating a blocked %s read gives the replacement its own priority",
+  (operation) =>
+    Effect.gen(function* () {
+      const h = yield* cachedHostReadHarness;
+      const entry = yield* h.prepare(operation + "-1");
+      const old = yield* h
+        .read(operation)
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(entry.started);
+      yield* h.service.invalidate({ reference: h.reference });
+      const next = yield* h.prepare(operation + "-1");
+      const fresh = yield* h.read(operation).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(next.started);
+      assert.isFalse(yield* Deferred.isDone(entry.interrupted));
+      yield* Deferred.succeed(next.release, undefined);
+      yield* Fiber.join(fresh);
+      yield* Deferred.succeed(entry.release, undefined);
+      yield* Fiber.join(old);
+      yield* h.read(operation);
+      assert.deepStrictEqual(h.requests, [
+        { path: operation + "-1", background: true },
+        { path: operation + "-1", background: false },
+      ]);
+    }),
+);
+
+it.effect(
+  "persisted summary invalidation drains a blocked producer before a fresh ordinary read",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* cachedHostReadHarness;
+      const entry = yield* h.prepare("summary-1");
+      const old = yield* h
+        .read("summary")
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(entry.started);
+      const invalidation = yield* h.service
+        .invalidate({ reference: h.reference })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.isUndefined(invalidation.pollUnsafe());
+      assert.isFalse(yield* Deferred.isDone(entry.interrupted));
+      yield* Deferred.succeed(entry.release, undefined);
+      yield* Fiber.join(old);
+      yield* Fiber.join(invalidation);
+      const next = yield* h.prepare("summary-1");
+      const fresh = yield* h.read("summary").pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(next.started);
+      yield* Deferred.succeed(next.release, undefined);
+      assert.strictEqual(yield* Fiber.join(fresh), "Change request 1");
+      assert.deepStrictEqual(h.requests, [
+        { path: "summary-1", background: true },
+        { path: "summary-1", background: false },
+      ]);
+    }),
+);
+
+it.effect.each(["detail", "activity", "summary"] as const)(
+  "canceling the last %s subscriber waiting at admission leaves the cache retry usable",
+  (operation) =>
+    Effect.gen(function* () {
+      const h = yield* cachedHostReadHarness;
+      const held = yield* Effect.forEach(
+        Array.from({ length: 8 }, (_, index) => "held-" + index),
+        h.prepare,
+      );
+      const holding = yield* Effect.forEach(held, (_, index) =>
+        h.hostRead("held-" + index).pipe(Effect.forkChild({ startImmediately: true })),
+      );
+      yield* Effect.forEach(held, (entry) => Deferred.await(entry.started));
+      const blockerEntry = yield* h.prepare("admission-blocker");
+      const blocker = yield* h
+        .hostRead("admission-blocker")
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      const target = yield* h.prepare(operation + "-1");
+      const canceled = yield* h
+        .read(operation)
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(target.requested);
+      yield* Fiber.interrupt(canceled);
+      assert.isFalse(yield* Deferred.isDone(target.started));
+      const next = yield* h.prepare(operation + "-1");
+      const retry = yield* h
+        .read(operation)
+        .pipe(
+          Effect.provideService(SourceControlReadContext.Background, true),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      yield* Deferred.await(next.requested);
+      yield* Deferred.succeed(blockerEntry.release, undefined);
+      yield* Effect.forEach(held, (entry) => Deferred.succeed(entry.release, undefined));
+      yield* Deferred.await(next.started);
+      yield* Deferred.succeed(next.release, undefined);
+      assert.strictEqual(
+        yield* Fiber.join(retry),
+        operation === "activity" ? "0" : "Change request 1",
+      );
+      yield* Fiber.join(blocker);
+      yield* Effect.forEach(holding, Fiber.join);
+      assert.deepStrictEqual(
+        h.requests.filter((request) => request.path === operation + "-1"),
+        [{ path: operation + "-1", background: true }],
+      );
+      // Eight held readers, the admission blocker, and the one cached target read.
+      assert.strictEqual(h.requests.length, held.length + 2);
     }),
 );
 
