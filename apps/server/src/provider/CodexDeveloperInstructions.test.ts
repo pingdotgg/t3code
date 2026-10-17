@@ -8,6 +8,18 @@ import {
 } from "./CodexDeveloperInstructions.ts";
 
 describe("buildCodexDeveloperInstructions", () => {
+  it("includes the Codex code-mode hint in orchestration context", () => {
+    const context = buildCodexAdditionalContext({
+      model: "gpt-5.3-codex",
+      reasoningEffort: "high",
+    });
+
+    const orchestration = context.t3_code_orchestration?.value ?? "";
+
+    NodeAssert.match(orchestration, /tools\.mcp__t3_code__orchestrator_capabilities/);
+    NodeAssert.doesNotMatch(orchestration, /acp-mcp-call/);
+  });
+
   it("appends runtime info after the mode instructions", () => {
     const instructions = runtimeInstructions({
       model: "gpt-5.3-codex",
