@@ -3,6 +3,7 @@ import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
   resolvePathLinkTarget,
+  splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
@@ -269,6 +270,32 @@ function hasMarkdownFilePrimaryAction(input: {
     input.canOpenInPanel ||
     input.canOpenMedia === true
   );
+}
+
+export function markdownFileCopyMenuItems(input: {
+  targetPath: string;
+  workspaceRelativePath: string | null;
+}) {
+  const { path } = splitFilePathPosition(input.targetPath);
+  const position = input.targetPath.slice(path.length);
+  return [
+    ...(input.workspaceRelativePath === null
+      ? []
+      : [
+          {
+            id: "copy-relative",
+            label: "Copy relative path",
+            value: `${input.workspaceRelativePath}${position}`,
+            title: "Relative path",
+          } as const,
+        ]),
+    {
+      id: "copy-full",
+      label: "Copy full path",
+      value: input.targetPath,
+      title: "Full path",
+    },
+  ] as const;
 }
 
 export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
@@ -1152,8 +1179,8 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
-  displayPath: string;
   panelPath: string | null;
+  workspaceRelativePath: string | null;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
@@ -1853,8 +1880,8 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
-  displayPath,
   panelPath,
+  workspaceRelativePath,
   line,
   label,
   copyMarkdown,
@@ -2035,6 +2062,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     if (!api) return;
 
     try {
+      const copyItems = markdownFileCopyMenuItems({ targetPath, workspaceRelativePath });
       const clicked = await api.contextMenu.show(
         [
           ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
@@ -2043,8 +2071,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
             : []),
           ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-          { id: "copy-relative", label: "Copy relative path" },
-          { id: "copy-full", label: "Copy full path" },
+          ...copyItems.map(({ id, label }) => ({ id, label })),
         ] as const,
         position,
       );
@@ -2065,12 +2092,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleRevealInFileManager();
         return;
       }
-      if (clicked === "copy-relative") {
-        handleCopy(displayPath, "Relative path");
-        return;
-      }
-      if (clicked === "copy-full") {
-        handleCopy(targetPath, "Full path");
+      const copyItem = copyItems.find(({ id }) => id === clicked);
+      if (copyItem) {
+        handleCopy(copyItem.value, copyItem.title);
       }
     } catch (cause) {
       reportMarkdownActionFailure(
@@ -2180,7 +2204,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
-    previous.displayPath === next.displayPath &&
+    previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
@@ -2587,7 +2611,7 @@ function useChatMarkdownState({
         href={fileLinkMeta.targetPath}
         targetPath={fileLinkMeta.targetPath}
         iconPath={fileLinkMeta.filePath}
-        displayPath={fileLinkMeta.displayPath}
+        workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={panelPath}
         line={fileLinkMeta.line}
         label={fileLinkLabel(
