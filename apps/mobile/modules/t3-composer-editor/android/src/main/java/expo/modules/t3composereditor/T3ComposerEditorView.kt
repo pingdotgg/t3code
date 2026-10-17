@@ -591,6 +591,12 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+  private var touchSelectionStart = -1
+  private var touchSelectionEnd = -1
+  private var touchScrollX = 0
+  private var touchScrollY = 0
+  private var touchScrolled = false
+  private var touchMovedCaret = false
 
   /**
    * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
@@ -674,6 +680,53 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
     }
   }
+
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+      touchSelectionStart = selectionStart
+      touchSelectionEnd = selectionEnd
+      touchScrollX = scrollX
+      touchScrollY = scrollY
+      touchScrolled = false
+      touchMovedCaret = false
+    }
+    val handled = super.onTouchEvent(event)
+    if (scrollX != touchScrollX || scrollY != touchScrollY) touchScrolled = true
+    if (
+      event.actionMasked == MotionEvent.ACTION_MOVE &&
+        (selectionStart != touchSelectionStart || selectionEnd != touchSelectionEnd)
+    ) {
+      touchMovedCaret = true
+    }
+    val restoresCaret =
+      event.actionMasked == MotionEvent.ACTION_UP &&
+        touchScrolled &&
+        !touchMovedCaret &&
+        touchSelectionStart >= 0 &&
+        touchSelectionStart == touchSelectionEnd &&
+        selectionStart == selectionEnd
+    if (restoresCaret) {
+      setSelection(
+        touchSelectionStart.coerceIn(0, length()),
+        touchSelectionEnd.coerceIn(0, length()),
+      )
+    }
+    if (
+      event.actionMasked == MotionEvent.ACTION_UP ||
+        event.actionMasked == MotionEvent.ACTION_CANCEL
+    ) {
+      touchSelectionStart = -1
+      touchSelectionEnd = -1
+      touchScrolled = false
+      touchMovedCaret = false
+    }
+    return handled
+  }
+
+  // Both ArrowKeyMovementMethod and Editor move the caret after a drag. Scrolling to read back
+  // must leave the caret where it was; typing scrolls back to it.
+  override fun moveCursorToVisibleOffset(): Boolean = false
+
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
