@@ -1,10 +1,11 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { toastManager } from "../ui/toast";
 import {
@@ -45,7 +46,7 @@ export function usePullRequestFilesViewed(options: {
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
   );
   const refresh = query.refresh;
-  const states = useMemo(() => toFileViewedStates(query.data), [query.data]);
+  const states = toFileViewedStates(query.data);
   const truncated = query.data?.truncated === true;
   const error = query.error;
   const [overlay, setOverlay] = useState<FileViewedOverlay>(NO_OVERLAY);
@@ -68,10 +69,11 @@ export function usePullRequestFilesViewed(options: {
   // answer that differs from it is the first read that could have seen the write, which is what
   // retires the press rather than the host happening to agree with it.
   const answeredFrom = useRef<Map<string, FileViewedStates | null>>(new Map());
-  const statesRef = useRef(states);
-  statesRef.current = states;
+  // The committed answer, read when a write completes rather than when it was sent.
+  const committedStates = useRef(states);
 
   useEffect(() => {
+    committedStates.current = states;
     const pending = new Set([...queued.current.keys(), ...sentBy.current.keys()]);
     const answered = new Set<string>();
     for (const [path, from] of answeredFrom.current) {
@@ -82,7 +84,11 @@ export function usePullRequestFilesViewed(options: {
     setOverlay((current) => settleFileViewedOverlay(current, states, pending, answered));
   }, [states]);
 
-  const flush = useCallback(() => {
+  // Takes the target explicitly so a scope being left still sends its last presses to itself.
+  const flush = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly reference: PullRequestRef;
+  }) => {
     flushTimer.current = null;
     const batch = toFileViewedBatch(queued.current);
     if (batch.length === 0) return;
@@ -90,7 +96,10 @@ export function usePullRequestFilesViewed(options: {
     const sentFrom = scope.current;
     const request = ++requests.current;
     for (const file of batch) sentBy.current.set(file.path, request);
-    void setFilesViewed({ environmentId, input: { ...reference, files: batch } }).then((result) => {
+    void setFilesViewed({
+      environmentId: target.environmentId,
+      input: { ...target.reference, files: batch },
+    }).then((result) => {
       const mine = batch
         .map((file) => file.path)
         .filter((path) => sentBy.current.get(path) === request);
@@ -106,26 +115,23 @@ export function usePullRequestFilesViewed(options: {
       }
       // Answered for from the next read on, whatever it says. A push landing between the write
       // and that read comes back as `dismissed`, and the press must not stand over it.
-      for (const path of mine) answeredFrom.current.set(path, statesRef.current);
+      for (const path of mine) answeredFrom.current.set(path, committedStates.current);
       refresh();
     });
-  }, [environmentId, reference, refresh, setFilesViewed]);
+  };
 
-  // Read through a ref rather than closed over: `setViewed` is handed to every file header the
-  // viewer draws, and a new identity per render would rebuild all of them.
-  const flushRef = useRef(flush);
-  flushRef.current = flush;
+  const currentTarget = useEffectEvent(() => ({ environmentId, reference }));
+  const flushTarget = useEffectEvent(flush);
 
   // Leaving a change request, the environment it lives on, or the page itself records what was
-  // pressed and then drops the rest. The flush kept here is the one bound to the scope being
-  // left, which is what sends those last presses where they were meant to go.
+  // pressed and then drops the rest, sending those last presses to the scope being left.
   useEffect(() => {
-    const flushScope = flushRef.current;
+    const leaving = currentTarget();
     scope.current = scopeKey;
     return () => {
       if (flushTimer.current !== null) {
         clearTimeout(flushTimer.current);
-        flushScope();
+        flushTarget(leaving);
       }
       queued.current = new Map();
       sentBy.current = new Map();
@@ -134,41 +140,23 @@ export function usePullRequestFilesViewed(options: {
     };
   }, [scopeKey]);
 
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
-  const refreshFromHost = useCallback(() => refreshRef.current(), []);
-
-  const setViewed = useCallback((path: string, viewed: boolean) => {
+  // Handed to every file header the viewer draws; a new identity would rebuild all of them.
+  const setViewed = useStableCallback((path: string, viewed: boolean) => {
     setOverlay((current) => new Map(current).set(path, viewed));
     queued.current.set(path, viewed);
     if (flushTimer.current !== null) clearTimeout(flushTimer.current);
-    flushTimer.current = setTimeout(() => flushRef.current(), FLUSH_DELAY_MS);
-  }, []);
+    const target = { environmentId, reference };
+    flushTimer.current = setTimeout(() => flush(target), FLUSH_DELAY_MS);
+  });
 
-  const isViewed = useCallback(
-    (path: string) => isFileViewed(path, states, overlay),
-    [overlay, states],
-  );
-  const isStale = useCallback(
-    (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
-    [overlay, states],
-  );
-  const viewedCount = useMemo(
-    () => countViewedFiles(paths, states, overlay),
-    [overlay, paths, states],
-  );
-
-  return useMemo(
-    () => ({
-      enabled,
-      isViewed,
-      isStale,
-      setViewed,
-      viewedCount,
-      truncated,
-      error,
-      refresh: refreshFromHost,
-    }),
-    [enabled, error, isStale, isViewed, refreshFromHost, setViewed, truncated, viewedCount],
-  );
+  return {
+    enabled,
+    isViewed: (path: string) => isFileViewed(path, states, overlay),
+    isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
+    setViewed,
+    viewedCount: countViewedFiles(paths, states, overlay),
+    truncated,
+    error,
+    refresh,
+  };
 }

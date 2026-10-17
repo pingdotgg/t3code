@@ -38,4 +38,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useCopyToClipboard.ts",
   "apps/web/src/components/auth/PairingRouteSurface.tsx",
   "apps/web/src/components/Sidebar.logic.ts",
+  "apps/web/src/components/pullRequest/usePullRequestFilesViewed.ts",
 ] as const;
