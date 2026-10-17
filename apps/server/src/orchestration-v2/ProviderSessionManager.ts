@@ -248,10 +248,18 @@ function sessionKey(providerSessionId: ProviderSessionId): string {
   return String(providerSessionId);
 }
 
+/**
+ * Runless artifacts that belong to the live session itself: runtime requests
+ * with no provider turn (their node and transcript item are runless too) and
+ * native task receipts that must reconcile even between runs. They bypass the
+ * normal per-run subscriber and are persisted by the session event pump.
+ */
 function sessionScopedRuntimeRequestThreadId(
   event: ProviderAdapter.ProviderAdapterV2Event,
 ): ThreadId | undefined {
   switch (event.type) {
+    case "subagent.native-task-ended":
+      return event.threadId;
     case "runtime_request.updated":
       return event.runtimeRequest.providerTurnId === null ? event.threadId : undefined;
     case "node.updated":
@@ -1981,7 +1989,12 @@ export const layerWithOptions = (
                           ),
                         );
                     }).pipe(entry.requestEventPermit.withPermits(1));
-                    return;
+                    // A native task receipt also releases live tracking an
+                    // active run holds for an inherited background item, so
+                    // runs still see it; the pump remains its only ingestor.
+                    // Other session-scoped events stay internal: a run could
+                    // route and re-ingest those.
+                    if (event.type !== "subagent.native-task-ended") return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                   yield* releaseLiveOutput;
