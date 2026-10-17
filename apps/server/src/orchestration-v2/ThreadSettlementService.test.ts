@@ -7,6 +7,7 @@ import {
   EventId,
   ProviderInstanceId,
   ProviderSessionId,
+  RunId,
   ThreadId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
@@ -206,6 +207,29 @@ describe("isAutoSettlementCandidate", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps a thread armed to auto-resume parked until its usage limit resets", () => {
+    const recovery = {
+      runId: RunId.make("run-1"),
+      resetAt: DateTime.formatIso(at(3 * DAY_MS)),
+      autoResume: true,
+    };
+    const armed = shell({
+      status: "failed",
+      latestRunId: RunId.make("run-1"),
+      latestRunCompletedAt: at(-4 * DAY_MS),
+      limitRecovery: recovery,
+    });
+    expect(ThreadSettlementService.isAutoSettlementCandidate(armed, NOW_MS)).toBe(false);
+    for (const thread of [
+      shell({ ...armed, limitRecovery: { ...recovery, autoResume: false } }),
+      shell({ ...armed, limitRecovery: { ...recovery, runId: RunId.make("run-0") } }),
+      shell({ ...armed, latestRunId: null }),
+      shell({ ...armed, limitRecovery: { ...recovery, resetAt: DateTime.formatIso(at(-1_000)) } }),
+    ]) {
+      expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(true);
+    }
+  });
 });
 
 describe("threadHasQueuedTurnStart", () => {
@@ -320,6 +344,33 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
     ).toEqual(at(-1_000));
+  });
+
+  it("waits out an armed auto-resume and restarts inactivity at its reset", () => {
+    const thread = shell({
+      status: "failed",
+      latestRunId: RunId.make("run-1"),
+      latestRunCompletedAt: at(-4 * DAY_MS),
+      limitRecovery: {
+        runId: RunId.make("run-1"),
+        resetAt: DateTime.formatIso(at(DAY_MS)),
+        autoResume: true,
+      },
+    });
+    const input = {
+      thread,
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 1,
+      autoSettleOnMerge: false,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + 2 * DAY_MS + 1 }),
+    ).toEqual(at(DAY_MS));
   });
 
   it("settles on merge only after the user's last action and preserves the activity time", () => {

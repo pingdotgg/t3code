@@ -128,6 +128,18 @@ function pullRequestSettles(
   return pullRequestAtMs >= userAnchorMs;
 }
 
+/** When an auto-resume armed for the thread's latest run will fire, or null. */
+function armedLimitResetAtMs(
+  thread: Pick<ProjectionStore.ProjectionSettlementCandidate, "limitRecovery" | "latestRunId">,
+): number | null {
+  const recovery = thread.limitRecovery;
+  if (recovery == null || !recovery.autoResume || recovery.runId !== thread.latestRunId) {
+    return null;
+  }
+  const resetAtMs = Date.parse(recovery.resetAt);
+  return Number.isFinite(resetAtMs) ? resetAtMs : null;
+}
+
 export function isAutoSettlementCandidate(
   thread: Omit<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">,
   nowMs: number,
@@ -138,6 +150,10 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
+  // An armed auto-resume is a parked wake, like a snooze. Settling the thread
+  // before its reset would drop the resume.
+  const limitResetAtMs = armedLimitResetAtMs(thread);
+  if (limitResetAtMs !== null && limitResetAtMs > nowMs) return false;
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return true;
   const snoozedAtMs = toMillis(thread.snoozedAt);
@@ -222,11 +238,15 @@ export function resolveAutoSettlementAt(input: {
     pullRequest !== null || thread.linkedPullRequest != null || thread.branchPullRequest != null;
   if (input.autoSettleKeepPullRequests === true && hasPullRequest) return null;
   if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
-  const snoozedUntilMs = toMillis(thread.snoozedUntil);
-  const timerWakeAtMs =
-    snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
+  const passedWakeAtMs = (wakeAtMs: number | null) =>
+    wakeAtMs !== null && wakeAtMs <= input.nowMs ? wakeAtMs : null;
   const inactivityAtMs =
-    latestMillis([activityAtMs, toMillis(thread.lastSnoozeWakeAt), timerWakeAtMs]) ?? activityAtMs;
+    latestMillis([
+      activityAtMs,
+      toMillis(thread.lastSnoozeWakeAt),
+      passedWakeAtMs(toMillis(thread.snoozedUntil)),
+      passedWakeAtMs(armedLimitResetAtMs(thread)),
+    ]) ?? activityAtMs;
   return inactivityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
     ? DateTime.makeUnsafe(inactivityAtMs)
     : null;

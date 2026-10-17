@@ -212,6 +212,16 @@ it.effect.each([
           snoozedAt: now,
         }),
       );
+      yield* createRun(
+        yield* createThread("limit-armed", {
+          limitRecovery: {
+            runId: RunId.make("run:thread:settlement:limit-armed:1"),
+            resetAt: DateTime.formatIso(DateTime.add(now, { days: 1 })),
+            autoResume: true,
+          },
+        }),
+        "failed",
+      );
       const woke = yield* createThread("woke", {
         snoozedUntil: DateTime.add(now, { days: 1 }),
         snoozedAt: DateTime.subtract(old, { days: 1 }),
@@ -270,6 +280,7 @@ it.effect.each([
       for (const candidate of candidates) {
         const expected = shell.threads.find((thread) => thread.id === candidate.id)!;
         assert.deepEqual(candidate.pendingBackgroundTasks, expected.pendingBackgroundTasks);
+        assert.deepEqual(candidate.limitRecovery, expected.limitRecovery);
         const settings = {
           pullRequest: null,
           nowMs: DateTime.toEpochMillis(now),
