@@ -7,6 +7,7 @@ import { Atom } from "effect/reactivity";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { randomUUID } from "~/lib/utils";
 
 import { createRecordingCompositor } from "./recordingCompositor";
 
@@ -124,6 +125,7 @@ interface ActiveRecording {
   stream: MediaStream | null;
   recorder: MediaRecorder | null;
   compositor: Awaited<ReturnType<typeof createRecordingCompositor>>;
+  releaseCapture: (() => void) | null;
   savedBlob?: Blob;
   uploadPromise?: Promise<string>;
   lifecycle: BrowserRecordingLifecycle;
@@ -255,7 +257,7 @@ const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
       50_000_000,
       Math.max(
         2_500_000,
-        (settings?.width ?? 1920) * (settings?.height ?? 1080) * (settings?.frameRate ?? 30) * 0.05,
+        (settings?.width ?? 1920) * (settings?.height ?? 1080) * (settings?.frameRate || 30) * 0.05,
       ),
     ),
   );
@@ -284,14 +286,102 @@ const stopMediaStream = (stream: MediaStream | null): void => {
 };
 
 interface PendingTabMediaCapture {
-  readonly start: () => void;
+  readonly start: () => Promise<true | string>;
 }
 
 const pendingTabMediaCaptures = new Map<string, PendingTabMediaCapture>();
+const pageFrameCaptures = new Map<string, ReturnType<typeof captureRecordingPageFrames>>();
+
+const captureRecordingPageFrames = (tabId: string, frameRate: number) => {
+  const captureId = randomUUID();
+  const canvas = document.createElement("canvas");
+  let stream: MediaStream | null = null;
+  let accepting = true;
+  let delivered = false;
+  let pending: string | null = null;
+  let consumption: Promise<boolean> | null = null;
+  let frameDelay: ReturnType<typeof setTimeout> | undefined;
+  let releaseDelay: (() => void) | undefined;
+  let lastFrameAt = -Infinity;
+  let resolve!: (stream: MediaStream) => void;
+  let reject!: (cause: unknown) => void;
+  const ready = new Promise<MediaStream>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  const dispose = (cause: unknown = new BrowserRecordingStartCancelledError({ tabId })) => {
+    if (!accepting) return;
+    accepting = false;
+    pending = null;
+    clearTimeout(frameDelay);
+    releaseDelay?.();
+    if (!delivered) stopMediaStream(stream);
+    stream = null;
+    canvas.width = canvas.height = 0;
+    if (pageFrameCaptures.get(tabId)?.captureId === captureId) pageFrameCaptures.delete(tabId);
+    reject(cause);
+  };
+  const receive = (frame: string): Promise<boolean> => {
+    if (!accepting) return Promise.resolve(false);
+    pending = frame;
+    consumption ??= (async () => {
+      while (pending) {
+        if (!accepting) break;
+        const delay = 1000 / frameRate - (performance.now() - lastFrameAt);
+        if (delay > 1)
+          await new Promise<void>((res) => {
+            releaseDelay = res;
+            frameDelay = setTimeout(res, delay);
+          });
+        if (!accepting || !pending) break;
+        const current = pending;
+        pending = null;
+        let bitmap: ImageBitmap | undefined;
+        try {
+          const bytes = Uint8Array.from(atob(current), (value) => value.charCodeAt(0));
+          bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+          if (!accepting) break;
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          const context = canvas.getContext("2d", { alpha: false });
+          if (!context) throw new Error("Recording canvas is unavailable.");
+          context.drawImage(bitmap, 0, 0);
+          stream ??= canvas.captureStream(0);
+          (stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack).requestFrame();
+          lastFrameAt = performance.now();
+          delivered = true;
+          resolve(stream);
+        } catch (cause) {
+          if (accepting) {
+            dispose(cause);
+            void stopBrowserRecording(tabId).catch(() => undefined);
+          }
+        } finally {
+          bitmap?.close();
+        }
+      }
+      return accepting;
+    })().finally(() => {
+      consumption = null;
+    });
+    return consumption;
+  };
+  const flush = async () => {
+    if (!accepting || !stream) return;
+    // Give a static recording its terminal timestamp without periodically repainting it.
+    (stream.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack).requestFrame();
+    canvas.getContext("2d")?.drawImage(canvas, 0, 0);
+    await waitForBrowserRecordingPaint();
+  };
+  const capture = { captureId, ready, receive, dispose, flush };
+  pageFrameCaptures.set(tabId, capture);
+  return capture;
+};
 
 const prepareTabMediaCapture = (tabId: string, frameRate: number) => {
   let acceptStream = true;
   let capturedStream: MediaStream | null = null;
+  let pageCapture: ReturnType<typeof captureRecordingPageFrames> | undefined;
   let resolveCapture!: (stream: MediaStream | PromiseLike<MediaStream>) => void;
   let rejectCapture!: (cause: unknown) => void;
   const capturePromise = new Promise<MediaStream>((resolve, reject) => {
@@ -305,44 +395,82 @@ const prepareTabMediaCapture = (tabId: string, frameRate: number) => {
     }
     return stream;
   });
+  let acquisition = capturePromise;
   const pending: PendingTabMediaCapture = {
-    start: () => {
+    start: async () => {
+      acquisition = captureTabMediaStreamWithTimeout(tabId, capturePromise).catch((cause) => {
+        acceptStream = false;
+        pageCapture?.dispose(cause);
+        throw cause;
+      });
       try {
         // Electron invokes this callback through executeJavaScript(..., true), so even automated
         // and delayed queued starts satisfy getDisplayMedia's transient-activation requirement.
-        resolveCapture(captureTabMediaStream(frameRate));
+        const stream = await Promise.race([
+          captureTabMediaStream(frameRate).then((stream) => {
+            if (!acceptStream) stopMediaStream(stream);
+            return stream;
+          }),
+          acquisition,
+        ]);
+        resolveCapture(stream);
       } catch (cause) {
+        if (acceptStream && cause instanceof DOMException && cause.name === "NotReadableError") {
+          pageCapture = captureRecordingPageFrames(tabId, frameRate);
+          resolveCapture(pageCapture.ready);
+          // Manager must receive the capture ID before it can subscribe and deliver the first frame.
+          return pageCapture.captureId;
+        }
         rejectCapture(cause);
       }
+      return true;
     },
   };
   pendingTabMediaCaptures.set(tabId, pending);
   return {
-    capturePromise,
+    get capturePromise() {
+      return acquisition;
+    },
+    adoptStream: () => {
+      capturedStream = null;
+    },
     cancel: () => {
       acceptStream = false;
+      pageCapture?.dispose();
       if (capturedStream) {
         stopMediaStream(capturedStream);
         capturedStream = null;
       }
       if (pendingTabMediaCaptures.get(tabId) === pending) pendingTabMediaCaptures.delete(tabId);
+      rejectCapture(new BrowserRecordingStartCancelledError({ tabId }));
       void capturePromise.catch(() => undefined);
     },
   };
 };
 
-const triggerTabMediaCapture = (tabId: unknown): boolean => {
+const triggerTabMediaCapture = (tabId: unknown) => {
   if (typeof tabId !== "string") return false;
   const pending = pendingTabMediaCaptures.get(tabId);
   if (!pending) return false;
   pendingTabMediaCaptures.delete(tabId);
-  pending.start();
-  return true;
+  return pending.start();
 };
 
 Object.defineProperty(globalThis, DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER, {
   configurable: true,
-  value: triggerTabMediaCapture,
+  value: Object.assign(triggerTabMediaCapture, {
+    frame: (tabId: string, captureId: string, frame: string) => {
+      const capture = pageFrameCaptures.get(tabId);
+      return capture?.captureId === captureId ? capture.receive(frame) : Promise.resolve(false);
+    },
+    end: (tabId: string, captureId: string) => {
+      const capture = pageFrameCaptures.get(tabId);
+      if (capture?.captureId !== captureId) return false;
+      capture.dispose();
+      void stopBrowserRecording(tabId).catch(() => undefined);
+      return true;
+    },
+  }),
 });
 
 const captureTabMediaStreamWithTimeout = async (
@@ -378,6 +506,8 @@ const captureTabMediaStreamWithTimeout = async (
 };
 
 const clearActiveRecording = (recording: ActiveRecording): void => {
+  recording.releaseCapture?.();
+  recording.releaseCapture = null;
   recording.compositor?.dispose();
   recording.compositor = null;
   recording.releaseSurfaceActivity?.();
@@ -522,6 +652,7 @@ export async function startBrowserRecording(
     startedAt,
     startupSettled,
     releaseSurfaceActivity,
+    releaseCapture: null,
     stream: null,
     recorder: null,
     compositor: null,
@@ -562,6 +693,7 @@ export async function startBrowserRecording(
       startingLifecycle.grantStarted = true;
       await throwIfStartupCancelled();
       const capture = prepareTabMediaCapture(tabId, frameRate);
+      recording.releaseCapture = capture.cancel;
       try {
         await bridge.recording.startScreencast(tabId);
       } catch (cause) {
@@ -583,7 +715,8 @@ export async function startBrowserRecording(
         throw cause;
       }
       try {
-        recording.stream = await captureTabMediaStreamWithTimeout(tabId, capture.capturePromise);
+        recording.stream = await capture.capturePromise;
+        capture.adoptStream();
         return recording.stream;
       } catch (cause) {
         const cleanupCause = await cleanupFailedRecordingStart(bridge, recording);
@@ -697,6 +830,7 @@ const finalizeBrowserRecording = async (
       result = { _tag: "Success", artifact: null };
     } else {
       try {
+        if (activeRecordings.get(tabId) === recording) await pageFrameCaptures.get(tabId)?.flush();
         await stopMediaRecorder(recording.recorder);
       } catch (cause) {
         throw new BrowserRecordingOperationError({

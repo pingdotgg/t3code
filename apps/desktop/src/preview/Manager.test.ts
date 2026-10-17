@@ -3044,6 +3044,79 @@ describe("PreviewManager", () => {
     ),
   );
 
+  const setupFallback = (manager: PreviewManager.PreviewManager["Service"]) =>
+    Effect.gen(function* () {
+      const image = (value: string) => ({
+        isEmpty: () => false,
+        getSize: () => ({ width: 800, height: 600 }),
+        toJPEG: vi.fn(() => Buffer.from(value)),
+      });
+      const host = makeTestHostWebContents();
+      const frames = yield* Queue.unbounded<string>();
+      const blocked = Promise.withResolvers<boolean>();
+      let receive!: (frame: ReturnType<typeof image>) => void;
+      let captureId = 0;
+      host.executeJavaScript.mockImplementation((code: string) => {
+        if (code.includes("?.frame?.")) {
+          Queue.offerUnsafe(frames, code);
+          return blocked.promise;
+        }
+        return Promise.resolve(String(++captureId));
+      });
+      const guest = Object.assign(
+        makeTestPreviewWebContents(async () => image("static"), 42, host),
+        {
+          beginFrameSubscription: vi.fn((_dirty: boolean, callback: typeof receive) => {
+            receive = callback;
+          }),
+          endFrameSubscription: vi.fn(),
+        },
+      );
+      fromId.mockImplementation((id) => (id === 42 ? guest : null));
+      yield* manager.createTab("fallback");
+      yield* manager.registerWebview("fallback", 42);
+      return {
+        host,
+        guest,
+        frames,
+        blocked,
+        receive: (value: string) => {
+          const next = image(value);
+          receive(next);
+          return next;
+        },
+      };
+    });
+
+  effectIt.effect(
+    "seeds static readiness, coalesces before JPEG, and releases capture on STOP",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const f = yield* setupFallback(manager);
+          yield* manager.startRecording("fallback");
+          expect(yield* Queue.take(f.frames)).toContain(Buffer.from("static").toString("base64"));
+          const middle = f.receive("middle");
+          const last = f.receive("last");
+          expect(middle.toJPEG).not.toHaveBeenCalled();
+          expect(last.toJPEG).not.toHaveBeenCalled();
+          f.blocked.resolve(true);
+          expect(yield* Queue.take(f.frames)).toContain(Buffer.from("last").toString("base64"));
+          expect(middle.toJPEG).not.toHaveBeenCalled();
+          const grants: unknown[] = [];
+          f.host.displayMediaHandler()?.({ frame: f.host.mainFrame }, (grant) =>
+            grants.push(grant),
+          );
+          expect(grants).toEqual([{}]);
+          yield* manager.stopRecording("fallback");
+          expect(f.guest.endFrameSubscription).toHaveBeenCalledOnce();
+          f.receive("stale");
+          expect(yield* Queue.size(f.frames)).toBe(0);
+          expect(f.guest.debugger.attach).not.toHaveBeenCalled();
+        }),
+      ),
+  );
+
   effectIt.effect("requests display media with a fresh renderer gesture", () =>
     withManager((manager) =>
       Effect.gen(function* () {

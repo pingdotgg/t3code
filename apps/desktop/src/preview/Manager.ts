@@ -123,6 +123,7 @@ const ZOOM_EPSILON = 0.001;
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
+const RECORDING_FALLBACK_JPEG_QUALITY = 85;
 /**
  * Cold guests can reject capturePage with UnknownVizError or never settle it.
  * Bound each attempt so snapshots release control even when Chromium stalls.
@@ -137,7 +138,8 @@ const PICTURE_IN_PICTURE_MIN_HEIGHT = 160;
 const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
 const requestRecordingCaptureExpression = (tabId: string): string =>
-  `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
+  `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)})`;
+const encodeRecordingFrame = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   colorScheme: "light",
   radius: "0.625rem",
@@ -578,6 +580,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
   // (electron#44618) and now always rejects with NotAllowedError.
   let pendingRecording: PendingRecording | null = null;
+  const recordingFrameSubscriptions = new Map<
+    string,
+    { stop: Effect.Effect<void>; end: () => void }
+  >();
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
   let currentMainWindow: BrowserWindow | undefined;
@@ -758,6 +764,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     tabId: string,
     consumer: FrameCaptureConsumer,
   ) {
+    if (consumer === "recording") {
+      const subscription = recordingFrameSubscriptions.get(tabId);
+      recordingFrameSubscriptions.delete(tabId);
+      if (subscription) yield* subscription.stop;
+    }
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
         const current = sessions.get(tabId);
@@ -1813,6 +1824,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         : null;
     if (replacedWebContentsId !== null) {
       clearPendingRecording(tabId);
+      const subscription = recordingFrameSubscriptions.get(tabId);
+      if (subscription) {
+        yield* stopFrameCapture(tabId, "recording");
+        subscription.end();
+      }
       yield* Effect.all(
         [
           detachControlSession(replacedWebContentsId),
@@ -3069,6 +3085,111 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
   };
 
+  const subscribeRecordingPageFrames = Effect.fn("PreviewManager.subscribeRecordingPageFrames")(
+    function* (
+      tabId: string,
+      wc: Electron.WebContents,
+      requester: Electron.WebContents,
+      captureId: string,
+      initialImage: Electron.NativeImage | null,
+    ) {
+      let stopped = false;
+      let delivering = false;
+      let pending: Electron.NativeImage | null = null;
+      let delivery: ReturnType<typeof runFork> | undefined;
+      const call = (method: string, argument = "") =>
+        attemptPromise(
+          { operation: "recording.requestCapture", tabId, webContentsId: requester.id },
+          () =>
+            requester.executeJavaScript(
+              `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.${method}?.(${JSON.stringify(tabId)}, ${JSON.stringify(captureId)}${argument})`,
+            ),
+        );
+      const end = () => {
+        // Renderer termination invokes STOP, which takes this same tab's lifecycle lock.
+        runFork(call("end").pipe(Effect.ignore));
+      };
+      const sourceLost = () =>
+        runFork(
+          withTabLifecycleLock(
+            tabId,
+            Effect.gen(function* () {
+              if (recordingFrameSubscriptions.get(tabId) !== subscription) return;
+              yield* stopFrameCapture(tabId, "recording");
+              end();
+            }),
+          ),
+        );
+      const subscription = {
+        end,
+        stop: Effect.gen(function* () {
+          stopped = true;
+          pending = null;
+          wc.off("destroyed", sourceLost);
+          wc.off("render-process-gone", sourceLost);
+          yield* attempt(
+            { operation: "recording.requestCapture", tabId, webContentsId: wc.id },
+            () => {
+              if (!wc.isDestroyed()) wc.endFrameSubscription();
+            },
+          ).pipe(Effect.ignore);
+          if (delivery) yield* Fiber.interrupt(delivery);
+        }),
+      };
+      const receive = (image: Electron.NativeImage) => {
+        if (stopped || image.isEmpty()) return;
+        pending = image;
+        if (delivering) return;
+        delivering = true;
+        delivery = runFork(
+          Effect.gen(function* () {
+            while (pending) {
+              if (stopped) return;
+              const current = pending;
+              pending = null;
+              const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+              if (
+                wc.isDestroyed() ||
+                requester.isDestroyed() ||
+                !frameCaptureWindowOpen ||
+                tab?.webContentsId !== wc.id ||
+                recordingFrameSubscriptions.get(tabId) !== subscription
+              )
+                return;
+              // Await decoded consumption before encoding the next latest image.
+              const frameJson = yield* encodeRecordingFrame(
+                current.toJPEG(RECORDING_FALLBACK_JPEG_QUALITY).toString("base64"),
+              );
+              const consumed = yield* call("frame", `, ${frameJson}`).pipe(
+                Effect.orElseSucceed(() => false),
+              );
+              if (consumed !== true) {
+                sourceLost();
+                return;
+              }
+            }
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                delivering = false;
+                // Keep the final frame draining if scheduling yields before this finalizer.
+                if (pending) receive(pending);
+              }),
+            ),
+          ),
+        );
+      };
+      recordingFrameSubscriptions.set(tabId, subscription);
+      yield* attempt({ operation: "recording.requestCapture", tabId, webContentsId: wc.id }, () => {
+        wc.on("destroyed", sourceLost);
+        wc.on("render-process-gone", sourceLost);
+        wc.beginFrameSubscription(false, receive);
+        // A static guest may produce no damage after subscribing. Use the same guest's warm frame.
+        if (initialImage) receive(initialImage);
+      });
+    },
+  );
+
   const startRecording = Effect.fn("PreviewManager.startRecording")(function* (
     tabId: string,
     options: RecordingInputOptions = DEFAULT_RECORDING_INPUT_OPTIONS,
@@ -3079,6 +3200,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     return yield* withTabLifecycleLock(
       tabId,
       Effect.gen(function* () {
+        if (recordingFrameSubscriptions.has(tabId)) yield* stopFrameCapture(tabId, "recording");
         yield* startFrameCapture(tabId, "recording");
         yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) =>
           replaceMap(sessions, (copy) => {
@@ -3095,14 +3217,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* attempt({ operation: "recording.cursor", tabId, webContentsId: wc.id }, () =>
           wc.send(RECORDING_CURSOR_CHANNEL, true, options, tab?.controller),
         );
-        yield* attemptPromise(
+        const warmImage = yield* attemptPromise(
           {
             operation: "recording.warmSource",
             tabId,
             webContentsId: wc.id,
           },
-          () => wc.capturePage().then(() => undefined),
-        ).pipe(Effect.retry({ times: 1 }), Effect.ignore);
+          () => wc.capturePage(),
+        ).pipe(
+          Effect.retry({ times: 1 }),
+          Effect.orElseSucceed(() => null),
+        );
         const currentWebContents = yield* requireWebContents(tabId);
         if (currentWebContents !== wc || wc.isDestroyed()) {
           return yield* new PreviewWebContentsNotFoundError({
@@ -3124,7 +3249,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           () =>
             requestWebContents.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
         );
-        if (captureRequested !== true) {
+        if (typeof captureRequested === "string") {
+          clearPendingRecording(tabId);
+          yield* subscribeRecordingPageFrames(
+            tabId,
+            wc,
+            requestWebContents,
+            captureRequested,
+            warmImage,
+          );
+        } else if (captureRequested !== true) {
           return yield* new PreviewRecordingCaptureUnavailableError({
             tabId,
             webContentsId: requestWebContents.id,
