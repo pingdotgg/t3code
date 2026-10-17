@@ -21,7 +21,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useLayoutEffect, useMemo } from "react";
+import { useLayoutEffect } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -288,16 +288,13 @@ function createMergedEnvironmentQuery<Input, A>(
   return function useMergedQuery(targets: ReadonlyArray<EnvironmentQueryTarget<Input>>) {
     const key = JSON.stringify(targets);
     const view = useAtomValue(targets.length === 0 ? empty : family(key));
-    const refresh = useCallback(
-      (override?: ReadonlyArray<EnvironmentQueryTarget<Input>>) => {
-        const refreshTargets =
-          override ?? (JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>);
-        for (const atom of new Set(refreshTargets.map(atomFor))) {
-          appAtomRegistry.refresh(atom);
-        }
-      },
-      [key],
-    );
+    const refresh = (override?: ReadonlyArray<EnvironmentQueryTarget<Input>>) => {
+      const refreshTargets =
+        override ?? (JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>);
+      for (const atom of new Set(refreshTargets.map(atomFor))) {
+        appAtomRegistry.refresh(atom);
+      }
+    };
     return { ...view, refresh };
   };
 }
@@ -359,7 +356,7 @@ export function usePullRequestList(
       }
     }
   }, [query.observations]);
-  const data = useMemo(() => mergePullRequestLists(query.values), [query.values]);
+  const data = mergePullRequestLists(query.values);
   return { data, error: query.error, isPending: query.isPending, refresh: query.refresh };
 }
 
@@ -373,14 +370,11 @@ export function usePullRequestListStats(
   ) => void;
 } {
   const query = usePullRequestStatsQuery(targets);
-  const stats = useMemo(
-    () =>
-      query.values.length === 0
-        ? null
-        : query.values.flatMap(([environmentId, result]) =>
-            result.stats.map((stat) => ({ ...stat, environmentId })),
-          ),
-    [query.values],
-  );
+  const stats =
+    query.values.length === 0
+      ? null
+      : query.values.flatMap(([environmentId, result]) =>
+          result.stats.map((stat) => ({ ...stat, environmentId })),
+        );
   return { stats, isPending: query.isPending, refresh: query.refresh };
 }
