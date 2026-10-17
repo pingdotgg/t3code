@@ -6,15 +6,26 @@ import type {
 
 type Route = StackNavigationState<ParamListBase>["routes"][number];
 
-export function projectWorkspaceStack(
+/** Keep the presenting history mounted while modal routes cover the whole workspace. */
+export function projectStackPresentation(
   state: StackNavigationState<ParamListBase>,
   isOverlay: (route: Route) => boolean,
 ) {
   const firstOverlay = state.routes.findIndex(isOverlay);
-  const workspaceRoutes = state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay);
+  return {
+    workspace: state.routes.slice(0, firstOverlay < 0 ? undefined : firstOverlay),
+    overlays: firstOverlay < 0 ? [] : state.routes.slice(firstOverlay),
+  };
+}
+
+/** Project one router history into native columns and a modal presentation stack. */
+export function projectWorkspaceStack(
+  state: StackNavigationState<ParamListBase>,
+  isOverlay: (route: Route) => boolean,
+) {
+  const { workspace: workspaceRoutes, overlays } = projectStackPresentation(state, isOverlay);
   const primary = workspaceRoutes.find((route) => route.name === "Home");
   const detail = workspaceRoutes.filter((route) => route.name !== "Home");
-  const overlays = firstOverlay < 0 ? [] : state.routes.slice(firstOverlay);
   return { primary, detail, overlays };
 }
 

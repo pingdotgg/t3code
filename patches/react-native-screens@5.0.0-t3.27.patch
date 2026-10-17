@@ -1,0 +1,170 @@
+diff --git a/android/build.gradle b/android/build.gradle
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -217,6 +217,7 @@
+ }
+ 
+ dependencies {
++    testImplementation 'junit:junit:4.13.2'
+     implementation 'com.facebook.react:react-native:+'
+     implementation 'androidx.appcompat:appcompat:1.7.1'
+     implementation 'androidx.fragment:fragment-ktx:1.8.9'
+diff --git a/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/FormSheetWidth.kt b/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/FormSheetWidth.kt
+new file mode 100644
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/FormSheetWidth.kt
+@@ -0,0 +1,13 @@
++package com.swmansion.rnscreens.core.modals.formsheet
++
++import kotlin.math.roundToInt
++
++/** Keep compact sheets edge-to-edge, with Material gutters and a readable width in wide windows. */
++internal object FormSheetWidth {
++    fun resolve(windowWidth: Int, density: Float): Int =
++        if (windowWidth / density < 600f) {
++            windowWidth
++        } else {
++            minOf((640f * density).roundToInt(), windowWidth - (32f * density).roundToInt())
++        }
++}
+diff --git a/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetAvailableHeightProvider.kt b/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetAvailableHeightProvider.kt
+--- a/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetAvailableHeightProvider.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetAvailableHeightProvider.kt
+@@ -24,6 +24,8 @@
+         fun onAvailableHeightMeasured(height: Int)
+     }
+ 
++    internal var onAvailableWidthMeasured: ((Int) -> Unit)? = null
++
+     internal var availableHeightListener: OnAvailableHeightMeasuredListener? = null
+ 
+     init {
+@@ -35,6 +37,10 @@
+         widthMeasureSpec: Int,
+         heightMeasureSpec: Int,
+     ) {
++        val width = MeasureSpec.getSize(widthMeasureSpec)
++        if (MeasureSpec.getMode(widthMeasureSpec) != MeasureSpec.UNSPECIFIED && width > 0) {
++            onAvailableWidthMeasured?.invoke(width)
++        }
+         val height = MeasureSpec.getSize(heightMeasureSpec)
+         if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.UNSPECIFIED && height > 0) {
+             availableHeightListener?.onAvailableHeightMeasured(height)
+diff --git a/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetDialog.kt b/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetDialog.kt
+--- a/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetDialog.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/core/modals/formsheet/dialog/FormSheetDialog.kt
+@@ -3,13 +3,16 @@
+ import android.content.Context
+ import android.os.Bundle
+ import android.util.Log
++import android.view.Gravity
+ import android.view.View
+ import android.view.ViewGroup
+ import android.view.Window
+ import android.view.WindowManager
+ import android.widget.FrameLayout
+ import androidx.core.view.WindowCompat
++import androidx.coordinatorlayout.widget.CoordinatorLayout
+ import com.google.android.material.bottomsheet.BottomSheetDialog
++import com.swmansion.rnscreens.core.modals.formsheet.FormSheetWidth
+ 
+ /**
+  * A custom BottomSheetDialog override used to render the FormSheet native component.
+@@ -87,7 +90,13 @@
+ 
+     private fun setupBottomSheetHeight() {
+         val bottomSheetView = findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
+-        bottomSheetView?.layoutParams?.height = ViewGroup.LayoutParams.MATCH_PARENT
++        bottomSheetView?.let { sheet ->
++            sheet.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
++            (sheet.layoutParams as CoordinatorLayout.LayoutParams).gravity = Gravity.CENTER_HORIZONTAL
++            availableHeightProvider.onAvailableWidthMeasured = { width ->
++                behavior.maxWidth = FormSheetWidth.resolve(width, context.resources.displayMetrics.density)
++            }
++        }
+     }
+ 
+     private fun installAvailableHeightProvider() {
+@@ -105,7 +114,10 @@
+         contentParent.addView(
+             availableHeightProvider,
+             0,
+-            FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT),
++            FrameLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT,
++                ViewGroup.LayoutParams.MATCH_PARENT,
++            ),
+         )
+     }
+ 
+diff --git a/android/src/main/java/com/swmansion/rnscreens/legacy/stack/views/ScreensCoordinatorLayout.kt b/android/src/main/java/com/swmansion/rnscreens/legacy/stack/views/ScreensCoordinatorLayout.kt
+--- a/android/src/main/java/com/swmansion/rnscreens/legacy/stack/views/ScreensCoordinatorLayout.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/legacy/stack/views/ScreensCoordinatorLayout.kt
+@@ -1,11 +1,13 @@
+ package com.swmansion.rnscreens.legacy.stack.views
+ 
+ import android.content.Context
++import android.view.Gravity
+ import android.view.WindowInsets
+ import android.view.animation.Animation
+ import android.view.animation.AnimationSet
+ import androidx.coordinatorlayout.widget.CoordinatorLayout
+ import com.facebook.react.uimanager.ReactPointerEventsView
++import com.swmansion.rnscreens.core.modals.formsheet.FormSheetWidth
+ import com.swmansion.rnscreens.legacy.PointerEventsBoxNoneImpl
+ import com.swmansion.rnscreens.legacy.ScreenStackFragment
+ import com.swmansion.rnscreens.legacy.bottomsheet.usesFormSheetPresentation
+@@ -113,6 +115,22 @@
+ 
+     override fun shouldDelayChildPressedState(): Boolean = fragment.screen.usesFormSheetPresentation()
+ 
++    override fun onMeasure(
++        widthMeasureSpec: Int,
++        heightMeasureSpec: Int,
++    ) {
++        if (fragment.screen.usesFormSheetPresentation()) {
++            val params = fragment.screen.layoutParams as LayoutParams
++            params.width =
++                FormSheetWidth.resolve(
++                    MeasureSpec.getSize(widthMeasureSpec),
++                    resources.displayMetrics.density,
++                )
++            params.gravity = Gravity.CENTER_HORIZONTAL
++        }
++        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
++    }
++
+     override fun onLayout(
+         changed: Boolean,
+         l: Int,
+diff --git a/android/src/test/java/com/swmansion/rnscreens/core/modals/formsheet/FormSheetWidthTest.kt b/android/src/test/java/com/swmansion/rnscreens/core/modals/formsheet/FormSheetWidthTest.kt
+new file mode 100644
+--- /dev/null
++++ b/android/src/test/java/com/swmansion/rnscreens/core/modals/formsheet/FormSheetWidthTest.kt
+@@ -0,0 +1,26 @@
++package com.swmansion.rnscreens.core.modals.formsheet
++
++import org.junit.Assert.assertEquals
++import org.junit.Test
++
++class FormSheetWidthTest {
++    @Test
++    fun compactWindowsRemainEdgeToEdge() {
++        assertEquals(412, FormSheetWidth.resolve(412, 1f))
++        assertEquals(1198, FormSheetWidth.resolve(1198, 2f))
++    }
++
++    @Test
++    fun wideWindowsUseGuttersBeforeReachingMaximumWidth() {
++        assertEquals(568, FormSheetWidth.resolve(600, 1f))
++        assertEquals(1136, FormSheetWidth.resolve(1200, 2f))
++        assertEquals(640, FormSheetWidth.resolve(800, 1f))
++        assertEquals(1280, FormSheetWidth.resolve(1600, 2f))
++    }
++
++    @Test
++    fun resizingAcrossFoldedAndUnfoldedWidthsRecomputesFromTheCurrentWindow() {
++        val widths = listOf(840, 412, 650, 840)
++        assertEquals(listOf(640, 412, 618, 640), widths.map { FormSheetWidth.resolve(it, 1f) })
++    }
++}
