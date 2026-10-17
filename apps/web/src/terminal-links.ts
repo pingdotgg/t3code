@@ -32,6 +32,11 @@ const FILE_PATH_PATTERN =
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
+// The whitespace-delimited token a path match sits in, and a query string inside it.
+// Request logs print routes like `/api/trpc/post.list?batch=1`; files don't carry
+// queries, while prose like `src/main.ts?` still trims to a path.
+const TOKEN_PATTERN = /[^\s"'`<>]*/y;
+const QUERY_STRING_PATTERN = /\?[A-Za-z0-9_%&=-]/;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
@@ -55,6 +60,12 @@ function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   return output;
 }
 
+function hasQueryString(line: string, start: number): boolean {
+  TOKEN_PATTERN.lastIndex = start;
+  const token = TOKEN_PATTERN.exec(line)?.[0] ?? "";
+  return QUERY_STRING_PATTERN.test(token);
+}
+
 function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
   return a.start < b.end && b.start < a.end;
 }
@@ -75,7 +86,9 @@ function collectMatches(
 
     const trimmed = trimClosingDelimiters(raw, kind);
     if (trimmed.length === 0) continue;
-    if (kind === "path" && isTerminalUrl(trimmed)) continue;
+    if (kind === "path" && (isTerminalUrl(trimmed) || hasQueryString(line, start))) {
+      continue;
+    }
 
     const candidate: TerminalLinkMatch = {
       kind,
