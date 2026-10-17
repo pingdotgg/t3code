@@ -1228,13 +1228,13 @@ it.each([
     query: "Hidden needle",
     count: 1,
   },
-  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Hello World", count: 1, useTemplate: true },
-  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Document template", count: 1, useTemplate: true },
-  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "World Document", count: 0, useTemplate: true },
-  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Use template", count: 0, useTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Hello World", count: 1, withTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Document template", count: 1, withTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "World Document", count: 0, withTemplate: true },
+  { text: ARTIFACT_TEMPLATE_DIRECTIVE, query: "Use template", count: 0, withTemplate: true },
 ])(
   "highlights the indexed occurrences of $query in $text",
-  async ({ text, query, count, lineBreaks, user, useTemplate }) => {
+  async ({ text, query, count, lineBreaks, user, withTemplate }) => {
     const skills = [{ name: "test-t3-app", displayName: "T3 App Testing" }];
     const highlights = new Map<string, Set<Range>>();
     vi.stubGlobal(
@@ -1268,7 +1268,7 @@ it.each([
                 skills={skills}
                 lineBreaks={lineBreaks ?? false}
                 parseRawHtml={!user}
-                onUseArtifactTemplate={useTemplate ? () => undefined : undefined}
+                onUseArtifactTemplate={withTemplate ? () => undefined : undefined}
               />
             </MarkdownFindContext>
           </div>
