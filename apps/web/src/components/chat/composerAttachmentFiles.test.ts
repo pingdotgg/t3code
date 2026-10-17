@@ -1,12 +1,19 @@
-import { EnvironmentId, PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+} from "@t3tools/contracts";
+import { imageMimeType } from "@t3tools/shared/image";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
-import { isVideoAttachment, videoMimeType } from "../../types";
+import { isFileAttachment, isImageAttachment, isVideoAttachment, videoMimeType } from "../../types";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
   classifyComposerAttachmentFile,
+  composerFileAttachmentMimeType,
   composerOtherFilesForPresentation,
+  DNG_FILE_MIME_TYPE,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   inferImageMimeTypeFromName,
@@ -40,6 +47,128 @@ describe("composer attachment files", () => {
     expect(
       composerOtherFilesForPresentation(files, environmentId, new Set(["inline-file"])),
     ).toEqual([files[1]]);
+  });
+
+  describe("DNG originals (#16023)", () => {
+    const dngBytes = new Uint8Array([0x49, 0x49, 0x2a, 0x00, 0x08, 0, 0, 0, 0xfe, 0xff, 0x00, 0x80]);
+    // What pickers, drags and pastes actually report for a .dng across browsers and platforms.
+    const browserLabels = [
+      "image/tiff",
+      "image/x-adobe-dng",
+      "image/dng",
+      "image/x-dng",
+      "",
+      "application/octet-stream",
+      "image/png",
+      "image/jpeg",
+      "image/heic",
+    ];
+
+    it.each(browserLabels)("routes .dng labelled %j as a generic file", (type) => {
+      for (const name of ["IMG_3921_7-50-59.DNG", "original.dng"]) {
+        expect(classifyComposerAttachmentFile({ name, type })).toBe("file");
+      }
+    });
+
+    it("recognizes DNG MIME types without a DNG extension", () => {
+      for (const type of ["image/dng", "image/x-dng", "IMAGE/X-DNG", "image/x-adobe-dng"]) {
+        expect(classifyComposerAttachmentFile({ name: "clipboard", type })).toBe("file");
+        expect(classifyComposerAttachmentFile({ name: "photo.jpg", type })).toBe("file");
+      }
+    });
+
+    it("claims captioned DNG pastes instead of falling through to text", () => {
+      const dng = new File([dngBytes], "photo.DNG", { type: "image/tiff" });
+      const document = new File(["doc"], "notes.rtf", { type: "application/rtf" });
+      expect(shouldHandleComposerAttachmentPaste({ files: [dng], plainText: "Caption" })).toBe(true);
+      expect(
+        shouldHandleComposerAttachmentPaste({ files: [document, dng], plainText: "Caption" }),
+      ).toBe(true);
+      expect(shouldHandleComposerAttachmentPaste({ files: [dng], plainText: "" })).toBe(true);
+      // Ordinary document pastes with clipboard text still fall through to the text paste.
+      expect(shouldHandleComposerAttachmentPaste({ files: [document], plainText: "Caption" })).toBe(
+        false,
+      );
+    });
+
+    it("keeps the original bytes and never routes a DNG through image normalization", async () => {
+      for (const type of browserLabels) {
+        const file = new File([dngBytes], "original.dng", { type, lastModified: 42 });
+        expect(normalizeComposerImageFileMimeType(file)).toBe(file);
+        expect(new Uint8Array(await file.arrayBuffer())).toEqual(dngBytes);
+      }
+    });
+
+    it.each(browserLabels)(
+      "records a DNG labelled %j with a MIME downstream readers treat as a file",
+      (type) => {
+        const file = new File([dngBytes], "IMG.DNG", { type });
+        const mimeType = composerFileAttachmentMimeType(file);
+        expect(mimeType).toBe(DNG_FILE_MIME_TYPE);
+        const attachment = {
+          type: "file" as const,
+          id: "dng",
+          name: file.name,
+          mimeType,
+          sizeBytes: 81 * 1024 * 1024,
+        };
+        expect(imageMimeType(attachment)).toBeNull();
+        expect(isImageAttachment(attachment)).toBe(false);
+        expect(isFileAttachment(attachment)).toBe(true);
+        // The provider image budget must not count a raw file it will never send as a picture.
+        expect(getProviderAttachmentLimitError([attachment])).toBeUndefined();
+      },
+    );
+
+    it("keeps original bytes and metadata when staging rewrites a misleading DNG MIME", async () => {
+      // Mirrors ChatComposer's generic-file staging: the File is re-wrapped only to carry the
+      // derived MIME, which must not touch the payload.
+      for (const type of ["image/png", "image/jpeg", "image/tiff", "", "image/dng"]) {
+        for (const name of ["IMG_0001.DNG", "clipboard"]) {
+          if (name === "clipboard" && type !== "image/dng") continue;
+          const file = new File([dngBytes], name, { type, lastModified: 4242 });
+          const mimeType = composerFileAttachmentMimeType(file);
+          const staged =
+            file.type === mimeType
+              ? file
+              : new File([file], file.name, { type: mimeType, lastModified: file.lastModified });
+          expect(staged.type).toBe(DNG_FILE_MIME_TYPE);
+          expect(staged.name).toBe(name);
+          expect(staged.lastModified).toBe(4242);
+          expect(staged.size).toBe(dngBytes.byteLength);
+          expect(new Uint8Array(await staged.arrayBuffer())).toEqual(dngBytes);
+        }
+      }
+    });
+
+    it("leaves other generic files' wire MIME unchanged", () => {
+      expect(
+        composerFileAttachmentMimeType(new File(["pdf"], "report.pdf", { type: "application/pdf" })),
+      ).toBe("application/pdf");
+      expect(composerFileAttachmentMimeType(new File(["zip"], "archive.zip", { type: "" }))).toBe(
+        "application/octet-stream",
+      );
+      expect(
+        composerFileAttachmentMimeType(
+          new File(["mov"], "clip.mov", { type: "application/octet-stream" }),
+        ),
+      ).toBe("video/quicktime");
+    });
+
+    it("does not broaden the exception to other RAW formats or DNG-looking names", () => {
+      expect(classifyComposerAttachmentFile({ name: "photo.cr2", type: "image/x-canon-cr2" })).toBe(
+        "unsupported-image",
+      );
+      expect(classifyComposerAttachmentFile({ name: "photo.nef", type: "image/x-nikon-nef" })).toBe(
+        "unsupported-image",
+      );
+      expect(classifyComposerAttachmentFile({ name: "export.dng.png", type: "image/png" })).toBe(
+        "image",
+      );
+      expect(classifyComposerAttachmentFile({ name: "scan.dng.tif", type: "image/tiff" })).toBe(
+        "unsupported-image",
+      );
+    });
   });
 
   it("keeps supported images and HEIC photos on the image path", () => {
