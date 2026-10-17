@@ -16,7 +16,7 @@ import {
   PlusIcon,
 } from "lucide-react";
 import { LegendList } from "@legendapp/list/react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useState } from "react";
 
 import {
   COMPOSER_PULL_REQUEST_DRAG_TYPE,
@@ -100,13 +100,9 @@ function LinkRowImpl({
   const openPrLink = useOpenPrLink(threadRef);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
-  const menuAnchor = useMemo(
-    () =>
-      menuPosition
-        ? { getBoundingClientRect: () => new DOMRect(menuPosition.x, menuPosition.y, 0, 0) }
-        : undefined,
-    [menuPosition],
-  );
+  const menuAnchor = menuPosition
+    ? { getBoundingClientRect: () => new DOMRect(menuPosition.x, menuPosition.y, 0, 0) }
+    : undefined;
   const { link, depth, stack } = line;
   const snapshot = link.snapshot;
   const open = snapshot === null || snapshot.state === "open";
@@ -338,6 +334,26 @@ function LinkRowImpl({
 /** Memoized so a modifier key or a sync of one link re-renders only the rows that changed. */
 const LinkRow = memo(LinkRowImpl);
 
+// LegendList re-renders its rows when `data` changes identity. Inline, the compiler
+// recomputes these lines whenever a modifier key or row input changes too.
+function usePullRequestLines(
+  pullRequests: Parameters<typeof visibleThreadPullRequests>[0] | undefined,
+) {
+  "use memo";
+  const links = visibleThreadPullRequests(pullRequests ?? []);
+  const lines = pullRequestListLines(resolveThreadPullRequestChains(links));
+  return { links, lines };
+}
+
+function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | null {
+  let latest: string | null = null;
+  for (const link of links) {
+    const at = link.snapshot?.syncedAt;
+    if (at !== undefined && (latest === null || at > latest)) latest = at;
+  }
+  return latest;
+}
+
 const lineKey = (line: PullRequestListLine) =>
   `${line.link.host}/${line.link.repository}#${line.link.number}`;
 
@@ -357,73 +373,51 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const thread = useThreadShell(threadRef);
   const projects = useProjects();
-  const environmentProjects = useMemo(
-    () =>
-      projects
-        .filter((project) => project.environmentId === threadRef.environmentId)
-        .toSorted((left, right) =>
-          left.id === thread?.projectId ? -1 : right.id === thread?.projectId ? 1 : 0,
-        ),
-    [projects, threadRef.environmentId, thread?.projectId],
-  );
+  const environmentProjects = projects
+    .filter((project) => project.environmentId === threadRef.environmentId)
+    .toSorted((left, right) =>
+      left.id === thread?.projectId ? -1 : right.id === thread?.projectId ? 1 : 0,
+    );
   const modifiers = useShortcutModifierState(true);
   const speedMode =
     modifiers.shiftKey && !modifiers.metaKey && !modifiers.ctrlKey && !modifiers.altKey;
-  const openLinkDialog = useCallback(() => openLinkPullRequestDialog(threadRef), [threadRef]);
+  const openLinkDialog = () => openLinkPullRequestDialog(threadRef);
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: true });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
-  const links = useMemo(() => visibleThreadPullRequests(thread?.pullRequests ?? []), [thread]);
-  const lines = useMemo(() => pullRequestListLines(resolveThreadPullRequestChains(links)), [links]);
-  const handleUnlink = useCallback(
-    (link: ThreadPullRequestLink) => {
-      void unlink({
-        environmentId: threadRef.environmentId,
-        input: {
-          threadId: threadRef.threadId,
-          host: link.host,
-          repository: link.repository,
-          number: link.number,
-        },
-      });
-    },
-    [threadRef, unlink],
-  );
-  const handleSetWatching = useCallback(
-    (link: ThreadPullRequestLink, watching: boolean) => {
-      void watch({
-        environmentId: threadRef.environmentId,
-        input: {
-          threadId: threadRef.threadId,
-          host: link.host,
-          repository: link.repository,
-          number: link.number,
-          watching,
-        },
-      });
-    },
-    [threadRef, watch],
-  );
-  const openCount = useMemo(
-    () => links.filter((link) => link.snapshot === null || link.snapshot.state === "open").length,
-    [links],
-  );
-  const lastSynced = useMemo(() => {
-    let latest: string | null = null;
-    for (const link of links) {
-      const at = link.snapshot?.syncedAt;
-      if (at !== undefined && (latest === null || at > latest)) latest = at;
-    }
-    return latest;
-  }, [links]);
+  const { links, lines } = usePullRequestLines(thread?.pullRequests);
+  const handleUnlink = (link: ThreadPullRequestLink) => {
+    void unlink({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId: threadRef.threadId,
+        host: link.host,
+        repository: link.repository,
+        number: link.number,
+      },
+    });
+  };
+  const handleSetWatching = (link: ThreadPullRequestLink, watching: boolean) => {
+    void watch({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId: threadRef.threadId,
+        host: link.host,
+        repository: link.repository,
+        number: link.number,
+        watching,
+      },
+    });
+  };
+  const openCount = links.filter(
+    (link) => link.snapshot === null || link.snapshot.state === "open",
+  ).length;
+  const lastSynced = latestSyncedAt(links);
 
   // Legend re-renders visible rows only when data or extraData changes, so everything the rows
   // read from outside their line goes in here.
-  const rowInputs = useMemo(
-    () => ({ speedMode, environmentProjects, capabilities, supportsWatch, thread }),
-    [speedMode, environmentProjects, capabilities, supportsWatch, thread],
-  );
+  const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
 
   if (links.length === 0) {
     return (
