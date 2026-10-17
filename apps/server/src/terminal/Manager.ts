@@ -43,6 +43,7 @@ import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Equal from "effect/Equal";
@@ -1186,12 +1187,14 @@ function legacySafeThreadId(threadId: string): string {
   return threadId.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function toSafeThreadId(threadId: string): string {
+const MAX_FILE_NAME_BYTES = 255;
+
+function encodedHistoryThreadPart(threadId: string): string {
   return `terminal_${Base64Url.encode(threadId)}`;
 }
 
-function toSafeTerminalId(terminalId: string): string {
-  return Base64Url.encode(terminalId);
+function joinHistoryFileName(threadPart: string, terminalPart: string | null): string {
+  return terminalPart === null ? `${threadPart}.log` : `${threadPart}_${terminalPart}.log`;
 }
 
 function toSessionKey(threadId: string, terminalId: string): string {
@@ -1406,6 +1409,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const context = yield* Effect.context<never>();
   const runFork = Effect.runForkWith(context);
 
@@ -1518,16 +1522,38 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
     });
 
-  const historyPath = (threadId: string, terminalId: string) => {
-    const threadPart = toSafeThreadId(threadId);
-    if (terminalId === DEFAULT_TERMINAL_ID) {
-      return path.join(logsDir, `${threadPart}.log`);
-    }
-    return path.join(logsDir, `${threadPart}_${toSafeTerminalId(terminalId)}.log`);
-  };
+  const hashId = (id: string) =>
+    crypto.digest("SHA-256", new TextEncoder().encode(id)).pipe(
+      Effect.map((digest) => Base64Url.encode(digest)),
+      Effect.orDie,
+    );
+  const hashedHistoryThreadPart = (threadId: string) =>
+    hashId(threadId).pipe(Effect.map((digest) => `terminal_sha256.${digest}`));
 
-  const legacyHistoryPath = (threadId: string) =>
-    path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
+  // Nested subagent thread ids can encode past the filename limit. Only those names switch to
+  // hashed ids, so every name that already fit keeps its path. "." is outside the base64url
+  // alphabet, so the two forms never collide.
+  const historyPath = Effect.fnUntraced(function* (threadId: string, terminalId: string) {
+    const isDefault = terminalId === DEFAULT_TERMINAL_ID;
+    const encodedName = joinHistoryFileName(
+      encodedHistoryThreadPart(threadId),
+      isDefault ? null : Base64Url.encode(terminalId),
+    );
+    if (encodedName.length <= MAX_FILE_NAME_BYTES) {
+      return path.join(logsDir, encodedName);
+    }
+    const hashedName = joinHistoryFileName(
+      yield* hashedHistoryThreadPart(threadId),
+      isDefault ? null : yield* hashId(terminalId),
+    );
+    return path.join(logsDir, hashedName);
+  });
+
+  const legacyHistoryName = (threadId: string) => `${legacySafeThreadId(threadId)}.log`;
+  const legacyHistoryPath = (threadId: string) => path.join(logsDir, legacyHistoryName(threadId));
+  // Ids this long could never have been written under the legacy name.
+  const hasLegacyHistoryPath = (threadId: string) =>
+    Buffer.byteLength(legacyHistoryName(threadId)) <= MAX_FILE_NAME_BYTES;
 
   const readManagerState = SynchronizedRef.get(managerStateRef);
 
@@ -1688,7 +1714,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       yield* fileSystem
-        .writeFileString(historyPath(threadId, terminalId), request.history.value())
+        .writeFileString(yield* historyPath(threadId, terminalId), request.history.value())
         .pipe(
           Effect.catch((error) =>
             Effect.logWarning("failed to persist terminal history", {
@@ -1759,7 +1785,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    const nextPath = historyPath(threadId, terminalId);
+    const nextPath = yield* historyPath(threadId, terminalId);
     if (
       yield* fileSystem
         .exists(nextPath)
@@ -1790,7 +1816,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return history;
     }
 
-    if (terminalId !== DEFAULT_TERMINAL_ID) {
+    if (terminalId !== DEFAULT_TERMINAL_ID || !hasLegacyHistoryPath(threadId)) {
       return new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit);
     }
 
@@ -1839,7 +1865,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    yield* fileSystem.remove(historyPath(threadId, terminalId), { force: true }).pipe(
+    yield* fileSystem.remove(yield* historyPath(threadId, terminalId), { force: true }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("failed to delete terminal history", {
           threadId,
@@ -1848,7 +1874,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }),
       ),
     );
-    if (terminalId === DEFAULT_TERMINAL_ID) {
+    if (terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryPath(threadId)) {
       yield* fileSystem.remove(legacyHistoryPath(threadId), { force: true }).pipe(
         Effect.catch((error) =>
           Effect.logWarning("failed to delete terminal history", {
@@ -1864,16 +1890,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const deleteAllHistoryForThread = Effect.fn("terminal.deleteAllHistoryForThread")(function* (
     threadId: string,
   ) {
-    const threadPrefix = `${toSafeThreadId(threadId)}_`;
+    const threadParts = [
+      encodedHistoryThreadPart(threadId),
+      yield* hashedHistoryThreadPart(threadId),
+    ];
     const entries = yield* fileSystem
       .readDirectory(logsDir, { recursive: false })
       .pipe(Effect.orElseSucceed(() => [] as Array<string>));
     yield* Effect.forEach(
       entries.filter(
         (name) =>
-          name === `${toSafeThreadId(threadId)}.log` ||
           name === `${legacySafeThreadId(threadId)}.log` ||
-          name.startsWith(threadPrefix),
+          threadParts.some((part) => name === `${part}.log` || name.startsWith(`${part}_`)),
       ),
       (name) =>
         fileSystem.remove(path.join(logsDir, name), { force: true }).pipe(
