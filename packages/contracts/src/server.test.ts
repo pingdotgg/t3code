@@ -32,6 +32,16 @@ const baseProviderSnapshot = {
 };
 
 describe("ServerProvider", () => {
+  it("round-trips the optional installed version, including an unknown value", () => {
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, installedVersion: "1.2.3" }),
+    ).toHaveProperty("installedVersion", "1.2.3");
+    expect(
+      decodeServerProvider({ ...baseProviderSnapshot, installedVersion: null }),
+    ).toHaveProperty("installedVersion", null);
+    expect(decodeServerProvider(baseProviderSnapshot)).not.toHaveProperty("installedVersion");
+  });
+
   it.each([undefined, true, false])("decodes workspace command discovery pending=%s", (pending) => {
     const workspace = {
       cwd: "/workspace/project",

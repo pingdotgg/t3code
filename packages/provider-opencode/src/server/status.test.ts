@@ -161,6 +161,8 @@ const runtimeMock = {
     runVersionError: null as Error | null,
     runVersionPending: false,
     versionStdout: DEFAULT_VERSION_STDOUT,
+    localServerVersion: "1.14.19",
+    externalServerVersion: "1.14.19",
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
     inventoryCwd: null as string | null,
@@ -180,6 +182,8 @@ const runtimeMock = {
     this.state.runVersionError = null;
     this.state.runVersionPending = false;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
+    this.state.localServerVersion = "1.14.19";
+    this.state.externalServerVersion = "1.14.19";
     this.state.inventoryError = null;
     this.state.connectionError = null;
     this.state.inventoryCwd = null;
@@ -211,7 +215,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
         ...(effectiveServerPassword !== undefined
           ? { serverPassword: effectiveServerPassword }
           : {}),
-        version: "1.14.19",
+        version: runtimeMock.state.localServerVersion,
         isRunning: Effect.succeed(true),
         exitCode: Effect.never,
       };
@@ -235,7 +239,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
       return {
         url: serverUrl ?? "http://127.0.0.1:4301",
         ...(serverPassword ? { serverPassword } : {}),
-        version: "1.14.19",
+        version: serverUrl
+          ? runtimeMock.state.externalServerVersion
+          : runtimeMock.state.localServerVersion,
         exitCode: null,
         external: Boolean(serverUrl),
       };
@@ -529,6 +535,30 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("keeps the running server version separate from the installed CLI version", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.20\n";
+      runtimeMock.state.localServerVersion = "1.14.19";
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+
+      NodeAssert.equal(snapshot.version, "1.14.19");
+      NodeAssert.equal(snapshot.installedVersion, "1.14.20");
+    }),
+  );
+
+  it.effect("does not let a newer running server mask an older local installation", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.19\n";
+      runtimeMock.state.localServerVersion = "1.14.20";
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+
+      NodeAssert.equal(snapshot.version, "1.14.20");
+      NodeAssert.equal(snapshot.installedVersion, "1.14.19");
+    }),
+  );
+
   it.effect("lists a local OpenCode 2 binary's models in Full access only, never via 1.x", () =>
     Effect.gen(function* () {
       runtimeMock.state.versionStdout = "opencode v2.0.18\n";
@@ -630,11 +660,15 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
 
   it.effect("reports local model inventory failures without treating them as empty", () =>
     Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.20\n";
+      runtimeMock.state.localServerVersion = "1.14.19";
       runtimeMock.state.inventoryError = new Error("opencode models failed");
       const snapshot = yield* checkProvider(makeOpenCodeSettings());
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "1.14.19");
+      NodeAssert.equal(snapshot.installedVersion, "1.14.20");
       NodeAssert.equal(snapshot.models.length, 0);
       NodeAssert.equal(
         snapshot.message,
@@ -645,6 +679,20 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (it) => {
+  it.effect("keeps a configured server authoritative and omits the local installed version", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.14.20\n";
+      runtimeMock.state.externalServerVersion = "1.14.21";
+
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings({ serverUrl: "http://127.0.0.1:9999" }),
+      );
+
+      NodeAssert.equal(snapshot.version, "1.14.21");
+      NodeAssert.equal("installedVersion" in snapshot, false);
+    }),
+  );
+
   it.effect("does not send a local environment password to a configured server", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkProvider(

@@ -599,6 +599,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     cause: unknown,
     version: string | null = null,
     phase: "version" | "inventory" = "version",
+    installedVersion?: string | null,
   ) => {
     const failure = formatOpenCodeProbeError({
       cause,
@@ -606,19 +607,22 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       phase,
       serverUrl: openCodeSettings.serverUrl,
     });
-    return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
-      enabled: openCodeSettings.enabled,
-      checkedAt,
-      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-      probe: {
-        installed: failure.installed,
-        version,
-        status: "error",
-        auth: { status: "unknown" },
-        message: failure.message,
-      },
-    });
+    return {
+      ...buildServerProvider({
+        presentation: OPENCODE_PRESENTATION,
+        enabled: openCodeSettings.enabled,
+        checkedAt,
+        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+        probe: {
+          installed: failure.installed,
+          version,
+          status: "error",
+          auth: { status: "unknown" },
+          message: failure.message,
+        },
+      }),
+      ...(installedVersion !== undefined ? { installedVersion } : {}),
+    };
   };
 
   if (!openCodeSettings.enabled) {
@@ -676,8 +680,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     readonly url: string;
     readonly serverPassword?: string;
     readonly version: string;
-  }) =>
-    openCodeRuntime
+  }) => {
+    version = server.version;
+    return openCodeRuntime
       .loadOpenCodeInventory(
         openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
@@ -686,6 +691,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         }),
       )
       .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
+  };
   const inventoryEffect = isExternalServer
     ? openCodeRuntime
         .connectToOpenCodeServer({
@@ -710,7 +716,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ),
   );
   if (inventoryExit._tag === "Failure") {
-    return fallback(Cause.squash(inventoryExit.cause), version, "inventory");
+    return fallback(
+      Cause.squash(inventoryExit.cause),
+      version,
+      "inventory",
+      isExternalServer ? undefined : probed.version,
+    );
   }
 
   version = inventoryExit.value.version;
@@ -722,29 +733,32 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
   const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
-  return buildServerProvider({
-    presentation: OPENCODE_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    skills,
-    slashCommands: openCodeCommandsToServerProviderSlashCommands(
-      inventoryExit.value.inventory.commands,
-    ),
-    probe: {
-      installed: true,
-      version,
-      status: connectedCount > 0 ? "ready" : "warning",
-      auth: {
-        status: connectedCount > 0 ? "authenticated" : "unknown",
-        type: "opencode",
+  return {
+    ...buildServerProvider({
+      presentation: OPENCODE_PRESENTATION,
+      enabled: true,
+      checkedAt,
+      models,
+      skills,
+      slashCommands: openCodeCommandsToServerProviderSlashCommands(
+        inventoryExit.value.inventory.commands,
+      ),
+      probe: {
+        installed: true,
+        version,
+        status: connectedCount > 0 ? "ready" : "warning",
+        auth: {
+          status: connectedCount > 0 ? "authenticated" : "unknown",
+          type: "opencode",
+        },
+        message:
+          connectedCount > 0
+            ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
+            : isExternalServer
+              ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
+              : "OpenCode is available, but it did not report any connected upstream providers.",
       },
-      message:
-        connectedCount > 0
-          ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
-          : isExternalServer
-            ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
-            : "OpenCode is available, but it did not report any connected upstream providers.",
-    },
-  });
+    }),
+    ...(!isExternalServer ? { installedVersion: probed.version } : {}),
+  };
 });

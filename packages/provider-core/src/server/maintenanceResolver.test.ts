@@ -157,9 +157,11 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
   );
 
   it.effect("does not fetch latest provider versions when update checks are disabled", () =>
-    enrichProviderSnapshotWithVersionAdvisory(installedPackageToolProvider, manualPackageTool, {
-      enableProviderUpdateChecks: false,
-    }).pipe(
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      manualPackageTool,
+      { enableProviderUpdateChecks: false },
+    ).pipe(
       Effect.provide(ProviderLatestVersions.layer),
       Effect.provideService(
         HttpClient.HttpClient,
@@ -170,9 +172,112 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       Effect.map((provider) => {
         expect(provider.versionAdvisory).toMatchObject({
           status: "unknown",
-          currentVersion: "1.0.0",
+          currentVersion: "1.1.0",
           latestVersion: null,
           checkedAt: "2026-04-10T00:00:00.000Z",
+        });
+      }),
+    ),
+  );
+
+  it.effect("uses the installed version for advisory while preserving runtime version", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      manualPackageTool,
+      { enableProviderUpdateChecks: true },
+    ).pipe(
+      Effect.provideServiceEffect(
+        ProviderLatestVersions.ProviderLatestVersions,
+        ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("cached latest version should avoid HTTP")),
+      ),
+      Effect.map((provider) => {
+        expect(provider.version).toBe("1.0.0");
+        expect(provider.installedVersion).toBe("1.1.0");
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.1.0",
+          latestVersion: "1.2.0",
+        });
+      }),
+    ),
+  );
+
+  it.effect(
+    "reports current when the installed version matches latest but the server is older",
+    () =>
+      enrichProviderSnapshotWithVersionAdvisory(
+        { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+        manualPackageTool,
+        { enableProviderUpdateChecks: true },
+      ).pipe(
+        Effect.provideServiceEffect(
+          ProviderLatestVersions.ProviderLatestVersions,
+          ProviderLatestVersions.make([["@example/package-tool", "1.1.0"]]),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("cached latest version should avoid HTTP")),
+        ),
+        Effect.map((provider) => {
+          expect(provider.version).toBe("1.0.0");
+          expect(provider.versionAdvisory).toMatchObject({
+            status: "current",
+            currentVersion: "1.1.0",
+            latestVersion: "1.1.0",
+          });
+        }),
+      ),
+  );
+
+  it.effect("does not let a newer running server mask an outdated installation", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, version: "1.2.0", installedVersion: "1.0.0" },
+      manualPackageTool,
+      { enableProviderUpdateChecks: true },
+    ).pipe(
+      Effect.provideServiceEffect(
+        ProviderLatestVersions.ProviderLatestVersions,
+        ProviderLatestVersions.make([["@example/package-tool", "1.1.0"]]),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("cached latest version should avoid HTTP")),
+      ),
+      Effect.map((provider) => {
+        expect(provider.version).toBe("1.2.0");
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: "1.1.0",
+        });
+      }),
+    ),
+  );
+
+  it.effect("keeps an explicitly unknown installed version unknown", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: null },
+      manualPackageTool,
+      { enableProviderUpdateChecks: true },
+    ).pipe(
+      Effect.provideServiceEffect(
+        ProviderLatestVersions.ProviderLatestVersions,
+        ProviderLatestVersions.make([["@example/package-tool", "1.2.0"]]),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unknown installed version should skip lookup")),
+      ),
+      Effect.map((provider) => {
+        expect(provider.version).toBe("1.0.0");
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "unknown",
+          currentVersion: null,
+          latestVersion: null,
         });
       }),
     ),
