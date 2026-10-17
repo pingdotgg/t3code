@@ -64,11 +64,11 @@ const setup = Effect.gen(function* () {
   yield* git(work, "add", "-A");
   yield* git(work, "commit", "--quiet", "-m", "Docs");
   yield* git(work, "push", "--quiet", "origin", "main", "feat/answer-42", "feat/answer-doc");
-  const head = (branch: string) => git(remote, "rev-parse", `refs/heads/${branch}`);
+  const head = (branch: string) => git(remote, "--git-dir=.", "rev-parse", `refs/heads/${branch}`);
   return {
     remote,
     head,
-    git: (...args: string[]) => git(remote, ...args),
+    git: (...args: string[]) => git(remote, "--git-dir=.", ...args),
     layers: [
       { number: 1, headBranch: "feat/answer-42", headSha: yield* head("feat/answer-42") },
       { number: 2, headBranch: "feat/answer-doc", headSha: yield* head("feat/answer-doc") },

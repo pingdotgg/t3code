@@ -451,6 +451,14 @@ export const make = Effect.gen(function* () {
             ],
           });
         if (input.force) {
+          // The sha comes from the server and git would read anything but a commit as an option.
+          if (!/^[0-9a-f]{7,64}$/i.test(pull.head.sha))
+            return yield* new ForgejoCli.ForgejoCliError({
+              command: repo.command ?? "tea",
+              cwd: input.cwd,
+              detail: "Forgejo reported a pull request head that is not a commit.",
+              reason: "invalid-response",
+            });
           // tea leaves an existing PR branch at its old tip. Keep dirty files safe
           // while bringing the selected branch to the PR revision we fetched.
           yield* process.run({

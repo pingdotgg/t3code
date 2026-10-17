@@ -719,7 +719,7 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
           "fetchRemoteTrackingBranch",
           { cwd: "/repo", remoteName: "origin", remoteBranch: "feature/x" },
         ],
-        ["execute", ["branch", "feature/x", "refs/remotes/origin/feature/x"]],
+        ["execute", ["branch", "--", "feature/x", "refs/remotes/origin/feature/x"]],
         ["switchRef", { cwd: "/repo", refName: "feature/x" }],
         [
           "setBranchUpstream",

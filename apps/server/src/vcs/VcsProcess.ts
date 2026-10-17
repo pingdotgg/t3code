@@ -18,6 +18,8 @@ import {
   VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as ProcessRunner from "../processRunner.ts";
 
 export interface VcsProcessInput {
@@ -60,6 +62,54 @@ const VCS_PROCESS_CONCURRENCY = 8;
 const GITHUB_PROCESS_CONCURRENCY = 4;
 
 export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
+
+/**
+ * Appends `key=value` to the `GIT_CONFIG_*` entries git reads as command-line
+ * config, so argv stays the same on every platform and nothing is written to
+ * the user's config. The entry goes after any inherited ones. Windows env names
+ * are case-insensitive (elsewhere git reads only `GIT_CONFIG_COUNT`), so there the
+ * count is found regardless of casing, read from
+ * the last spelling (a per-command value spread over process.env), and updated
+ * under every spelling so the child sees it whichever one Node keeps. A count
+ * git would reject is left alone so git still reports it.
+ */
+export const gitConfigEnv = (
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv => {
+  const countKeys = Object.keys(env).filter((name) =>
+    platform === "win32" ? name.toUpperCase() === "GIT_CONFIG_COUNT" : name === "GIT_CONFIG_COUNT",
+  );
+  const countKey = countKeys.at(-1) ?? "GIT_CONFIG_COUNT";
+  const inherited = env[countKey];
+  if (
+    inherited !== undefined &&
+    inherited !== "" &&
+    // Git parses the count with strtoul: leading whitespace, an optional sign
+    // (only -0 is non-negative), digits, and nothing after them.
+    /^[ \t\r\n\v\f]*(?:\+?\d+|-0+)/.exec(inherited)?.[0] !== inherited
+  ) {
+    return {};
+  }
+  const count = inherited === undefined || inherited === "" ? 0 : Number.parseInt(inherited, 10);
+  return {
+    ...Object.fromEntries([...countKeys, countKey].map((name) => [name, String(count + 1)])),
+    [`GIT_CONFIG_KEY_${count}`]: key,
+    [`GIT_CONFIG_VALUE_${count}`]: value,
+  };
+};
+
+/**
+ * Git otherwise opens any folder holding `HEAD`, `objects/` and `refs/` as a
+ * bare repository and applies its `config`, including commands such as
+ * `core.fsmonitor`. Files saved in a project or checked out from a clone can
+ * form one, so git started by T3 (or by gh and friends) only opens a bare
+ * repository named with `--git-dir` or `GIT_DIR`. Git before 2.38 ignores it.
+ */
+export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
+  gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
@@ -114,6 +164,7 @@ const isTransientGitExit = (stderr: string) =>
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
@@ -133,7 +184,10 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
-        ...(input.env !== undefined ? { env: input.env } : {}),
+        env: {
+          ...input.env,
+          ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
+        },
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: input.outputMode ?? "truncate",

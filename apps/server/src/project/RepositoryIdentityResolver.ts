@@ -11,6 +11,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
 // Background sweeps resolve every project each minute. A long TTL keeps them
@@ -124,6 +126,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       .run({
         command: "git",
         args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
@@ -146,6 +149,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey, "remote", "-v"],
+      env: explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform),
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);

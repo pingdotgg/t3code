@@ -158,7 +158,7 @@ const make = Effect.gen(function* () {
       git.execute({
         operation: "PullRequestReviewGuideService.fetch",
         cwd: workspaceRoot,
-        args: ["fetch", "--quiet", "--no-tags", remote, ...args],
+        args: ["fetch", "--quiet", "--no-tags", "--", remote, ...args],
         timeoutMs: 5 * 60_000,
       });
     // The host names the base branch. A name git rejects, or one that would change the refspec

@@ -777,6 +777,7 @@ export const make = Effect.gen(function* () {
               "fetch",
               "--quiet",
               "--no-tags",
+              "--",
               yield* baseRemote,
               `refs/pull/${pullRequest.number}/head`,
             ]);
@@ -791,7 +792,7 @@ export const make = Effect.gen(function* () {
       );
 
       yield* Effect.gen(function* () {
-        if (!exists) yield* runGit(input.cwd, "branch", ["branch", localBranch, target.ref]);
+        if (!exists) yield* runGit(input.cwd, "branch", ["branch", "--", localBranch, target.ref]);
         yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         if (exists) {
           yield* runGit(

@@ -76,16 +76,14 @@ function headRevision(rest: string): string | null {
   return head.length === 0 ? null : head;
 }
 
-export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
-  const revisions = new Map<string, string>();
+function parseEntries(patch: string): ReadonlyArray<Omit<Entry, "inBody">> {
+  const entries: Array<Omit<Entry, "inBody">> = [];
   let entry: Entry | null = null;
 
   const close = () => {
     if (entry === null) return;
-    const path = entry.deleted ? entry.oldPath : (entry.newPath ?? entry.oldPath);
-    if (path !== null && path.length > 0 && entry.revision !== null) {
-      revisions.set(path, entry.revision);
-    }
+    const { inBody: _inBody, ...closed } = entry;
+    entries.push(closed);
     entry = null;
   };
 
@@ -116,5 +114,34 @@ export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, strin
     }
   }
   close();
+  return entries;
+}
+
+/**
+ * What the head has of each file, as the blob ids from a unified patch's `index <before>..<after>`
+ * line: Bitbucket exposes no blob id for a file anywhere else. Keyed by the head's name, except
+ * for a deletion where only the old name exists. An entry with no `index` line (most often one
+ * Bitbucket excluded by pattern) is left out.
+ */
+export function parseDiffFileRevisions(patch: string): ReadonlyMap<string, string> {
+  const revisions = new Map<string, string>();
+  for (const entry of parseEntries(patch)) {
+    const path = entry.deleted ? entry.oldPath : (entry.newPath ?? entry.oldPath);
+    if (path !== null && path.length > 0 && entry.revision !== null) {
+      revisions.set(path, entry.revision);
+    }
+  }
   return revisions;
+}
+
+/**
+ * The files a unified patch changes, as the name each side has. A side with no file (`/dev/null`
+ * for an added or a deleted file) is null; a rename is the only entry whose two names differ.
+ */
+export function parseDiffFilePaths(
+  patch: string,
+): ReadonlyArray<{ readonly oldPath: string | null; readonly newPath: string | null }> {
+  return parseEntries(patch).flatMap(({ oldPath, newPath }) =>
+    (oldPath ?? newPath) === null ? [] : [{ oldPath, newPath }],
+  );
 }
