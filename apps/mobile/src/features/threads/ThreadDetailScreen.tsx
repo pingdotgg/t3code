@@ -2,6 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
+import { ThreadHandoffCard, threadHandoffClosesComposer } from "./ThreadHandoffCard";
 import { useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -558,7 +559,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     useState<RuntimeRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   const composerSlotHidden =
-    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+    activeUserInputRequestId !== null ||
+    props.creationState?.kind === "failed" ||
+    threadHandoffClosesComposer(props.selectedThread);
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -1206,6 +1209,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       />
                     </Animated.View>
                   ) : null}
+                  <View
+                    // With the composer closed, the card pads the home indicator itself.
+                    style={
+                      threadHandoffClosesComposer(props.selectedThread)
+                        ? { paddingBottom: composerBottomInset }
+                        : undefined
+                    }
+                  >
+                    <ThreadHandoffCard thread={props.selectedThread} />
+                  </View>
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}
@@ -1301,7 +1314,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
 
                 {/*
                  * Hidden (not unmounted) while a user-input request owns the composer slot, so
-                 * composer drafts and editor state survive.
+                 * composer drafts and editor state survive. A thread that moved away continues on
+                 * the other environment, so its card owns the slot too.
                  */}
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
                   {isProviderSubagent ? (

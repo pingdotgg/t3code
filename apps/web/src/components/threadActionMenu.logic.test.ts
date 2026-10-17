@@ -91,6 +91,48 @@ describe("buildThreadActionMenuItems", () => {
     expect(allowed.every((item) => !item.disabled)).toBe(true);
   });
 
+  it("offers each linked environment, disabled with its reason when it cannot take the thread", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      handoffTargets: [
+        { environmentId: "environment-box", label: "Box", reason: null },
+        {
+          environmentId: "environment-vps",
+          label: "VPS",
+          reason: "No project with this repository",
+        },
+      ],
+    });
+    const continueOn = items.find((item) => item.id === "continue-on");
+    expect(continueOn?.children).toEqual([
+      { id: "continue-on:environment-box", label: "Box", disabled: false },
+      {
+        id: "continue-on:environment-vps",
+        label: "VPS (No project with this repository)",
+        disabled: true,
+      },
+    ]);
+    // Without targets there is nothing to offer, and a running thread cannot move.
+    expect(buildThreadActionMenuItems(baseState).some((item) => item.id === "continue-on")).toBe(
+      false,
+    );
+    expect(
+      buildThreadActionMenuItems({
+        ...baseState,
+        isRunning: true,
+        handoffTargets: [{ environmentId: "environment-box", label: "Box", reason: null }],
+      }).find((item) => item.id === "continue-on")?.disabled,
+    ).toBe(true);
+    // A connection that cannot change threads cannot move one either.
+    expect(
+      buildThreadActionMenuItems({
+        ...baseState,
+        canOperate: false,
+        handoffTargets: [{ environmentId: "environment-box", label: "Box", reason: null }],
+      }).find((item) => item.id === "continue-on")?.disabled,
+    ).toBe(true);
+  });
+
   it("hides lifecycle items when the environment lacks the capabilities", () => {
     expect(
       ids({
