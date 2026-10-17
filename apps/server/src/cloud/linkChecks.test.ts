@@ -2,10 +2,48 @@ import { describe, expect, it } from "@effect/vitest";
 import type { RelayLinkProofRequest } from "@t3tools/contracts/relay";
 
 import {
+  isAllowedEndpointOrigin,
   isSupportedLinkProviderKind,
   linkProofScopes,
   parseManagedEndpointLocalOrigin,
 } from "./linkChecks.ts";
+
+describe("isAllowedEndpointOrigin", () => {
+  const origin = { localHttpHost: "127.0.0.1", localHttpPort: 3773 };
+
+  it("accepts the WSL NAT request only when trusted by the server", () => {
+    expect(
+      isAllowedEndpointOrigin({
+        origin,
+        requestUrl: "http://172.24.162.233:3773/api/connect/link-proof",
+        allowNonLoopbackRequestHost: true,
+      }),
+    ).toBe(true);
+    expect(
+      isAllowedEndpointOrigin({
+        origin,
+        requestUrl: "http://172.24.162.233:3773/api/connect/link-proof",
+      }),
+    ).toBe(false);
+  });
+
+  it("retains signed-origin and port checks", () => {
+    expect(
+      isAllowedEndpointOrigin({
+        origin: { localHttpHost: "172.24.162.233", localHttpPort: 3773 },
+        requestUrl: "http://172.24.162.233:3773/",
+        allowNonLoopbackRequestHost: true,
+      }),
+    ).toBe(false);
+    expect(
+      isAllowedEndpointOrigin({
+        origin,
+        requestUrl: "http://172.24.162.233:3774/",
+        allowNonLoopbackRequestHost: true,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("parseManagedEndpointLocalOrigin", () => {
   it.each([
