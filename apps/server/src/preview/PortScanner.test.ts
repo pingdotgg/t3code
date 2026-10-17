@@ -655,7 +655,7 @@ effectIt.effect("does not swallow process probe defects", () =>
     const defect = new Error("unexpected process probe defect");
     const layer = layerProbeFailure(() => Effect.die(defect));
 
-    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
+    const exit = yield* Effect.flatMap(ownedScanner(), (scanner) => scanner.scan()).pipe(
       Effect.provide(layer),
       Effect.exit,
     );
@@ -760,7 +760,7 @@ effectIt.effect("keeps spawning lsof after a spawn failure that is not a missing
     );
   });
   return Effect.gen(function* () {
-    const scanner = yield* PortScanner.PortDiscovery;
+    const scanner = yield* ownedScanner();
     yield* scanner.scan();
     yield* scanner.scan();
     expect(lsofSpawns).toBe(2);
@@ -771,7 +771,7 @@ effectIt.effect("does not swallow process probe interruption", () =>
   Effect.gen(function* () {
     const layer = layerProbeFailure(() => Effect.interrupt);
 
-    const exit = yield* Effect.flatMap(PortScanner.PortDiscovery, (scanner) => scanner.scan()).pipe(
+    const exit = yield* Effect.flatMap(ownedScanner(), (scanner) => scanner.scan()).pipe(
       Effect.provide(layer),
       Effect.exit,
     );
@@ -781,6 +781,73 @@ effectIt.effect("does not swallow process probe interruption", () =>
       expect(Cause.hasInterruptsOnly(exit.cause)).toBe(true);
     }
   }),
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips idle listener scans on %s and resumes when candidates exist",
+  (platform) => {
+    let processCalls = 0;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          Layer.succeed(HostProcess.Platform, platform),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: () => {
+              processCalls += 1;
+              return Effect.succeed({
+                stdout: `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(
+              Layer.succeed(FetchHttpClient.Fetch, () =>
+                Promise.resolve(
+                  new Response("hello", { headers: { "content-type": "text/html" } }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      yield* scanner.retain;
+      yield* TestClock.adjust("9 seconds");
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(0);
+
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      expect(yield* scanner.scan()).toMatchObject([{ port: LSOF_TEST_PORT, pid: 1234 }]);
+      expect(processCalls).toBe(1);
+
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      yield* TestClock.adjust("9 seconds");
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(processCalls).toBe(1);
+
+      expect(yield* scanner.scan([`http://localhost:${LSOF_TEST_PORT}/docs`])).toMatchObject([
+        { port: LSOF_TEST_PORT, url: `http://localhost:${LSOF_TEST_PORT}/docs` },
+      ]);
+      expect(processCalls).toBe(2);
+    }).pipe(Effect.provide(layer));
+  },
 );
 
 effectIt.effect(

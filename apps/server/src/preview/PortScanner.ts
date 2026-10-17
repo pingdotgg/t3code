@@ -692,10 +692,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         terminalByProcessId.set(processId, registration.owner);
       }
     }
+    if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
+      return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
+    }
     if (hostPlatform === "win32") {
-      if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
-        return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
-      }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
       const runNetstat = (protocol: "tcp" | "tcpv6") =>
         processRunner.run({
