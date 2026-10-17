@@ -141,8 +141,15 @@ export function claudeUsageResponseToLimits(input: {
 }): { readonly limits: ServerProviderUsageLimits; readonly names: ClaudeScopedLimitNames } {
   const { response, checkedAt } = input;
   if (!response.rate_limits_available || !response.rate_limits) {
+    // `unsupported` is a lock: it hides the account from Limits and ignores
+    // streamed windows. Only `rate_limits_available: false` earns it. The CLI
+    // also sends `rate_limits: null` beside `true` when its own usage fetch
+    // failed, which is transient, so the next probe or event can recover.
     return {
-      limits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }),
+      limits: makeUnavailableUsageLimits({
+        checkedAt,
+        reason: response.rate_limits_available ? "probeFailed" : "unsupported",
+      }),
       names: { overageIncluded: undefined },
     };
   }

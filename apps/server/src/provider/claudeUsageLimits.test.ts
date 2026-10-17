@@ -95,6 +95,17 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
   });
 
+  it("reports a subscription account whose usage read came back empty as a failed probe", () => {
+    // The CLI sets `rate_limits` to null when its own usage fetch fails, while
+    // `rate_limits_available` stays true for an account that has limits.
+    const { limits, names } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: { rate_limits_available: true, rate_limits: null },
+    });
+    expect(limits).toEqual({ checkedAt, windows: [], unavailable: { reason: "probeFailed" } });
+    expect(names).toEqual(noNames);
+  });
+
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
       claudeUsageResponseToLimits({
