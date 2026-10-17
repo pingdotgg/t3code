@@ -305,18 +305,31 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly showTrailingDivider?: boolean;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
+  readonly fullSwipeWidth?: number;
+  readonly onSwipeableWillOpen: (methods: SwipeableMethods) => void;
+  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
+  readonly activationKey?: string;
+  readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
+  const { width: windowWidth } = useWindowDimensions();
+  const theme = useUniwindTheme();
+  const dormant = useSwipeRowDormant(props.activationKey);
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const sidebarPane = props.pane === "sidebar";
   const isDraft = pendingTask.kind === "draft";
   const projectTitle = props.projectTitle ?? props.project?.title ?? pendingTask.projectTitle ?? "";
   const branch = pendingTask.branch;
+  const deleteLabel = isDraft ? "Discard" : "Delete";
+  const handleDelete = useCallback(
+    () => onDeletePendingTask(pendingTask),
+    [onDeletePendingTask, pendingTask],
+  );
 
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
-      if (nativeEvent.event === "delete") onDeletePendingTask(pendingTask);
+      if (nativeEvent.event === "delete") handleDelete();
     },
-    [onDeletePendingTask, pendingTask],
+    [handleDelete],
   );
 
   const rowContent = (
@@ -422,45 +435,73 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
       {props.showPendingDivider ? (
         <ThreadListV2SectionDivider label="Unsent" pane={props.pane} />
       ) : null}
-      <Menu
-        actions={isDraft ? DRAFT_TASK_MENU_ACTIONS : PENDING_TASK_MENU_ACTIONS}
-        onPressAction={handleMenuAction}
-        shouldOpenOnLongPress
+      <ThreadSwipeable
+        dormant={dormant}
+        threadKey={pendingTask.key}
+        resetKey={pendingTask.key}
+        backgroundColor={theme[sidebarPane ? "--color-drawer" : "--color-screen"]}
+        containerStyle={sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS } : undefined}
+        fullSwipeAction="primary"
+        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        onDelete={handleDelete}
+        onSwipeableClose={props.onSwipeableClose}
+        onSwipeableWillOpen={props.onSwipeableWillOpen}
+        primaryAction={{
+          accessibilityLabel: `${deleteLabel} ${pendingTask.title}`,
+          tone: "danger",
+          icon: "trash",
+          label: deleteLabel,
+          onPress: handleDelete,
+        }}
+        secondaryAction={null}
+        simultaneousWith={props.simultaneousSwipeGesture}
+        threadTitle={pendingTask.title}
       >
-        <RowPressable
-          accessibilityHint={
-            isDraft
-              ? "Opens the draft in the new task composer"
-              : "Sends when the environment reconnects. Opens the task for editing"
-          }
-          accessibilityLabel={pendingTask.title}
-          accessibilityRole="button"
-          key={pendingTask.key}
-          className={sidebarPane ? "bg-drawer" : "bg-screen"}
-          interactionClassName={sidebarPane ? "bg-thread-hover" : "bg-row-hover"}
-          onPress={() => onSelectPendingTask(pendingTask)}
-          style={
-            sidebarPane
-              ? {
-                  borderRadius: SIDEBAR_V2_ROW_RADIUS,
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                }
-              : undefined
-          }
-        >
-          {sidebarPane ? (
-            rowContent
-          ) : (
-            <View>
-              <View className="px-5 py-2.5">{rowContent}</View>
-              {props.showTrailingDivider !== false ? (
-                <View className="ml-5 h-px bg-border-subtle" />
-              ) : null}
-            </View>
-          )}
-        </RowPressable>
-      </Menu>
+        {(close) => (
+          <Menu
+            actions={isDraft ? DRAFT_TASK_MENU_ACTIONS : PENDING_TASK_MENU_ACTIONS}
+            onPressAction={handleMenuAction}
+            shouldOpenOnLongPress
+          >
+            <RowPressable
+              accessibilityHint={
+                isDraft
+                  ? "Opens the draft in the new task composer. Swipe left to discard."
+                  : "Sends when the environment reconnects. Opens the task for editing. Swipe left to delete."
+              }
+              accessibilityLabel={pendingTask.title}
+              accessibilityRole="button"
+              key={pendingTask.key}
+              className={sidebarPane ? "bg-drawer" : "bg-screen"}
+              interactionClassName={sidebarPane ? "bg-thread-hover" : "bg-row-hover"}
+              onPress={() => {
+                close();
+                onSelectPendingTask(pendingTask);
+              }}
+              style={
+                sidebarPane
+                  ? {
+                      borderRadius: SIDEBAR_V2_ROW_RADIUS,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                    }
+                  : undefined
+              }
+            >
+              {sidebarPane ? (
+                rowContent
+              ) : (
+                <View>
+                  <View className="px-5 py-2.5">{rowContent}</View>
+                  {props.showTrailingDivider !== false ? (
+                    <View className="ml-5 h-px bg-border-subtle" />
+                  ) : null}
+                </View>
+              )}
+            </RowPressable>
+          </Menu>
+        )}
+      </ThreadSwipeable>
     </>
   );
 });

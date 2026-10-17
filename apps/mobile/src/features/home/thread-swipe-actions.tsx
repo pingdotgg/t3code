@@ -59,6 +59,7 @@ export const THREAD_SWIPE_SPRING = {
 
 interface ThreadSwipeAction {
   readonly accessibilityLabel: string;
+  readonly tone?: "primary" | "secondary" | "danger";
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly label: string;
   readonly menu?: {
@@ -99,7 +100,7 @@ function resolveSecondaryAction(input: {
   const action = input.secondaryAction;
   return {
     ...action,
-    tone: "secondary",
+    tone: action.tone ?? "secondary",
     menu:
       action.menu === undefined
         ? undefined
@@ -709,7 +710,7 @@ export function ThreadSwipeActions(props: {
       <SwipeActionButton
         accessibilityLabel={props.primaryAction.accessibilityLabel}
         actionsWidth={actionsWidth}
-        tone="primary"
+        tone={props.primaryAction.tone ?? "primary"}
         compact={props.compact}
         entryRange={
           secondaryAction === null

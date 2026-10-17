@@ -644,6 +644,10 @@ function ThreadNavigationSidebarPane(
               showPendingDivider={item.showPendingDivider}
               onSelectPendingTask={openPendingTask}
               onDeletePendingTask={confirmDeletePendingTask}
+              fullSwipeWidth={props.width - 20}
+              onSwipeableClose={handleSwipeableClose}
+              onSwipeableWillOpen={handleSwipeableWillOpen}
+              simultaneousSwipeGesture={sidebarScrollGesture}
             />
           );
         }
