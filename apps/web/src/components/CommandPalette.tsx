@@ -2891,12 +2891,19 @@ function OpenCommandPaletteDialog(props: {
       platform: navigator.platform,
       context: { modelPickerOpen: false },
     });
-    if (threadJumpIndexFromCommand(command ?? "") !== null) {
+    // A shortcut shown on a listed item runs that item. The global handlers
+    // ignore shortcuts while the palette is open, so nothing else would.
+    const isJump = threadJumpIndexFromCommand(command ?? "") !== null;
+    const matchingItem = command
+      ? displayedGroups
+          .flatMap((group) => group.items)
+          .find((item) => item.shortcutCommand === command)
+      : undefined;
+    const isNewThread =
+      command === "chat.new" || command === "chat.newLocal" || command === "chat.newWithoutProject";
+    if (isJump || (matchingItem && isNewThread)) {
       event.preventDefault();
       event.stopPropagation();
-      const matchingItem = displayedGroups
-        .flatMap((group) => group.items)
-        .find((item) => item.shortcutCommand === command);
       if (matchingItem) {
         executeItem(matchingItem);
       }
