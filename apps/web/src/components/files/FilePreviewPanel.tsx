@@ -72,6 +72,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
+import { BinaryFileFallback } from "./BinaryFileFallback";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
@@ -1348,6 +1349,16 @@ export default function FilePreviewPanel({
               workspaceRoot={cwd}
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
+            />
+          ) : relativePath &&
+            file.error &&
+            file.data === null &&
+            file.readError?.failure === "binary_file" &&
+            absolutePath ? (
+            <BinaryFileFallback
+              key={absolutePath}
+              environmentId={environmentId}
+              path={absolutePath}
             />
           ) : relativePath && file.error && file.data === null ? (
             <div
