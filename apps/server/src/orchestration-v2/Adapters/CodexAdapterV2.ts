@@ -792,8 +792,10 @@ export function buildCodexTurnStartParams(input: {
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
       // Model catalogues can default summaries to "none". Request them on every
-      // turn, including resumed threads, for T3's reasoning timeline.
-      summary: "detailed",
+      // turn, including resumed threads, for T3's reasoning timeline. "auto" is
+      // the most detailed level each model supports; endpoints such as Bedrock
+      // reject "detailed".
+      summary: "auto",
       // Always explicit: omitting this on resume leaves Codex's previous
       // reviewer sticky after switching away from Auto mode.
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
