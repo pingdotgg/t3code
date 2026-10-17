@@ -6,7 +6,8 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, eq, exists, isNull, ne, notExists } from "drizzle-orm";
+import * as SqlError from "effect/sql/SqlError";
+import { and, eq, exists, isNull, ne, notExists, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -18,8 +19,10 @@ export class EnvironmentCredentialCreatePersistenceError extends Schema.TaggedEr
     stage: Schema.Literals([
       "generate-credential",
       "hash-token",
+      "lock-credentials",
       "insert-credential",
       "revoke-previous-credentials",
+      "transaction",
     ]),
     environmentId: Schema.String,
     credentialId: Schema.optionalKey(Schema.String),
@@ -125,7 +128,24 @@ const make = Effect.gen(function* () {
         ),
       );
       const now = DateTime.formatIso(yield* DateTime.now);
-      yield* db
+      const createError =
+        (stage: EnvironmentCredentialCreatePersistenceError["stage"]) => (cause: unknown) =>
+          new EnvironmentCredentialCreatePersistenceError({
+            stage,
+            environmentId: input.environmentId,
+            credentialId: credential.credentialId,
+            cause,
+          });
+      // Concurrent links for one environment key must rotate one at a time:
+      // otherwise each request revokes the other's fresh credential and none
+      // survives. The transaction-scoped advisory lock serializes them across
+      // Workers, so the last request to commit keeps the only valid credential.
+      const lockCredentials = db
+        .execute(
+          sql`select pg_advisory_xact_lock(hashtext(${input.environmentId}::text), hashtext(${input.environmentPublicKey}::text))`,
+        )
+        .pipe(Effect.mapError(createError("lock-credentials")));
+      const insertCredential = db
         .insert(relayEnvironmentCredentials)
         .values({
           credentialId: credential.credentialId,
@@ -136,18 +156,8 @@ const make = Effect.gen(function* () {
           createdAt: now,
           updatedAt: now,
         })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentCredentialCreatePersistenceError({
-                stage: "insert-credential",
-                environmentId: input.environmentId,
-                credentialId: credential.credentialId,
-                cause,
-              }),
-          ),
-        );
-      yield* db
+        .pipe(Effect.mapError(createError("insert-credential")));
+      const revokePreviousCredentials = db
         .update(relayEnvironmentCredentials)
         .set({
           revokedAt: now,
@@ -161,15 +171,22 @@ const make = Effect.gen(function* () {
             isNull(relayEnvironmentCredentials.revokedAt),
           ),
         )
+        .pipe(Effect.mapError(createError("revoke-previous-credentials")));
+      yield* db.$client
+        .withTransaction(
+          lockCredentials.pipe(
+            Effect.andThen(insertCredential),
+            Effect.andThen(revokePreviousCredentials),
+          ),
+        )
         .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentCredentialCreatePersistenceError({
-                stage: "revoke-previous-credentials",
-                environmentId: input.environmentId,
-                credentialId: credential.credentialId,
-                cause,
-              }),
+          // A failed COMMIT or ROLLBACK surfaces as a defect; it is still a
+          // persistence failure the link response should report.
+          Effect.catchDefect((defect) =>
+            SqlError.isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
+          ),
+          Effect.mapError((cause) =>
+            SqlError.isSqlError(cause) ? createError("transaction")(cause) : cause,
           ),
         );
       return credential.token;
