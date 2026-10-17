@@ -114,10 +114,10 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       const result = yield* service.triggerWebhook(requestFor(task));
       assert.equal(result._tag, "accepted");
       const launched = yield* Queue.take(launches);
-      assert.equal(
-        launched.initialMessage?.text,
-        "Review this PR: https://github.com/org/repo/pull/45",
-      );
+      const framed =
+        /^Review this PR: <(webhook-data-[0-9a-f]{12})>https:\/\/github\.com\/org\/repo\/pull\/45<\/\1>\n\nText between <\1> and <\/\1> was copied from the webhook request\./;
+      const frame = framed.exec(launched.initialMessage?.text ?? "")?.[1];
+      assert.isDefined(frame);
       assert.equal(
         launched.commandId,
         `scheduled-task:${task.id}:webhook:${result._tag === "accepted" ? result.deliveryId : ""}`,
@@ -132,6 +132,12 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
       });
       assert.equal(delivery.body, new TextDecoder().decode(pullRequestBody));
       assert.equal(delivery.renderedPrompt, launched.initialMessage?.text);
+
+      // Each delivery gets its own frame, so a request can't predict the tag that closes it.
+      yield* service.triggerWebhook(requestFor(task));
+      const next = framed.exec((yield* Queue.take(launches)).initialMessage?.text ?? "")?.[1];
+      assert.isDefined(next);
+      assert.notEqual(next, frame);
     }),
   ),
 );
@@ -494,8 +500,11 @@ it.effect("logs a body's first 64 KiB by bytes, not characters", () =>
 it.effect("counts the prompt as the provider does, without surrounding whitespace", () =>
   withService(({ service, launches }) =>
     Effect.gen(function* () {
-      const { task } = yield* service.upsert(yield* webhookTaskInput({ prompt: "{{body.text}}" }));
-      const text = `{"text":"${" ".repeat(1_000)}${"x".repeat(119_990)}${"\\n".repeat(1_000)}"}`;
+      // Values are framed, so only an empty placeholder can leave padding at the edge.
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({ prompt: `{{body.none}}${" ".repeat(2_000)}{{body.text}}` }),
+      );
+      const text = JSON.stringify({ text: "x".repeat(119_000) });
       const result = yield* service.triggerWebhook(
         requestFor(task, { body: new TextEncoder().encode(text), bodyText: text }),
       );

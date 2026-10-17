@@ -88,6 +88,17 @@ request: `{{body.path}}` for a JSON or form field, `{{headers.name}}`,
 For example, `Review this PR: {{body.pull_request.html_url}}` sends only the
 pull request link. A placeholder with no value is left empty.
 
+Each value reaches the agent wrapped in `<webhook-data-…>` tags and marked as
+untrusted request data. This helps the agent tell it apart from your
+instructions, but it doesn't guarantee the agent ignores what the text says.
+Inside a value, every `$`, other currency sign and `@`, and a `/` that starts
+a lone word, gets an invisible character after it, so mentions like `$skill`,
+`@file` and `/command` don't act. Text copied from a value, such as an email
+address or a command, carries that character too. Without a signature, anyone
+with the URL can start a run with any content. A signature only proves which
+service sent the request: a GitHub payload still carries text written by any
+GitHub user.
+
 For GitHub, turn on **Require signature**, keep the header
 `x-hub-signature-256`, hex encoding and the `sha256=` prefix, and enter the
 same secret in the repository's webhook settings with content type
