@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
@@ -10,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
@@ -58,6 +61,22 @@ const makeDesktopBootstrap = (
   ...overrides,
 });
 
+const liveProcess = Effect.acquireRelease(
+  Effect.promise(async () => {
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    await NodeEvents.EventEmitter.once(child, "spawn");
+    return child;
+  }),
+  (child) =>
+    Effect.promise(async () => {
+      const exited = NodeEvents.EventEmitter.once(child, "exit");
+      child.kill();
+      await exited;
+    }),
+);
+
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {
     traceMinLevel: "Info",
@@ -100,10 +119,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-" });
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
       for (const [name, pid, mode, rejectRunningServer] of [
         ["stale", 2_147_483_647, "web", true],
-        ["desktop", process.pid, "desktop", true],
-        ["serve", process.pid, "web", false],
+        ["own-pid", process.pid, "web", true],
+        ["desktop", child.pid, "desktop", true],
+        ["serve", child.pid, "web", false],
       ] as const) {
         const baseDir = path.join(root, name);
         const stateDir = path.join(baseDir, "userdata");
@@ -119,7 +141,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           }),
         );
         const cwd = path.join(root, `${name}-project`);
-        const config = yield* resolveServerConfig(
+        const configResult = yield* resolveServerConfig(
           {
             ...minimalWebFlags(baseDir),
             mode: Option.some(mode),
@@ -135,11 +157,54 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
             ),
           ),
+          Effect.result,
         );
-        expect(config.cwd).toBe(cwd);
+        assert(Result.isSuccess(configResult));
+        expect(configResult.success.cwd).toBe(cwd);
         expect(yield* fs.exists(cwd)).toBe(true);
       }
     }),
+  );
+
+  it.effect(
+    "refuses a manual web launch when a runtime record belongs to another live process",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-live-" });
+        const child = yield* liveProcess;
+        assert(child.pid !== undefined);
+        const stateDir = path.join(baseDir, "userdata");
+        yield* fs.makeDirectory(stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(stateDir, "server-runtime.json"),
+          yield* encodeUnknownJson({
+            version: 1,
+            pid: child.pid,
+            port: 3773,
+            origin: "http://127.0.0.1:3773",
+            startedAt: "2026-10-01T00:00:00.000Z",
+          }),
+        );
+        const cwd = path.join(baseDir, "project");
+        const error = yield* resolveServerConfig(
+          { ...minimalWebFlags(baseDir), cwd: Option.some(cwd) },
+          Option.none(),
+          { rejectRunningServer: true },
+        ).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+          Effect.flip,
+        );
+        expect(String(error)).toContain("A T3 Code server is already running");
+        expect(String(error)).toContain(`pid ${child.pid}`);
+        expect(yield* fs.exists(cwd)).toBe(false);
+      }),
   );
 
   it.effect("enables a trimmed reusable auth token only for web dev mode", () =>
