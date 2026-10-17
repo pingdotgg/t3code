@@ -1,8 +1,7 @@
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
-import { resolveThreadPullRequestChains } from "@t3tools/shared/threadPullRequests";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestListLines } from "./pullRequestListLines";
+import { pullRequestListLines, resolveThreadPullRequestChains } from "./threadPullRequests.ts";
 
 function link(
   number: number,

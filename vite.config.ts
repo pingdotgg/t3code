@@ -248,6 +248,15 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        files: ["apps/mobile/src/**"],
+        excludeFiles: [
+          "apps/mobile/src/components/ui/AppSymbol.tsx",
+          "apps/mobile/src/components/ui/AppSymbol.ios.tsx",
+          "apps/mobile/src/features/pull-requests/pullRequestGlyphs.ts",
+        ],
+        rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
+      },
+      {
         // React commits state set in a raw ResizeObserver callback after the paint, so derived
         // layout lands a frame late. observeResize flushes every observed resize in one render.
         files: ["apps/web/src/**"],

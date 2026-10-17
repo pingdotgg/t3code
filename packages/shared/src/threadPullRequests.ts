@@ -364,3 +364,37 @@ export function applyThreadPullRequestLinkUpdate(
     ),
   };
 }
+
+export interface PullRequestListLine {
+  readonly link: ThreadPullRequestLink;
+  readonly depth: number;
+  readonly chainKey: string;
+  readonly stack: { readonly kind: ThreadPullRequestChain["kind"]; readonly size: number } | null;
+}
+
+function chainKeyOf(chain: ThreadPullRequestChain): string {
+  const bottom = chain.layers[0]!;
+  return `${bottom.host}/${bottom.repository}#${bottom.number}`;
+}
+
+export function pullRequestListLines(
+  chains: ReadonlyArray<ThreadPullRequestChain>,
+): ReadonlyArray<PullRequestListLine> {
+  const ordered = [...chains].sort(
+    (left, right) =>
+      Math.max(...right.layers.map(latestUpdatedAt)) -
+      Math.max(...left.layers.map(latestUpdatedAt)),
+  );
+  return ordered.flatMap((chain) => {
+    const chainKey = chainKeyOf(chain);
+    return chain.layers.map((link, index) => ({
+      link,
+      depth: chain.depths[index]!,
+      chainKey,
+      stack:
+        index === 0 && chain.layers.length > 1
+          ? { kind: chain.kind, size: chain.layers.length }
+          : null,
+    }));
+  });
+}
