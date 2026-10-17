@@ -242,7 +242,14 @@ export const make = Effect.gen(function* () {
   const lastReads = new Map<string, LastRead>();
   const threadTails = new Map<
     string,
-    Map<string, { readonly count: number; readonly comments: ReadonlyArray<PullRequestComment> }>
+    Map<
+      string,
+      {
+        readonly count: number;
+        readonly fetchedAt: number;
+        readonly comments: ReadonlyArray<PullRequestComment>;
+      }
+    >
   >();
 
   const identityOf = (link: ThreadPullRequestLink) => ({
@@ -290,7 +297,13 @@ export const make = Effect.gen(function* () {
     );
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
-    function* (key: string, reference: PullRequestRef, activity: PullRequestActivity) {
+    function* (
+      key: string,
+      reference: PullRequestRef,
+      activity: PullRequestActivity,
+      now: number,
+      rereadMs: number,
+    ) {
       // Comment cursors cannot account for missing threads. Only finish a truncated read
       // when the host confirms that every thread was listed.
       if (activity.commentsTruncated && activity.reviewThreadsTruncated !== false) return null;
@@ -306,7 +319,7 @@ export const make = Effect.gen(function* () {
         if (cursor === null) continue;
         const count = thread.commentCount ?? 0;
         let tail = tails.get(thread.id);
-        if (tail?.count !== count) {
+        if (tail?.count !== count || now - tail.fetchedAt >= rereadMs) {
           const comments = new Map<string, PullRequestComment>();
           const cursors = new Set<string>();
           while (cursor !== null) {
@@ -328,7 +341,7 @@ export const make = Effect.gen(function* () {
             cursor = page.nextCursor;
           }
           if (thread.comments.length + comments.size < count) return null;
-          tail = { count, comments: [...comments.values()] };
+          tail = { count, fetchedAt: now, comments: [...comments.values()] };
           tails.set(thread.id, tail);
         }
         remarks.push(...tail.comments);
@@ -461,7 +474,13 @@ export const make = Effect.gen(function* () {
 
     // Never advance the remark watermark past comments an incomplete read could have missed.
     const remarks = Option.isSome(activity)
-      ? yield* readRemarks(group.key, reference, activity.value)
+      ? yield* readRemarks(
+          group.key,
+          reference,
+          activity.value,
+          now,
+          fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
+        )
       : null;
     lastReads.set(group.key, {
       at: plan.activity || last === undefined ? now : last.at,

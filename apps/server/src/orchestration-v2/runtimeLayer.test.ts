@@ -2906,6 +2906,161 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["with fingerprint", "without fingerprint", "fingerprint becomes unavailable"])(
+    "refreshes edited cached review replies: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const projectId = ProjectId.make(`pr-watch-tail-project-${mode}`);
+        const threadId = ThreadId.make(`runtime-pr-watch-tail-${mode}`);
+        const startedAt = "2026-10-02T12:00:00.000Z";
+        yield* TestClock.setTime(Date.parse(startedAt));
+        yield* seedProject({
+          projectId,
+          title: "Watch edited replies",
+          workspaceRoot: "/workspace/watch-tail",
+          defaultModelSelection: null,
+          createdAt: startedAt,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-tail-create-${mode}`),
+          threadId,
+          projectId,
+          title: "Watch edited replies",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-tail-start-${mode}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 12,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/12", source: "agent" },
+        });
+        let reply: PullRequestComment = {
+          id: "reply-11",
+          kind: "review-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Original feedback.",
+          createdAt: "2026-10-02T11:00:00.000Z",
+          url: null,
+          path: "src/index.ts",
+          reviewState: null,
+        };
+        const firstTen = Array.from({ length: 10 }, (_, index) => ({
+          ...reply,
+          id: `reply-${index}`,
+        }));
+        let fingerprintAvailable = mode !== "without fingerprint";
+        let activityReads = 0;
+        let pagesRead = 0;
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(ProjectionStore.ProjectionStoreV2)({
+                getThreadsWithPullRequests: () =>
+                  projections
+                    .getThreadsWithPullRequests()
+                    .pipe(
+                      Effect.map((threads) => threads.filter((thread) => thread.id === threadId)),
+                    ),
+              }),
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () =>
+                  Effect.succeed(
+                    fingerprintAvailable ? { status: "OPEN pending", remarks: "unchanged" } : null,
+                  ),
+                invalidate: () => Effect.void,
+                detail: () =>
+                  Effect.succeed({
+                    ...watchedPullRequestDetail({ projectId, number: 12, at: startedAt }),
+                    checks: [{ name: "test", status: "pending", description: null, url: null }],
+                  }),
+                activity: () =>
+                  Effect.sync(() => {
+                    activityReads += 1;
+                    return {
+                      comments: firstTen,
+                      commentCount: 11,
+                      commentsTruncated: true,
+                      reviewThreadsTruncated: false,
+                      reviewThreads: [
+                        {
+                          id: "review-thread",
+                          path: "src/index.ts",
+                          line: 1,
+                          side: "right" as const,
+                          isResolved: false,
+                          isOutdated: false,
+                          comments: firstTen,
+                          commentCount: 11,
+                          nextCommentsCursor: "after-10",
+                        },
+                      ],
+                      commits: [],
+                    };
+                  }),
+                threadComments: () =>
+                  Effect.sync(() => {
+                    pagesRead += 1;
+                    return { comments: [reply], nextCursor: null };
+                  }),
+              }),
+            ),
+          ),
+        );
+        yield* reactor.sweep;
+        yield* reactor.sweep;
+        assert.equal(pagesRead, 1);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages,
+          [],
+        );
+
+        const readsBeforeEdit = activityReads;
+        reply = { ...reply, body: "Edited feedback.", editedAt: "2026-10-02T12:00:01.000Z" };
+        // The edit keeps the reply count, so only the tail's reread deadline can surface it.
+        if (mode === "fingerprint becomes unavailable") fingerprintAvailable = false;
+        if (fingerprintAvailable) {
+          yield* TestClock.adjust("30 minutes");
+        } else {
+          // Frequent activity reads must not postpone the tail's own refresh deadline.
+          yield* TestClock.adjust("5 minutes");
+          yield* reactor.sweep;
+          assert.equal(pagesRead, 1);
+          yield* TestClock.adjust("5 minutes");
+        }
+        yield* reactor.sweep;
+        assert.equal(activityReads, readsBeforeEdit + (fingerprintAvailable ? 1 : 2));
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages.map((message) => message.notification?.summary),
+          ["#12: new comments"],
+        );
+        assert.include(messages[0]?.text ?? "", "Edited feedback.");
+        assert.notInclude(messages[0]?.text ?? "", "Original feedback.");
+        assert.equal(pagesRead, 2);
+        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.equal(watch?.remarksThrough, reply.editedAt);
+        assert.deepEqual(watch?.remarkIds, [reply.id]);
+
+        yield* reactor.sweep;
+        assert.equal(pagesRead, 2);
+        assert.lengthOf((yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages, 1);
+      }),
+  );
+
   it.effect.each([
     "single page",
     "paginated",
