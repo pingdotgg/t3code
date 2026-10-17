@@ -49,7 +49,7 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
       }
     } else if (char === "\\") {
       const next = input[index + 1];
-      if (next !== undefined && /\s/.test(next)) {
+      if (next !== undefined && /[\s'"]/.test(next)) {
         current += next;
         index++;
       } else {
