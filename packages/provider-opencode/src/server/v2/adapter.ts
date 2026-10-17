@@ -536,6 +536,11 @@ const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
+/** How long a fork waits for its source to stop running when it can't cut before that run. */
+const FORK_WAIT = "1 minute";
+const FORK_POLL = "1 second";
+export const OPENCODE_2_FORK_SOURCE_RUNNING =
+  "The thread you forked from is still running. Send your message again when it finishes.";
 /** Answers that mean the server refused a prompt; any other failure may have been accepted. */
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
   "InvalidRequestError",
@@ -603,6 +608,33 @@ const boundaryAfter = (
     later.map(promptOf).find((messageId) => messageId !== undefined && prompts.has(messageId)) ??
       null,
   );
+};
+
+/** History items that record input or a switch, never what an execution wrote. */
+const INPUT_ITEMS: ReadonlySet<string> = new Set([
+  "user",
+  "synthetic",
+  "system",
+  "skill",
+  "agent-switched",
+  "model-switched",
+  "location-switched",
+]);
+
+/**
+ * OpenCode runs one execution at a time and ends each with an `idle` item, so
+ * the newest item before the cut that is not input decides. A fork copies only
+ * the items before its cut and a run only adds items, so a fork before such a
+ * cut copies nothing the running execution still writes.
+ */
+const endedBefore = (
+  history: ReadonlyArray<{ readonly id: string; readonly type: string }>,
+  cut: string,
+) => {
+  const at = history.findIndex((item) => item.id === cut);
+  if (at < 0) return false;
+  const last = history.slice(at + 1).find((item) => !INPUT_ITEMS.has(item.type));
+  return last === undefined || last.type === "idle";
 };
 
 const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error);
@@ -2751,24 +2783,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * A rollback also waits for background subagents, whose reports wake the
      * session into the history it would cut.
      */
-    const ensureQuiet = Effect.fnUntraced(function* (
-      sessionId: string,
-      verb: "roll back" | "fork",
-    ) {
+    const isWorking = Effect.fnUntraced(function* (sessionId: string, verb: "roll back" | "fork") {
       const state = threads.get(sessionId);
       const busyHere =
         state !== undefined &&
         (state.active !== undefined ||
           busy.has(sessionId) ||
           (verb === "roll back" && hasBackground(state)));
-      const busyThere =
-        !busyHere &&
-        (state === undefined || state.unsettled) &&
-        sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
-      if (busyHere || busyThere) {
+      return (
+        busyHere ||
+        ((state === undefined || state.unsettled) &&
+          sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT))))
+      );
+    });
+
+    const ensureQuiet = Effect.fnUntraced(function* (sessionId: string) {
+      if (yield* isWorking(sessionId, "roll back")) {
         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
           driver: OPENCODE_PROVIDER,
-          detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
+          detail: `Cannot roll back OpenCode session ${sessionId} while it is still working`,
         });
       }
     });
@@ -2835,24 +2868,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    /**
-     * The list takes one type, so it reads all.
-     */
-    const userMessages = (sessionId: string) =>
+    /** Newest first. The list takes one type, so it reads all. */
+    const historyOf = (sessionId: string) =>
       OpenCode2Client.paginate(
         { sessionID: Session.ID.make(sessionId), limit: 100 },
         client.message.list,
-      ).pipe(
-        Stream.runCollect,
-        Effect.map(
-          (messages) =>
-            new Set(
-              messages.flatMap((message) =>
-                message.type === "user" || message.type === "synthetic" ? [String(message.id)] : [],
-              ),
-            ),
+      ).pipe(Stream.runCollect);
+
+    const cutPoints = (history: ReadonlyArray<{ readonly id: string; readonly type: string }>) =>
+      new Set(
+        history.flatMap((message) =>
+          message.type === "user" || message.type === "synthetic" ? [message.id] : [],
         ),
       );
+    const userMessages = (sessionId: string) => historyOf(sessionId).pipe(Effect.map(cutPoints));
 
     const snapshotOf = Effect.fnUntraced(function* (
       providerThread: OrchestrationV2ProviderThread,
@@ -3796,10 +3825,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           const { providerThread, target } = rollbackInput;
           const sessionId = yield* sessionIdOf(providerThread);
-          yield* ensureQuiet(sessionId, "roll back");
+          yield* ensureQuiet(sessionId);
           if (!threads.has(sessionId)) {
             yield* runtime.resumeThread({ providerThread });
-            yield* ensureQuiet(sessionId, "roll back");
+            yield* ensureQuiet(sessionId);
           }
           const boundary = yield* boundaryAfter(
             rollbackInput.providerThreadTurns,
@@ -3843,9 +3872,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           const source = forkInput.sourceProviderThread;
           const sourceId = yield* sessionIdOf(source);
-          // OpenCode forks whatever history the source has, so a fork taken
-          // while anything writes to it would copy a run half done.
-          yield* ensureQuiet(sourceId, "fork");
           const selected =
             forkInput.providerTurnId === undefined
               ? undefined
@@ -3856,15 +3882,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               detail: `OpenCode fork boundary turn ${forkInput.providerTurnId} was not found`,
             });
           }
+          const working = yield* isWorking(sourceId, "fork");
+          const history = selected === undefined ? [] : yield* historyOf(sourceId);
+          const cuts = cutPoints(history);
+          // The caller read the source's turns before any wait, so the turns
+          // run here since then count too, such as a continuation that ran
+          // while the fork waited. A running continuation's own copy already
+          // names the report it answers.
+          const loaded = threads.get(sourceId);
+          const turns = new Map(
+            [
+              ...(forkInput.sourceProviderTurns ?? []),
+              ...(loaded?.providerTurns.values() ?? []),
+              ...(loaded?.active === undefined ? [] : [loaded.active.providerTurn]),
+            ].map((turn) => [turn.id, turn] as const),
+          );
+          // An execution OpenCode started on its own has no turn yet; its
+          // continuation's would cut before its first report.
           const before =
             selected === undefined
               ? null
-              : yield* boundaryAfter(
-                  forkInput.sourceProviderTurns ?? [],
-                  source.id,
-                  selected,
-                  yield* userMessages(sourceId),
-                );
+              : ((yield* boundaryAfter([...turns.values()], source.id, selected, cuts)) ??
+                loaded?.wakes.find((wake) => wake.first !== undefined && cuts.has(wake.first))
+                  ?.first ??
+                null);
+          // OpenCode copies the history before the cut, or all of it without
+          // one. A source still running is forked only before a turn after the
+          // ones kept, once every execution before that turn has ended;
+          // otherwise the fork would copy a run half done, so it waits.
+          if (working && (before === null || !endedBefore(history, before))) return undefined;
           // A fork copies the source's history, model, location and rules; its
           const forked = yield* client.session.fork({
             sessionID: Session.ID.make(sourceId),
@@ -3906,7 +3952,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           return state.providerThread;
         }).pipe(
+          // The source's own next turn takes its gate between tries, and a try
+          // is never cut short: one cut during its request could leave a fork
+          // no thread has.
           exclusive(forkInput.sourceProviderThread),
+          Effect.repeat({
+            until: (forked) => forked !== undefined,
+            schedule: Schedule.spaced(FORK_POLL).pipe(Schedule.upTo({ duration: FORK_WAIT })),
+          }),
+          Effect.filterOrFail(
+            (forked): forked is OrchestrationV2ProviderThread => forked !== undefined,
+            () =>
+              new ProviderAdapter.ProviderAdapterForkThreadError({
+                driver,
+                providerThreadId: forkInput.sourceProviderThread.id,
+                cause: OPENCODE_2_FORK_SOURCE_RUNNING,
+              }),
+          ),
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause

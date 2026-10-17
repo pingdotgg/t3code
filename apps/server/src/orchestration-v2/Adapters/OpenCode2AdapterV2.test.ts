@@ -38,6 +38,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
+  OPENCODE_2_FORK_SOURCE_RUNNING,
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
   t3McpServerName,
@@ -4075,7 +4076,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses to fork a session while OpenCode runs a follow-up on it", () =>
+  it.effect("waits instead of forking while OpenCode runs a follow-up on the source", () =>
     Effect.gen(function* () {
       const offered = yield* Deferred.make<void>();
       const { runtime, thread } = yield* resumed([
@@ -4087,31 +4088,40 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       yield* Deferred.await(offered);
-      const refused = yield* runtime
+      const fork = yield* runtime
         .forkThread({
           sourceProviderThread: thread,
           targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
         })
-        .pipe(Effect.flip);
-      assert.equal(refused._tag, "ProviderAdapterProtocolError");
-    }).pipe(Effect.scoped),
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("5 seconds");
+      assert.isUndefined(fork.pollUnsafe());
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("asks the server before forking a session this runtime has not loaded", () =>
+  it.effect("waits for a run the server reports on a session this runtime has not loaded", () =>
     Effect.gen(function* () {
+      const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
       const runtime = yield* openCode2ReplayRuntime([
         ...opening,
         out("session.active"),
         reply("session.active", { data: { [SESSION]: { type: "running" } } }),
+        out("session.active"),
+        reply("session.active", { data: {} }),
+        out("session.fork", { sessionID: SESSION }),
+        replyData("session.fork", sessionInfo({ id: FORK })),
+        out("session.update", { sessionID: FORK, permissions: "<any>" }),
+        reply("session.update", null),
       ]);
-      const refused = yield* runtime
+      const fork = yield* runtime
         .forkThread({
           sourceProviderThread: providerThread(yield* DateTime.now),
           targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
         })
-        .pipe(Effect.flip);
-      assert.equal(refused._tag, "ProviderAdapterProtocolError");
-    }).pipe(Effect.scoped),
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 second");
+      assert.equal((yield* Fiber.join(fork)).nativeThreadRef?.nativeId, FORK);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("lets the next turn start when a rollback's stage never answers", () =>
@@ -4165,21 +4175,242 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("refuses to fork a session while its turn runs", () =>
+  it.effect("tells the user to send again when the source's turn outlasts a fork's wait", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
+        // The quiet stream is reopened after its silence limit.
+        ...reconnected({ [SESSION]: { type: "running" } }).slice(1),
+        ...openRequests([]),
       ]);
       yield* runtime.startTurn(turnInput(thread));
-      const refused = yield* runtime
+      const fork = yield* runtime
         .forkThread({
           sourceProviderThread: thread,
           targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
         })
-        .pipe(Effect.flip);
-      assert.equal(refused._tag, "ProviderAdapterProtocolError");
-    }).pipe(Effect.scoped),
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* TestClock.adjust("61 seconds");
+      const refused = yield* Fiber.join(fork);
+      assert.equal(refused._tag, "ProviderAdapterForkThreadError");
+      assert.equal(
+        refused._tag === "ProviderAdapterForkThreadError" ? refused.cause : undefined,
+        OPENCODE_2_FORK_SOURCE_RUNNING,
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  /** A source thread whose first turn ended and whose second runs now. */
+  const FIRST_PROMPT = `msg_t3_turn_${SESSION}:attempt:first`;
+  const RUNNING_PROMPT = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+  const sourceTurns = (thread: OrchestrationV2ProviderThread, now: DateTime.Utc) => {
+    const recorded = (key: string, ordinal: number, nativeId: string, running: boolean) => ({
+      id: ProviderTurnId.make(`provider-turn:${key}`),
+      providerThreadId: thread.id,
+      nodeId: NodeId.make(`node:${key}`),
+      runAttemptId: RunAttemptId.make(`attempt:${key}`),
+      nativeTurnRef: { driver: OPENCODE_PROVIDER, nativeId, strength: "weak" as const },
+      ordinal,
+      status: running ? ("running" as const) : ("completed" as const),
+      startedAt: now,
+      completedAt: running ? null : now,
+    });
+    return [
+      recorded("first", 1, FIRST_PROMPT, false),
+      recorded("second", 2, RUNNING_PROMPT, true),
+    ] as const;
+  };
+  const firstTurnItems = [
+    {
+      id: "msg_first_reply",
+      time: { created: 2, completed: 3 },
+      type: "assistant",
+      agent: "build",
+      model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+      content: [{ type: "text", text: "first answer" }],
+      finish: "stop",
+      cost: 0,
+      tokens: { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } },
+    },
+    { id: FIRST_PROMPT, time: { created: 1 }, text: "first", type: "user" },
+  ];
+  const idleItem = (id: string, created: number) => ({
+    id,
+    time: { created },
+    type: "idle",
+    outcome: "succeeded",
+  });
+
+  it.effect.each([
+    ["the turns read before it started list it", true],
+    ["only the adapter knows it", false],
+  ] as const)(
+    "forks a running thread at an earlier turn at once, before the running turn: %s",
+    ([, listed]) =>
+      Effect.gen(function* () {
+        const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+        const { runtime, thread } = yield* resumed([
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { id: RUNNING_PROMPT, time: { created: 5 }, text: "second", type: "user" },
+              idleItem("msg_first_idle", 4),
+              ...firstTurnItems,
+            ],
+            cursor: {},
+          }),
+          out("session.fork", { sessionID: SESSION, before: RUNNING_PROMPT }),
+          replyData("session.fork", sessionInfo({ id: FORK })),
+          out("session.update", { sessionID: FORK, permissions: "<any>" }),
+          reply("session.update", null),
+        ]);
+        yield* runtime.startTurn({ ...turnInput(thread), providerTurnOrdinal: 2 });
+        const [first, second] = sourceTurns(thread, yield* DateTime.now);
+        const forked = yield* runtime.forkThread({
+          sourceProviderThread: thread,
+          targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+          providerTurnId: first.id,
+          sourceProviderTurns: listed ? [first, second] : [first],
+        });
+        assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    ["before its continuation starts", false],
+    ["while its continuation runs", true],
+  ] as const)(
+    "forks at the latest turn before a report OpenCode is answering on its own, %s",
+    ([, continued]) =>
+      Effect.gen(function* () {
+        const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+        const offered =
+          yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+        const firstEnded = yield* Deferred.make<OrchestrationV2ProviderTurn>();
+        const firstPrompt = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+        // The report wakes the session into an execution with no turn yet.
+        const { runtime, thread } = yield* resumed([
+          ...backgroundLaunch(CHILD),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          event("session.inbox.enqueued", {
+            inboxID: "msg_report",
+            sessionID: SESSION,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: "report",
+                description: "Sleep",
+                metadata: {
+                  source: "subagent",
+                  childID: CHILD,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+          out("message.list", "<any>"),
+          reply("message.list", {
+            data: [
+              { ...firstTurnItems[0], id: "msg_followup", time: { created: 5 }, content: [] },
+              { id: "msg_report", time: { created: 4 }, text: "report", type: "synthetic" },
+              idleItem("msg_first_idle", 3),
+              { ...firstTurnItems[0], content: [] },
+              { id: firstPrompt, time: { created: 1 }, text: "hi", type: "user" },
+            ],
+            cursor: {},
+          }),
+          // The replay fails on a fork without this cut.
+          out("session.fork", { sessionID: SESSION, before: "msg_report" }),
+          replyData("session.fork", sessionInfo({ id: FORK })),
+          out("session.update", { sessionID: FORK, permissions: "<any>" }),
+          reply("session.update", null),
+        ]).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+            take: Effect.never,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status !== "running"
+              ? Deferred.succeed(firstEnded, event.providerTurn)
+              : Effect.void,
+          ),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(withLineage(thread));
+        const first = yield* Deferred.await(firstEnded);
+        const offer = yield* Deferred.await(offered);
+        if (continued) yield* runtime.startTurn(continuationTurn(thread, offer));
+        const forked = yield* runtime.forkThread({
+          sourceProviderThread: thread,
+          targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+          providerTurnId: first.id,
+          sourceProviderTurns: [first],
+        });
+        assert.equal(forked.nativeThreadRef?.nativeId, FORK);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("waits to fork before a running turn whose prompt came in during an earlier run", () =>
+    Effect.gen(function* () {
+      const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+      // The prompt reached the model while a run OpenCode started on its own
+      // was writing a step, so the history before it is not settled yet.
+      const steeredInto = {
+        ...firstTurnItems[0],
+        id: "msg_wake_reply",
+        time: { created: 4 },
+        content: [],
+      };
+      const history = (ended: boolean) => ({
+        data: [
+          ...(ended ? [idleItem("msg_second_idle", 6)] : []),
+          { id: RUNNING_PROMPT, time: { created: 5 }, text: "second", type: "user" },
+          ended ? { ...steeredInto, time: { created: 4, completed: 6 } } : steeredInto,
+          idleItem("msg_first_idle", 3),
+          ...firstTurnItems,
+        ],
+        cursor: {},
+      });
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        out("message.list", "<any>"),
+        reply("message.list", history(false)),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("message.list", "<any>"),
+        reply("message.list", history(true)),
+        out("session.fork", { sessionID: SESSION, before: RUNNING_PROMPT }),
+        replyData("session.fork", sessionInfo({ id: FORK })),
+        out("session.update", { sessionID: FORK, permissions: "<any>" }),
+        reply("session.update", null),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({ ...turnInput(thread), providerTurnOrdinal: 2 });
+      const [first, second] = sourceTurns(thread, yield* DateTime.now);
+      const fork = yield* runtime
+        .forkThread({
+          sourceProviderThread: thread,
+          targetThreadId: ThreadId.make("thread:opencode2-adapter:fork"),
+          providerTurnId: first.id,
+          sourceProviderTurns: [first, second],
+        })
+        .pipe(Effect.forkScoped);
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      yield* TestClock.adjust("1 second");
+      assert.equal((yield* Fiber.join(fork)).nativeThreadRef?.nativeId, FORK);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("moves a fork into its target thread's worktree before the first prompt", () =>
