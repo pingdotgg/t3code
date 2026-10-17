@@ -240,7 +240,6 @@ import { BrowserSettingsReadError, openUrlInPreview } from "../browser/openFileI
 import { resolveDiscoveredServerUrl } from "../browser/browserTargetResolver";
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
-import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -462,6 +461,7 @@ import {
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
+import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
@@ -487,7 +487,6 @@ import {
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
-  agentControlledBrowserCloseConfirmation,
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
@@ -1040,7 +1039,6 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
-  const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
@@ -4336,126 +4334,16 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };
   const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);
-  const cleanupRightPanelSurfaces = (surfaces: readonly RightPanelSurface[]) => {
-    if (!activeThreadRef) return;
-    for (const surface of surfaces) {
-      if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
-        void closePreviewSession({
-          closePreview,
-          snapshot: activePreviewState.sessions[surface.resourceId] ?? null,
-          tabId: surface.resourceId,
-          threadRef: activeThreadRef,
-        });
-      }
-      if (
-        surface.kind === "terminal" &&
-        readEnvironmentScope(activeThreadRef.environmentId, AuthTerminalOperateScope)
-      ) {
-        for (const terminalId of surface.terminalIds) {
-          storeCloseTerminal(activeThreadRef, terminalId);
-          terminalActions.closeTerminalSession(terminalId);
-        }
-      }
-    }
-  };
-  const closeAfterAgentBrowserConfirmation = (
-    surfaces: readonly RightPanelSurface[],
-    closeSurfaces: () => void,
-  ) => {
-    const message = agentControlledBrowserCloseConfirmation(
-      surfaces,
-      activePreviewState.desktopByTabId,
-    );
-    if (!message) {
-      closeSurfaces();
-      return;
-    }
-    const localApi = readLocalApi();
-    if (!localApi) return;
-    void localApi.dialogs.confirm(message, { variant: "destructive" }).then(
-      (confirmed) => {
-        if (confirmed) closeSurfaces();
-      },
-      () => undefined,
-    );
-  };
-  const syncActivePreviewSurface = () => {
-    if (!activeThreadRef) return;
-    const nextActiveSurface = selectActiveRightPanelSurface(
-      useRightPanelStore.getState().byThreadKey,
-      activeThreadRef,
-    );
-    if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
-      setActivePreviewTab(activeThreadRef, nextActiveSurface.resourceId);
-    }
-  };
-  const finishRightPanelSurfaceClose = (surfaces: readonly RightPanelSurface[]) => {
-    if (!activeThreadRef) return;
-    const store = useRightPanelStore.getState();
-    const activeId = selectThreadRightPanelState(
-      store.byThreadKey,
-      activeThreadRef,
-    ).activeSurfaceId;
-    const ordered = surfaces.toSorted(
-      (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
-    );
-    for (const surface of ordered) {
-      cleanupRightPanelSurfaces([surface]);
-      store.closeSurface(activeThreadRef, surface.id);
-    }
-    syncActivePreviewSurface();
-  };
-  const closeRightPanelSurface = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    const finishClose = () => finishRightPanelSurfaceClose([surface]);
-    if (surface.kind === "preview") {
-      closeAfterAgentBrowserConfirmation([surface], finishClose);
-      return;
-    }
-    if (
-      surface.kind !== "terminal" ||
-      !readEnvironmentScope(activeThreadRef.environmentId, AuthTerminalOperateScope)
-    ) {
-      finishClose();
-      return;
-    }
-    const activeLabel =
-      activeTerminalLabelsById.get(surface.activeTerminalId) ??
-      getTerminalLabel(surface.activeTerminalId);
-    const otherLabels = surface.terminalIds
-      .filter((terminalId) => terminalId !== surface.activeTerminalId)
-      .map(
-        (terminalId) => activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId),
-      );
-    void confirmTerminalClose([activeLabel, ...otherLabels]).then((confirmed) => {
-      if (confirmed) {
-        finishClose();
-      }
-    });
-  };
-  const closeRightPanelSurfaceStable = useStableCallback(closeRightPanelSurface);
-  const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    const surfaces = rightPanelState.surfaces.filter((entry) => entry.id !== surface.id);
-    const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-    closeAfterAgentBrowserConfirmation(surfaces, finishClose);
-  };
-  const closeOtherRightPanelSurfacesStable = useStableCallback(closeOtherRightPanelSurfaces);
-  const closeRightPanelSurfacesToRight = (surface: RightPanelSurface) => {
-    if (!activeThreadRef) return;
-    const surfaceIndex = rightPanelState.surfaces.findIndex((entry) => entry.id === surface.id);
-    if (surfaceIndex < 0) return;
-    const surfaces = rightPanelState.surfaces.slice(surfaceIndex + 1);
-    const finishClose = () => finishRightPanelSurfaceClose(surfaces);
-    closeAfterAgentBrowserConfirmation(surfaces, finishClose);
-  };
-  const closeRightPanelSurfacesToRightStable = useStableCallback(closeRightPanelSurfacesToRight);
-  const closeAllRightPanelSurfaces = () => {
-    if (!activeThreadRef) return;
-    const finishClose = () => finishRightPanelSurfaceClose(rightPanelState.surfaces);
-    closeAfterAgentBrowserConfirmation(rightPanelState.surfaces, finishClose);
-  };
-  const closeAllRightPanelSurfacesStable = useStableCallback(closeAllRightPanelSurfaces);
+  const {
+    closeSurface: closeRightPanelSurface,
+    closeOtherSurfaces: closeOtherRightPanelSurfacesStable,
+    closeSurfacesToRight: closeRightPanelSurfacesToRightStable,
+    closeAllSurfaces: closeAllRightPanelSurfacesStable,
+  } = useRightPanelSurfaceClose({
+    threadRef: activeThreadRef,
+    terminalLabelsById: activeTerminalLabelsById,
+  });
+  const closeRightPanelSurfaceStable = closeRightPanelSurface;
   const moveRightPanelSurface = (surfaceId: string, toIndex: number) => {
     if (activeThreadRef)
       useRightPanelStore.getState().moveSurface(activeThreadRef, surfaceId, toIndex);
