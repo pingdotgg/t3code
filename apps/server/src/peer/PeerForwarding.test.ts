@@ -35,6 +35,7 @@ import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
+import * as ThreadImportService from "../orchestration-v2/ThreadImportService.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
@@ -177,6 +178,7 @@ const serveBox = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) =>
       Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
       Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+      Layer.provide(Layer.mock(ThreadImportService.ThreadImportService)({})),
     ),
   );
 
@@ -238,14 +240,20 @@ const makeLaptop = Effect.gen(function* () {
           ),
       }),
     ),
-    Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-    Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
-    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-    Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-    Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
     Layer.provide(ServerSettings.layerTest()),
-    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-    Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+    // Services the toolkits declare that these calls never reach.
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+        Layer.mock(ThreadImportService.ThreadImportService)({}),
+      ),
+    ),
     Layer.fresh,
   );
   const here = yield* Layer.build(layerHere);
