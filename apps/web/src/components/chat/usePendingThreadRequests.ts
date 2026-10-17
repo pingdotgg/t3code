@@ -27,6 +27,7 @@ import {
   derivePendingUserInputProgress,
   projectPendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
+  threadContextsReferencedByAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
@@ -430,7 +431,10 @@ export function usePendingThreadRequests(input: {
         );
         store.addThreadContexts(
           composerDraftTarget,
-          store.getComposerDraft(questionTarget)?.threadContexts ?? [],
+          threadContextsReferencedByAnswer(
+            displacedAnswer ?? "",
+            store.getComposerDraft(questionTarget)?.threadContexts ?? [],
+          ),
           { appendReference: false },
         );
       }

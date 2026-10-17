@@ -2,6 +2,8 @@ import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts"
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
+import { collectInlineContextIds } from "./lib/composerContextReferences";
+
 export function projectPendingUserInputAnswer(
   answer: unknown,
   threadContexts: ReadonlyArray<ThreadContextRecord>,
@@ -12,6 +14,19 @@ export function projectPendingUserInputAnswer(
     const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
     return record ? formatThreadLink(record.threadId, reference.label) : reference.source;
   });
+}
+
+/**
+ * Thread records the answer text still references. Deleting a chip from an answer
+ * leaves its record in the question draft, so moving the answer elsewhere must not
+ * carry the records it no longer points at.
+ */
+export function threadContextsReferencedByAnswer(
+  answer: string,
+  threadContexts: ReadonlyArray<ThreadContextRecord>,
+): ThreadContextRecord[] {
+  const referencedIds = new Set(collectInlineContextIds(answer));
+  return threadContexts.filter((record) => referencedIds.has(record.contextId));
 }
 
 export interface PendingUserInputDraftAnswer {
