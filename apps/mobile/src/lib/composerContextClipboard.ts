@@ -65,14 +65,29 @@ export async function importComposerContextClipboard(
   existingCount: number,
   signal: AbortSignal,
   existingContextCount = 0,
+  destinationEnvironmentId?: EnvironmentId,
 ) {
   const fragment =
     decodeComposerContextFragment(input.fragment) ?? decodeComposerContextClipboardHtml(input.html);
   if (!fragment) return null;
   const selected = referencedComposerContext(input.text, { version: 1, records: fragment.records });
-  if (existingContextCount + (selected?.records.length ?? 0) > COMPOSER_CONTEXT_MAX_RECORDS)
+  // The agent can only read threads on its own server; a pasted foreign one is dropped and its
+  // reference stays visibly unavailable, like an attachment that failed to copy.
+  const skippedThreads: string[] = [];
+  const retained = (selected?.records ?? []).filter((record) => {
+    if (
+      record.kind !== "thread" ||
+      !("threadId" in record) ||
+      destinationEnvironmentId === undefined ||
+      record.environmentId === destinationEnvironmentId
+    )
+      return true;
+    skippedThreads.push(record.title);
+    return false;
+  });
+  if (existingContextCount + retained.length > COMPOSER_CONTEXT_MAX_RECORDS)
     throw new Error("Remove some context items from the draft before pasting more.");
-  const imported = reidentifyComposerContext(input.text, selected?.records ?? [], uuidv4);
+  const imported = reidentifyComposerContext(input.text, retained, uuidv4);
   const attachments: DraftComposerAttachment[] = [];
   const records: ComposerContextRecord[] = [];
   const failures: string[] = [];
@@ -99,6 +114,7 @@ export async function importComposerContextClipboard(
       context: { version: 1 as const, records },
       attachments,
       failures,
+      skippedThreads,
     };
   } catch (error) {
     await Promise.all(

@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_MAX_RECORDS,
+  ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 
 const mocks = vi.hoisted(() => ({
@@ -140,6 +145,55 @@ describe("mobile context clipboard imports", () => {
     });
     expect(mocks.execute).not.toHaveBeenCalled();
     expect(mocks.download).not.toHaveBeenCalled();
+  });
+
+  const thread = (id: string, environmentId: string) => ({
+    version: 1 as const,
+    kind: "thread" as const,
+    contextId: ComposerContextId.make(id),
+    label: id,
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(id),
+    title: id,
+  });
+
+  it("drops threads owned by another machine than the destination", async () => {
+    const result = await importComposerContextClipboard(
+      {
+        text: "[local](t3-context://v1/thread/local) [foreign](t3-context://v1/thread/foreign)",
+        fragment: encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("source") },
+          records: [thread("local", "destination"), thread("foreign", "source")],
+        })!,
+        html: "",
+      },
+      0,
+      new AbortController().signal,
+      // Only one slot is free: the dropped thread must not count against it.
+      COMPOSER_CONTEXT_MAX_RECORDS - 1,
+      EnvironmentId.make("destination"),
+    );
+    expect(result?.context.records.map((record) => record.label)).toEqual(["local"]);
+    expect(result?.skippedThreads).toEqual(["foreign"]);
+  });
+
+  it("keeps threads when the destination machine is unknown", async () => {
+    const result = await importComposerContextClipboard(
+      {
+        text: "[foreign](t3-context://v1/thread/foreign)",
+        fragment: encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("source") },
+          records: [thread("foreign", "source")],
+        })!,
+        html: "",
+      },
+      0,
+      new AbortController().signal,
+    );
+    expect(result?.context.records.map((record) => record.label)).toEqual(["foreign"]);
+    expect(result?.skippedThreads).toEqual([]);
   });
 
   it("refuses an overflowing context paste before copying files", async () => {
