@@ -1,0 +1,31 @@
+diff --git a/dist/components/ImageItem/ImageItem.android.js b/dist/components/ImageItem/ImageItem.android.js
+index 5fcaa9f9a7d893817fee89b85186ee3936118e69..3f7ed6e5f13f7f1424dac79b6b958ea261e42990 100644
+--- a/dist/components/ImageItem/ImageItem.android.js
++++ b/dist/components/ImageItem/ImageItem.android.js
+@@ -28,10 +28,10 @@ const ImageItem = ({ imageSrc, onZoom, onRequestClose, onLongPress, delayLongPre
+         onZoom(isZoomed);
+         if ((_a = imageContainer) === null || _a === void 0 ? void 0 : _a.current) {
+             imageContainer.current.setNativeProps({
+-                scrollEnabled: !isZoomed,
++                scrollEnabled: swipeToCloseEnabled && !isZoomed,
+             });
+         }
+-    }, [imageContainer]);
++    }, [imageContainer, swipeToCloseEnabled]);
+     const onLongPressHandler = useCallback(() => {
+         onLongPress(imageSrc);
+     }, [imageSrc, onLongPress]);
+diff --git a/dist/hooks/usePanResponder.js b/dist/hooks/usePanResponder.js
+index 99dcbc7efea4eba86a8bc2bad71dde73c8ebf1b4..b2c622bae0328ede83455bad8fe2662e5cf22f44 100644
+--- a/dist/hooks/usePanResponder.js
++++ b/dist/hooks/usePanResponder.js
+@@ -266,6 +266,9 @@ const usePanResponder = ({ initialScale, initialTranslate, onZoom, doubleTapToZo
+                 tmpTranslate = null;
+             }
+         },
++        // A gesture taken over mid-pinch must commit like a release, or pans stay
++        // gated on the pre-pinch scale while the image still shows zoomed.
++        onTerminate: () => handlers.onRelease(),
+     };
+     const panResponder = useMemo(() => createPanResponder(handlers), [handlers]);
+     return [panResponder.panHandlers, scaleValue, translateValue];
