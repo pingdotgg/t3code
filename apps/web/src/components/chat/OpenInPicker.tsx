@@ -208,6 +208,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  openInCwdIsFile = false,
   presentation = "toolbar",
   compact = false,
   enableShortcut = true,
@@ -217,6 +218,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  /** Set only when `openInCwd` is known to be a file; remote links need to tell it from a folder. */
+  openInCwdIsFile?: boolean;
   presentation?: "toolbar" | "menu";
   compact?: boolean;
   enableShortcut?: boolean;
@@ -249,6 +252,7 @@ export const OpenInPicker = memo(function OpenInPicker({
         editor,
         host: remote.host.host,
         absolutePath: openInCwd,
+        isFile: openInCwdIsFile,
       });
       if (url === undefined) return;
       // Only record hint-seen/preferred when the shell actually accepted

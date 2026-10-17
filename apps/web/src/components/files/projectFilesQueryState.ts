@@ -50,6 +50,11 @@ interface ProjectQueryState<A> {
 interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
   readonly readError: ProjectReadFileError | null;
   readonly isNotFile: boolean;
+  /**
+   * Only a read that returned contents or hit a binary file counts, so an
+   * unknown path is never taken for a file.
+   */
+  readonly isFile: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -265,9 +270,11 @@ export function useProjectFileQuery(
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
+  const fileData = canReadFiles ? (optimisticFile?.data ?? data) : null;
+  const isNotFile = readError?.failure === "path_not_file";
 
   return {
-    data: canReadFiles ? (optimisticFile?.data ?? data) : null,
+    data: fileData,
     error:
       !isQueryEnabled || fileAccess.isPending
         ? null
@@ -276,7 +283,10 @@ export function useProjectFileQuery(
           : (fileAccess.error ?? "This connection cannot read host files."),
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
-    isNotFile: readError?.failure === "path_not_file",
+    isNotFile,
+    // A refresh that fails keeps the last contents, so a path that became a
+    // folder is ruled out by the failure before the stale contents count.
+    isFile: !isNotFile && (fileData !== null || readError?.failure === "binary_file"),
     refresh,
   };
 }

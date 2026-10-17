@@ -1229,6 +1229,7 @@ export default function FilePreviewPanel({
               keybindings={keybindings}
               availableEditors={availableEditors}
               openInCwd={absolutePath}
+              openInCwdIsFile={file.isFile}
               compact
             />
           ) : null}

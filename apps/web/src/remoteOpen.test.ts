@@ -177,6 +177,50 @@ describe("buildRemoteOpenUrl", () => {
     );
   });
 
+  it("marks file targets so VS Code-family editors open a file, not a folder", () => {
+    expect(
+      buildRemoteOpenUrl({
+        editor: "vscode",
+        host: "sol",
+        absolutePath: "/home/theo/my repo/README.md",
+        isFile: true,
+      }),
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/home/theo/my%20repo/README.md:1:1");
+    expect(
+      buildRemoteOpenUrl({
+        editor: "cursor",
+        host: "sol",
+        absolutePath: "/tmp/x.md",
+        isFile: true,
+      }),
+    ).toBe("cursor://vscode-remote/ssh-remote+sol/tmp/x.md:1:1");
+  });
+
+  it("leaves folder and project targets unmarked", () => {
+    expect(
+      buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "/tmp/x", isFile: false }),
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/tmp/x");
+    expect(buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "/tmp/x" })).toBe(
+      "vscode://vscode-remote/ssh-remote+sol/tmp/x",
+    );
+  });
+
+  it("builds the same Zed and JetBrains links for file targets", () => {
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/tmp/x.md", isFile: true }),
+    ).toBe("zed://ssh/sol/tmp/x.md");
+    expect(
+      buildRemoteOpenUrl({
+        editor: "pycharm",
+        host: "sol",
+        absolutePath: "/tmp/x.md",
+        isFile: true,
+      }),
+    ).toBe(
+      "jetbrains://gateway/ssh/environment?h=sol&launchIde=true&ideHint=PY&projectHint=%2Ftmp%2Fx.md",
+    );
+  });
+
   it("returns undefined for editors without remote support", () => {
     expect(buildRemoteOpenUrl({ editor: "kiro", host: "sol", absolutePath: "/tmp/x" })).toBe(
       undefined,
