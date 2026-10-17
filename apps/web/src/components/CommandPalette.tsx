@@ -188,6 +188,7 @@ import {
   type CommandPaletteActionItem,
   type CommandPaletteOpenIntent,
   type CommandPaletteProject,
+  type CommandPaletteReturnContext,
   type CommandPaletteSubmenuItem,
   type CommandPaletteView,
   filterCommandPaletteGroups,
@@ -197,6 +198,8 @@ import {
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
+  createCommandPaletteSearchState,
+  reduceCommandPaletteSearchState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
@@ -507,6 +510,9 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   const openAddProject = () => dispatch({ _tag: "OpenAddProject" });
   const openNewThreadIn = () => dispatch({ _tag: "OpenNewThreadIn" });
   const clearOpenIntent = () => dispatch({ _tag: "ClearOpenIntent" });
+  const backToCommand = () => dispatch({ _tag: "BackToCommand" });
+  const openChildSearch = (mode: "files" | "content", context: CommandPaletteReturnContext) =>
+    dispatch({ _tag: "OpenChildSearch", mode, context });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
@@ -529,11 +535,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       if (event.isComposing || event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      toggleMode("command");
+      backToCommand();
     };
     window.addEventListener("keydown", onEscapeKeyDown, true);
     return () => window.removeEventListener("keydown", onEscapeKeyDown, true);
-  }, [state.mode, state.open, toggleMode]);
+  }, [backToCommand, state.mode, state.open]);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -639,7 +645,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         onOpenChange={(open, eventDetails) => {
           if (!open && eventDetails.reason === "escape-key" && state.mode !== "command") {
             eventDetails.cancel();
-            toggleMode("command");
+            backToCommand();
             return;
           }
           setOpen(open);
@@ -652,7 +658,8 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           mode={state.mode}
           openIntent={state.openIntent}
           setOpen={setOpen}
-          openOverlayMode={toggleMode}
+          openOverlayMode={openChildSearch}
+          initialContext={state.restoredSearch}
           clearOpenIntent={clearOpenIntent}
         />
       </CommandDialog>
@@ -664,7 +671,11 @@ function CommandPaletteDialog(props: {
   readonly mode: SearchOverlayMode;
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
-  readonly openOverlayMode: (mode: SearchOverlayMode) => void;
+  readonly openOverlayMode: (
+    mode: "files" | "content",
+    context: CommandPaletteReturnContext,
+  ) => void;
+  readonly initialContext: CommandPaletteReturnContext | undefined;
   readonly clearOpenIntent: () => void;
 }) {
   const composerHandleRef = useComposerHandleContext();
@@ -699,6 +710,7 @@ function CommandPaletteDialog(props: {
           openIntent={props.openIntent}
           setOpen={props.setOpen}
           openOverlayMode={props.openOverlayMode}
+          initialContext={props.initialContext}
           clearOpenIntent={props.clearOpenIntent}
         />
       )}
@@ -709,15 +721,26 @@ function CommandPaletteDialog(props: {
 function OpenCommandPaletteDialog(props: {
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
-  readonly openOverlayMode: (mode: SearchOverlayMode) => void;
+  readonly openOverlayMode: (
+    mode: "files" | "content",
+    context: CommandPaletteReturnContext,
+  ) => void;
+  readonly initialContext: CommandPaletteReturnContext | undefined;
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
-  const [query, setQuery] = useState(openIntent?.kind === "search" ? openIntent.query : "");
+  const [searchState, dispatchSearch] = useReducer(
+    reduceCommandPaletteSearchState,
+    createCommandPaletteSearchState(
+      props.initialContext?.query ?? (openIntent?.kind === "search" ? openIntent.query : ""),
+    ),
+  );
+  const { query, views: viewStack } = searchState;
+  const setQuery = (query: string) => dispatchSearch({ type: "query", query });
   const [linkedThreadSearch, setLinkedThreadSearch] = useState(
-    openIntent?.kind === "search" ? openIntent : null,
+    props.initialContext?.linkedThreadSearch ?? (openIntent?.kind === "search" ? openIntent : null),
   );
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
@@ -838,8 +861,7 @@ function OpenCommandPaletteDialog(props: {
       );
     }),
   );
-  const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
-  const currentView = viewStack.at(-1) ?? null;
+  const currentView = viewStack.at(-1)?.view ?? null;
   const environmentIds = environments
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
@@ -1304,17 +1326,9 @@ function OpenCommandPaletteDialog(props: {
   // highlight ref it writes.
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
     browseNavigation.invalidate();
-    setViewStack((previousViews) => [
-      ...previousViews,
-      {
-        addonIcon: view.addonIcon,
-        groups: view.groups,
-        ...(view.initialQuery ? { initialQuery: view.initialQuery } : {}),
-      },
-    ]);
+    dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
     setHighlightedItemValue(null);
-    setQuery(view.initialQuery ?? "");
   });
 
   function pushView(item: CommandPaletteSubmenuItem): void {
@@ -1334,9 +1348,8 @@ function OpenCommandPaletteDialog(props: {
     } else if (newProjectFlow?.sourcesEnvironmentId) {
       setAddProjectEnvironmentId(newProjectFlow.sourcesEnvironmentId);
     }
-    setViewStack((previousViews) => previousViews.slice(0, -1));
+    dispatchSearch({ type: "back" });
     setHighlightedItemValue(null);
-    setQuery("");
   }
 
   function handleQueryChange(nextQuery: string): void {
@@ -1807,7 +1820,7 @@ function OpenCommandPaletteDialog(props: {
     keepOpen: true,
     shortcutCommand: "filePicker.toggle",
     run: async () => {
-      openOverlayMode("files");
+      openOverlayMode("files", { query, linkedThreadSearch });
     },
   });
 
@@ -1820,7 +1833,7 @@ function OpenCommandPaletteDialog(props: {
     keepOpen: true,
     shortcutCommand: "projectSearch.toggle",
     run: async () => {
-      openOverlayMode("content");
+      openOverlayMode("content", { query, linkedThreadSearch });
     },
   });
 
@@ -1974,9 +1987,8 @@ function OpenCommandPaletteDialog(props: {
         setIsRemoteProjectLookingUp(false);
         setAddProjectCloneFlow(null);
         setNewProjectFlow(null);
-        setViewStack([]);
+        dispatchSearch({ type: "reset", query: intent.query });
         setLinkedThreadSearch(intent);
-        setQuery(intent.query);
         clearOpenIntent();
         return;
       case "add-project":
@@ -1988,8 +2000,7 @@ function OpenCommandPaletteDialog(props: {
         browseNavigation.invalidate();
         setAddProjectCloneFlow(null);
         setNewProjectFlow(null);
-        setViewStack([]);
-        setQuery("");
+        dispatchSearch({ type: "reset" });
         pushPaletteView({
           addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
           groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
@@ -2002,7 +2013,7 @@ function OpenCommandPaletteDialog(props: {
         setIsRemoteProjectLookingUp(false);
         setAddProjectCloneFlow(null);
         setNewProjectFlow(null);
-        setViewStack([]);
+        dispatchSearch({ type: "reset" });
         pushPaletteView({
           addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
           groups: [{ value: "themes", label: "Change theme", items: [] }],
@@ -2628,7 +2639,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     if (sourcesEnvironmentId !== null) {
-      setViewStack((previousViews) => previousViews.slice(0, -1));
+      dispatchSearch({ type: "back" });
     }
     popView();
     startAddProjectSourceSelection(environmentId);
