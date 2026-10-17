@@ -252,6 +252,40 @@ describe("getCachedNativeReviewDiffData", () => {
   });
 });
 
+describe("buildNativeReviewDiffData row bound", () => {
+  function singleFilePatch(lineCount: number) {
+    return [
+      "diff --git a/huge.ts b/huge.ts",
+      "--- a/huge.ts",
+      "+++ b/huge.ts",
+      `@@ -0,0 +1,${lineCount} @@`,
+      ...Array.from({ length: lineCount }, (_, index) => `+const value${index} = ${index};`),
+    ].join("\n");
+  }
+
+  it("sends a bounded excerpt of a huge file while keeping its full counts", () => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(singleFilePatch(200_000), "native-review-row-bound"),
+    );
+
+    expect(data.rows.length).toBeLessThanOrEqual(2_002);
+    expect(data.rows[0]).toMatchObject({ kind: "file", additions: 200_000, deletions: 0 });
+    expect(data.rows.at(-1)).toMatchObject({
+      kind: "notice",
+      text: "This diff is too large to show in full; counts include all changes.",
+    });
+  });
+
+  it("sends every row of an ordinary file", () => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(singleFilePatch(1_000), "native-review-row-bound-small"),
+    );
+
+    expect(data.rows.filter((row) => row.kind === "line")).toHaveLength(1_000);
+    expect(data.rows.some((row) => row.kind === "notice")).toBe(false);
+  });
+});
+
 describe("createNativeReviewDiffTheme", () => {
   it("serializes every native color as cross-platform opaque hex", () => {
     for (const themeId of MOBILE_THEME_IDS) {

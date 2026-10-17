@@ -19,6 +19,13 @@ import type { ReviewInlineComment } from "./reviewCommentSelection";
 
 const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
 const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
+/**
+ * Every row is serialized for setRowsJson and decoded on the native heap, so one
+ * huge file (a 200k-line rebase diff) can exhaust Android's Java heap. Files past
+ * this bound show an excerpt; the header still carries the full counts.
+ */
+const NATIVE_REVIEW_MAX_FILE_ROWS = 2_000;
+const TRUNCATED_FILE_NOTICE = "This diff is too large to show in full; counts include all changes.";
 const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})([\da-f]{2})?$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
@@ -435,9 +442,13 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
     },
   ];
 
-  const lineRows = file.rows.filter((row): row is ReviewRenderableLineRow => row.kind === "line");
+  const sourceRows =
+    file.rows.length > NATIVE_REVIEW_MAX_FILE_ROWS
+      ? file.rows.slice(0, NATIVE_REVIEW_MAX_FILE_ROWS)
+      : file.rows;
+  const lineRows = sourceRows.filter((row): row is ReviewRenderableLineRow => row.kind === "line");
   let lineIndex = 0;
-  file.rows.forEach((row, rowIndex) => {
+  sourceRows.forEach((row, rowIndex) => {
     if (row.kind === "hunk") {
       rows.push({
         kind: "hunk",
@@ -459,6 +470,9 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
     lineIndex += 1;
   });
 
+  if (sourceRows !== file.rows) {
+    rows.push(createNoticeRow(file.id, "truncated", TRUNCATED_FILE_NOTICE));
+  }
   rows.push(...noticeRowsForFile(file));
   const prepared: PreparedNativeReviewFileRows = {
     fileId: file.id,
