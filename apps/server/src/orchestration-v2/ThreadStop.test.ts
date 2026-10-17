@@ -1,9 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  ContextTransferId,
   EventId,
   MessageId,
   NodeId,
+  type OrchestrationV2DomainEvent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -156,6 +158,267 @@ const threadState = (threadId: ThreadId) =>
         .map((link) => link.number),
     };
   });
+
+it.effect.each([
+  "idle",
+  "archived",
+  "missing",
+  "running",
+  "queued",
+  "waiting",
+  "correlated",
+  "provider-active",
+  "roster",
+  "background",
+  "question",
+  "restart",
+] as const)(
+  "Stop clears an orphaned follow-up only when its child is finished (%s)",
+  (childState) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make(`thread:orphan-parent:${childState}`);
+      yield* createWatchingThread(parentThreadId, 1);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, "original task");
+      const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+      const child = yield* orchestrator.getThreadProjection(childThreadId);
+      const original = parent.subagents[0]!;
+      const originalItem = parent.turnItems.find((item) => item.type === "subagent")!;
+      const originalNode = parent.nodes.find((node) => node.id === original.id)!;
+      const taskId = NodeId.make(`node:orphan-followup:${childState}`);
+      const itemId = TurnItemId.make(`item:orphan-followup:${childState}`);
+      const followupChildThreadId =
+        childState === "missing" ? ThreadId.make("thread:missing-child") : childThreadId;
+      const now = yield* DateTime.now;
+      let sequence = 0;
+      const apply = (event: Omit<OrchestrationV2DomainEvent, "id">) =>
+        projections.apply({
+          ...event,
+          id: EventId.make(`event:orphan:${childState}:${sequence++}`),
+        } as OrchestrationV2DomainEvent);
+      yield* apply({
+        type: "subagent.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          status: "completed",
+          result: "Original result",
+          completedAt: now,
+          completionDelivery: { state: "acknowledged", observedByRunId: null },
+        },
+      });
+      yield* apply({
+        type: "context-transfer.created",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: {
+          ...child.contextTransfers[0]!,
+          id: ContextTransferId.make(`transfer:original-result:${childState}`),
+          type: "subagent_result",
+          sourceThreadId: childThreadId,
+          targetThreadId: parentThreadId,
+          sourcePoint: { threadId: childThreadId, runId: child.runs[0]!.id },
+          targetRunId: parent.runs[0]!.id,
+        },
+      });
+      yield* apply({
+        type: "node.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...originalNode, status: "completed", completedAt: now },
+      });
+      yield* apply({
+        type: "turn-item.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...originalItem, status: "completed", completedAt: now },
+      });
+      yield* apply({
+        type: "subagent.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: taskId,
+          childThreadId: followupChildThreadId,
+          status: "running",
+          result: null,
+          completedAt: null,
+        },
+      });
+      yield* apply({
+        type: "node.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...originalNode, id: taskId, status: "running" },
+      });
+      assert.equal(originalItem.type, "subagent");
+      if (originalItem.type !== "subagent") return;
+      yield* apply({
+        type: "turn-item.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: {
+          ...originalItem,
+          id: itemId,
+          nodeId: taskId,
+          subagentId: taskId,
+          childThreadId: followupChildThreadId,
+          status: "running",
+        },
+      });
+      const runAtStart = child.runs[0]!;
+      const childRunStatus =
+        childState === "running" || childState === "queued" || childState === "waiting"
+          ? childState
+          : "completed";
+      yield* apply({
+        type: "run.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: { ...runAtStart, status: "running", delegatedTaskId: taskId },
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.delegatedTaskId,
+        taskId,
+      );
+      // A terminal write based on the attempt's start snapshot loses a later steer binding.
+      yield* apply({
+        type: "run.updated",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: {
+          ...runAtStart,
+          status: childRunStatus,
+          completedAt: childRunStatus === "completed" ? now : null,
+          ...(childState === "correlated" ? { delegatedTaskId: taskId } : {}),
+        },
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.delegatedTaskId,
+        childState === "correlated" ? taskId : undefined,
+      );
+      if (childState === "provider-active" || childState === "roster") {
+        yield* apply({
+          type: "provider-thread.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            ...child.providerThreads[0]!,
+            status: childState === "provider-active" ? "active" : "idle",
+            pendingBackgroundTasks:
+              childState === "roster" ? [{ taskId: "background-task", kind: "command" }] : [],
+          },
+        });
+      }
+      if (childState === "background") {
+        yield* apply({
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            ...originalItem,
+            id: TurnItemId.make("item:child-background"),
+            threadId: childThreadId,
+            runId: runAtStart.id,
+            nodeId: runAtStart.rootNodeId,
+            type: "command_execution",
+            status: "running",
+            input: "test background work",
+          },
+        });
+      }
+      if (childState === "question") {
+        yield* apply({
+          type: "runtime-request.updated",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make("request:child-question"),
+            nodeId: runAtStart.rootNodeId!,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+      }
+      if (childState === "restart") {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        yield* outbox.enqueue([
+          {
+            id: `effect:restart-continuation:${runAtStart.id}`,
+            commandId: CommandId.make("command:child-restart"),
+            threadId: childThreadId,
+            request: { type: "provider-runtime.continue", sourceRunId: runAtStart.id },
+          },
+        ]);
+      }
+      yield* apply({
+        type: "run.updated",
+        threadId: parentThreadId,
+        occurredAt: now,
+        payload: { ...parent.runs[0]!, status: "completed", completedAt: now },
+      });
+      if (childState === "archived") {
+        yield* apply({
+          type: "thread.archived",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: { ...child.thread, archivedAt: now },
+        });
+      }
+      const childBeforeStop = yield* orchestrator.getThreadProjection(childThreadId);
+      assert.lengthOf(
+        ((yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? []).filter(
+          (task) => task.kind === "subagent",
+        ),
+        1,
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make(`stop-orphan:${childState}`),
+        threadId: parentThreadId,
+      });
+      const after = yield* orchestrator.getThreadProjection(parentThreadId);
+      assert.isEmpty((after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined));
+      const expected = childState === "idle" || childState === "archived" ? "cancelled" : "running";
+      assert.equal(after.subagents.find((task) => task.id === taskId)?.status, expected);
+      assert.equal(after.nodes.find((node) => node.id === taskId)?.status, expected);
+      assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
+      assert.equal(
+        after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+        "disposed",
+      );
+      assert.equal(
+        after.subagents.find((task) => task.id === original.id)?.result,
+        "Original result",
+      );
+      assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childBeforeStop);
+      if (expected === "cancelled") {
+        assert.lengthOf(
+          (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? [],
+          0,
+        );
+        yield* orchestrator.recoverDelegatedTasks;
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(`stop-orphan-again:${childState}`),
+          threadId: parentThreadId,
+        });
+        const repeated = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.equal(repeated.subagents.find((task) => task.id === taskId)?.status, "cancelled");
+        assert.deepEqual(repeated.messages, after.messages);
+        assert.deepEqual(repeated.contextTransfers, after.contextTransfers);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("Stop ends watches, holds queues, and stops the delegated tasks under the thread", () =>
   Effect.gen(function* () {
