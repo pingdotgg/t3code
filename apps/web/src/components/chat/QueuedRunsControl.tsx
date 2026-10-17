@@ -49,27 +49,15 @@ export interface QueuedRunsControlHandle {
 
 type ThreadQueueProjection = Parameters<typeof deriveThreadQueueWorkflowState>[0];
 
-// Separate hooks so these stay cached across the useAssetUrls call, which keys on
-// the resources array.
-function useQueueWorkflow(projection: ThreadQueueProjection | undefined) {
-  "use memo";
-  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
-  const queuedImageAttachmentIds: string[] = [];
-  for (const { attachments } of workflow?.queuedRuns ?? []) {
-    for (const attachment of attachments) {
-      if (attachment.type === "image") queuedImageAttachmentIds.push(attachment.id);
-    }
-  }
-  const queuedImageAttachmentResources = queuedImageAttachmentIds.map((attachmentId) => ({
-    _tag: "attachment" as const,
-    attachmentId,
-  }));
-  return { workflow, queuedImageAttachmentIds, queuedImageAttachmentResources };
-}
-
-function useAcknowledgedMessageIds(projection: ThreadQueueProjection | undefined) {
-  "use memo";
-  return new Set((projection?.messages ?? []).map((message) => message.id));
+function queuedImageResources(projection: ThreadQueueProjection | undefined) {
+  if (!projection) return [];
+  return deriveThreadQueueWorkflowState(projection).queuedRuns.flatMap(({ attachments }) =>
+    attachments.flatMap((attachment) =>
+      attachment.type === "image"
+        ? [{ _tag: "attachment" as const, attachmentId: attachment.id }]
+        : [],
+    ),
+  );
 }
 
 export function QueuedRunsControl({
@@ -104,25 +92,26 @@ export function QueuedRunsControl({
   // Drags must start from the grip, not from an accidental text-drag on the
   // row. The grip arms its run id on pointerdown; dragstart verifies it.
   const dragArmedRunIdRef = useRef<RunId | null>(null);
-  const { workflow, queuedImageAttachmentIds, queuedImageAttachmentResources } =
-    useQueueWorkflow(projection);
-  const queued = workflow?.queuedRuns ?? [];
-  const activeRun = workflow?.activeRun ?? null;
-  const canReorder = workflow?.canReorder === true;
+  const steerInFlightRef = useRef(false);
+  // Once the projection holds the message the optimistic copy is stale no
+  // matter what happened to its run — keying on still-queued runs alone would
+  // resurrect a phantom "pending" row after the run is cancelled or started.
+  const acknowledgedMessageIds = new Set((projection?.messages ?? []).map((message) => message.id));
+  const queuedImageAttachmentResources = queuedImageResources(projection);
   const queuedImageAttachmentUrls = useAssetUrls(
     props.environmentId,
     queuedImageAttachmentResources,
   );
+  const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
+  const queued = workflow?.queuedRuns ?? [];
+  const activeRun = workflow?.activeRun ?? null;
+  const canReorder = workflow?.canReorder === true;
   const queuedImageUrlById = new Map(
-    queuedImageAttachmentIds.flatMap((attachmentId, index) => {
-      const url = queuedImageAttachmentUrls[index];
-      return url ? [[attachmentId, url] as const] : [];
+    queuedImageAttachmentUrls.flatMap((url, index) => {
+      const resource = queuedImageAttachmentResources[index];
+      return url && resource ? [[resource.attachmentId, url] as const] : [];
     }),
   );
-  // Once the projection holds the message the optimistic copy is stale no
-  // matter what happened to its run — keying on still-queued runs alone would
-  // resurrect a phantom "pending" row after the run is cancelled or started.
-  const acknowledgedMessageIds = useAcknowledgedMessageIds(projection);
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
@@ -180,7 +169,6 @@ export function QueuedRunsControl({
     void move(runId, queued[insertIndex]?.run.id ?? null);
   };
 
-  const steerInFlightRef = useRef(false);
   const steer = async (queuedRunId: RunId) => {
     if (activeRun === null || !workflow?.canPromoteToSteer || steerInFlightRef.current) return;
     steerInFlightRef.current = true;
