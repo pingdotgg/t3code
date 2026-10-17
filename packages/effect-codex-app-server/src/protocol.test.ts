@@ -1,10 +1,13 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -21,6 +24,10 @@ const encoder = new TextEncoder();
 const encodeJsonl = (value: unknown) => encoder.encode(`${encodeUnknownJsonString(value)}\n`);
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
+const requestFailure = {
+  onFailure: (error: CodexError.CodexAppServerError) => error,
+  onSuccess: () => assert.fail("Expected the request to fail"),
+};
 const decodeAccountTokenUsageResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/usage/read"],
 );
@@ -802,6 +809,58 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
       assert.equal(error.message, "Codex App Server input stream ended.");
       assert.equal("cause" in error, false);
+    }),
+  );
+
+  it.effect("terminates when the process exits while its output stays open", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const exited = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        exited: Deferred.await(exited),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+      });
+      const answered = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      const unanswered = yield* transport.request("thread/start", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* TestClock.adjust("1 minute");
+
+      // A reply written just before the exit still arrives.
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1 });
+      yield* Deferred.succeed(exited, exitError);
+      yield* Queue.offer(input, encodeJsonl({ id: 1, result: {} }));
+      assert.deepEqual(yield* Fiber.join(answered), {});
+      yield* TestClock.adjust("1 second");
+      assert.isFalse(yield* Deferred.isDone(termination));
+
+      yield* TestClock.adjust("1 second");
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
+      assert.strictEqual(
+        yield* Fiber.join(unanswered).pipe(Effect.match(requestFailure)),
+        exitError,
+      );
+    }),
+  );
+
+  it.effect("fails requests still waiting for a reply when the client closes", () =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const clientScope = yield* Scope.make();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio }).pipe(
+        Scope.provide(clientScope),
+      );
+      const response = yield* transport.request("thread/start", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Scope.close(clientScope, Exit.void);
+
+      assert.instanceOf(
+        yield* Fiber.join(response).pipe(Effect.match(requestFailure)),
+        CodexError.CodexAppServerInputStreamEndedError,
+      );
     }),
   );
 });

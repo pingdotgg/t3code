@@ -16,6 +16,7 @@ const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
+const EXITED_OUTPUT_GRACE = "2 seconds";
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -37,6 +38,11 @@ export interface CodexAppServerIncomingRequest {
 export interface CodexAppServerPatchedProtocolOptions {
   readonly stdio: Stdio.Stdio;
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
+  /**
+   * Completes when the app-server process exits. Its stdout can stay open
+   * after that, while a command it started still holds the pipe.
+   */
+  readonly exited?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: CodexAppServerProtocolLogEvent) => Effect.Effect<void, never>;
@@ -446,6 +452,28 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     );
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
+
+    if (options.exited) {
+      yield* options.exited.pipe(
+        // Output written just before exit still arrives; the pipe normally
+        // closes with the process and terminates the transport first.
+        Effect.tap(() => Effect.sleep(EXITED_OUTPUT_GRACE)),
+        Effect.flatMap((error) => handleTermination(() => Effect.succeed(error))),
+        Effect.forkScoped,
+      );
+    }
+
+    // Closing the client fails the requests still waiting on a reply, which
+    // would otherwise wait forever.
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        const closed = new CodexError.CodexAppServerInputStreamEndedError({});
+        yield* Ref.update(terminationFailure, (current) =>
+          Option.isSome(current) ? current : Option.some(closed),
+        );
+        yield* failAllPending(closed);
+      }),
+    );
 
     const request = (method: string, payload?: unknown) =>
       Effect.gen(function* () {
