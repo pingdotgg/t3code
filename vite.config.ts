@@ -327,6 +327,7 @@ export default defineConfig({
         // Add a file once it compiles cleanly. ChatView is being split toward this list.
         files: [
           "apps/web/src/components/PersistentThreadTerminals.tsx",
+          "apps/web/src/components/chat/usePendingThreadRequests.ts",
           "apps/web/src/components/terminal/**",
         ],
         rules: {
