@@ -64,4 +64,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/media/MediaVideoPlayer.tsx",
   "apps/web/src/components/media/MediaActions.tsx",
   "apps/web/src/components/device/DeviceSetup.tsx",
+  "apps/web/src/components/device/DevicePanel.tsx",
 ] as const;
