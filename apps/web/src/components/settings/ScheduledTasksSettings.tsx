@@ -51,6 +51,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
@@ -108,7 +109,6 @@ import {
   SettingsRow,
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  useRelativeTimeTick,
 } from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
@@ -202,11 +202,11 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
  * instant — render "in 5m" style labels for upcoming runs instead of a
  * misleading "just now".
  */
-export function relativeLabel(value: string | null): string {
+function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
-  const diffMs = new Date(value).getTime() - Date.now();
+  const diffMs = new Date(value).getTime() - nowMs;
   if (diffMs <= 0) {
-    const relative = formatRelativeTime(value);
+    const relative = formatRelativeTime(value, nowMs);
     if (!relative) return "Not scheduled";
     return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
   }
@@ -216,6 +216,13 @@ export function relativeLabel(value: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `in ${hours}h`;
   return `in ${Math.round(hours / 24)}d`;
+}
+
+// The clock is the label's own minute tick: the React Compiler caches a
+// `Date.now()` read in render on the timestamp alone.
+export function ScheduledRelativeLabel(props: { value: string | null }) {
+  const nowMinute = useNowMinute();
+  return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));
 }
 
 const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
@@ -372,7 +379,6 @@ function ScheduledTaskEnvironmentList({
       onEdit(environmentId, linkedTask);
     }
   }, [environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
 
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
@@ -504,7 +510,6 @@ function ScheduledTaskEnvironmentSection({
       onEdit(environment.environmentId, linkedTask);
     }
   }, [environment.environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
   return (
     <SettingsSection
       title={environment.label}
@@ -607,13 +612,17 @@ function ScheduledTaskRow({
         <div className="flex flex-wrap items-center gap-2">
           <span>
             {scheduleLabel(task.schedule)} ·{" "}
-            {!task.enabled
-              ? "Paused"
-              : isWebhook
-                ? "Listening"
-                : task.nextRunAt
-                  ? `Next run ${relativeLabel(task.nextRunAt)}`
-                  : "Not scheduled"}
+            {!task.enabled ? (
+              "Paused"
+            ) : isWebhook ? (
+              "Listening"
+            ) : task.nextRunAt ? (
+              <>
+                Next run <ScheduledRelativeLabel value={task.nextRunAt} />
+              </>
+            ) : (
+              "Not scheduled"
+            )}
           </span>
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
@@ -730,7 +739,7 @@ function WebhookDeliveriesDialog({
                   {DELIVERY_OUTCOME_LABELS[selected.outcome]}
                 </Badge>
                 <span>
-                  {selected.method} · {relativeLabel(selected.receivedAt)}
+                  {selected.method} · <ScheduledRelativeLabel value={selected.receivedAt} />
                 </span>
                 {selected.signatureVerified ? (
                   <span className="text-muted-foreground">Signature verified</span>
@@ -777,7 +786,7 @@ function WebhookDeliveriesDialog({
                     </Badge>
                     <span>{delivery.method}</span>
                     <span className="text-muted-foreground">
-                      {relativeLabel(delivery.receivedAt)}
+                      <ScheduledRelativeLabel value={delivery.receivedAt} />
                     </span>
                     {delivery.missingFields.length > 0 ? (
                       <span className="text-muted-foreground">

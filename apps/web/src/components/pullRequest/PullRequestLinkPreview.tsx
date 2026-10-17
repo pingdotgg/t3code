@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
@@ -139,7 +139,7 @@ export function PullRequestLinkPreview({
                   <span className="min-w-0 truncate">{authorLabel}</span>
                   <span aria-hidden>·</span>
                   <span className="shrink-0">
-                    opened {formatRelativeTimeLabel(detail.createdAt)}
+                    opened <RelativeTime timestamp={detail.createdAt} />
                   </span>
                 </div>
               </div>

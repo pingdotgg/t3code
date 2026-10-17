@@ -13,7 +13,7 @@ import type { ReactNode } from "react";
 
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button, InlineButton } from "../ui/button";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -203,7 +203,9 @@ export function PullRequestDetailGhost({
               }
               updated={
                 seed ? (
-                  <span>updated {formatRelativeTimeLabel(seed.updatedAt)}</span>
+                  <span>
+                    updated <RelativeTime timestamp={seed.updatedAt} />
+                  </span>
                 ) : (
                   <GhostBar className="h-3 w-16" />
                 )

@@ -6,7 +6,7 @@ import type {
 import type { ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -96,7 +96,7 @@ export function PullRequestRowLines({
         {meta}
         {updatedAt ? (
           <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">
-            {formatRelativeTimeLabel(updatedAt)}
+            <RelativeTime timestamp={updatedAt} />
           </span>
         ) : null}
       </span>

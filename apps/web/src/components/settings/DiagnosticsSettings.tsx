@@ -23,7 +23,6 @@ import * as Option from "effect/Option";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useOpenInPreferredEditor } from "../../editorPreferences";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useRelativeTimeState } from "../../hooks/useRelativeTimeState";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -64,13 +63,10 @@ function formatBytes(value: number): string {
   return `${next.toFixed(next >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
-function formatRelative(value: DateTime.Utc | null): string {
-  if (!value) return "No trace records";
-  return formatRelativeTimeLabel(DateTime.formatIso(value));
-}
-
-function formatRelativeNoWrap(value: DateTime.Utc | null): string {
-  return formatRelative(value).replaceAll(" ", "\u00a0");
+function RelativeTimeNoWrap(props: { value: DateTime.Utc }) {
+  const relative = useRelativeTimeState(DateTime.formatIso(props.value));
+  if (relative.status !== "relative") return null;
+  return relative.suffix ? `${relative.value}\u00a0${relative.suffix}` : relative.value;
 }
 
 function shortenTraceId(traceId: string): string {
@@ -1182,7 +1178,7 @@ export function DiagnosticsSettingsPanel() {
                   {formatDuration(failure.durationMs)}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pr-5">
-                  {formatRelativeNoWrap(failure.endedAt)}
+                  <RelativeTimeNoWrap value={failure.endedAt} />
                 </td>
               </tr>
             ))}
@@ -1210,7 +1206,7 @@ export function DiagnosticsSettingsPanel() {
                   <ExpandableText text={failure.cause} />
                 </td>
                 <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pr-5">
-                  {formatRelativeNoWrap(failure.lastSeenAt)}
+                  <RelativeTimeNoWrap value={failure.lastSeenAt} />
                 </td>
               </tr>
             ))}
@@ -1238,7 +1234,7 @@ export function DiagnosticsSettingsPanel() {
                   {formatDuration(span.durationMs)}
                 </td>
                 <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground">
-                  {formatRelativeNoWrap(span.endedAt)}
+                  <RelativeTimeNoWrap value={span.endedAt} />
                 </td>
                 <td className="min-w-0 whitespace-nowrap px-4 py-3 align-top text-muted-foreground last:sm:pr-5">
                   <TraceIdCell traceId={span.traceId} />
@@ -1284,7 +1280,7 @@ export function DiagnosticsSettingsPanel() {
                     className="hover:bg-muted/15"
                   >
                     <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground sm:pl-5">
-                      {formatRelativeNoWrap(event.seenAt)}
+                      <RelativeTimeNoWrap value={event.seenAt} />
                     </td>
                     <td className="px-4 py-3 align-top">
                       <span className="inline-flex rounded bg-muted px-1.5 py-0.5 font-mono text-2xs font-medium uppercase text-foreground/80">

@@ -287,6 +287,8 @@ describe("relative time boundaries", () => {
     expect(msUntilRelativeTimeChange("2026-04-05T00:00:00.000Z", nowMs)).toBe(12 * 3_600_000);
     // A future timestamp reads "just now" until a minute after it.
     expect(msUntilRelativeTimeChange("2026-04-07T12:00:10.000Z", nowMs)).toBe(70_000);
+    // A far-future timestamp stays within setTimeout's range.
+    expect(msUntilRelativeTimeChange("2026-06-01T00:00:00.000Z", nowMs)).toBe(86_400_000);
   });
 
   it("keeps the elapsed snapshot stable while the label is unchanged", () => {

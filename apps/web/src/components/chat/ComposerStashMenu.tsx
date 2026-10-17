@@ -2,7 +2,7 @@ import { BookmarkIcon, FileIcon, FileTextIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { RelativeTime } from "../RelativeTime";
 import { cn } from "~/lib/utils";
 import { type PromptStashEntry } from "../../promptStashStore";
 import { ComposerBanner } from "./ComposerBanner";
@@ -205,7 +205,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                     dateTime={entry.createdAt}
                     className="shrink-0 text-muted-foreground tabular-nums max-sm:hidden"
                   >
-                    {formatRelativeTimeLabel(entry.createdAt)}
+                    <RelativeTime timestamp={entry.createdAt} />
                   </time>
                   <ComposerBanner.Dismiss
                     className="z-10"
