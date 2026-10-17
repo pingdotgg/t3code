@@ -10,7 +10,7 @@ import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
 import type { EnvironmentId, SshDeviceHostConfig } from "@t3tools/contracts";
 import { randomUUID } from "../../lib/utils";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { deviceEnvironment } from "../../state/device";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -55,59 +55,52 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
     connected: environment.connection.phase === "connected",
   }));
   const { checks, testConnection } = useHostConnectionChecks(targets);
-  const hostEnvironments = useMemo(
-    () =>
-      connectedEnvironments.map((environment) => ({
-        environmentId: environment.environmentId,
-        label: environment.label,
-        labels: settingsScopeEnvironmentLabels(environment, connectedEnvironments),
-        hosts: environment.serverConfig?.settings.deviceHosts ?? [],
-      })),
-    [connectedEnvironments],
-  );
-  const groupedHosts = useMemo(() => groupDeviceHosts(hostEnvironments), [hostEnvironments]);
+  const hostEnvironments = connectedEnvironments.map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+    labels: settingsScopeEnvironmentLabels(environment, connectedEnvironments),
+    hosts: environment.serverConfig?.settings.deviceHosts ?? [],
+  }));
+  const groupedHosts = groupDeviceHosts(hostEnvironments);
   const save = async (host: SshDeviceHostConfig, remove = false, original = host) => {
     if (!props.environmentId || projectScope) return;
     setBusy(true);
-    try {
-      const results = await Promise.allSettled(
-        environments.map(async (environment) => {
-          if (environment.connection.phase !== "connected" || !environment.serverConfig) {
-            throw new Error("Environment disconnected");
-          }
-          if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
-            throw new Error("This connection cannot change device settings.");
-          }
-          return update({
-            environmentId: environment.environmentId,
-            input: {
-              patch: {
-                deviceHosts: updateDeviceHosts(
-                  environment.serverConfig.settings.deviceHosts,
-                  host,
-                  remove,
-                  original,
-                ),
-              },
+    const results = await Promise.allSettled(
+      environments.map(async (environment) => {
+        if (environment.connection.phase !== "connected" || !environment.serverConfig) {
+          throw new Error("Environment disconnected");
+        }
+        if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
+          throw new Error("This connection cannot change device settings.");
+        }
+        return update({
+          environmentId: environment.environmentId,
+          input: {
+            patch: {
+              deviceHosts: updateDeviceHosts(
+                environment.serverConfig.settings.deviceHosts,
+                host,
+                remove,
+                original,
+              ),
             },
-          });
-        }),
-      );
-      const failed = environments.filter((_, index) => {
-        const result = results[index];
-        return result?.status !== "fulfilled" || result.value._tag === "Failure";
-      });
-      if (failed.length === 0) {
-        setEditing(null);
-      } else {
-        toastManager.add({
-          type: "error",
-          title: "Device hosts not saved on all environments",
-          description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+          },
         });
-      }
-    } finally {
-      setBusy(false);
+      }),
+    );
+    setBusy(false);
+    const failed = environments.filter((_, index) => {
+      const result = results[index];
+      return result?.status !== "fulfilled" || result.value._tag === "Failure";
+    });
+    if (failed.length === 0) {
+      setEditing(null);
+    } else {
+      toastManager.add({
+        type: "error",
+        title: "Device hosts not saved on all environments",
+        description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+      });
     }
   };
   const listActions = {
@@ -246,18 +239,14 @@ function DeviceHostList({
     ]),
   );
   const states = useAtomValue(
-    useMemo(
-      () =>
-        Atom.make(
-          (get) =>
-            new Map(
-              environments.map(({ environmentId }) => {
-                const result = get(deviceEnvironment.state({ environmentId, input: {} }));
-                return [environmentId, Option.getOrUndefined(AsyncResult.value(result))] as const;
-              }),
-            ),
+    Atom.make(
+      (get) =>
+        new Map(
+          environments.map(({ environmentId }) => {
+            const result = get(deviceEnvironment.state({ environmentId, input: {} }));
+            return [environmentId, Option.getOrUndefined(AsyncResult.value(result))] as const;
+          }),
         ),
-      [environments],
     ),
   );
   const retry = useAtomCommand(deviceEnvironment.list);
