@@ -322,6 +322,18 @@ describe("thread notifications", () => {
     expect(state.add).not.toHaveBeenCalled();
   });
 
+  it("closes the toast when its thread is opened another way", async () => {
+    await render();
+    await complete();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    state.active = { environmentId: "env-2", threadId: "thread-1" };
+    await render();
+    expect(state.close).not.toHaveBeenCalled();
+    state.active = { environmentId: "env-1", threadId: "thread-1" };
+    await render();
+    expect(state.close).toHaveBeenCalledWith("toast-1");
+  });
+
   it("compares the environment as well as the thread", async () => {
     state.active = { environmentId: "env-2", threadId: "thread-1" };
     await render();

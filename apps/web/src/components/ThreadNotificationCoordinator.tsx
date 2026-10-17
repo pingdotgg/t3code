@@ -118,6 +118,15 @@ function EnvironmentNotifications({
     strict: false,
   });
   const previous = useRef(new Map<ThreadId, NotificationState>());
+  const toasts = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    if (activeEnvironmentId !== environmentId || !activeThreadId) return;
+    const toastId = toasts.current.get(activeThreadId);
+    if (toastId === undefined) return;
+    toasts.current.delete(activeThreadId);
+    toastManager.close(toastId);
+  }, [activeEnvironmentId, activeThreadId, environmentId]);
 
   useEffect(() => {
     if (threads === null) {
@@ -178,6 +187,8 @@ function EnvironmentNotifications({
         document.hasFocus() &&
         (activeEnvironmentId !== environmentId || activeThreadId !== thread.id)
       ) {
+        const priorToastId = toasts.current.get(thread.id);
+        if (priorToastId !== undefined) toastManager.close(priorToastId);
         const toastId = toastManager.add({
           type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
           title,
@@ -206,6 +217,7 @@ function EnvironmentNotifications({
             },
           },
         });
+        toasts.current.set(thread.id, toastId);
         continue;
       }
       if (
