@@ -329,6 +329,33 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       );
     return output;
   }, Effect.scoped);
+  // Codex spawns `codex-code-mode-host` from beside its real binary and fails every tool call
+  // without it, so a bare release binary is unusable. Script launchers (npm, shims) are trusted.
+  const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
+    function* (realExecutablePath: string) {
+      if (platform === "win32") {
+        if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
+      } else {
+        const file = yield* fs.open(realExecutablePath, { flag: "r" });
+        const header = yield* file.readAlloc(2);
+        if (Option.isSome(header) && header.value[0] === 0x23 && header.value[1] === 0x21)
+          return true;
+      }
+      const info = yield* fs.stat(
+        path.join(
+          path.dirname(realExecutablePath),
+          `codex-code-mode-host${platform === "win32" ? ".exe" : ""}`,
+        ),
+      );
+      return (
+        info.type === "File" &&
+        Number(info.size) > 0 &&
+        (platform === "win32" || (info.mode & 0o111) !== 0)
+      );
+    },
+    Effect.scoped,
+    Effect.orElseSucceed(() => false),
+  );
   const localCache = new Map<string, { fingerprint: string; executable: CodexExecutable | null }>();
   const resolveLocal = Effect.fn("CodexInstallation.resolveLocal")(
     function* () {
@@ -347,6 +374,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         )
       )
         return null;
+      if (!(yield* hasCodeModeHost(realExecutablePath))) return null;
       const info = yield* fs.stat(executablePath);
       const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
       const cached = localCache.get(executablePath);

@@ -202,6 +202,27 @@ it.effect("falls back to a managed download when the reused local executable dis
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.each([false, true])(
+  "requires codex-code-mode-host beside a native local binary (host present: %s)",
+  (withHost) =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ local: { version: "0.156.1" } });
+      // Without a shebang the probe still runs via the shell fallback, but reads as a native binary.
+      const script = yield* h.fs.readFileString(h.localBinaryPath);
+      yield* h.fs.writeFileString(h.localBinaryPath, script.replace(/^#!.*\n/u, ""), {
+        mode: 0o755,
+      });
+      if (withHost)
+        yield* h.fs.writeFileString(`${h.baseDir}/local/codex-code-mode-host`, "host", {
+          mode: 0o755,
+        });
+      yield* h.installation.start;
+      expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+      expect((yield* h.installation.resolve()).source).toBe(withHost ? "local" : "managed");
+      expect(h.downloads()).toBe(withHost ? 0 : 1);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("rechecks compatibility after the local executable is replaced", () =>
   Effect.gen(function* () {
     const h = yield* makeHarness({ local: { version: "0.156.1" } });
