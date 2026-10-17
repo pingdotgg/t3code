@@ -187,6 +187,46 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.live.each([
+    { name: "default head", keepErrorOutputTail: undefined, stderr: "" },
+    { name: "explicit head", keepErrorOutputTail: false, stderr: "" },
+    { name: "opt-in tail", keepErrorOutputTail: true, stderr: "" },
+    { name: "stderr preference", keepErrorOutputTail: true, stderr: "stderr failure ".repeat(400) },
+  ])("bounds failed process stdout: $name", ({ keepErrorOutputTail, stderr }) =>
+    Effect.gen(function* () {
+      const stdout = `HEAD\n${"verbose-prefix ".repeat(400)}{"credential":"${"synthetic-secret".repeat(400)}"}\nPANIC: emulator SDK is broken\n`;
+      const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Replace only the SSH endpoint with a real, deterministic failing process.
+      const spawner = ChildProcessSpawner.make(() =>
+        nativeSpawner.spawn(
+          ChildProcess.make(process.execPath, [
+            "-e",
+            `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)}); process.exitCode = 1;`,
+          ]),
+        ),
+      );
+      const failure = yield* runSshCommand(
+        { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
+        keepErrorOutputTail === undefined ? {} : { keepErrorOutputTail },
+      ).pipe(Effect.flip, Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      assert.instanceOf(failure, SshCommandError);
+      assert.equal(failure.exitCode, 1);
+      assert.equal(failure.stderr, stderr);
+      assert.equal(failure.message, stderr.trim() || failure.stdout?.trim());
+      assert.isAtMost(failure.stdout?.length ?? 0, 4_012);
+      assert.notInclude(failure.stdout ?? "", "synthetic-secret");
+      if (keepErrorOutputTail) {
+        assert.isTrue(failure.stdout?.startsWith("[truncated]\n"));
+        assert.isTrue(failure.stdout?.endsWith("PANIC: emulator SDK is broken\n"));
+        assert.include(failure.stdout ?? "", '{"credential":"[redacted]"}');
+      } else {
+        assert.isTrue(failure.stdout?.startsWith("HEAD\n"));
+        assert.isTrue(failure.stdout?.endsWith("\n[truncated]"));
+        assert.notInclude(failure.stdout ?? "", "PANIC");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
