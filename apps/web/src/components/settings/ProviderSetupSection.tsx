@@ -212,12 +212,21 @@ function ProviderSetupActions({
               {installation?.phase === "downloading" &&
               installation.totalBytes !== null &&
               installation.totalBytes > 0 ? (
-                <progress
+                <div
+                  role="progressbar"
                   aria-label="Antigravity download"
-                  className="block h-1 w-full accent-foreground"
-                  value={installation.downloadedBytes}
-                  max={installation.totalBytes}
-                />
+                  aria-valuemin={0}
+                  aria-valuemax={installation.totalBytes}
+                  aria-valuenow={Math.min(installation.downloadedBytes, installation.totalBytes)}
+                  className="h-1 w-full overflow-hidden rounded-full bg-muted forced-colors:border"
+                >
+                  <div
+                    className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out motion-reduce:transition-none forced-color-adjust-none"
+                    style={{
+                      width: `${Math.min(100, (installation.downloadedBytes / installation.totalBytes) * 100)}%`,
+                    }}
+                  />
+                </div>
               ) : null}
             </div>
             {!installActive &&
