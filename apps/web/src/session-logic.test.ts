@@ -5,6 +5,7 @@ import {
   CheckpointScopeId,
   NodeId,
   PlanId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
   RunAttemptId,
@@ -31,6 +32,7 @@ import {
   derivePhase,
   findLatestProposedPlan,
   isLatestRunSettled,
+  selectComposerTasksPlan,
   selectHandoffImageResources,
   selectMessageImageResources,
   createMessageAttachmentPreviewProjector,
@@ -959,6 +961,141 @@ describe("V2 session presentation", () => {
     expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
     expect(next.entries.at(-1)?.attempt?.status).toBe("superseded");
     expect(previous.entries.at(-1)?.attempt?.status).toBe("running");
+  });
+});
+
+describe("composer tasks drawer", () => {
+  const projection = makeThreadProjectionFixture();
+  const now = projection.updatedAt;
+
+  function providerThread(id: string, driver: string) {
+    return {
+      id: ProviderThreadId.make(id),
+      driver: ProviderDriverKind.make(driver),
+      providerInstanceId: ProviderInstanceId.make(driver),
+      providerSessionId: null,
+      appThreadId: projection.thread.id,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle" as const,
+      firstRunOrdinal: null,
+      lastRunOrdinal: null,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function run(id: string, ordinal: number, providerThreadId: string | null) {
+    return {
+      id: RunId.make(id),
+      threadId: projection.thread.id,
+      ordinal,
+      providerInstanceId: projection.thread.providerInstanceId,
+      modelSelection: projection.thread.modelSelection,
+      providerThreadId: providerThreadId === null ? null : ProviderThreadId.make(providerThreadId),
+      userMessageId: MessageId.make(`message-${id}`),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "completed" as const,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: now,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+  }
+
+  function plan(runId: string, statuses: ReadonlyArray<"pending" | "inProgress" | "completed">) {
+    return {
+      createdAt: "2026-06-20T00:00:00.000Z",
+      runId: RunId.make(runId),
+      steps: statuses.map((status, index) => ({ step: `Step ${index}`, status })),
+    };
+  }
+
+  const threads = [providerThread("claude", "claudeAgent"), providerThread("codex", "codex")];
+  const openList = plan("claude-1", ["completed", "inProgress", "pending"]);
+
+  it("shows the running turn's own list for every provider", () => {
+    const codexPlan = plan("codex-1", ["completed", "completed"]);
+    const withRuns = {
+      ...projection,
+      runs: [run("codex-1", 1, "codex")],
+      providerThreads: threads,
+    };
+    expect(selectComposerTasksPlan(withRuns, codexPlan, RunId.make("codex-1"), false)).toBe(
+      codexPlan,
+    );
+  });
+
+  it("keeps a Claude list with open steps after its run settles and during later Claude runs", () => {
+    const settled = {
+      ...projection,
+      runs: [run("claude-1", 1, "claude")],
+      providerThreads: threads,
+    };
+    expect(selectComposerTasksPlan(settled, openList, RunId.make("claude-1"), true)).toBe(openList);
+
+    const laterRun = {
+      ...settled,
+      runs: [...settled.runs, run("claude-2", 2, "claude")],
+    };
+    expect(selectComposerTasksPlan(laterRun, openList, RunId.make("claude-2"), false)).toBe(
+      openList,
+    );
+  });
+
+  it("hides a settled Claude list once every step is completed", () => {
+    const settled = {
+      ...projection,
+      runs: [run("claude-1", 1, "claude")],
+      providerThreads: threads,
+    };
+    const done = plan("claude-1", ["completed", "completed"]);
+    expect(selectComposerTasksPlan(settled, done, RunId.make("claude-1"), true)).toBeNull();
+  });
+
+  it("keeps today's behavior for other providers once their run settles", () => {
+    const codexPlan = plan("codex-1", ["completed", "pending"]);
+    const withRuns = {
+      ...projection,
+      runs: [run("codex-1", 1, "codex"), run("codex-2", 2, "codex")],
+      providerThreads: threads,
+    };
+    expect(selectComposerTasksPlan(withRuns, codexPlan, RunId.make("codex-1"), true)).toBeNull();
+    expect(selectComposerTasksPlan(withRuns, codexPlan, RunId.make("codex-2"), false)).toBeNull();
+  });
+
+  it("hides a Claude list once a later run moves to another provider thread", () => {
+    const switched = {
+      ...projection,
+      runs: [run("claude-1", 1, "claude"), run("codex-2", 2, "codex")],
+      providerThreads: threads,
+    };
+    expect(selectComposerTasksPlan(switched, openList, RunId.make("codex-2"), false)).toBeNull();
+
+    const freshClaudeSession = {
+      ...switched,
+      providerThreads: [...threads, providerThread("claude-fresh", "claudeAgent")],
+      runs: [run("claude-1", 1, "claude"), run("claude-3", 3, "claude-fresh")],
+    };
+    expect(
+      selectComposerTasksPlan(freshClaudeSession, openList, RunId.make("claude-3"), true),
+    ).toBeNull();
+  });
+
+  it("keeps the Claude list while a newer run has not reached a provider thread yet", () => {
+    const queued = {
+      ...projection,
+      runs: [run("claude-1", 1, "claude"), run("pending-2", 2, null)],
+      providerThreads: threads,
+    };
+    expect(selectComposerTasksPlan(queued, openList, RunId.make("pending-2"), false)).toBe(
+      openList,
+    );
   });
 });
 

@@ -272,6 +272,44 @@ export function deriveActivePlanState(
   };
 }
 
+/**
+ * Picks the todo list the composer tasks drawer shows, given the plan from
+ * deriveActivePlanState. Every provider shows the running turn's own list.
+ * Claude keeps one task list (TaskCreate/TaskUpdate) for its whole session, so
+ * a Claude list with open steps also stays visible after its run settles and
+ * during later runs on that same Claude session.
+ */
+export function selectComposerTasksPlan(
+  projection: OrchestrationV2ThreadProjection | null,
+  plan: ActivePlanState | null,
+  activeRunId: RunId | null,
+  activeRunSettled: boolean,
+): ActivePlanState | null {
+  if (projection === null || plan === null) return null;
+  if (activeRunId !== null && !activeRunSettled && plan.runId === activeRunId) return plan;
+  if (plan.steps.every((step) => step.status === "completed")) return null;
+  const planProviderThreadId = projection.runs.find(
+    (run) => run.id === plan.runId,
+  )?.providerThreadId;
+  if (planProviderThreadId === undefined || planProviderThreadId === null) return null;
+  const planDriver = projection.providerThreads.find(
+    (providerThread) => providerThread.id === planProviderThreadId,
+  )?.driver;
+  if (planDriver !== "claudeAgent") return null;
+  // A later run on another provider thread (provider switch, fresh session)
+  // does not own this list.
+  let latestStartedRun: OrchestrationV2ThreadProjection["runs"][number] | null = null;
+  for (const run of projection.runs) {
+    if (
+      run.providerThreadId !== null &&
+      (latestStartedRun === null || run.ordinal > latestStartedRun.ordinal)
+    ) {
+      latestStartedRun = run;
+    }
+  }
+  return latestStartedRun?.providerThreadId === planProviderThreadId ? plan : null;
+}
+
 function planItemTime(projection: OrchestrationV2ThreadProjection, planId: PlanId): string {
   const item = projection.turnItems.findLast(
     (candidate) =>
