@@ -60,3 +60,36 @@ describe("applyServerConfigProjection snapshot", () => {
     expect(providersOf(second)[0]!.skills).toBe(providersOf(first)[0]!.skills);
   });
 });
+
+describe("applyServerConfigProjection settingsUpdated", () => {
+  it("keeps unchanged settings sections when one field changes", () => {
+    const settings = {
+      favorites: [{ provider: "claude", model: "opus" }],
+      providerInstances: {
+        claude: { driver: "claudeAgent", config: { launchArgs: "" } },
+        codex: { driver: "codex" },
+      },
+    };
+    const current = Option.some({
+      config: { settings } as unknown as ServerConfig,
+      latestEvent: {} as ServerConfigStreamEvent,
+      source: "live" as const,
+    });
+    const next = applyServerConfigProjection(current, {
+      type: "settingsUpdated",
+      payload: {
+        settings: {
+          favorites: [{ provider: "claude", model: "opus" }],
+          providerInstances: {
+            claude: { driver: "claudeAgent", config: { launchArgs: "--verbose" } },
+            codex: { driver: "codex" },
+          },
+        },
+      },
+    } as unknown as ServerConfigStreamEvent);
+    const nextSettings = Option.getOrThrow(next).config.settings as unknown as typeof settings;
+    expect(nextSettings.favorites).toBe(settings.favorites);
+    expect(nextSettings.providerInstances.codex).toBe(settings.providerInstances.codex);
+    expect(nextSettings.providerInstances.claude.config.launchArgs).toBe("--verbose");
+  });
+});

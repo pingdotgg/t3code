@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import { cloneElement, isValidElement, type ReactElement } from "react";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -66,6 +66,9 @@ vi.mock("./settingsLayout", async (importOriginal) => {
   };
 });
 
+vi.mock("../../hooks/useStableCallback", () => ({
+  useStableCallback: <F,>(fn: F) => fn,
+}));
 vi.mock("./SettingsScopeSentence", () => ({ SettingsScopeSentence: () => null }));
 vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
@@ -73,12 +76,15 @@ vi.mock("react/compiler-runtime", async () => {
 });
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: () => atoms.providers,
+  useAtomValue: (atom: unknown, select?: (value: null) => unknown) =>
+    select ? select(null) : atom === atoms.providersAtom ? (atoms.providers ?? []) : null,
 }));
 
 vi.mock("../../state/server", () => ({
   EMPTY_SERVER_PROVIDERS: [],
+  providersIgnoringCheckedAtAtom: () => atoms.providersAtom,
   serverEnvironment: {
+    configValueAtom: () => atoms.providersAtom,
     providersValueAtom: () => atoms.providersAtom,
     refreshProviders: atoms.refreshProviders,
     updateProvider: atoms.updateProvider,
@@ -180,14 +186,33 @@ function renderPanel(options?: {
   readonly targetInstanceId?: ProviderInstanceId;
 }): ReactElement<Record<string, unknown>> {
   hooks.beginRender();
-  return EnvironmentProviderSettings({
-    environmentId,
-    environmentLabel: "Remote device",
-    ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
-    ...(options?.targetInstanceId === undefined
-      ? {}
-      : { targetInstanceId: options.targetInstanceId }),
-  }) as ReactElement<Record<string, unknown>>;
+  return expandProviderRows(
+    EnvironmentProviderSettings({
+      environmentId,
+      environmentLabel: "Remote device",
+      ...(options?.readOnly === undefined ? {} : { readOnly: options.readOnly }),
+      ...(options?.targetInstanceId === undefined
+        ? {}
+        : { targetInstanceId: options.targetInstanceId }),
+    }),
+  ) as ReactElement<Record<string, unknown>>;
+}
+
+// Renders the row components inline so assertions see the cards they return.
+function expandProviderRows(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(expandProviderRows);
+  if (!isValidElement<Record<string, unknown>>(node)) return node;
+  if (typeof node.type === "function" && node.type.name === "ProviderInstanceRow") {
+    return expandProviderRows((node.type as (props: unknown) => unknown)(node.props));
+  }
+  const props: Record<string, unknown> = {};
+  let changed = false;
+  for (const [key, value] of Object.entries(node.props)) {
+    const expanded = expandProviderRows(value);
+    if (expanded !== value) changed = true;
+    props[key] = expanded;
+  }
+  return changed ? cloneElement(node, props) : node;
 }
 
 function isRefreshButton(element: ReactElement<Record<string, unknown>>): boolean {
