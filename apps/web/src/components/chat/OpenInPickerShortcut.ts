@@ -25,7 +25,8 @@ export function useOpenFavoriteEditorShortcut({
   useEffect(() => {
     if (!enabled) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!isOpenFavoriteEditorShortcut(event, keybindings)) return;
+      // A mounted OpenInPicker handles the shortcut first; never open twice.
+      if (event.defaultPrevented || !isOpenFavoriteEditorShortcut(event, keybindings)) return;
       if (!openInCwd || !preferredEditor) return;
 
       event.preventDefault();

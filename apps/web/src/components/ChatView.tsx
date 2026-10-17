@@ -3021,6 +3021,9 @@ export default function ChatView(props: ChatViewProps) {
     primaryEnvironmentId,
     remoteOpenMode: remoteOpenState.mode,
   });
+  // While a file is previewed, its own Open in picker owns the shortcut.
+  const filePreviewOwnsOpenInShortcut =
+    rightPanelOpen && renderedRightPanelSurface?.kind === "file";
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker,
     environmentId: activeThread?.environmentId ?? environmentId,
@@ -7841,6 +7844,7 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     availableEditors,
     showOpenInPicker,
+    openInShortcutEnabled: !filePreviewOwnsOpenInShortcut,
     gitCwd,
     isGitRepo,
     envLocked,
