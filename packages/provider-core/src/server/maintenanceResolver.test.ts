@@ -21,6 +21,7 @@ import {
   makeTargetedProviderUpdateAction,
   enrichProviderSnapshotWithVersionAdvisory,
   homebrewOwnershipFromCommandPath,
+  latestProviderVersionCacheKeys,
   makeCachedProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   makeProviderMaintenanceCapabilities,
@@ -98,7 +99,10 @@ const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("maintenance resolution should not spawn a process here"),
 );
 
-function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) => string) {
+function stdoutSpawner(
+  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
+) {
   return ChildProcessSpawner.make((command) => {
     const { command: executable, args } = command as unknown as {
       readonly command: string;
@@ -107,7 +111,7 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCodeOf(args))),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
@@ -408,6 +412,96 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: "pnpm-global",
         });
       }),
+  );
+
+  it.effect.each([
+    {
+      case: "a release pnpm would install",
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      expected: "1.1.0",
+    },
+    // pnpm's minimumReleaseAge holds back the only newer release.
+    { case: "nothing pnpm would install yet", outdated: {}, expected: "1.0.0" },
+  ])(
+    "advertises $case for pnpm-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-latest");
+        const pnpmBinDir = NodePath.join(tempDir, "pnpm-bin");
+        const pnpmPath = NodePath.join(pnpmBinDir, "pnpm");
+        writeExecutable(pnpmPath);
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        const spawned: Array<ReadonlyArray<string>> = [];
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          // The probe asks the pnpm the updater runs: the server's, not the instance's.
+          { binaryPath: link, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: pnpmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                spawned.push([command, ...args]);
+                return args[0] === "outdated"
+                  ? JSON.stringify(fixture.outdated)
+                  : JSON.stringify([
+                      { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                    ]);
+              },
+              // `pnpm outdated` exits 1 when something is outdated.
+              (args) =>
+                args[0] === "outdated" && Object.keys(fixture.outdated).length > 0 ? 1 : 0,
+            ),
+          ),
+        );
+
+        // Resolving ownership must not query the registry; update checks may be off.
+        expect(spawned).toEqual([]);
+        const latestVersions = yield* ProviderLatestVersions.make();
+        const resolveLatest = resolveLatestProviderVersion(capabilities).pipe(
+          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("pnpm's answer should not reach the npm registry")),
+          ),
+        );
+        const latestVersion = yield* resolveLatest;
+
+        expect(spawned[0]).toEqual([
+          pnpmPath,
+          "outdated",
+          "-g",
+          "--format",
+          "json",
+          "@example/package-tool",
+        ]);
+        expect(latestVersion).toBe(fixture.expected);
+        expect(capabilities.update?.command).toBe("pnpm add -g @example/package-tool@latest");
+
+        // A cached answer is reused until an explicit refresh clears it.
+        const probes = spawned.length;
+        yield* resolveLatest;
+        expect(spawned).toHaveLength(probes);
+        yield* Effect.forEach(
+          latestProviderVersionCacheKeys(capabilities),
+          latestVersions.invalidate,
+          { discard: true },
+        );
+        yield* resolveLatest;
+        expect(spawned.length).toBeGreaterThan(probes);
+      }),
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(

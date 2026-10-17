@@ -1,4 +1,5 @@
 import type { ProviderDriverKind } from "@t3tools/contracts";
+import type * as Effect from "effect/Effect";
 
 export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
@@ -10,6 +11,12 @@ export interface ProviderMaintenanceCapabilities {
    * installer was asked and did not know.
    */
   readonly latestVersion?: string | null;
+  /**
+   * Asks the installer which version its update command would install. It
+   * contacts the registry, so it runs only with update checks; `null` falls
+   * back to the npm registry entry.
+   */
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
   readonly compareVersions?: (current: string, latest: string) => number;
 }
 
