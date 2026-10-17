@@ -97,4 +97,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/ThreadTerminalDrawer.tsx",
   "apps/web/src/components/settings/SettingsPanels.tsx",
   "apps/web/src/routes/_chat.pull-requests.tsx",
+  "apps/web/src/components/LegacySidebar.tsx",
 ] as const;
