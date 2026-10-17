@@ -1681,8 +1681,8 @@ export default function ChatView(props: ChatViewProps) {
     activePreviewMiniPlayer?.source ?? null,
     renderedRightPanelSurface,
   );
-  const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
-  const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
+  const rightPanelMaximized = rightPanelOpen && rightPanelState.maximized === true;
+  const inlineRightPanelMaximized = rightPanelMaximized && !shouldUsePlanSidebarSheet;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
@@ -3938,13 +3938,13 @@ export default function ChatView(props: ChatViewProps) {
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   useEffect(() => {
-    if (!canMaximizeRightPanel) return;
+    if (!rightPanelOpen) return;
     if (useRightPanelStore.getState().consumeMaximizeRequest(routeThreadRef)) {
       useRightPanelStore.getState().setMaximized(routeThreadRef, true);
     }
-  }, [canMaximizeRightPanel, routeThreadRef]);
+  }, [rightPanelOpen, routeThreadRef]);
   const toggleRightPanelMaximized = () => {
-    if (!canMaximizeRightPanel || !activeThreadRef) return;
+    if (!rightPanelOpen || !activeThreadRef) return;
     useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
   };
   const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);
@@ -7980,9 +7980,9 @@ export default function ChatView(props: ChatViewProps) {
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          inlineRightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={inlineRightPanelMaximized ? "true" : "false"}
       >
         <header
           ref={threadPanelPopoverAnchorRef}
@@ -8683,17 +8683,25 @@ export default function ChatView(props: ChatViewProps) {
         <RightPanelSheet
           animationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           open={rightPanelOpen}
+          maximized={rightPanelMaximized}
           onClose={closePreviewPanelStable}
         >
           <RightPanelTabs
             mode="sheet"
             open={rightPanelOpen}
+            maximized={rightPanelMaximized}
             keybindings={keybindings}
             getShortcutContext={getShortcutContextStable}
             inlineSize={previewPanelInlineSize}
             layoutControls={
               rightPanelOpen ? (
-                <div className="mr-px flex items-center">{panelToggleControls}</div>
+                <div className="mr-px flex items-center gap-1">
+                  <RightPanelMaximizeControl
+                    maximized={rightPanelMaximized}
+                    onToggle={toggleRightPanelMaximizedStable}
+                  />
+                  {panelToggleControls}
+                </div>
               ) : null
             }
             surfaces={renderedRightPanelSurfaces}
