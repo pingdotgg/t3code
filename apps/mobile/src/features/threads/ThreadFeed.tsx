@@ -32,7 +32,7 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref, resolveThreadLinkRef } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -1784,9 +1784,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (href: string, imageEmbed = false) => {
       const linkedThreadId = parseThreadLinkHref(href);
       if (linkedThreadId) {
+        const source = scopeThreadRef(props.environmentId, linkedThreadId);
+        const target =
+          resolveThreadLinkRef(
+            source,
+            appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
+          ) ?? source;
         navigation.navigate("Thread", {
-          environmentId: String(props.environmentId),
-          threadId: String(linkedThreadId),
+          environmentId: String(target.environmentId),
+          threadId: String(target.threadId),
         });
         return;
       }

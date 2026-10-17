@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -23,6 +23,26 @@ export function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null 
   } catch {
     return null;
   }
+}
+
+export function resolveThreadLinkRef(
+  source: ScopedThreadRef,
+  refs: ReadonlyArray<ScopedThreadRef>,
+): ScopedThreadRef | null {
+  const decodedId = percentDecodedThreadLinkId(source.threadId);
+  const ids = decodedId === null ? [source.threadId] : [source.threadId, decodedId];
+  for (const threadId of ids) {
+    const local = refs.find(
+      (ref) => ref.environmentId === source.environmentId && ref.threadId === threadId,
+    );
+    if (local) return local;
+  }
+  for (const threadId of ids) {
+    const matches = refs.filter((ref) => ref.threadId === threadId);
+    if (matches.length > 1) return null;
+    if (matches.length === 1) return matches[0]!;
+  }
+  return null;
 }
 
 export function formatThreadLink(threadId: string, label: string): string {

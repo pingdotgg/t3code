@@ -1,6 +1,73 @@
 import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
-import { formatThreadLink, parseThreadLinkHref, relabelThreadLinks } from "./threadLinks.ts";
+import {
+  formatThreadLink,
+  parseThreadLinkHref,
+  relabelThreadLinks,
+  resolveThreadLinkRef,
+} from "./threadLinks.ts";
+
+const ref = (environmentId: string, threadId = "chat-1") => ({
+  environmentId: EnvironmentId.make(environmentId),
+  threadId: ThreadId.make(threadId),
+});
+
+describe("thread link destinations", () => {
+  it.each([
+    ["environment-a", "environment-b"],
+    ["environment-b", "environment-a"],
+  ])("finds a chat on %s from a message on %s", (target, source) => {
+    const destination = ref(target);
+    expect(resolveThreadLinkRef(ref(source), [ref(source, "other-chat"), destination])).toBe(
+      destination,
+    );
+  });
+
+  it("keeps the message's environment when the id exists in both", () => {
+    const local = ref("environment-a");
+    expect(resolveThreadLinkRef(local, [ref("environment-b"), local])).toBe(local);
+  });
+
+  it("does not choose between ambiguous remote destinations", () => {
+    expect(
+      resolveThreadLinkRef(ref("environment-a"), [ref("environment-b"), ref("environment-c")]),
+    ).toBeNull();
+  });
+
+  it("preserves percent escapes that belong to a remote thread id", () => {
+    const destination = ref("environment-b", "provider%3A1");
+    expect(
+      resolveThreadLinkRef(ref("environment-a", "provider%3A1"), [
+        ref("environment-b", "provider:1"),
+        destination,
+      ]),
+    ).toBe(destination);
+  });
+
+  it("finds a remote thread when the agent encoded its id", () => {
+    const destination = ref("environment-b", "provider:1");
+    expect(resolveThreadLinkRef(ref("environment-a", "provider%3A1"), [destination])).toBe(
+      destination,
+    );
+  });
+
+  it("keeps a decoded local match ahead of a remote match", () => {
+    const local = ref("environment-a", "provider:1");
+    expect(
+      resolveThreadLinkRef(ref("environment-a", "provider%3A1"), [
+        ref("environment-b", "provider%3A1"),
+        local,
+      ]),
+    ).toBe(local);
+  });
+
+  it("leaves an unavailable chat unresolved", () => {
+    expect(
+      resolveThreadLinkRef(ref("environment-a"), [ref("environment-b", "other-chat")]),
+    ).toBeNull();
+  });
+});
 
 describe("thread links", () => {
   it("takes the thread id verbatim, percent escapes included", () => {
