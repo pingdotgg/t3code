@@ -1,6 +1,8 @@
-// Preview builds share nightly branding but ship without an update feed.
-const PRERELEASE_VERSION_PATTERN = /^[^-+]+-(?:nightly|preview)\.\d{8}\.\d+$/;
+const NIGHTLY_VERSION_PATTERN = /^[^-+]+-nightly\.\d{8}\.\d+$/;
 
+// Preview builds are packaged with the stable product name and icons (see
+// resolveDesktopProductName in scripts/build-desktop-artifact.ts), so they are
+// branded Beta at runtime too, rather than Nightly in a Beta-named app.
 export function isNightlyDesktopVersion(version: string): boolean {
-  return PRERELEASE_VERSION_PATTERN.test(version);
+  return NIGHTLY_VERSION_PATTERN.test(version);
 }
