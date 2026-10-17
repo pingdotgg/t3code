@@ -108,6 +108,7 @@ import {
   hasForwardedAuthorityHeaders,
   isAllowedEndpointOrigin,
   isSupportedLinkProviderKind,
+  linkProofLifetime,
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
@@ -592,16 +593,18 @@ const make = Effect.gen(function* () {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
     const now = yield* DateTime.now;
-    const expiresAt = DateTime.add(now, { minutes: 5 });
-    const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    const lifetime = linkProofLifetime({
+      challenge: request.challenge,
+      nowSeconds: Math.floor(now.epochMilliseconds / 1_000),
+    });
     const descriptor = yield* environment.getDescriptor;
     const payload = {
       iss: `t3-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
       sub: descriptor.environmentId,
       jti: yield* crypto.randomUUIDv4(),
-      iat: nowSeconds,
-      exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+      iat: lifetime.iat,
+      exp: lifetime.exp,
       challenge: request.challenge,
       descriptor,
       environmentId: descriptor.environmentId,
