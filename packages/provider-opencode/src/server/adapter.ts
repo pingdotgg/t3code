@@ -3001,6 +3001,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (threadInput.existingProviderThread?.nativeThreadRef != null) {
                 return yield* runtimeSession.resumeThread({
                   providerThread: threadInput.existingProviderThread,
+                  runtimePolicy: threadInput.runtimePolicy,
                 });
               }
               // No title: OpenCode generates one from the first prompt only when
@@ -3054,6 +3055,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 client.session.get({ sessionID: sessionId }),
               );
               const nativeSession = unwrapData("session.get", response);
+              yield* sdkCall("session.update", { sessionID: sessionId }, () =>
+                client.session.update({
+                  sessionID: sessionId,
+                  permission: openCodePermissionRules(
+                    threadInput.runtimePolicy ?? input.runtimePolicy,
+                  ),
+                }),
+              );
               const resumedAt = yield* DateTime.now;
               const providerThread = {
                 ...threadInput.providerThread,
@@ -3625,6 +3634,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   }),
               );
               const nativeSession = unwrapData("session.fork", response);
+              // OpenCode forks history without retaining the session permission policy.
+              yield* sdkCall("session.update", { sessionID: nativeSession.id }, () =>
+                client.session.update({
+                  sessionID: nativeSession.id,
+                  permission: openCodePermissionRules(
+                    forkInput.runtimePolicy ?? input.runtimePolicy,
+                  ),
+                }),
+              );
               const forkedAt = yield* DateTime.now;
               const providerThread = makeProviderThread({
                 idAllocator,
