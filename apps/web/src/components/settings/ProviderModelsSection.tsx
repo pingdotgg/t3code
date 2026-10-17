@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -113,6 +113,12 @@ interface ProviderModelsSectionProps {
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
+/** CustomModelEditor keys its option list on this array. */
+function useBuiltInModels(models: ReadonlyArray<ServerProviderModel>) {
+  "use memo";
+  return models.filter((model) => !model.isCustom);
+}
+
 export function ProviderModelsSection({
   instanceId,
   driverKind,
@@ -136,22 +142,18 @@ export function ProviderModelsSection({
   const [editingSlug, setEditingSlug] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const scrollToSlugRef = useRef<string | null>(null);
-  const hiddenModelSet = useMemo(() => new Set(hiddenModels), [hiddenModels]);
-  const favoriteModelSet = useMemo(() => new Set(favoriteModels), [favoriteModels]);
-  const displayModels = useMemo(
-    () =>
-      groupModelsForDisplay(models, {
-        favoriteModels: favoriteModelSet,
-        hiddenModels: hiddenModelSet,
-        modelOrder,
-      }),
-    [favoriteModelSet, hiddenModelSet, modelOrder, models],
-  );
+  const hiddenModelSet = new Set(hiddenModels);
+  const favoriteModelSet = new Set(favoriteModels);
+  const displayModels = groupModelsForDisplay(models, {
+    favoriteModels: favoriteModelSet,
+    hiddenModels: hiddenModelSet,
+    modelOrder,
+  });
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
   const hiddenCount = displayModels.filter(
     (model) => !model.isCustom && hiddenModelSet.has(model.slug),
   ).length;
-  const builtInModels = useMemo(() => models.filter((model) => !model.isCustom), [models]);
+  const builtInModels = useBuiltInModels(models);
   const allBuiltInModelsHidden =
     builtInModels.length > 0 && builtInModels.every((model) => hiddenModelSet.has(model.slug));
   const showFilter = models.length > FILTER_THRESHOLD;
@@ -165,6 +167,7 @@ export function ProviderModelsSection({
       )
     : displayModels;
 
+  // A model added or moved lands in a later commit, so each commit looks for the pending row.
   useEffect(() => {
     const slug = scrollToSlugRef.current;
     if (slug === null) return;
@@ -174,7 +177,7 @@ export function ProviderModelsSection({
     if (!row) return;
     scrollToSlugRef.current = null;
     row.scrollIntoView({ block: "nearest" });
-  }, [displayModels]);
+  });
 
   const handleAdd = () => {
     if (!canManageCustomModels || driverKind === "antigravity") return;
