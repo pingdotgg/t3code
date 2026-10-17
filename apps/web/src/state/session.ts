@@ -6,7 +6,6 @@ import {
   type EnvironmentId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -41,20 +40,16 @@ export function useEnvironmentsWithScope(
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
   scope: AuthEnvironmentScope,
 ): ReadonlySet<EnvironmentId> {
-  const permitted = useMemo(
-    () =>
-      Atom.make((get) => {
-        const ids = new Set<EnvironmentId>();
-        for (const { environmentId } of environments) {
-          const result = get(environmentSession.sessionStateAtom(environmentId));
-          if (sessionHasScope(result, scope)) {
-            ids.add(environmentId);
-          }
-        }
-        return ids;
-      }),
-    [environments, scope],
-  );
+  const permitted = Atom.make((get) => {
+    const ids = new Set<EnvironmentId>();
+    for (const { environmentId } of environments) {
+      const result = get(environmentSession.sessionStateAtom(environmentId));
+      if (sessionHasScope(result, scope)) {
+        ids.add(environmentId);
+      }
+    }
+    return ids;
+  });
   return useAtomValue(permitted);
 }
 
