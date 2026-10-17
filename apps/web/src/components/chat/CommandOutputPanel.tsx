@@ -22,13 +22,6 @@ export function useCommandOutputStreaming(environmentId: EnvironmentId): boolean
  * shows its final output. Mount it only when `useCommandOutputStreaming` holds.
  * It subscribes only while mounted, so collapsed rows and other threads receive nothing.
  */
-// Parsing ANSI output is linear in its length, and the compiler would redo it on
-// every render because the layout effect runs after it.
-function useTerminalOutputSpans(text: string, resolvedTheme: keyof typeof TERMINAL_PALETTES) {
-  "use memo";
-  return terminalOutputSpans(text, TERMINAL_PALETTES[resolvedTheme]);
-}
-
 export function CommandOutputPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -45,7 +38,6 @@ export function CommandOutputPanel(props: {
   const followRef = useRef(true);
   const text = data?.output.text ?? "";
   const { resolvedTheme } = useTheme();
-  const spans = useTerminalOutputSpans(text, resolvedTheme);
 
   // This panel only re-renders when its output changes, so keep the end in view after each.
   useLayoutEffect(() => {
@@ -58,6 +50,8 @@ export function CommandOutputPanel(props: {
     if (data === null) return <div className="text-muted-foreground italic">Loading output…</div>;
     return data.running ? null : <div className="text-muted-foreground italic">No output.</div>;
   }
+  // Parsed after the layout effect, the last hook, so the compiler caches it on text and theme.
+  const spans = terminalOutputSpans(text, TERMINAL_PALETTES[resolvedTheme]);
   return (
     <div>
       {data?.output.truncated ? (
