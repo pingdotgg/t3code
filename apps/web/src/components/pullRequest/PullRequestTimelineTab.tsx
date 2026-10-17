@@ -9,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
+  CircleCheckIcon,
   ExternalLinkIcon,
   FileCode2Icon,
   GitCommitHorizontalIcon,
@@ -34,6 +35,7 @@ import {
   pullRequestReviewOutcome,
   type PullRequestReviewOutcome,
   type PullRequestTimelineEvent,
+  type PullRequestTimelineThread,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
@@ -178,12 +180,14 @@ function ConversationCard({
   cwd,
   onOpen,
   reactions,
+  showPath = true,
 }: {
   event: PullRequestTimelineEvent;
   editable: PullRequestComment | null;
   cwd: string;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
+  showPath?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -221,7 +225,7 @@ function ConversationCard({
             </div>
             <PullRequestMetaLine className="mt-1 flex-wrap text-2xs text-muted-foreground">
               <span>{formatRelativeTimeLabel(event.at)}</span>
-              {event.path ? (
+              {showPath && event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
                   <FileCode2Icon aria-hidden className="size-3 shrink-0" />
                   <span className="truncate">{event.path}</span>
@@ -359,6 +363,116 @@ function ConversationGroup({
           </CollapsiblePanel>
         </div>
       </Collapsible>
+    </div>
+  );
+}
+
+function ReviewThreadEvent({
+  event,
+  thread,
+  editable,
+  cwd,
+  onOpen,
+  reactions,
+}: {
+  event: PullRequestTimelineEvent;
+  thread: PullRequestTimelineThread;
+  editable: ReadonlyMap<string, PullRequestComment>;
+  cwd: string;
+  onOpen: (url: string) => void;
+  reactions: ReactionSurface;
+}) {
+  // Like the Code tab's thread card: a settled conversation starts folded to its header.
+  const [expanded, setExpanded] = useState(!thread.isResolved);
+  const commentCount = 1 + thread.replies.length + thread.moreReplies;
+  const cardKey = (id: string) =>
+    `${reactions.reference.projectId}#${reactions.reference.number}:${id}`;
+
+  return (
+    <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+      <ActorTimelineMarker
+        actors={event.actor ? [event.actor] : []}
+        className="top-6"
+        fallback={<MessageSquareIcon className="size-3.5" />}
+        muted={!expanded}
+      />
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <FileCode2Icon aria-hidden className="size-3 shrink-0" />
+        <span className="min-w-0 truncate font-mono">
+          {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
+        </span>
+        {thread.isResolved ? (
+          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
+            <CircleCheckIcon aria-hidden className="size-3" />
+            Resolved
+          </span>
+        ) : null}
+        {thread.isOutdated ? <span className="shrink-0 font-medium">Outdated</span> : null}
+        {expanded ? null : (
+          <span className="shrink-0">
+            · {event.actor?.login ?? "ghost"} · {commentCount.toLocaleString()}{" "}
+            {commentCount === 1 ? "comment" : "comments"}
+          </span>
+        )}
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("ml-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-180")}
+        />
+      </button>
+      {expanded ? (
+        <>
+          <ConversationCard
+            key={cardKey(event.id)}
+            event={event}
+            editable={editable.get(event.id) ?? null}
+            cwd={cwd}
+            onOpen={onOpen}
+            reactions={reactions}
+            showPath={false}
+          />
+          {thread.replies.length > 0 || thread.hasMoreReplies ? (
+            <div className="ml-2 space-y-1 border-l border-border/60 pl-3">
+              {thread.replies.map((reply) => (
+                <ConversationCard
+                  key={cardKey(reply.id)}
+                  event={reply}
+                  editable={editable.get(reply.id) ?? null}
+                  cwd={cwd}
+                  onOpen={onOpen}
+                  reactions={reactions}
+                  showPath={false}
+                />
+              ))}
+              {thread.hasMoreReplies ? (
+                <div className="flex items-center gap-1 px-2 py-1 text-2xs text-muted-foreground">
+                  <span>
+                    {thread.moreReplies > 0
+                      ? `${thread.moreReplies.toLocaleString()} more ${thread.moreReplies === 1 ? "reply" : "replies"}`
+                      : "More replies"}
+                  </span>
+                  {thread.url !== null ? (
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      onClick={() => {
+                        if (thread.url !== null) onOpen(thread.url);
+                      }}
+                    >
+                      View on host
+                      <ExternalLinkIcon className="size-3" />
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -577,6 +691,19 @@ export function PullRequestTimelineTab({
               );
             }
             const event = row.event;
+            if (event.thread !== undefined) {
+              return (
+                <ReviewThreadEvent
+                  key={`${reactions.reference.projectId}#${reactions.reference.number}:thread:${event.id}`}
+                  event={event}
+                  thread={event.thread}
+                  editable={editable}
+                  cwd={detail.workspaceRoot}
+                  onOpen={openOnHost}
+                  reactions={reactions}
+                />
+              );
+            }
             if (event.kind === "commit") {
               return <CommitEvent key={event.id} event={event} onOpen={onOpenCommit} />;
             }
