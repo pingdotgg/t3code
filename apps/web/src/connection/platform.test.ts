@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -15,6 +16,8 @@ import {
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
+  ensureDesktopSshEnvironment,
+  forgetDesktopSshSetup,
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
   nextRejectedSecondaryBootstrap,
@@ -33,19 +36,41 @@ const TARGET: DesktopSshEnvironmentTarget = {
   port: 22,
 };
 
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<void>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+// Runs the attempt up to its desktop setup call before the test continues.
+const FORK_NOW = { startImmediately: true } as const;
+
 function makeBridge(
   calls: string[],
-  options?: { readonly failDescriptor?: boolean },
+  options?: {
+    readonly failDescriptor?: boolean;
+    /** Settles when the desktop finishes the given setup call (0-based). */
+    readonly setupDone?: (call: number) => Promise<void>;
+    /** Collects every setup promise the desktop returned. */
+    readonly setups?: Promise<unknown>[];
+  },
 ): DesktopBridge {
+  let setupCalls = 0;
   return {
-    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
+    ensureSshEnvironment: (target: DesktopSshEnvironmentTarget) => {
       calls.push("ensure");
-      return {
+      const setup = (options?.setupDone?.(setupCalls++) ?? Promise.resolve()).then(() => ({
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
         wsBaseUrl: "ws://127.0.0.1:3201/",
         pairingToken: "pairing-token",
-      };
+      }));
+      options?.setups?.push(setup);
+      return setup;
     },
     fetchSshEnvironmentDescriptor: async () => {
       calls.push("descriptor");
@@ -116,6 +141,88 @@ describe("desktop SSH pairing", () => {
 
       expect(calls).toEqual(["ensure", "descriptor"]);
     }),
+  );
+
+  it.effect("hands a timed-out attempt's setup to the next attempt", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const setupDone = deferred();
+      const bridge = makeBridge(calls, { setupDone: () => setupDone.promise });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const timedOut = yield* Effect.forkChild(
+          ensureDesktopSshEnvironment(bridge, TARGET),
+          FORK_NOW,
+        );
+        yield* Fiber.interrupt(timedOut);
+      }
+
+      const next = yield* Effect.forkChild(
+        provisionDesktopSshEnvironment(bridge, TARGET),
+        FORK_NOW,
+      );
+      setupDone.resolve();
+      yield* Fiber.join(next);
+
+      expect(calls).toEqual(["ensure", "descriptor", "token"]);
+    }),
+  );
+
+  it.effect("does not hand over a setup that a disconnect tears down", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const setupDone = deferred();
+      const bridge = makeBridge(calls, { setupDone: () => setupDone.promise });
+      const timedOut = yield* Effect.forkChild(
+        ensureDesktopSshEnvironment(bridge, TARGET),
+        FORK_NOW,
+      );
+      // Disabling the environment disconnects before the attempt's interruption lands.
+      forgetDesktopSshSetup(TARGET);
+      yield* Fiber.interrupt(timedOut);
+
+      const next = yield* Effect.forkChild(
+        provisionDesktopSshEnvironment(bridge, TARGET),
+        FORK_NOW,
+      );
+      expect(calls).toEqual(["ensure", "ensure"]);
+      setupDone.resolve();
+      yield* Fiber.join(next);
+    }),
+  );
+
+  it.effect.each(["failed", "succeeded"] as const)(
+    "starts its own setup once the abandoned one %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const setups: Promise<unknown>[] = [];
+        const setupDone = deferred();
+        const bridge = makeBridge(calls, {
+          setupDone: (call) => (call === 0 ? setupDone.promise : Promise.resolve()),
+          setups,
+        });
+        const timedOut = yield* Effect.forkChild(
+          ensureDesktopSshEnvironment(bridge, TARGET),
+          FORK_NOW,
+        );
+        yield* Fiber.interrupt(timedOut);
+        if (outcome === "failed") {
+          setupDone.reject(new Error("remote launch failed"));
+        } else {
+          setupDone.resolve();
+        }
+        // The abandoned setup was observed first, so it has already been let go.
+        yield* Effect.promise(() =>
+          setups[0]!.then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+
+        yield* provisionDesktopSshEnvironment(bridge, TARGET);
+
+        expect(calls).toEqual(["ensure", "ensure", "descriptor", "token"]);
+      }),
   );
 });
 
