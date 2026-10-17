@@ -5,7 +5,7 @@ import type {
   PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -45,9 +45,8 @@ export function PullRequestReviewerPicker({
     reportFailure: false,
   });
 
-  const candidates = useMemo(
-    () => (candidatesQuery.data?.candidates ?? []).filter((entry) => matches(entry, query)),
-    [candidatesQuery.data, query],
+  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
+    matches(entry, query),
   );
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
