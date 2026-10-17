@@ -113,8 +113,8 @@ import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineTex
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChip } from "./ContextChip";
+import { ComposerContextActionsContext } from "./composerContextActions";
 import {
-  ComposerContextActionsContext,
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";

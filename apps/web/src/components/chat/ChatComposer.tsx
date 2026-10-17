@@ -158,8 +158,8 @@ import {
   type ComposerPromptEditorHandle,
   ComposerPromptEditorTiptap as ComposerPromptEditor,
 } from "../ComposerPromptEditorTiptap";
+import { ComposerContextActionsContext } from "../composerContextActions";
 import {
-  ComposerContextActionsContext,
   composerContextRecordsFromDraft,
 } from "../composerContextPresentation";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
