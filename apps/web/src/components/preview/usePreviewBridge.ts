@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as Option from "effect/Option";
-import { useEffect, useEffectEvent, useMemo, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 
 import {
   flushPendingFaviconsForThread,
@@ -43,13 +43,8 @@ export function usePreviewBridge(input: {
   const { threadRef, tabId, runtimeTabId, serverDriven = false } = input;
   const clearBrowserPointer = useBrowserPointerStore((state) => state.clear);
   const reportStatus = useAtomCommand(previewEnvironment.reportStatus, "preview status report");
-  const bridge = previewBridge;
   const threadKey = scopedThreadKey(threadRef);
-  const stableThreadRef = useMemo(() => {
-    const parsed = parseScopedThreadKey(threadKey);
-    if (!parsed) throw new Error(`Invalid scoped thread key: ${threadKey}`);
-    return parsed;
-  }, [threadKey]);
+  const stableThreadRef = useThreadRefForKey(threadKey);
   const projectRef = useFaviconProjectRefForThread(stableThreadRef);
   const preparedConnection = usePreparedConnection(stableThreadRef.environmentId);
   const environmentHostname = Option.isSome(preparedConnection)
@@ -87,16 +82,29 @@ export function usePreviewBridge(input: {
     },
   );
   useEffect(() => {
-    if (!bridge || typeof window === "undefined") return;
+    if (!previewBridge || typeof window === "undefined") return;
     lastReportedUrl.current = null;
     lastReportedKind.current = null;
     lastDesktopNavStatus.current = null;
-    return bridge.onStateChange(handleStateChange);
-  }, [bridge, runtimeTabId, stableThreadRef, tabId]);
+    return previewBridge.onStateChange(handleStateChange);
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A different tab or thread starts its status reports and pointer tracking from scratch.
+    runtimeTabId,
+    stableThreadRef,
+    tabId,
+  ]);
   useEffect(() => {
     if (!projectRef) return;
     flushPendingFaviconsForThread(stableThreadRef, projectRef, environmentHostname);
   }, [environmentHostname, projectRef, stableThreadRef]);
+}
+
+// Callers pass a fresh threadRef each render; the key keeps the ref stable for the effects.
+function useThreadRefForKey(threadKey: string): ScopedThreadRef {
+  "use memo";
+  const parsed = parseScopedThreadKey(threadKey);
+  if (!parsed) throw new Error(`Invalid scoped thread key: ${threadKey}`);
+  return parsed;
 }
 
 function shouldClearBrowserPointer(
