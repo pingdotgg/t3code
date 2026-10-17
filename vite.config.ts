@@ -1,6 +1,7 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
+import { REACT_COMPILED_FILES } from "./apps/web/reactCompiledFiles.ts";
 
 const RESTRICTED_IMPORT_PATHS = [
   {
@@ -321,22 +322,10 @@ export default defineConfig({
         },
       },
       {
-        // Files the React Compiler must compile. Any bailout (a ref read in render, a
-        // setState in an effect, a manual memo it cannot preserve) fails lint instead of
-        // silently leaving the file unoptimized, and manual memoization is redundant here.
-        // Add a file once it compiles cleanly. ChatView is being split toward this list.
-        files: [
-          "apps/web/src/components/PersistentThreadTerminals.tsx",
-          "apps/web/src/components/chat/usePendingThreadRequests.ts",
-          "apps/web/src/components/chat/useQueuedRunEdit.ts",
-          "apps/web/src/components/chat/useUsageLimitsPanel.ts",
-          "apps/web/src/components/chat/useWorktreeSetup.ts",
-          "apps/web/src/components/pullRequest/useThreadLinkedPullRequest.ts",
-          "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
-          "apps/web/src/components/terminal/**",
-          "apps/web/src/hooks/useProactivePanels.ts",
-          "apps/web/src/hooks/useRightPanelSurfaceClose.ts",
-        ],
+        // Files the React Compiler must compile. Its bailout rules are errors here, and manual
+        // memoization is redundant. apps/web/src/compiledFiles.test.ts compiles each file and
+        // fails on any bailout lint cannot see, such as try/finally.
+        files: [...REACT_COMPILED_FILES],
         rules: {
           "react/exhaustive-effect-dependencies": "error",
           "react/globals": "error",

@@ -30,6 +30,7 @@
     "vite",
     "vite.config.ts",
     "vercel.ts",
+    "reactCompiledFiles.ts",
     "test",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",

@@ -20,21 +20,25 @@ export function useLoadBalancedEnvironment(
     },
     [registry],
   );
+  // Keyed by content: callers derive the list every render.
+  const environmentIdsKey = environmentIds.join("\n");
   const resourcesAtom = useMemo(
     () =>
       Atom.make((get) =>
-        environmentIds.map((environmentId) => {
-          const result = get(serverEnvironment.hostResources({ environmentId, input: {} }));
-          return {
-            environmentId,
-            resources: result._tag === "Success" ? result.value : null,
-            receivedAt: result._tag === "Success" ? result.timestamp : 0,
-            pending: result._tag === "Initial" || result.waiting,
-            failed: result._tag === "Failure",
-          };
-        }),
+        (environmentIdsKey === "" ? [] : (environmentIdsKey.split("\n") as EnvironmentId[])).map(
+          (environmentId) => {
+            const result = get(serverEnvironment.hostResources({ environmentId, input: {} }));
+            return {
+              environmentId,
+              resources: result._tag === "Success" ? result.value : null,
+              receivedAt: result._tag === "Success" ? result.timestamp : 0,
+              pending: result._tag === "Initial" || result.waiting,
+              failed: result._tag === "Failure",
+            };
+          },
+        ),
       ),
-    [environmentIds],
+    [environmentIdsKey],
   );
   const resources = useAtomValue(resourcesAtom);
   const pending = resources.some((resource) => resource.pending);

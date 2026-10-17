@@ -173,9 +173,7 @@ import {
 } from "../composer-logic";
 import {
   derivePhase,
-  deriveTimelineEntriesFromVisibleTurnItemsWithState,
   selectHandoffImageResources,
-  type TimelineEntriesProjection,
   deriveActivePlanState,
   deriveActiveWorkStartedAt,
   deriveCanInterruptRunningThread,
@@ -460,6 +458,7 @@ import {
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
+import { useIncrementalTimelineEntries } from "../hooks/useIncrementalTimelineEntries";
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { useAgentOpenedPreviews } from "./preview/useAgentOpenedPreviews";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -601,16 +600,9 @@ function useDraftHeroLayoutTransition(
   const previousStateRef = useRef(isDraftHeroState);
   const previousComposerRectRef = useRef<DOMRect | null>(null);
   const animationRef = useRef<Animation | null>(null);
-  const attachTransitionGroupRef = (element: HTMLDivElement | null) => {
-    transitionGroupRef.current = element;
-  };
-  const attachComposerAnchorRef = (element: HTMLDivElement | null) => {
-    composerAnchorRef.current = element;
-  };
-
-  const captureComposerRect = () => {
+  const captureComposerRect = useStableCallback(() => {
     previousComposerRectRef.current = composerAnchorRef.current?.getBoundingClientRect() ?? null;
-  };
+  });
 
   useLayoutEffect(() => {
     const transitionGroup = transitionGroupRef.current;
@@ -658,11 +650,7 @@ function useDraftHeroLayoutTransition(
     previousComposerRectRef.current = nextComposerRect;
   }, [animationDurationMs, animationsActive, isDraftHeroState]);
 
-  return {
-    transitionGroupRef: attachTransitionGroupRef,
-    composerAnchorRef: attachComposerAnchorRef,
-    captureComposerRect,
-  } as const;
+  return { transitionGroupRef, composerAnchorRef, captureComposerRect } as const;
 }
 
 const PreviewPanel = lazy(() =>
@@ -753,13 +741,26 @@ function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
   return text.length > 0 ? text : null;
 }
 
-const draftFanoutStateAtom = Atom.family((_routeKey: string) =>
-  Atom.make({
-    selections: null as ReadonlyArray<ModelSelection> | null,
-    sendInFlight: { current: false },
-    uncertainSubmissions: { current: new Map<string, ThreadId>() },
-  }).pipe(Atom.keepAlive),
+// Kept per route so a send in flight, and the multiple-model selections, survive
+// ChatView remounting while the user navigates.
+const draftFanoutSelectionsAtom = Atom.family((_routeKey: string) =>
+  Atom.make<ReadonlyArray<ModelSelection> | null>(null).pipe(Atom.keepAlive),
 );
+const draftSendStateByRouteKey = new Map<
+  string,
+  {
+    readonly sendInFlight: { current: boolean };
+    readonly uncertainSubmissions: { current: Map<string, ThreadId> };
+  }
+>();
+function draftSendState(routeKey: string) {
+  let state = draftSendStateByRouteKey.get(routeKey);
+  if (!state) {
+    state = { sendInFlight: { current: false }, uncertainSubmissions: { current: new Map() } };
+    draftSendStateByRouteKey.set(routeKey, state);
+  }
+  return state;
+}
 
 /**
  * Starts one thread of a multiple-model send. A request that may have
@@ -839,6 +840,104 @@ async function startFanoutThread(input: {
       }),
     );
     return false;
+  }
+}
+
+/**
+ * Reverts the thread to before `message` and puts that message's text and
+ * attachments back in the composer draft. Returns the restored prompt, or the
+ * error to show; on error the draft is untouched.
+ */
+async function rewindToMessage(input: {
+  readonly message: ChatMessage;
+  readonly environmentId: EnvironmentId;
+  readonly routeThreadRef: ScopedThreadRef;
+  readonly threadId: ThreadId;
+  readonly turnCount: number;
+  readonly restoreFiles: boolean;
+  readonly draftTarget: ScopedThreadRef | DraftId;
+  readonly composerHasPendingAttachments: boolean;
+  readonly createAssetUrl: Parameters<
+    typeof prepareRevertedMessageAttachments
+  >[0]["createAssetUrl"];
+  readonly revertThreadCheckpoint: (value: {
+    environmentId: EnvironmentId;
+    input: { commandId: CommandId; threadId: ThreadId; turnCount: number; restoreFiles: boolean };
+  }) => Promise<AtomCommandResult<unknown, unknown>>;
+}): Promise<
+  | { readonly error: string; readonly prompt?: never }
+  | { readonly error: null; readonly prompt: string }
+> {
+  const { message, environmentId, draftTarget } = input;
+  try {
+    if (input.composerHasPendingAttachments) {
+      throw new Error("Wait for attachments to finish preparing before rewinding.");
+    }
+    const connection = readPreparedConnection(environmentId);
+    if (!connection) throw new Error("The environment is not connected.");
+    const files = await prepareRevertedMessageAttachments({
+      message,
+      environmentId,
+      httpBaseUrl: connection.httpBaseUrl,
+      createAssetUrl: input.createAssetUrl,
+    });
+    const store = useComposerDraftStore.getState();
+    const draft = store.getComposerDraft(draftTarget);
+    if (
+      (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+    ) {
+      throw new Error("Make room for this message's attachments in the composer before rewinding.");
+    }
+    const commandId = CommandId.make(randomUUID());
+    await waitForRevertedMessage(
+      input.routeThreadRef,
+      message.id,
+      input.turnCount,
+      commandId,
+      async () => {
+        const result = await input.revertThreadCheckpoint({
+          environmentId,
+          input: {
+            commandId,
+            threadId: input.threadId,
+            turnCount: input.turnCount,
+            restoreFiles: input.restoreFiles,
+          },
+        });
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      },
+    );
+    const currentPrompt = store.getComposerDraft(draftTarget)?.prompt ?? "";
+    const restoredPrompt = recallableComposerPrompt(message.text);
+    const nextPrompt =
+      restoredPrompt.length === 0
+        ? currentPrompt
+        : currentPrompt.length > 0
+          ? `${currentPrompt}\n\n${restoredPrompt}`
+          : restoredPrompt;
+    store.setPrompt(draftTarget, nextPrompt);
+    const images: ComposerImageAttachment[] = [];
+    const restoredFiles: ComposerFileAttachment[] = [];
+    files.forEach((file, index) => {
+      const attachment = {
+        id: randomUUID(),
+        name: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+        file,
+      };
+      if (message.attachments?.[index]?.type === "image") {
+        images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
+      } else {
+        restoredFiles.push({ ...attachment, type: "file" });
+      }
+    });
+    store.addImages(draftTarget, images, { allowDuplicates: true });
+    store.addFiles(draftTarget, restoredFiles, { allowDuplicates: true });
+    return { error: null, prompt: nextPrompt };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
   }
 }
 
@@ -1338,7 +1437,9 @@ export default function ChatView(props: ChatViewProps) {
     (submission) => submission.status === "uploading",
   );
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  useLayoutEffect(() => {
+    optimisticUserMessagesRef.current = optimisticUserMessages;
+  });
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, LocalThreadErrorEntry>
   >({});
@@ -1400,27 +1501,24 @@ export default function ChatView(props: ChatViewProps) {
   const [timelineOverflows, setTimelineOverflows] = useState(false);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
-  const fanoutStateAtom = draftFanoutStateAtom(routeThreadKey);
-  const fanoutState = useAtomValue(fanoutStateAtom);
-  const sendInFlightRef = fanoutState.sendInFlight;
+  const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
+  const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainMultipleSubmissionsRef } =
+    draftSendState(routeThreadKey);
   const [resumingThreadKeys, setResumingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const isResuming = resumingThreadKeys.has(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
-  const multipleModelSelections = fanoutState.selections;
+  const multipleModelSelections = useAtomValue(fanoutSelectionsAtom);
   const setMultipleModelSelections = (
     selections: SetStateAction<ReadonlyArray<ModelSelection> | null>,
   ) => {
-    appAtomRegistry.update(fanoutStateAtom, (current) => ({
-      ...current,
-      selections: typeof selections === "function" ? selections(current.selections) : selections,
-    }));
+    appAtomRegistry.update(fanoutSelectionsAtom, (current) =>
+      typeof selections === "function" ? selections(current) : selections,
+    );
   };
   const setMultipleModelSelectionsStable = useStableCallback(setMultipleModelSelections);
-  const multipleModelSelectionsRef = useRef(multipleModelSelections);
-  multipleModelSelectionsRef.current = multipleModelSelections;
-  const uncertainMultipleSubmissionsRef = fanoutState.uncertainSubmissions;
+  const readMultipleModelSelections = () => appAtomRegistry.get(fanoutSelectionsAtom);
   const environmentUnavailableSendToastSlotRef = useRef(0);
   const feedbackUploadsInFlightRef = useRef(new Set<string>());
   const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
@@ -1857,11 +1955,12 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeActivityRun, activePlan, activeRuntime]);
   const activeComposerTaskSteps =
     activeComposerTasksProgress && activePlan ? activePlan.steps : null;
-  const activeProjectRef = useMemo(
-    () =>
-      activeThread ? scopeProjectRef(activeThread.environmentId, activeThread.projectId) : null,
-    [activeThread?.environmentId, activeThread?.projectId],
-  );
+  const activeThreadEnvironmentId = activeThread?.environmentId;
+  const activeThreadProjectId = activeThread?.projectId;
+  const activeProjectRef =
+    activeThreadEnvironmentId !== undefined && activeThreadProjectId !== undefined
+      ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
+      : null;
   const activeProject = useProject(activeProjectRef);
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
@@ -2591,29 +2690,18 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [providerStatuses, settings, activeProject?.id],
   );
-  const { selectedProviderEntry, requestedDriverKind } = useMemo(
-    () =>
-      resolveComposerProviderSelection({
-        entries: providerInstanceEntries,
-        candidateInstanceIds: [
-          selectedProviderByThreadId,
-          activeRuntime?.providerInstanceId,
-          activeThread?.modelSelection.instanceId,
-          activeProjectDefaultModelSelection?.instanceId,
-        ],
-        lockedProvider,
-        lockedInstanceId:
-          activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId,
-      }),
-    [
-      activeProjectDefaultModelSelection?.instanceId,
-      activeThread?.modelSelection.instanceId,
-      activeRuntime?.providerInstanceId,
-      lockedProvider,
-      providerInstanceEntries,
+  const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
+  const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
+    entries: providerInstanceEntries,
+    candidateInstanceIds: [
       selectedProviderByThreadId,
+      activeRuntime?.providerInstanceId,
+      activeThreadModelInstanceId,
+      activeProjectDefaultModelSelection?.instanceId,
     ],
-  );
+    lockedProvider,
+    lockedInstanceId: activeRuntime?.providerInstanceId ?? activeThreadModelInstanceId,
+  });
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
@@ -2631,20 +2719,19 @@ export default function ChatView(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeRuntime);
-  const setThreadError = useMemo(
-    () =>
-      makeThreadErrorSetter({
-        routeThreadRef,
-        routeThreadKey,
-        draftId,
-        serverThreadRef: serverThread
-          ? { threadId: serverThread.id, environmentId: serverThread.environmentId }
-          : null,
-        setLocalServerErrorsByThreadKey,
-        setLocalDraftErrorsByDraftId,
-      }),
-    [draftId, routeThreadKey, routeThreadRef, serverThread?.id, serverThread?.environmentId],
-  );
+  const serverThreadId = serverThread?.id;
+  const serverThreadEnvironmentId = serverThread?.environmentId;
+  const setThreadError = makeThreadErrorSetter({
+    routeThreadRef,
+    routeThreadKey,
+    draftId,
+    serverThreadRef:
+      serverThreadId !== undefined && serverThreadEnvironmentId !== undefined
+        ? { threadId: serverThreadId, environmentId: serverThreadEnvironmentId }
+        : null,
+    setLocalServerErrorsByThreadKey,
+    setLocalDraftErrorsByDraftId,
+  });
   const {
     pendingApprovals,
     pendingUserInputs,
@@ -3045,38 +3132,19 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [feedbackSubmissions],
   );
-  const timelineProjectionRef = useRef<{
-    readonly threadKey: string | null;
-    readonly projection: TimelineEntriesProjection;
-  } | null>(null);
-  const serverTimelineEntries = useMemo(() => {
-    const previous = timelineProjectionRef.current;
-    const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
-      {
-        visibleTurnItems: serverVisibleTurnItems,
-        optimisticMessages: optimisticUserMessages,
-        anchoredMessages: anchoredTimelineMessages,
-        attachmentUrlById: timelineAttachmentUrlById,
-        ...(serverProjection === null
-          ? {}
-          : {
-              attempts: serverProjection.attempts,
-              nodes: serverProjection.nodes,
-              plans: serverProjection.plans,
-            }),
-      },
-      previous?.threadKey === activeThreadKey ? previous.projection : null,
-    );
-    timelineProjectionRef.current = { threadKey: activeThreadKey, projection };
-    return projection.entries;
-  }, [
-    activeThreadKey,
-    anchoredTimelineMessages,
-    optimisticUserMessages,
-    serverVisibleTurnItems,
-    serverProjection,
-    timelineAttachmentUrlById,
-  ]);
+  const serverTimelineEntries = useIncrementalTimelineEntries(activeThreadKey, {
+    visibleTurnItems: serverVisibleTurnItems,
+    optimisticMessages: optimisticUserMessages,
+    anchoredMessages: anchoredTimelineMessages,
+    attachmentUrlById: timelineAttachmentUrlById,
+    ...(serverProjection === null
+      ? {}
+      : {
+          attempts: serverProjection.attempts,
+          nodes: serverProjection.nodes,
+          plans: serverProjection.plans,
+        }),
+  });
   const draftTimelineEntries = useMemo(
     () =>
       optimisticUserMessages.map(
@@ -3141,12 +3209,15 @@ export default function ChatView(props: ChatViewProps) {
     backgroundSubmissionPending,
     hasWorktreeSetupCard: worktreeSetup !== null,
   });
-  const draftHeroTransition = useDraftHeroLayoutTransition(
+  const {
+    transitionGroupRef: draftHeroTransitionGroupRef,
+    composerAnchorRef: draftHeroComposerAnchorRef,
+    captureComposerRect: captureDraftHeroComposerRect,
+  } = useDraftHeroLayoutTransition(
     isDraftHeroState,
     panelAnimationsActive,
     panelAnimationDurationMs,
   );
-  const captureDraftHeroComposerRect = draftHeroTransition.captureComposerRect;
   const { turnDiffSummaries } = useTurnDiffSummaries(serverProjection);
 
   /**
@@ -3211,25 +3282,14 @@ export default function ChatView(props: ChatViewProps) {
     availableEditors,
     openInCwd: gitCwd,
   });
-  const manualCompactionProviderAvailable = useMemo(
-    () =>
-      hasAvailableCompactionProvider({
-        providers: providerInstanceEntries,
-        driverKind: selectedProvider,
-        instanceId: activeProviderInstanceId,
-        lockedInstanceId: lockedProvider
-          ? (activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId ?? null)
-          : null,
-      }),
-    [
-      activeProviderInstanceId,
-      activeThread?.modelSelection.instanceId,
-      activeRuntime?.providerInstanceId,
-      lockedProvider,
-      providerInstanceEntries,
-      selectedProvider,
-    ],
-  );
+  const manualCompactionProviderAvailable = hasAvailableCompactionProvider({
+    providers: providerInstanceEntries,
+    driverKind: selectedProvider,
+    instanceId: activeProviderInstanceId,
+    lockedInstanceId: lockedProvider
+      ? (activeRuntime?.providerInstanceId ?? activeThread?.modelSelection.instanceId ?? null)
+      : null,
+  });
   const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
     useLocalStorage(
       `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
@@ -3390,45 +3450,34 @@ export default function ChatView(props: ChatViewProps) {
   const onToggleDiffStable = useStableCallback(onToggleDiff);
 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
-  const loadBalancingCandidates = useMemo(
-    () =>
-      needsLoadBalancing
-        ? logicalProjectEnvironments
-            .filter((candidate) => {
-              const environment = environmentById.get(candidate.environmentId);
-              return (
-                environment?.connection.phase === "connected" &&
-                (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-                environment.serverConfig?.providers.some(
-                  (provider) =>
-                    (activeProviderInstanceId === null ||
-                      provider.instanceId === activeProviderInstanceId) &&
-                    provider.driver === selectedProvider &&
-                    (environment.serverConfig?.settings
-                      ? resolveProjectProviderInstanceEnabled(
-                          environment.serverConfig.settings,
-                          candidate.projectId,
-                          provider.instanceId,
-                        )
-                      : provider.enabled) &&
-                    provider.installed &&
-                    provider.status !== "error" &&
-                    provider.auth.status !== "unauthenticated" &&
-                    provider.availability !== "unavailable",
-                )
-              );
-            })
-            .map((candidate) => candidate.environmentId)
-        : [],
-    [
-      needsLoadBalancing,
-      logicalProjectEnvironments,
-      environmentById,
-      loadBalancingSettings.loadBalancingWeights,
-      activeProviderInstanceId,
-      selectedProvider,
-    ],
-  );
+  const loadBalancingCandidates = needsLoadBalancing
+    ? logicalProjectEnvironments
+        .filter((candidate) => {
+          const environment = environmentById.get(candidate.environmentId);
+          return (
+            environment?.connection.phase === "connected" &&
+            (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
+            environment.serverConfig?.providers.some(
+              (provider) =>
+                (activeProviderInstanceId === null ||
+                  provider.instanceId === activeProviderInstanceId) &&
+                provider.driver === selectedProvider &&
+                (environment.serverConfig?.settings
+                  ? resolveProjectProviderInstanceEnabled(
+                      environment.serverConfig.settings,
+                      candidate.projectId,
+                      provider.instanceId,
+                    )
+                  : provider.enabled) &&
+                provider.installed &&
+                provider.status !== "error" &&
+                provider.auth.status !== "unauthenticated" &&
+                provider.availability !== "unavailable",
+            )
+          );
+        })
+        .map((candidate) => candidate.environmentId)
+    : [];
   const loadBalancing = useLoadBalancedEnvironment(
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
@@ -5289,24 +5338,22 @@ export default function ChatView(props: ChatViewProps) {
       return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsettlingThreadKey(threadKey);
-    try {
-      const result = await unsettleThreadMutation({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId, reason: "user" },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to un-settle thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    } finally {
-      setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
+    // Commands settle into a result, so this always runs.
+    const result = await unsettleThreadMutation({
+      environmentId: activeThreadRef.environmentId,
+      input: { threadId: activeThreadRef.threadId, reason: "user" },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to un-settle thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     }
+    setUnsettlingThreadKey((current) => (current === threadKey ? null : current));
   };
   const handleUnsettleActiveThreadStable = useStableCallback(handleUnsettleActiveThread);
   const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
@@ -5322,38 +5369,36 @@ export default function ChatView(props: ChatViewProps) {
       return;
     const threadKey = scopedThreadKey(activeThreadRef);
     setUnsnoozingThreadKey(threadKey);
-    try {
-      const recovery = activeThreadShell?.limitRecovery;
-      const recoveryOwnsSnooze =
-        recovery?.snooze === true &&
-        recovery.runId === activeThreadShell?.latestRun?.runId &&
-        activeThreadShell?.snoozedUntil != null &&
-        Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
-      const result = recoveryOwnsSnooze
-        ? await updateThreadMetadata({
-            environmentId: activeThreadRef.environmentId,
-            input: {
-              threadId: activeThreadRef.threadId,
-              limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
-            },
-          })
-        : await unsnoozeThreadMutation({
-            environmentId: activeThreadRef.environmentId,
-            input: { threadId: activeThreadRef.threadId, reason: "user" },
-          });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to wake thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    } finally {
-      setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
+    // Commands settle into a result, so this always runs.
+    const recovery = activeThreadShell?.limitRecovery;
+    const recoveryOwnsSnooze =
+      recovery?.snooze === true &&
+      recovery.runId === activeThreadShell?.latestRun?.runId &&
+      activeThreadShell?.snoozedUntil != null &&
+      Date.parse(activeThreadShell.snoozedUntil) === Date.parse(recovery.resetAt);
+    const result = recoveryOwnsSnooze
+      ? await updateThreadMetadata({
+          environmentId: activeThreadRef.environmentId,
+          input: {
+            threadId: activeThreadRef.threadId,
+            limitRecovery: { runId: recovery.runId, resetAt: recovery.resetAt, snooze: false },
+          },
+        })
+      : await unsnoozeThreadMutation({
+          environmentId: activeThreadRef.environmentId,
+          input: { threadId: activeThreadRef.threadId, reason: "user" },
+        });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to wake thread",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     }
+    setUnsnoozingThreadKey((current) => (current === threadKey ? null : current));
   };
   const handleUnsnoozeActiveThreadStable = useStableCallback(handleUnsnoozeActiveThread);
   const [isRestoringThreadBranch, setIsRestoringThreadBranch] = useState(false);
@@ -5541,45 +5586,41 @@ export default function ChatView(props: ChatViewProps) {
       },
     ]);
     scrollToEnd();
-    try {
-      const settingsResult = await persistThreadSettingsForNextTurn({
-        threadId,
-        createdAt,
-        ...(localCheckoutBranchMismatch
-          ? { branch: localCheckoutBranchMismatch.currentBranch }
-          : {}),
-        runtimeMode,
-        interactionMode: context.interactionMode,
-      });
-      const result =
-        settingsResult._tag === "Failure"
-          ? settingsResult
-          : await startThreadTurn({
-              environmentId,
-              input: {
-                threadId,
-                message: { messageId, role: "user", text, attachments: [] },
-                modelSelection: context.selectedModelSelection,
-                runtimeMode,
-                interactionMode: context.interactionMode,
-                createdAt,
-              },
-            });
-      if (result._tag === "Failure") {
-        setOptimisticUserMessages((messages) =>
-          messages.filter((message) => message.id !== messageId),
-        );
-        resetLocalDispatch();
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(threadId, error instanceof Error ? error.message : failureMessage);
-        }
-      } else {
-        clearUsageLimitsFor(routeThreadKey);
+    // Commands settle into a result, so this always runs.
+    const settingsResult = await persistThreadSettingsForNextTurn({
+      threadId,
+      createdAt,
+      ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
+      runtimeMode,
+      interactionMode: context.interactionMode,
+    });
+    const result =
+      settingsResult._tag === "Failure"
+        ? settingsResult
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId,
+              message: { messageId, role: "user", text, attachments: [] },
+              modelSelection: context.selectedModelSelection,
+              runtimeMode,
+              interactionMode: context.interactionMode,
+              createdAt,
+            },
+          });
+    if (result._tag === "Failure") {
+      setOptimisticUserMessages((messages) =>
+        messages.filter((message) => message.id !== messageId),
+      );
+      resetLocalDispatch();
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(threadId, error instanceof Error ? error.message : failureMessage);
       }
-    } finally {
-      sendInFlightRef.current = false;
+    } else {
+      clearUsageLimitsFor(routeThreadKey);
     }
+    sendInFlightRef.current = false;
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
   const activeGoal = activeThreadShell?.goal ?? null;
@@ -5688,54 +5729,35 @@ export default function ChatView(props: ChatViewProps) {
     isStoppingBackgroundWork,
     onOpenRelatedThreadStable,
   ]);
-  const threadStatusLine = useMemo(() => {
-    void nowMinute;
-    return activeThreadSnoozed ? (
-      <ThreadStatusLine
-        icon={<AlarmClockIcon />}
-        label={
-          activeThreadShell?.snoozedUntil
-            ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
-            : "Snoozed"
-        }
-        actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
-        actionDisabled={!canOperateThread || isUnsnoozing}
-        onAction={() => void handleUnsnoozeActiveThreadStable()}
-      />
-    ) : activeThreadSettled ? (
-      <ThreadStatusLine
-        icon={<CheckCircle2Icon />}
-        label={
-          activeThreadShell?.settledAt
-            ? `Settled ${formatRelativeTimeLabel(activeThreadShell.settledAt)}`
-            : "Settled"
-        }
-        actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
-        actionDisabled={!canOperateThread || isUnsettling}
-        onAction={() => void handleUnsettleActiveThreadStable()}
-      />
-    ) : activeThreadWokeVisible ? (
-      <ThreadStatusLine
-        icon={<AlarmClockIcon />}
-        label="Woke from snooze"
-        actionLabel="Dismiss"
-        onAction={acknowledgeActiveThreadWokeStable}
-      />
-    ) : null;
-  }, [
-    acknowledgeActiveThreadWokeStable,
-    activeThreadSettled,
-    activeThreadShell?.settledAt,
-    activeThreadShell?.snoozedUntil,
-    activeThreadSnoozed,
-    activeThreadWokeVisible,
-    canOperateThread,
-    handleUnsettleActiveThreadStable,
-    handleUnsnoozeActiveThreadStable,
-    isUnsettling,
-    isUnsnoozing,
-    nowMinute,
-  ]);
+  // The relative times read the clock; nowMinute re-renders them on the minute.
+  const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
+  const settledAt = activeThreadShell?.settledAt ?? null;
+  const threadStatusLine = activeThreadSnoozed ? (
+    <ThreadStatusLine
+      icon={<AlarmClockIcon />}
+      label={snoozedUntil ? `Snoozed, ${formatRelativeTimeUntilLabel(snoozedUntil)}` : "Snoozed"}
+      clockMinute={nowMinute}
+      actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+      actionDisabled={!canOperateThread || isUnsnoozing}
+      onAction={() => void handleUnsnoozeActiveThreadStable()}
+    />
+  ) : activeThreadSettled ? (
+    <ThreadStatusLine
+      icon={<CheckCircle2Icon />}
+      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      clockMinute={nowMinute}
+      actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
+      actionDisabled={!canOperateThread || isUnsettling}
+      onAction={() => void handleUnsettleActiveThreadStable()}
+    />
+  ) : activeThreadWokeVisible ? (
+    <ThreadStatusLine
+      icon={<AlarmClockIcon />}
+      label="Woke from snooze"
+      actionLabel="Dismiss"
+      onAction={acknowledgeActiveThreadWokeStable}
+    />
+  ) : null;
   const activeThreadHasCompactableConversation = serverVisibleTurnItems.some(
     ({ item }) =>
       item.type === "user_message" &&
@@ -6508,81 +6530,33 @@ export default function ChatView(props: ChatViewProps) {
       rewindingThreadKeys: new Set(store.rewindingThreadKeys).add(routeThreadKey),
     }));
     setThreadError(activeThread.id, null);
-    try {
-      if (composerRef.current?.hasPendingAttachments()) {
-        throw new Error("Wait for attachments to finish preparing before rewinding.");
-      }
-      const connection = readPreparedConnection(environmentId);
-      if (!connection) throw new Error("The environment is not connected.");
-      const files = await prepareRevertedMessageAttachments({
-        message,
-        environmentId,
-        httpBaseUrl: connection.httpBaseUrl,
-        createAssetUrl: createAttachmentAssetUrl,
-      });
-      const store = useComposerDraftStore.getState();
-      const draft = store.getComposerDraft(composerDraftTarget);
-      if (
-        (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-      ) {
-        throw new Error(
-          "Make room for this message's attachments in the composer before rewinding.",
-        );
-      }
-      const commandId = CommandId.make(randomUUID());
-      await waitForRevertedMessage(routeThreadRef, messageId, turnCount, commandId, async () => {
-        const result = await revertThreadCheckpoint({
-          environmentId,
-          input: { commandId, threadId: activeThread.id, turnCount, restoreFiles },
-        });
-        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-      });
-      const currentPrompt = store.getComposerDraft(composerDraftTarget)?.prompt ?? "";
-      const restoredPrompt = recallableComposerPrompt(message.text);
-      const nextPrompt =
-        restoredPrompt.length === 0
-          ? currentPrompt
-          : currentPrompt.length > 0
-            ? `${currentPrompt}\n\n${restoredPrompt}`
-            : restoredPrompt;
-      store.setPrompt(composerDraftTarget, nextPrompt);
-      const images: ComposerImageAttachment[] = [];
-      const restoredFiles: ComposerFileAttachment[] = [];
-      files.forEach((file, index) => {
-        const attachment = {
-          id: randomUUID(),
-          name: file.name,
-          mimeType: file.type,
-          sizeBytes: file.size,
-          file,
-        };
-        if (message.attachments?.[index]?.type === "image") {
-          images.push({ ...attachment, type: "image", previewUrl: URL.createObjectURL(file) });
-        } else {
-          restoredFiles.push({ ...attachment, type: "file" });
-        }
-      });
-      store.addImages(composerDraftTarget, images, { allowDuplicates: true });
-      store.addFiles(composerDraftTarget, restoredFiles, { allowDuplicates: true });
-      if (currentRouteThreadKeyRef.current === routeThreadKey) {
-        promptRef.current = nextPrompt;
-        composerRef.current?.resetCursorState({ prompt: nextPrompt, cursor: nextPrompt.length });
-        requestAnimationFrame(() => {
-          if (currentRouteThreadKeyRef.current === routeThreadKey)
-            composerRef.current?.focusAtEnd();
-        });
-      }
-    } catch (error) {
-      setThreadError(
-        activeThread.id,
-        error instanceof Error ? error.message : "Failed to revert thread state.",
-      );
-    } finally {
-      useComposerDraftStore.setState((store) => {
-        const remaining = new Set(store.rewindingThreadKeys);
-        remaining.delete(routeThreadKey);
-        return { rewindingThreadKeys: remaining };
+    const rewind = await rewindToMessage({
+      message,
+      environmentId,
+      routeThreadRef,
+      threadId: activeThread.id,
+      turnCount,
+      restoreFiles,
+      draftTarget: composerDraftTarget,
+      composerHasPendingAttachments: composerRef.current?.hasPendingAttachments() === true,
+      createAssetUrl: createAttachmentAssetUrl,
+      revertThreadCheckpoint,
+    });
+    useComposerDraftStore.setState((store) => {
+      const remaining = new Set(store.rewindingThreadKeys);
+      remaining.delete(routeThreadKey);
+      return { rewindingThreadKeys: remaining };
+    });
+    if (rewind.error !== null) {
+      setThreadError(activeThread.id, rewind.error);
+      return;
+    }
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      const nextPrompt = rewind.prompt;
+      promptRef.current = nextPrompt;
+      composerRef.current?.resetCursorState({ prompt: nextPrompt, cursor: nextPrompt.length });
+      requestAnimationFrame(() => {
+        if (currentRouteThreadKeyRef.current === routeThreadKey) composerRef.current?.focusAtEnd();
       });
     }
   };
@@ -6702,65 +6676,63 @@ export default function ChatView(props: ChatViewProps) {
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
-    try {
-      const resume = async () => {
-        if (resumableRunId === null) {
-          return resumeThreadQueue({ environmentId, input: { threadId } });
-        }
-        const createdAt = new Date().toISOString();
-        const settingsResult = await persistThreadSettingsForNextTurn({
+    // Commands settle into a result, so this always runs.
+    const resume = async () => {
+      if (resumableRunId === null) {
+        return resumeThreadQueue({ environmentId, input: { threadId } });
+      }
+      const createdAt = new Date().toISOString();
+      const settingsResult = await persistThreadSettingsForNextTurn({
+        threadId,
+        createdAt,
+        ...(localCheckoutBranchMismatch
+          ? { branch: localCheckoutBranchMismatch.currentBranch }
+          : {}),
+        runtimeMode,
+        interactionMode,
+      });
+      if (settingsResult._tag === "Failure") return settingsResult;
+      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
+      const turnResult = await startThreadTurn({
+        environmentId,
+        input: {
           threadId,
-          createdAt,
-          ...(localCheckoutBranchMismatch
-            ? { branch: localCheckoutBranchMismatch.currentBranch }
-            : {}),
+          manualContinuationOfRunId: resumableRunId,
+          ...(modelSelection ? { modelSelection } : {}),
+          message: {
+            messageId: newMessageId(),
+            role: "user",
+            text: "Continue where you left off.",
+            attachments: [],
+          },
           runtimeMode,
           interactionMode,
-        });
-        if (settingsResult._tag === "Failure") return settingsResult;
-        const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
-        const turnResult = await startThreadTurn({
-          environmentId,
-          input: {
-            threadId,
-            manualContinuationOfRunId: resumableRunId,
-            ...(modelSelection ? { modelSelection } : {}),
-            message: {
-              messageId: newMessageId(),
-              role: "user",
-              text: "Continue where you left off.",
-              attachments: [],
-            },
-            runtimeMode,
-            interactionMode,
-            dispatchMode: "start",
-          },
-        });
-        if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
-        clearUsageLimitsFor(routeThreadKey);
-        return resumeThreadQueue({ environmentId, input: { threadId } });
-      };
-      const result = await resume();
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(
-            threadId,
-            error instanceof Error ? error.message : "Could not resume thread.",
-          );
-        }
-      } else {
-        clearUsageLimitsFor(routeThreadKey);
-        if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
-      }
-    } finally {
-      sendInFlightRef.current = false;
-      setResumingThreadKeys((current) => {
-        const next = new Set(current);
-        next.delete(routeThreadKey);
-        return next;
+          dispatchMode: "start",
+        },
       });
+      if (turnResult._tag === "Failure" || !hasHeldQueuedRuns) return turnResult;
+      clearUsageLimitsFor(routeThreadKey);
+      return resumeThreadQueue({ environmentId, input: { threadId } });
+    };
+    const result = await resume();
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          threadId,
+          error instanceof Error ? error.message : "Could not resume thread.",
+        );
+      }
+    } else {
+      clearUsageLimitsFor(routeThreadKey);
+      if (currentRouteThreadKeyRef.current === routeThreadKey) scrollToEnd();
     }
+    sendInFlightRef.current = false;
+    setResumingThreadKeys((current) => {
+      const next = new Set(current);
+      next.delete(routeThreadKey);
+      return next;
+    });
   };
 
   const onSend = async (
@@ -7195,7 +7167,11 @@ export default function ChatView(props: ChatViewProps) {
       };
     };
 
-    const multipleTargets = [];
+    const multipleTargets: Array<{
+      readonly selection: ModelSelection;
+      readonly text: string;
+      readonly interactionMode: ProviderInteractionMode;
+    }> = [];
     for (const selection of multipleModelSelections ?? []) {
       const provider = providerInstanceEntries.find(
         (entry) => entry.instanceId === selection.instanceId,
@@ -7362,7 +7338,9 @@ export default function ChatView(props: ChatViewProps) {
       let releasedComposer = false;
       let canRestoreDraft = () => false;
       let startedCount = 0;
-      try {
+      // Anything thrown here (an attachment the server can no longer take)
+      // fails every selection; the draft restore below still runs.
+      const sendResult = await settlePromise(async () => {
         const attachments = await turnAttachmentsPromise;
         const fileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
         if (fileBlockReason !== null) throw new Error(fileBlockReason);
@@ -7385,13 +7363,13 @@ export default function ChatView(props: ChatViewProps) {
         const clearedDraftSnapshot = useComposerDraftStore
           .getState()
           .getComposerDraft(composerDraftTarget);
-        const submittedSelections = multipleModelSelectionsRef.current;
+        const submittedSelections = readMultipleModelSelections();
         canRestoreDraft = () =>
           currentRouteThreadKeyRef.current === routeThreadKey &&
           composerSendGenerationRef.current === sendGeneration &&
           useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) ===
             clearedDraftSnapshot &&
-          multipleModelSelectionsRef.current === submittedSelections;
+          readMultipleModelSelections() === submittedSelections;
         setThreadError(threadIdForSend, null);
         const starts = Promise.all(
           multipleTargets.map(async (target) => {
@@ -7476,83 +7454,81 @@ export default function ChatView(props: ChatViewProps) {
         if (failedSelections.length === 0 && turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
-      } catch (error) {
+      });
+      if (sendResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(sendResult);
         failedSelections.push(...multipleModelSelections);
         setThreadError(
           threadIdForSend,
           error instanceof Error ? error.message : "Failed to send messages.",
         );
-      } finally {
-        const restoreFailedDraft = () => {
-          setMultipleModelSelections(failedSelections);
-          if (clearedDraft) {
-            setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
-            addComposerDraftImages(
-              composerDraftTarget,
-              composerImagesSnapshot.map(cloneComposerImageForRetry),
-            );
-            addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
-            setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
-            setComposerDraftPreviewAnnotations(
-              composerDraftTarget,
-              composerPreviewAnnotationsSnapshot,
-            );
-            setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
-            setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
-            if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
-              promptRef.current = messageTextForSend;
-              composerRef.current.resetCursorState({
-                cursor: collapseExpandedComposerCursor(
-                  messageTextForSend,
-                  messageTextForSend.length,
-                ),
-                prompt: messageTextForSend,
-                detectTrigger: true,
-              });
-            }
+      }
+      const restoreFailedDraft = () => {
+        setMultipleModelSelections(failedSelections);
+        if (clearedDraft) {
+          setComposerDraftPrompt(composerDraftTarget, messageTextForSend);
+          addComposerDraftImages(
+            composerDraftTarget,
+            composerImagesSnapshot.map(cloneComposerImageForRetry),
+          );
+          addComposerDraftFiles(composerDraftTarget, composerFilesSnapshot);
+          setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
+          setComposerDraftPreviewAnnotations(
+            composerDraftTarget,
+            composerPreviewAnnotationsSnapshot,
+          );
+          setComposerDraftReviewComments(composerDraftTarget, composerReviewCommentsSnapshot);
+          setComposerDraftThreadContexts(composerDraftTarget, composerThreadContextsSnapshot);
+          if (composerRef.current && currentRouteThreadKeyRef.current === routeThreadKey) {
+            promptRef.current = messageTextForSend;
+            composerRef.current.resetCursorState({
+              cursor: collapseExpandedComposerCursor(messageTextForSend, messageTextForSend.length),
+              prompt: messageTextForSend,
+              detectTrigger: true,
+            });
           }
-        };
-        if (failedSelections.length > 0) {
-          if (canRestoreDraft() && composerRef.current) {
-            restoreFailedDraft();
-          } else if (clearedDraft) {
-            const recoveryToastId = toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "A background prompt could not be sent",
-                description:
-                  "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
-                timeout: 0,
-                actionProps: {
-                  children: "Restore prompt",
-                  onClick: () => {
-                    if (
-                      !draftId ||
-                      !useComposerDraftStore.getState().getDraftSession(draftId) ||
-                      sendInFlightRef.current ||
-                      composerDraftHasUserContent(
-                        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-                      )
-                    ) {
-                      toastManager.update(recoveryToastId, {
-                        description:
-                          "Return to the original draft and send or clear its current prompt before restoring.",
-                      });
-                      return;
-                    }
-                    restoreFailedDraft();
-                    void navigate({ to: "/draft/$draftId", params: { draftId } });
-                    toastManager.close(recoveryToastId);
-                  },
+        }
+      };
+      if (failedSelections.length > 0) {
+        if (canRestoreDraft() && composerRef.current) {
+          restoreFailedDraft();
+        } else if (clearedDraft) {
+          const recoveryToastId = toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "A background prompt could not be sent",
+              description:
+                "Your newer draft is unchanged. Restore the failed prompt when this composer is empty.",
+              timeout: 0,
+              actionProps: {
+                children: "Restore prompt",
+                onClick: () => {
+                  if (
+                    !draftId ||
+                    !useComposerDraftStore.getState().getDraftSession(draftId) ||
+                    sendInFlightRef.current ||
+                    composerDraftHasUserContent(
+                      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+                    )
+                  ) {
+                    toastManager.update(recoveryToastId, {
+                      description:
+                        "Return to the original draft and send or clear its current prompt before restoring.",
+                    });
+                    return;
+                  }
+                  restoreFailedDraft();
+                  void navigate({ to: "/draft/$draftId", params: { draftId } });
+                  toastManager.close(recoveryToastId);
                 },
-              }),
-            );
-          }
+              },
+            }),
+          );
         }
-        if (!releasedComposer) {
-          sendInFlightRef.current = false;
-          resetLocalDispatch();
-        }
+      }
+      if (!releasedComposer) {
+        sendInFlightRef.current = false;
+        resetLocalDispatch();
       }
       return;
     }
@@ -8347,18 +8323,9 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  const onSendRef = useRef(onSend);
-  onSendRef.current = onSend;
-  const onResumeRef = useRef(onResume);
-  onResumeRef.current = onResume;
-  const onCompactContextRef = useRef(onCompactContext);
-  onCompactContextRef.current = onCompactContext;
-  const onComposerSend = (...args: Parameters<typeof onSend>) => onSendRef.current(...args);
-  const onComposerSendStable = useStableCallback(onComposerSend);
-  const onComposerResume = () => onResumeRef.current();
-  const onComposerResumeStable = useStableCallback(onComposerResume);
-  const onComposerCompactContext = () => onCompactContextRef.current();
-  const onComposerCompactContextStable = useStableCallback(onComposerCompactContext);
+  const onComposerSendStable = useStableCallback(onSend);
+  const onComposerResumeStable = useStableCallback(onResume);
+  const onComposerCompactContextStable = useStableCallback(onCompactContext);
   const queuedRunsControl = useMemo(
     () =>
       isServerThread && activeThread ? (
@@ -8414,7 +8381,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     setWorkLocallyResendDraftId(null);
-    void onSendRef.current();
+    void onComposerSendStable();
   }, [
     composerDraftTarget,
     routeThreadKey,
@@ -8460,12 +8427,8 @@ export default function ChatView(props: ChatViewProps) {
     if (!paintOnlyDisplayedTimeline) void onRollbackCheckpoint(input);
   };
   const onTimelineRollbackCheckpointStable = useStableCallback(onTimelineRollbackCheckpoint);
-  // The revert handler is read from a ref at call-time so the callback
-  // reference is fully stable and never busts TimelineRowCtx identity.
-  const onRevertToTurnCountRef = useRef(onRevertToTurnCountStable);
-  onRevertToTurnCountRef.current = onRevertToTurnCountStable;
   const onRevertTimelineTurn = (targetTurnCount: number, messageId: MessageId) => {
-    void onRevertToTurnCountRef.current(targetTurnCount, messageId);
+    void onRevertToTurnCountStable(targetTurnCount, messageId);
   };
   const onRevertTimelineTurnStable = useStableCallback(onRevertTimelineTurn);
 
@@ -8501,6 +8464,15 @@ export default function ChatView(props: ChatViewProps) {
     consumePendingFileDrop,
     pendingSidebarFileDrops,
   ]);
+
+  const addDroppedFilesToComposer = useStableCallback(
+    (files: Parameters<ChatComposerHandle["addDroppedFiles"]>[0]) =>
+      composerRef.current?.addDroppedFiles(files),
+  );
+  const addDroppedFoldersToComposer = useStableCallback(
+    (folders: Parameters<ChatComposerHandle["addDroppedFolders"]>[0]) =>
+      composerRef.current?.addDroppedFolders(folders),
+  );
 
   if (!activeThread) {
     return <NoActiveThreadState />;
@@ -8784,8 +8756,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const workspaceFileDropHandlers = makeWorkspaceFileDropHandlers({
     setDragActive: setIsWorkspaceFileDragActive,
-    addFiles: (files) => composerRef.current?.addDroppedFiles(files),
-    addFolders: (folders) => composerRef.current?.addDroppedFolders(folders),
+    addFiles: addDroppedFilesToComposer,
+    addFolders: addDroppedFoldersToComposer,
   });
 
   const content = (
@@ -9081,10 +9053,7 @@ export default function ChatView(props: ChatViewProps) {
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
-              <div
-                ref={draftHeroTransition.transitionGroupRef}
-                className="chat-composer-lane w-full"
-              >
+              <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
                 <div
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
@@ -9108,7 +9077,7 @@ export default function ChatView(props: ChatViewProps) {
                     </div>
                   ) : null}
                   <div
-                    ref={draftHeroTransition.composerAnchorRef}
+                    ref={draftHeroComposerAnchorRef}
                     className="relative z-10"
                     style={
                       forceExpandedMobileComposer
