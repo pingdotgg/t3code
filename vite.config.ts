@@ -330,6 +330,7 @@ export default defineConfig({
           "apps/web/src/components/chat/usePendingThreadRequests.ts",
           "apps/web/src/components/chat/useQueuedRunEdit.ts",
           "apps/web/src/components/chat/useUsageLimitsPanel.ts",
+          "apps/web/src/components/chat/useWorktreeSetup.ts",
           "apps/web/src/components/pullRequest/useThreadLinkedPullRequest.ts",
           "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
           "apps/web/src/components/terminal/**",
