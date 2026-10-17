@@ -354,11 +354,22 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   }
 }
 
+/**
+ * Why a turn could not start, for the user. `detail` stays in the logs, since
+ * it can carry provider or configuration text.
+ */
+export const ProviderAdapterFailureReason = Schema.Literals([
+  "previous_turn_active",
+  "attachment_unreadable",
+]);
+export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
+
 export class ProviderAdapterProtocolError extends Schema.TaggedError<ProviderAdapterProtocolError>()(
   "ProviderAdapterProtocolError",
   {
     driver: ProviderDriverKind,
     detail: Schema.String,
+    reason: Schema.optional(ProviderAdapterFailureReason),
     cause: Schema.optional(Schema.Defect()),
     payload: Schema.optional(Schema.Unknown),
   },

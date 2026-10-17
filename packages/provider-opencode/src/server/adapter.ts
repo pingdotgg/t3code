@@ -3092,9 +3092,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 return yield* protocolError(`OpenCode session ${sessionId} is not registered`);
               }
               if (state.activeTurn !== null) {
-                return yield* protocolError(
-                  `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
-                );
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: OPENCODE_PROVIDER,
+                  detail: `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
+                  reason: "previous_turn_active",
+                });
               }
               const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(
                 turnInput.modelSelection.model,
@@ -3136,9 +3138,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               if (state.activeTurn !== null) {
-                return yield* protocolError(
-                  `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
-                );
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: OPENCODE_PROVIDER,
+                  detail: `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
+                  reason: "previous_turn_active",
+                });
               }
               const turn: ActiveOpenCodeTurn = {
                 isRoot: true,

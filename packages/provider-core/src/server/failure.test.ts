@@ -101,6 +101,103 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+const driver = ProviderDriverKind.make("claudeAgent");
+const protocolError = (detail: string, reason?: ProviderAdapter.ProviderAdapterFailureReason) =>
+  new ProviderAdapter.ProviderAdapterProtocolError({
+    driver,
+    detail,
+    ...(reason === undefined ? {} : { reason }),
+  });
+const turnStart = (cause: unknown) =>
+  new ProviderAdapter.ProviderAdapterTurnStartError({
+    driver,
+    threadId: ThreadId.make("thread:busy"),
+    providerThreadId: ProviderThreadId.make("provider-thread:busy"),
+    runId: RunId.make("run:busy"),
+    cause,
+  });
+const GENERIC_TURN_START =
+  "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
+
+it("names a typed reason beneath each wrapper category", () => {
+  const categories = [
+    ["ProviderAdapterTurnStartError", "The provider could not start this turn"],
+    ["ProviderAdapterEventStreamError", "The provider event stream closed unexpectedly"],
+    ["ProviderAdapterOpenSessionError", "The provider session could not be opened"],
+    ["ProviderAdapterResumeThreadError", "The provider conversation could not be resumed"],
+  ] as const;
+  for (const [tag, summary] of categories) {
+    const message = makeProviderFailure({
+      // An Effect Cause between the category and its reason is transparent.
+      cause: Cause.fail({
+        _tag: tag,
+        cause: Cause.fail(protocolError("Turn is still active.", "previous_turn_active")),
+      }),
+    }).message;
+    assert.isTrue(message.startsWith(`${summary}: the previous turn is still running. `), message);
+  }
+  // A newer category replaces the reason that sat beneath an outer one.
+  assert.isTrue(
+    makeProviderFailure({
+      cause: {
+        _tag: "ProviderAdapterTurnStartError",
+        cause: {
+          _tag: "ProviderAdapterOpenSessionError",
+          cause: protocolError("Failed to read attachment 'a'.", "attachment_unreadable"),
+        },
+      },
+    }).message.startsWith(
+      "The provider session could not be opened: an attachment could not be read. ",
+    ),
+  );
+});
+
+it("says why a turn could not start without showing the adapter's detail", () => {
+  assert.equal(
+    makeProviderFailure({
+      cause: Cause.fail(
+        turnStart(
+          protocolError(
+            "Claude provider turn provider-turn:previous is still active.",
+            "previous_turn_active",
+          ),
+        ),
+      ),
+    }).message,
+    "The provider could not start this turn: the previous turn is still running. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+  assert.equal(
+    makeProviderFailure({
+      cause: turnStart(
+        protocolError("Failed to read attachment 'attachment:private'.", "attachment_unreadable"),
+      ),
+    }).message,
+    "The provider could not start this turn: an attachment could not be read. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+});
+
+it("keeps untyped adapter text out of the message", () => {
+  for (const hidden of [
+    // Adapter details can carry configuration, such as a malformed model name.
+    protocolError("Pi model 'OPENAI_API_KEY=placeholder' must use provider/model format."),
+    "This provider does not support context compaction.",
+    new Error("socket hang up at 10.0.0.5"),
+    // A reason the adapter boundary does not define, or an Object.prototype key.
+    { _tag: "ProviderAdapterProtocolError", detail: "x", reason: "OPENAI_API_KEY=placeholder" },
+    { _tag: "ProviderAdapterProtocolError", detail: "x", reason: "constructor" },
+    // A provider-controlled tag naming an Object.prototype key is not a category.
+    { _tag: "constructor", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+  ]) {
+    const message = makeProviderFailure({ cause: turnStart(hidden) }).message;
+    assert.equal(message, GENERIC_TURN_START);
+  }
+  // A typed reason with no category above it names nothing.
+  assert.equal(
+    makeProviderFailure({ cause: protocolError("busy", "previous_turn_active") }).message,
+    "Provider turn failed.",
+  );
+});
+
 it("does not expose defect text nested inside a known error category", () => {
   const failure = makeProviderFailure({
     cause: {
