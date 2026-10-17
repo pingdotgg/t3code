@@ -31,4 +31,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/ui/toggle-group.tsx",
   "apps/web/src/components/ThreadNotificationCoordinator.tsx",
   "apps/web/src/state/queries.ts",
+  "apps/web/src/state/sourceControlActions.ts",
 ] as const;
