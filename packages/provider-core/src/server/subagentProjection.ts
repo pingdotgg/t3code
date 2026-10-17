@@ -75,6 +75,8 @@ export function makeSubagentChildThread(input: {
       type: "node",
       nodeId: input.parentNodeId,
     },
+    // Lineage already ties a subagent to its parent; the parent's own launcher is not its launcher.
+    launchedByThreadId: null,
     createdAt: input.now,
     updatedAt: input.now,
     archivedAt: null,

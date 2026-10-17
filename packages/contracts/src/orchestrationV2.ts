@@ -381,6 +381,11 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ]),
   ),
+  /**
+   * The agent thread that started this top-level thread through MCP. Unlike
+   * lineage, it carries no context or lifecycle coupling; clients only group by it.
+   */
+  launchedByThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   archivedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -1805,6 +1810,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
+  launchedByThreadId: OrchestrationV2AppThread.fields.launchedByThreadId,
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   latestRunId: Schema.NullOr(RunId),
@@ -2556,6 +2562,7 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    launchedByThreadId: Schema.optional(ThreadId),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
