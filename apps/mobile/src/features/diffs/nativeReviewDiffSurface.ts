@@ -122,6 +122,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly themeJson: string;
   readonly styleJson?: string;
   readonly rowHeight: number;
+  /** iOS caps unwrapped rows at this width. Android measures the widest row instead. */
   readonly contentWidth: number;
   readonly initialRowIndex?: number;
   readonly scrollEnabled?: boolean;

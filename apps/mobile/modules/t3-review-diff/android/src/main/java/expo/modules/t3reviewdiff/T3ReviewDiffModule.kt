@@ -38,9 +38,6 @@ class T3ReviewDiffModule : Module() {
       Prop("rowHeight") { view: T3ReviewDiffView, rowHeight: Double ->
         view.setRowHeight(rowHeight.toFloat())
       }
-      Prop("contentWidth") { view: T3ReviewDiffView, contentWidth: Double ->
-        view.setContentWidth(contentWidth.toFloat())
-      }
       Prop("contentInsetBottom") { view: T3ReviewDiffView, value: Double ->
         view.setContentInsetBottom(value.toFloat())
       }
