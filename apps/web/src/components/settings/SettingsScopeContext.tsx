@@ -1,4 +1,4 @@
-import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
+import { type EnvironmentId, T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -12,26 +12,46 @@ import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
 
+type ProjectFileMember = readonly [
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  physicalProjectKey: string,
+];
+
+// Keyed by the members' identifying fields so each render reads the same atom.
+const memberProjectFilesAtom = Atom.family((membersKey: string) => {
+  const members = JSON.parse(membersKey) as ReadonlyArray<ProjectFileMember>;
+  return Atom.make((get) => {
+    const files = new Map<string, T3ProjectFile | null>();
+    for (const [environmentId, workspaceRoot, physicalProjectKey] of members) {
+      const result = get(
+        getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
+      );
+      if (result.waiting) continue;
+      const data =
+        get(optimisticFileAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME))?.data ??
+        Option.getOrNull(AsyncResult.value(result));
+      files.set(
+        physicalProjectKey,
+        data === null || data.truncated ? null : parseT3ProjectFile(data.contents),
+      );
+    }
+    return files;
+  }).pipe(Atom.withLabel(`web-settings-member-project-files:${membersKey}`));
+});
+
 function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
   const members = scope.kind === "project" || scope.kind === "checkout" ? scope.members : [];
   return useAtomValue(
-    Atom.make((get) => {
-      const files = new Map<string, T3ProjectFile | null>();
-      for (const member of members) {
-        const result = get(
-          getProjectFileQueryAtom(member.environmentId, member.workspaceRoot, T3_PROJECT_FILE_NAME),
-        );
-        if (result.waiting) continue;
-        const data =
-          get(optimisticFileAtom(member.environmentId, member.workspaceRoot, T3_PROJECT_FILE_NAME))
-            ?.data ?? Option.getOrNull(AsyncResult.value(result));
-        files.set(
+    memberProjectFilesAtom(
+      JSON.stringify(
+        members.map((member): ProjectFileMember => [
+          member.environmentId,
+          member.workspaceRoot,
           member.physicalProjectKey,
-          data === null || data.truncated ? null : parseT3ProjectFile(data.contents),
-        );
-      }
-      return files;
-    }),
+        ]),
+      ),
+    ),
   );
 }
 

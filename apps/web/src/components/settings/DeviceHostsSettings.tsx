@@ -2,7 +2,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { DeviceHostAvailability } from "../device/DeviceHostAvailability";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -12,6 +12,7 @@ import type { EnvironmentId, SshDeviceHostConfig } from "@t3tools/contracts";
 import { randomUUID } from "../../lib/utils";
 import { useState } from "react";
 import { deviceEnvironment } from "../../state/device";
+import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
@@ -212,6 +213,10 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   );
 }
 
+const deviceHostStatesAtom = environmentAtomList("web-device-host-states", (environmentId) =>
+  deviceEnvironment.state({ environmentId, input: {} }),
+);
+
 function DeviceHostList({
   environments,
   groups,
@@ -238,15 +243,12 @@ function DeviceHostList({
       settingsScopeEnvironmentLabels(environment, scopeEnvironments),
     ]),
   );
-  const states = useAtomValue(
-    Atom.make(
-      (get) =>
-        new Map(
-          environments.map(({ environmentId }) => {
-            const result = get(deviceEnvironment.state({ environmentId, input: {} }));
-            return [environmentId, Option.getOrUndefined(AsyncResult.value(result))] as const;
-          }),
-        ),
+  const environmentIds = environments.map(({ environmentId }) => environmentId);
+  const results = useAtomValue(deviceHostStatesAtom(environmentIdsKey(environmentIds)));
+  const states = new Map(
+    environmentIds.map(
+      (environmentId, index) =>
+        [environmentId, Option.getOrUndefined(AsyncResult.value(results[index]!))] as const,
     ),
   );
   const retry = useAtomCommand(deviceEnvironment.list);

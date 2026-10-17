@@ -1,10 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import { Atom } from "effect/reactivity";
 import { useState } from "react";
 
+import { environmentIdsKey } from "~/state/environmentAtomList";
 import type { EnvironmentPresentation } from "~/state/environments";
-import { serverEnvironment } from "~/state/server";
+import { environmentUpdateStatesAtom } from "~/state/server";
 import {
   buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
@@ -29,13 +29,15 @@ import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 export function useAutoBalanceUpdateBanner(
   environments: readonly EnvironmentPresentation[],
 ): ComposerBannerStackItem | null {
-  const statesAtom = Atom.make((get) =>
-    environments.map((environment) => ({
-      environment,
-      state: get(serverEnvironment.updateStateAtom(environment.environmentId)),
-    })),
+  const updateStates = useAtomValue(
+    environmentUpdateStatesAtom(
+      environmentIdsKey(environments.map(({ environmentId }) => environmentId)),
+    ),
   );
-  const states = useAtomValue(statesAtom);
+  const states = environments.flatMap((environment, index) => {
+    const state = updateStates[index];
+    return state ? [{ environment, state }] : [];
+  });
   const [dismissedNotices, setDismissedNotices] = useState<ReadonlySet<string | ServerUpdateState>>(
     () => new Set(),
   );

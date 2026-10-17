@@ -49,7 +49,13 @@ import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
-import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  environmentSession,
+  environmentSessionStatesAtom,
+  readEnvironmentScope,
+  useEnvironmentScope,
+} from "~/state/session";
+import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -542,22 +548,22 @@ export function usePrimarySettingsAvailable(): boolean {
 
 function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<EnvironmentId> {
   const { environments } = useEnvironments();
-  const writableTargetsAtom = Atom.make((get) =>
-    environments.filter(supportsSharedSettingsSync).flatMap((environment) => {
-      const result = get(environmentSession.sessionStateAtom(environment.environmentId));
-      // A cold grant must not drop a shared edit. The server authorizes the
-      // write; mismatch suggestions still wait for a confirmed grant.
-      if (includePending && result._tag === "Initial") {
-        return [environment.environmentId];
-      }
-      const session =
-        result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
-      return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
-        ? [environment.environmentId]
-        : [];
-    }),
-  );
-  return useAtomValue(writableTargetsAtom);
+  const targetIds = environments
+    .filter(supportsSharedSettingsSync)
+    .map(({ environmentId }) => environmentId);
+  const results = useAtomValue(environmentSessionStatesAtom(environmentIdsKey(targetIds)));
+  return targetIds.flatMap((environmentId, index) => {
+    const result = results[index]!;
+    // A cold grant must not drop a shared edit. The server authorizes the
+    // write; mismatch suggestions still wait for a confirmed grant.
+    if (includePending && result._tag === "Initial") {
+      return [environmentId];
+    }
+    const session = result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
+    return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
+      ? [environmentId]
+      : [];
+  });
 }
 
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {

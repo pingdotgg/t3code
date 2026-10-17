@@ -1,9 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
 import { type ReactNode, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";
-import { serverEnvironment } from "~/state/server";
+import { environmentIdsKey } from "~/state/environmentAtomList";
+import { environmentUpdateStatesAtom } from "~/state/server";
 import { useServerUpdate } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -33,17 +33,15 @@ function useNow(intervalMs: number | null): number {
 }
 
 function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<UpdateRunMachineView> {
-  const viewsAtom = Atom.make((get) =>
-    run.machines.map((machine) => ({
-      machine,
-      status: resolveUpdateRunMachineStatus(
-        machine,
-        run.phase,
-        get(serverEnvironment.updateStateAtom(machine.environmentId)),
-      ),
-    })),
+  const updateStates = useAtomValue(
+    environmentUpdateStatesAtom(
+      environmentIdsKey(run.machines.map(({ environmentId }) => environmentId)),
+    ),
   );
-  return useAtomValue(viewsAtom);
+  return run.machines.map((machine, index) => ({
+    machine,
+    status: resolveUpdateRunMachineStatus(machine, run.phase, updateStates[index]!),
+  }));
 }
 
 function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {

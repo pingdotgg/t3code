@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import {
   Clock3Icon,
   CopyIcon,
@@ -57,6 +57,7 @@ import {
   type EnvironmentPresentation,
 } from "../../state/environments";
 import { useProjects } from "../../state/entities";
+import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -329,6 +330,10 @@ export function ScheduledTasksSettings(target: {
   );
 }
 
+const scheduledTasksListAtom = environmentAtomList("web-scheduled-tasks-list", (environmentId) =>
+  serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
+);
+
 function ScheduledTaskEnvironmentList({
   environmentId,
   taskId,
@@ -339,31 +344,25 @@ function ScheduledTaskEnvironmentList({
   readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
 }) {
   const { scope, environments } = useSettingsScope();
-  const states = useAtomValue(
-    Atom.make((get) =>
-      environments.map((environment) => {
-        const connected =
-          environment.connection.phase === "connected" && environment.serverConfig !== null;
-        const query = connected
-          ? get(
-              serverEnvironment.scheduledTasksLive({
-                environmentId: environment.environmentId,
-                input: {},
-              }),
-            )
-          : null;
-        const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
-        return {
-          environment,
-          connected,
-          tasks: data?.tasks.filter((task) =>
-            matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
-          ),
-          error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
-        };
-      }),
-    ),
+  const connectedIds = environments.flatMap((environment) =>
+    environment.connection.phase === "connected" && environment.serverConfig !== null
+      ? [environment.environmentId]
+      : [],
   );
+  const queries = useAtomValue(scheduledTasksListAtom(environmentIdsKey(connectedIds)));
+  const states = environments.map((environment) => {
+    const index = connectedIds.indexOf(environment.environmentId);
+    const query = index < 0 ? null : queries[index]!;
+    const data = query === null ? null : Option.getOrNull(AsyncResult.value(query));
+    return {
+      environment,
+      connected: index >= 0,
+      tasks: data?.tasks.filter((task) =>
+        matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
+      ),
+      error: query?._tag === "Failure" ? formatEnvironmentQueryError(query.cause) : null,
+    };
+  });
   const linkedState = states.find((state) => state.environment.environmentId === environmentId);
   const linkedTask = linkedState?.tasks?.find((task) => task.id === taskId);
   const openedLink = useRef(false);
