@@ -74,6 +74,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -86,6 +87,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -667,6 +669,71 @@ type CodexTurnStartParamsWithCollaborationMode =
 const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
   CodexTurnStartParamsWithCollaborationMode,
 );
+
+/** Hidden wire model the Codex TUI sends while Luna Reserve is active (tui/src/model_catalog.rs:7). */
+const CODEX_LUNA_RESERVE_MODEL = "gpt-reserve";
+/** The TUI's fallback normal model when the backend names none (tui/src/model_catalog.rs:8). */
+const CODEX_LUNA_MODEL = "gpt-6-luna";
+const CODEX_LUNA_RESERVE_READ_TIMEOUT = "3 seconds";
+const CODEX_LUNA_RESERVE_READ_BACKOFF_MS = 30_000;
+
+// Only the fields the TUI's fallback reads (tui/src/backend_banners.rs:18-36); other banners decode to none.
+const decodeCodexLunaReserveBanner = Schema.decodeUnknownOption(
+  Schema.Struct({
+    banner_type: Schema.Literal("luna_reserve"),
+    blocked_model_slug: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  }),
+);
+
+interface CodexLunaReserve {
+  readonly normalModel: string;
+  readonly blockedModel: string | null;
+}
+
+/**
+ * Luna Reserve state after a Reserve-capable `account/rateLimits/read`, or
+ * `undefined` when the read leaves it unchanged. Mirrors the Codex 0.156 TUI
+ * (tui/src/chatwidget/backend_banners.rs): only a full read that allows
+ * ordinary usage with no remaining blocker ends Reserve (lines 317-327), and a
+ * `luna_reserve` banner starts it (lines 143-154). Reserve borrows the normal
+ * Luna model's presentation (tui/src/chatwidget/luna_reserve_model.rs:14-21).
+ */
+export function codexLunaReserveFromRead(
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+): CodexLunaReserve | null | undefined {
+  const credits = response.rateLimits.credits;
+  if (
+    response.ordinaryUsageAllowed != null &&
+    (response.ordinaryUsageAllowed ||
+      credits?.unlimited === true ||
+      credits?.hasCredits === true) &&
+    response.rateLimitUpsell == null &&
+    response.rateLimits.spendControlReached !== true &&
+    response.rateLimits.rateLimitReachedType == null
+  ) {
+    return null;
+  }
+  const banner = decodeCodexLunaReserveBanner(response.rateLimitUpsell);
+  if (Option.isNone(banner)) return undefined;
+  const reserveSnapshot = [
+    response.rateLimits,
+    ...Object.values(response.rateLimitsByLimitId ?? {}),
+  ].find((snapshot) => snapshot.limitName === CODEX_LUNA_RESERVE_MODEL);
+  return {
+    normalModel: reserveSnapshot?.normalModelSlug ?? CODEX_LUNA_MODEL,
+    blockedModel: banner.value.blocked_model_slug ?? null,
+  };
+}
+
+/** Reserve replaces only the model it stands in for, so the visible Luna label stays true. */
+export function codexLunaReserveApplies(reserve: CodexLunaReserve | null, selectedModel: string) {
+  return (
+    reserve !== null &&
+    reserve.normalModel === selectedModel &&
+    (reserve.blockedModel === null || reserve.blockedModel === selectedModel)
+  );
+}
+
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
 );
@@ -717,6 +784,8 @@ export function buildCodexTurnStartParams(input: {
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
+  /** Model sent on the wire when it differs from the user's selection (Luna Reserve). */
+  readonly wireModel?: string;
   readonly hasT3Mcp?: boolean;
   readonly browserToolsAvailable?: boolean;
   readonly deviceToolsAvailable?: boolean;
@@ -725,6 +794,7 @@ export function buildCodexTurnStartParams(input: {
   readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
 }) {
   return Effect.gen(function* () {
+    const wireModel = input.wireModel ?? input.modelSelection.model;
     const runtimeModeDefaults = codexRuntimeModeTurnDefaults(input.runtimePolicy.runtimeMode);
     const approvalPolicy =
       input.runtimePolicy.approvalPolicy === undefined
@@ -777,7 +847,8 @@ export function buildCodexTurnStartParams(input: {
         : {
             mode: input.runtimePolicy.interactionMode === "plan" ? "plan" : "default",
             settings: {
-              model: input.modelSelection.model,
+              // Codex takes the model from collaborationMode when present (core/src/session/step_settings.rs:265).
+              model: wireModel,
               reasoning_effort: effort ?? "medium",
               ...(developerInstructions === undefined
                 ? {}
@@ -790,7 +861,7 @@ export function buildCodexTurnStartParams(input: {
       input: input.codexInput,
       ...(additionalContext ? { additionalContext } : {}),
       cwd: input.runtimePolicy.cwd,
-      model: input.modelSelection.model,
+      model: wireModel,
       // Model catalogues can default summaries to "none". Request them on every
       // turn, including resumed threads, for T3's reasoning timeline.
       summary: "detailed",
@@ -1185,6 +1256,11 @@ interface CodexSubagentThreadContext {
   startedAt: DateTime.Utc;
   readonly turnItemId: OrchestrationV2TurnItem["id"];
   readonly turnItemOrdinal: number;
+  /**
+   * The visible model of whatever spawned this subagent, fixed at registration.
+   * `parentContext` moves to the root's latest turn, whose selection can change.
+   */
+  readonly spawnerModel: string;
   task: OrchestrationV2Subagent;
 }
 
@@ -1682,6 +1758,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
   const { clientFactory, crypto, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
+  // Luna Reserve: like the Codex TUI, re-read usage after a usage-limit stop
+  // (tui/src/chatwidget/turn_runtime.rs:460-463) and while Reserve is active,
+  // so the next turn enters or leaves it. Ordinary sessions never pay for the read.
+  // An instance is one Codex home and so one account, and a weekly limit can
+  // outlast many sessions, so the state lives here and survives an idle release.
+  const lunaReserve = yield* Ref.make<CodexLunaReserve | null>(null);
+  const lunaReserveReadArmed = yield* Ref.make(false);
+  // Sessions start turns concurrently; one read at a time keeps a stale
+  // response from overwriting a newer one.
+  const lunaReservePermit = yield* Semaphore.make(1);
+  // A slow usage endpoint would otherwise cost every turn start the full timeout.
+  const lunaReserveReadPausedUntil = yield* Ref.make(0);
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -1793,6 +1881,44 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
+        // The read goes through this session's app-server; the state it updates is the adapter's.
+        const refreshLunaReserve = Effect.gen(function* () {
+          if (!(yield* Ref.get(lunaReserveReadArmed)) && (yield* Ref.get(lunaReserve)) === null) {
+            return;
+          }
+          if ((yield* Clock.currentTimeMillis) < (yield* Ref.get(lunaReserveReadPausedUntil))) {
+            return;
+          }
+          const response = yield* client
+            .request("account/rateLimits/read", {
+              supportsLunaReserve: true,
+              // T3 never shows reset-credit details; skipping them saves a backend call.
+              excludeResetCreditDetails: true,
+            })
+            .pipe(Effect.timeout(CODEX_LUNA_RESERVE_READ_TIMEOUT), Effect.result);
+          if (Result.isFailure(response)) {
+            yield* Ref.set(
+              lunaReserveReadPausedUntil,
+              (yield* Clock.currentTimeMillis) + CODEX_LUNA_RESERVE_READ_BACKOFF_MS,
+            );
+            // Without ChatGPT auth no read can succeed and Reserve cannot apply
+            // (app-server request_processors/account_processor.rs:1111-1120 at rust-v0.156.1).
+            if (
+              response.failure._tag === "CodexAppServerRequestError" &&
+              response.failure.code === -32600 &&
+              response.failure.errorMessage.includes("authentication required")
+            ) {
+              yield* Ref.set(lunaReserveReadArmed, false);
+              yield* Ref.set(lunaReserve, null);
+            }
+            return yield* Effect.logDebug("Codex Luna Reserve usage read failed.", {
+              cause: response.failure,
+            });
+          }
+          yield* Ref.set(lunaReserveReadArmed, false);
+          const next = codexLunaReserveFromRead(response.success);
+          if (next !== undefined) yield* Ref.set(lunaReserve, next);
+        }).pipe(lunaReservePermit.withPermit);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
@@ -2668,14 +2794,36 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
           });
 
+        /**
+         * A subagent a Reserve turn spawns without its own model inherits the
+         * hidden wire model (codex-rs/core/src/agent/child_config.rs:109-117),
+         * and a child Codex continues keeps it, so Codex can report
+         * `gpt-reserve` for a subagent long after Reserve ends. Every reported
+         * subagent model passes through here so the subagent and its child
+         * thread show the model Reserve stood in for: the immediate spawner's
+         * visible model, then the Reserve read's normal model.
+         */
+        const visibleSubagentModel = (model: string, parentModel: string | undefined) =>
+          model !== CODEX_LUNA_RESERVE_MODEL
+            ? Effect.succeed(model)
+            : Ref.get(lunaReserve).pipe(
+                Effect.map((reserve) => parentModel ?? reserve?.normalModel ?? CODEX_LUNA_MODEL),
+              );
+
+        /** The visible model of whatever spawns a subagent on this turn. */
+        const spawnerVisibleModel = (context: ActiveCodexTurnContext) =>
+          context.subagent === null
+            ? context.input.modelSelection.model
+            : (context.subagent.task.model ?? context.subagent.spawnerModel);
+
         const updateSubagentSelection = Effect.fnUntraced(function* (
           nativeThreadId: string,
           value: string | null,
           effort?: string | null,
           tier?: string | null,
         ) {
-          const model = value?.trim();
-          if (!model) return;
+          const reported = value?.trim();
+          if (!reported) return;
           const previous = subagentSelections.get(nativeThreadId);
           const previousOptions = previous?.options;
           const options =
@@ -2694,14 +2842,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     value?.trim() ? [{ id, value: value.trim() }] : [],
                   ),
                 ];
-          const selection = {
+          // Registration resolves an early report against the spawner it learns then.
+          subagentSelections.set(nativeThreadId, {
+            model: reported,
+            ...(options === undefined ? {} : { options }),
+          });
+          const subagent = (yield* Ref.get(subagentThreads)).get(nativeThreadId);
+          if (subagent === undefined) return;
+          const model = yield* visibleSubagentModel(reported, subagent.spawnerModel);
+          const modelSelection = {
+            instanceId: subagent.task.providerInstanceId,
             model,
             ...(options === undefined ? {} : { options }),
           };
-          subagentSelections.set(nativeThreadId, selection);
-          const subagent = (yield* Ref.get(subagentThreads)).get(nativeThreadId);
-          if (subagent === undefined) return;
-          const modelSelection = { instanceId: subagent.task.providerInstanceId, ...selection };
           if (
             subagent.task.modelSelection &&
             modelSelectionsEqual(subagent.task.modelSelection, modelSelection)
@@ -2759,6 +2912,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeThreadId: input.nativeThreadId,
             });
             const turnItemOrdinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+            const reportedSelection = subagentSelections.get(input.nativeThreadId);
+            const reportedModel = reportedSelection?.model ?? input.model;
+            const spawnerModel = spawnerVisibleModel(input.context);
+            const model =
+              reportedModel === null
+                ? null
+                : yield* visibleSubagentModel(reportedModel, spawnerModel);
             const providerThread = {
               id: idAllocator.derive.providerThread({
                 driver: CODEX_PROVIDER,
@@ -2786,7 +2946,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               createdAt: now,
               updatedAt: now,
             } satisfies OrchestrationV2ProviderThread;
-            const reportedSelection = subagentSelections.get(input.nativeThreadId);
             const task = {
               id: subagentNodeId,
               threadId: input.context.projectionThreadId,
@@ -2801,13 +2960,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeTaskRef: codexNativeItemRef(input.nativeItemId),
               prompt: input.prompt,
               title: input.title,
-              model: reportedSelection?.model ?? input.model,
-              modelSelection: reportedSelection
-                ? {
-                    instanceId: input.context.input.modelSelection.instanceId,
-                    ...reportedSelection,
-                  }
-                : undefined,
+              model,
+              modelSelection:
+                reportedSelection && model !== null
+                  ? {
+                      instanceId: input.context.input.modelSelection.instanceId,
+                      ...reportedSelection,
+                      model,
+                    }
+                  : undefined,
               status: "running",
               result: null,
               startedAt: now,
@@ -2850,6 +3011,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeItemId: input.nativeItemId,
               }),
               turnItemOrdinal,
+              spawnerModel,
               task,
             } satisfies CodexSubagentThreadContext;
 
@@ -5606,6 +5768,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             rootProviderThreads.set(nativeThreadId, { ...rootProviderThread, status: "idle" });
           }
           if (current.status === "failed" && current.failure.class === "usage_limit") {
+            yield* Ref.set(lunaReserveReadArmed, true);
             const item = makeProviderFailureTurnItem({
               driver: CODEX_PROVIDER,
               threadId: context.input.threadId,
@@ -5909,6 +6072,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(providerRetry === undefined ? {} : { providerRetry }),
                   ...(holdsForGoal ? { goalHoldTurn: completedTurn } : {}),
                 });
+              } else if (
+                input.status === "failed" &&
+                (input.failureCode === "usageLimitExceeded" ||
+                  input.failureCode === "rateLimitExceeded" ||
+                  (input.context.latestProviderFailure ?? providerRetry)?.failure.class ===
+                    "usage_limit")
+              ) {
+                // A subagent draws on the same account quota as its root thread.
+                yield* Ref.set(lunaReserveReadArmed, true);
               }
               const waiter = (yield* Ref.get(turnWaiters)).get(input.nativeTurnId);
               if (waiter !== undefined) {
@@ -6185,11 +6357,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            yield* refreshLunaReserve;
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
+              ...(codexLunaReserveApplies(
+                yield* Ref.get(lunaReserve),
+                turnInput.modelSelection.model,
+              )
+                ? { wireModel: CODEX_LUNA_RESERVE_MODEL }
+                : {}),
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
