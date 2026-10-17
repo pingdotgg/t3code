@@ -12,6 +12,7 @@ import {
   type PullRequestProviderFailure,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderRepositoryRef,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { definition } from "../client/definition.ts";
@@ -95,6 +96,15 @@ export const make = Effect.gen(function* () {
       cause: error,
     });
 
+  // A repository read from a browser URL carries the installation's URL prefix, which glab adds
+  // to the API path itself, so every call asks GitLab for the project path first.
+  const onProject =
+    <I extends ProviderRepositoryRef, A, E>(call: (input: I) => Effect.Effect<A, E>) =>
+    (input: I) =>
+      cli
+        .resolveProjectPath(input)
+        .pipe(Effect.flatMap((repository) => call({ ...input, repository })));
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitlab"),
     capabilities: CAPABILITIES,
@@ -102,7 +112,7 @@ export const make = Effect.gen(function* () {
     getViewer: (input) =>
       cli.getViewerUsername({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
 
-    listChangeRequests: (input) =>
+    listChangeRequests: onProject((input) =>
       cli
         .listMergeRequests({
           cwd: input.cwd,
@@ -118,14 +128,16 @@ export const make = Effect.gen(function* () {
           Effect.mapError(fail("listChangeRequests")),
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
+    ),
 
-    getChangeRequestChecks: (input) =>
+    getChangeRequestChecks: onProject((input) =>
       cli.getMergeRequestDetail(input).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
+    ),
 
-    getChangeRequest: (input) =>
+    getChangeRequest: onProject((input) =>
       Effect.all(
         [
           cli.getMergeRequestDetail(input),
@@ -151,8 +163,9 @@ export const make = Effect.gen(function* () {
             : { behindBy: mergeRequest.divergedCommits }),
         })),
       ),
+    ),
 
-    getChangeRequestActivity: (input) =>
+    getChangeRequestActivity: onProject((input) =>
       Effect.all(
         [
           cli
@@ -190,28 +203,34 @@ export const make = Effect.gen(function* () {
           commits,
         })),
       ),
+    ),
 
-    getViewerPermissions: (input) =>
+    getViewerPermissions: onProject((input) =>
       cli
         .getMergeRequestDetail(input)
         .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
+    ),
 
-    getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
+    getDiff: onProject((input) =>
+      cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
+    ),
 
-    getDiffFileContents: (input) =>
+    getDiffFileContents: onProject((input) =>
       cli.getMergeRequestDiffFileContents(input).pipe(Effect.mapError(fail("getDiffFileContents"))),
+    ),
 
     // GitLab's own local-storage marks are keyed on the blob id too, so this stales at the same
     // moment its web UI would.
-    getFileRevisions: (input) =>
+    getFileRevisions: onProject((input) =>
       cli.getFileRevisions(input).pipe(
         Effect.mapError(fail("getFileRevisions")),
         Effect.map((revisions) => ({ revisions })),
       ),
+    ),
 
     // Users only: GitLab requests a review of a person, and the groups that can stand in for one
     // appear in approval rules rather than in a merge request's reviewers.
-    listReviewerCandidates: (input) =>
+    listReviewerCandidates: onProject((input) =>
       cli
         .listReviewerCandidates({
           cwd: input.cwd,
@@ -219,8 +238,9 @@ export const make = Effect.gen(function* () {
           number: input.number,
         })
         .pipe(Effect.mapError(fail("listReviewerCandidates"))),
+    ),
 
-    setReviewerRequest: (input) =>
+    setReviewerRequest: onProject((input) =>
       cli
         .setReviewerRequest({
           cwd: input.cwd,
@@ -230,8 +250,9 @@ export const make = Effect.gen(function* () {
           requested: input.requested,
         })
         .pipe(Effect.mapError(fail("setReviewerRequest"))),
+    ),
 
-    runAction: (input) =>
+    runAction: onProject((input) =>
       cli
         .runMergeRequestAction({
           cwd: input.cwd,
@@ -241,8 +262,9 @@ export const make = Effect.gen(function* () {
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+    ),
 
-    updateChangeRequest: (input) =>
+    updateChangeRequest: onProject((input) =>
       cli
         .updateMergeRequest({
           cwd: input.cwd,
@@ -252,10 +274,13 @@ export const make = Effect.gen(function* () {
           ...(input.body === undefined ? {} : { description: input.body }),
         })
         .pipe(Effect.mapError(fail("updateChangeRequest"))),
+    ),
 
-    comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    comment: onProject((input) =>
+      cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    ),
 
-    updateComment: (input) =>
+    updateComment: onProject((input) =>
       cli
         .updateNote({
           cwd: input.cwd,
@@ -265,10 +290,13 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("updateComment"))),
+    ),
 
-    submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    submitReview: onProject((input) =>
+      cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    ),
 
-    replyToThread: (input) =>
+    replyToThread: onProject((input) =>
       cli
         .replyToDiscussion({
           cwd: input.cwd,
@@ -278,8 +306,9 @@ export const make = Effect.gen(function* () {
           body: input.body,
         })
         .pipe(Effect.mapError(fail("replyToThread"))),
+    ),
 
-    setReaction: (input) =>
+    setReaction: onProject((input) =>
       cli
         .setReaction({
           cwd: input.cwd,
@@ -290,8 +319,9 @@ export const make = Effect.gen(function* () {
           reacted: input.reacted,
         })
         .pipe(Effect.mapError(fail("setReaction"))),
+    ),
 
-    setThreadResolution: (input) =>
+    setThreadResolution: onProject((input) =>
       cli
         .setDiscussionResolution({
           cwd: input.cwd,
@@ -301,6 +331,7 @@ export const make = Effect.gen(function* () {
           resolved: input.resolved,
         })
         .pipe(Effect.mapError(fail("setThreadResolution"))),
+    ),
   };
 
   return provider;

@@ -55,6 +55,26 @@ describe("parseChangeRequestUrl", () => {
     );
   });
 
+  it("keeps a GitLab installation prefix in the repository so the link rebuilds to the same page", () => {
+    const url = "https://code.example.com/gitlab/team/subgroup/project/-/merge_requests/9";
+    const parsed = parseChangeRequestUrl(url);
+
+    expect(parsed).toEqual({
+      host: "code.example.com",
+      repository: "gitlab/team/subgroup/project",
+      number: 9,
+    });
+    expect(changeRequestUrlFor("gitlab", parsed!.host, parsed!.repository, parsed!.number)).toBe(
+      url,
+    );
+  });
+
+  it("does not take a GitLab group named gitlab for an installation prefix", () => {
+    expect(
+      parseChangeRequestUrl("https://gitlab.example.com/gitlab/project/-/merge_requests/9"),
+    ).toEqual({ host: "gitlab.example.com", repository: "gitlab/project", number: 9 });
+  });
+
   it("reads Bitbucket and both Azure DevOps URL forms", () => {
     expect(parseChangeRequestUrl("https://bitbucket.org/workspace/repo/pull-requests/5")).toEqual({
       host: "bitbucket.org",

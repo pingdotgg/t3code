@@ -5,6 +5,10 @@ import * as Layer from "effect/Layer";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
 
+const resolvesToItself = {
+  resolveProjectPath: (input: { readonly repository: string }) => Effect.succeed(input.repository),
+};
+
 describe("gitLabViewerPermissions", () => {
   it("offers everything to a viewer GitLab says can merge", () => {
     expect(gitLabViewerPermissions({ viewerCanMerge: true })).toEqual({
@@ -82,6 +86,7 @@ describe("getChangeRequest base freshness", () => {
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...resolvesToItself,
             getMergeRequestDetail: () => Effect.succeed(detail),
           }),
         ),
@@ -106,6 +111,7 @@ describe("getChangeRequest base freshness", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          ...resolvesToItself,
           getMergeRequestDetail: () => Effect.succeed({ ...detail, ...divergence }),
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
@@ -147,7 +153,11 @@ describe("rewriting what has already been said", () => {
 
   const providerWith = make.pipe(
     Effect.provide(
-      Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({ updateMergeRequest, updateNote }),
+      Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+        ...resolvesToItself,
+        updateMergeRequest,
+        updateNote,
+      }),
     ),
   );
 
@@ -218,6 +228,7 @@ describe("expanding unchanged lines", () => {
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...resolvesToItself,
             getMergeRequestDiffFileContents,
           }),
         ),
@@ -240,6 +251,7 @@ describe("expanding unchanged lines", () => {
       const provider = yield* make.pipe(
         Effect.provide(
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...resolvesToItself,
             getMergeRequestDiffFileContents: () =>
               Effect.fail(
                 new GitLabPullRequestCli.GitLabDiffFileContentsUnavailableError({
@@ -261,6 +273,47 @@ describe("expanding unchanged lines", () => {
         reason: "failed",
         detail: "The diff file 'assets/logo.png' is binary.",
       });
+    }),
+  );
+});
+
+describe("a repository linked from a browser URL under an installation prefix", () => {
+  const stored = {
+    cwd: "/w",
+    repository: "gitlab/team/subgroup/project",
+    host: "code.example.com",
+    number: 9,
+  };
+  const resolveProjectPath = vi.fn(() => Effect.succeed("team/subgroup/project"));
+  const getMergeRequestDiff = vi.fn(() =>
+    Effect.succeed({ patch: "", truncated: false, nextCursor: null }),
+  );
+  const commentOnMergeRequest = vi.fn(() => Effect.void);
+
+  it.effect("reads and writes through the project path GitLab reports for the stored one", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            resolveProjectPath,
+            getMergeRequestDiff,
+            commentOnMergeRequest,
+          }),
+        ),
+      );
+
+      yield* provider.getDiff(stored);
+      yield* provider.comment({ ...stored, body: "Looks good." });
+
+      expect(resolveProjectPath).toHaveBeenCalledWith(
+        expect.objectContaining({ host: "code.example.com", repository: stored.repository }),
+      );
+      expect(getMergeRequestDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ repository: "team/subgroup/project", number: 9 }),
+      );
+      expect(commentOnMergeRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ repository: "team/subgroup/project", number: 9 }),
+      );
     }),
   );
 });
