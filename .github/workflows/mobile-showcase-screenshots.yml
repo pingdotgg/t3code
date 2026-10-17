@@ -34,6 +34,10 @@ on:
           - ember
           - iris
           - all
+      pen_assets:
+        description: Export G dark and H light iPhone marketing layouts (requires PEN_CLI_KEY)
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -100,6 +104,52 @@ jobs:
           name: app-store-connect-screenshots
           path: artifacts/app-store/screenshots/apple/
           if-no-files-found: warn
+          retention-days: 14
+
+  pen-assets:
+    name: Pen App Store layouts
+    needs: ios
+    if: inputs.pen_assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check Pen key
+        env:
+          PEN_CLI_KEY: ${{ secrets.PEN_CLI_KEY }}
+        run: test -n "$PEN_CLI_KEY" || { echo 'Add the PEN_CLI_KEY repository Actions secret to export Pen layouts.'; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Install Pen CLI
+        run: npm install --global @pen.dev/cli@0.3.9
+
+      - name: Download iOS captures
+        uses: actions/download-artifact@v8
+        with:
+          name: app-store-connect-screenshots
+          path: artifacts/app-store/screenshots/apple/
+
+      - name: Export and validate Pen layouts
+        env:
+          PEN_CLI_KEY: ${{ secrets.PEN_CLI_KEY }}
+        run: node scripts/mobile-showcase-assets.ts --appearance "${{ inputs.appearance }}" --theme "${{ inputs.theme }}"
+
+      - name: Upload Pen layouts
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-store-pen-layouts
+          path: artifacts/app-store/pen/
+          if-no-files-found: error
           retention-days: 14
 
   android:
