@@ -47,6 +47,7 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  workspaceDefaultsPending?: boolean;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -76,6 +77,7 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        deferWorkspaceDefaults?: boolean;
       },
     ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
       const projects = readProjects();
@@ -140,12 +142,19 @@ export function useNewThreadHandler() {
             currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
           destinationDraftId,
         });
+      // The shared resolver owns the priority order. The t3.json read is
+      // skipped entirely when a higher-priority source decides, and its
+      // query atom caches per project after the first call.
+      let workspaceDefaultsPending = false;
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
         const consultProjectFile =
           project !== undefined && projectSettings.settings.defaultThreadEnvMode === null;
-        const projectFile = consultProjectFile
-          ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
-          : null;
+        workspaceDefaultsPending =
+          project !== undefined && options?.deferWorkspaceDefaults === true;
+        const projectFile =
+          consultProjectFile && !workspaceDefaultsPending
+            ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
+            : null;
         return resolveNewThreadEnvMode({
           projectSettings: resolveProjectSettings(
             targetServerSettings,
@@ -237,6 +246,7 @@ export function useNewThreadHandler() {
               branch: null,
               worktreePath: null,
               envMode: defaultEnvMode,
+              ...(workspaceDefaultsPending ? { workspaceDefaultsPending: true } : {}),
               startFromOrigin: resolveNewDraftStartFromOrigin({
                 envMode: defaultEnvMode,
                 newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
@@ -364,6 +374,7 @@ export function useNewThreadHandler() {
           branch: options?.branch ?? null,
           worktreePath: options?.worktreePath ?? null,
           envMode: initialEnvMode,
+          ...(workspaceDefaultsPending ? { workspaceDefaultsPending: true } : {}),
           startFromOrigin:
             options?.startFromOrigin ??
             resolveNewDraftStartFromOrigin({

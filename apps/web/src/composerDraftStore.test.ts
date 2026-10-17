@@ -1288,6 +1288,41 @@ describe("composerDraftStore project draft thread mapping", () => {
     }
   });
 
+  it("keeps unresolved workspace defaults and typed content across persistence", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      workspaceDefaultsPending: true,
+    });
+    store.setPrompt(draftId, "keep typing");
+    store.setDraftThreadContext(draftId, { runtimeMode: "full-access" });
+    store.setDraftThreadContext(draftId, {
+      projectRef,
+      branch: "main",
+      envMode: "local",
+      environmentSelection: "auto",
+    });
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(persisted.draftThreadsByThreadKey[draftId]?.workspaceDefaultsPending).toBe(true);
+    expect(persisted.draftsByThreadKey[draftId]?.prompt).toBe("keep typing");
+  });
+
+  it("lets an explicit workspace choice finish pending defaults without changing text", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      workspaceDefaultsPending: true,
+    });
+    store.setPrompt(draftId, "keep typing");
+    store.setDraftThreadContext(draftId, { envMode: "worktree", branch: "chosen-branch" });
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      envMode: "worktree",
+      branch: "chosen-branch",
+    });
+    expect(store.getDraftSession(draftId)?.workspaceDefaultsPending).toBeUndefined();
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("keep typing");
+  });
+
   it("stores and reads project draft thread ids via actions", () => {
     const store = useComposerDraftStore.getState();
     expect(store.getDraftThreadByProjectRef(projectRef)).toBeNull();
