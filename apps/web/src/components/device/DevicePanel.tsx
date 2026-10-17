@@ -157,7 +157,9 @@ export function DevicePanel(props: {
       {hostReady && !activeDevice && state.hostStatusDetail ? (
         <div
           role="status"
-          className="whitespace-pre-line border-b px-3 py-2 text-xs text-muted-foreground"
+          aria-label="Device host diagnostics"
+          tabIndex={0}
+          className="max-h-32 shrink-0 overflow-y-auto whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
         >
           {state.hostStatusDetail}
         </div>
