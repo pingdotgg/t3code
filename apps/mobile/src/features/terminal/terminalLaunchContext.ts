@@ -69,16 +69,15 @@ export function resolveTerminalOpenLocation(input: {
     threadShellWorktreePath: input.threadShellWorktreePath,
     threadDetailWorktreePath: input.threadDetailWorktreePath,
   });
+  const sessionLocation = input.terminalLocation ?? input.activeSessionLocation;
 
+  // A session's null worktree means the project checkout, not "unknown", so only
+  // fall back to the thread's worktree when there is no session.
+  if (sessionLocation !== null) {
+    return { cwd: sessionLocation.cwd, worktreePath: sessionLocation.worktreePath };
+  }
   return {
-    cwd:
-      input.terminalLocation?.cwd ??
-      input.activeSessionLocation?.cwd ??
-      preferredThreadWorktreePath ??
-      input.workspaceRoot,
-    worktreePath:
-      input.terminalLocation?.worktreePath ??
-      input.activeSessionLocation?.worktreePath ??
-      preferredThreadWorktreePath,
+    cwd: preferredThreadWorktreePath ?? input.workspaceRoot,
+    worktreePath: preferredThreadWorktreePath,
   };
 }

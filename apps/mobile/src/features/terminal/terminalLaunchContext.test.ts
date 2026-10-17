@@ -61,6 +61,21 @@ describe("resolveTerminalOpenLocation", () => {
       worktreePath: "/repo/worktrees/feature",
     });
   });
+
+  it("keeps a running checkout terminal on the checkout after the thread gains a worktree", () => {
+    expect(
+      resolveTerminalOpenLocation({
+        terminalLocation: null,
+        activeSessionLocation: { cwd: "/repo/root", worktreePath: null },
+        workspaceRoot: "/repo/root",
+        threadShellWorktreePath: "/repo/worktrees/feature",
+        threadDetailWorktreePath: "/repo/worktrees/feature",
+      }),
+    ).toEqual({
+      cwd: "/repo/root",
+      worktreePath: null,
+    });
+  });
 });
 
 describe("pending terminal launches", () => {

@@ -81,6 +81,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
+  resolveTerminalWorktreePath,
   resolveDraftPromotionNavigationTarget,
   resolveEffectiveInteractionMode,
   resolveThreadMetadataUpdateForNextTurn,
@@ -509,6 +510,36 @@ describe("session branch mismatch dismissal", () => {
     expect(isBranchMismatchDismissedForSession("t1:a:b")).toBe(true);
     expect(isBranchMismatchDismissedForSession("t1:a:c")).toBe(false);
     expect(isBranchMismatchDismissedForSession(null)).toBe(false);
+  });
+});
+
+describe("resolveTerminalWorktreePath", () => {
+  const threadWorktreePath = "/repo/.worktrees/feature";
+
+  it("keeps a terminal launched on the checkout off the thread's later worktree", () => {
+    expect(
+      resolveTerminalWorktreePath({
+        launchContext: { worktreePath: null },
+        summary: null,
+        threadWorktreePath,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps a terminal the server opened on the checkout off the thread's later worktree", () => {
+    expect(
+      resolveTerminalWorktreePath({
+        launchContext: null,
+        summary: { worktreePath: null },
+        threadWorktreePath,
+      }),
+    ).toBeNull();
+  });
+
+  it("falls back to the thread's worktree only without a launch context or summary", () => {
+    expect(
+      resolveTerminalWorktreePath({ launchContext: null, summary: null, threadWorktreePath }),
+    ).toBe(threadWorktreePath);
   });
 });
 
