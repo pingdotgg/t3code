@@ -102,6 +102,279 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("discovers skills from installed Cursor plugins", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDirectory = (prefix: string) =>
+          fileSystem
+            .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const userHome = yield* tempDirectory("cursor-skills-home-");
+        const workspace = yield* tempDirectory("cursor-skills-workspace-");
+        const writeFile = Effect.fn("writeCursorPluginFile")(function* (
+          file: string,
+          contents: string,
+        ) {
+          yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fileSystem.writeFileString(file, contents);
+        });
+        const plugins = path.join(userHome, ".cursor", "plugins");
+        const marketplace = path.join(plugins, "cache", "cursor-public");
+        const designKit = path.join(marketplace, "design-kit", "4f2a9c1");
+        const toolkit = path.join(marketplace, "toolkit", "9c1e7b3");
+        const nameless = path.join(marketplace, "nameless", "2e8f4a1");
+        const teamPlugin = path.join(plugins, "local", "team-plugin");
+
+        yield* writeFile(
+          path.join(userHome, ".agents", "skills", "deploy", "SKILL.md"),
+          "---\ndescription: local deploy\n---\n",
+        );
+        yield* writeFile(path.join(designKit, ".cache-complete"), "");
+        yield* writeFile(
+          path.join(designKit, ".cursor-plugin", "plugin.json"),
+          JSON.stringify({ name: "design-kit", skills: "./skills-custom/" }),
+        );
+        yield* writeFile(path.join(designKit, "skills-custom", "SKILL.md"), "---\n---\n");
+        yield* writeFile(
+          path.join(designKit, "skills-custom", "mockup", "SKILL.md"),
+          "---\nname: Mockup screens\n---\n",
+        );
+        yield* writeFile(
+          path.join(designKit, "skills-custom", "group", "nested", "SKILL.md"),
+          "---\n---\n",
+        );
+        yield* writeFile(path.join(designKit, "skills", "decoy", "SKILL.md"), "---\n---\n");
+        yield* writeFile(
+          path.join(marketplace, "partial", "7b3d5e8", "skills", "half-installed", "SKILL.md"),
+          "---\n---\n",
+        );
+        yield* writeFile(path.join(toolkit, ".cache-complete"), "");
+        yield* writeFile(
+          path.join(toolkit, ".cursor-plugin", "plugin.json"),
+          JSON.stringify({ name: "toolkit" }),
+        );
+        yield* writeFile(
+          path.join(toolkit, "skills", "release", "SKILL.md"),
+          "---\ndescription: cut a release\ndisable-model-invocation: true\n---\n",
+        );
+        yield* writeFile(
+          path.join(toolkit, "skills", "deploy", "SKILL.md"),
+          "---\ndescription: plugin deploy\n---\n",
+        );
+        yield* writeFile(path.join(nameless, ".cache-complete"), "");
+        yield* writeFile(
+          path.join(nameless, ".cursor-plugin", "plugin.json"),
+          JSON.stringify({ skills: "./custom/" }),
+        );
+        yield* writeFile(path.join(nameless, "custom", "unread", "SKILL.md"), "---\n---\n");
+        yield* writeFile(path.join(nameless, "skills", "fallback", "SKILL.md"), "---\n---\n");
+        yield* writeFile(
+          path.join(teamPlugin, ".claude-plugin", "plugin.json"),
+          JSON.stringify({
+            name: "team-plugin",
+            skills: ["./extras/lint", "extras/format/SKILL.md", "bundles", "../../shared"],
+          }),
+        );
+        yield* writeFile(path.join(teamPlugin, "extras", "lint", "SKILL.md"), "---\n---\n");
+        yield* writeFile(
+          path.join(teamPlugin, "extras", "lint", "autofix", "SKILL.md"),
+          "---\n---\n",
+        );
+        yield* writeFile(path.join(teamPlugin, "extras", "format", "SKILL.md"), "---\n---\n");
+        yield* writeFile(path.join(teamPlugin, "bundles", "stylecheck", "SKILL.md"), "---\n---\n");
+        yield* writeFile(path.join(plugins, "shared", "leaked", "SKILL.md"), "---\n---\n");
+
+        const expected = [
+          {
+            name: "deploy",
+            description: "local deploy",
+            path: path.join(userHome, ".agents", "skills", "deploy", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "fallback",
+            path: path.join(nameless, "skills", "fallback", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "format",
+            path: path.join(teamPlugin, "extras", "format", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "lint",
+            path: path.join(teamPlugin, "extras", "lint", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "mockup",
+            displayName: "Mockup screens",
+            path: path.join(designKit, "skills-custom", "mockup", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "release",
+            description: "cut a release",
+            path: path.join(toolkit, "skills", "release", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+            userInvocationOnly: true,
+          },
+          {
+            name: "stylecheck",
+            path: path.join(teamPlugin, "bundles", "stylecheck", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+        ];
+        expect(yield* discoverCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+        expect(yield* probeCursorSkills(workspace, { HOME: userHome })).toEqual(expected);
+      }),
+    ));
+
+  it.skipIf(!symlinksSupported)(
+    "skips plugin symlinks that loop or leave the plugin without failing discovery",
+    async () =>
+      await runNode(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const userHome = yield* fileSystem
+            .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-skills-home-" })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+          const writeSkill = Effect.fn("writeCursorSkill")(function* (directory: string) {
+            yield* fileSystem.makeDirectory(directory, { recursive: true });
+            yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+          });
+          const marketplace = path.join(userHome, ".cursor", "plugins", "cache", "cursor-public");
+          const plugin = path.join(marketplace, "linked", "5d1c8e2");
+          const pluginSkills = path.join(plugin, "skills");
+          const outside = path.join(userHome, "elsewhere", "escaped");
+          const linkedManifest = path.join(marketplace, "manifest", "1b4c7e9");
+          const outsideManifest = path.join(userHome, "elsewhere", "plugin.json");
+
+          yield* writeSkill(path.join(userHome, ".cursor", "skills", "review"));
+          yield* writeSkill(path.join(pluginSkills, "release"));
+          yield* fileSystem.writeFileString(path.join(plugin, ".cache-complete"), "");
+          yield* writeSkill(outside);
+          yield* fileSystem.symlink("loop", path.join(pluginSkills, "loop"));
+          yield* fileSystem.symlink(outside, path.join(pluginSkills, "escaped"));
+          yield* fileSystem.makeDirectory(path.join(pluginSkills, "linked-file"));
+          yield* fileSystem.symlink(
+            path.join(outside, "SKILL.md"),
+            path.join(pluginSkills, "linked-file", "SKILL.md"),
+          );
+          yield* fileSystem.makeDirectory(path.join(pluginSkills, "shared"));
+          yield* fileSystem.symlink(
+            path.join(pluginSkills, "release", "SKILL.md"),
+            path.join(pluginSkills, "shared", "SKILL.md"),
+          );
+          yield* writeSkill(path.join(linkedManifest, "custom", "from-manifest"));
+          yield* writeSkill(path.join(linkedManifest, "skills", "from-default"));
+          yield* fileSystem.writeFileString(path.join(linkedManifest, ".cache-complete"), "");
+          yield* fileSystem.writeFileString(
+            outsideManifest,
+            JSON.stringify({ name: "manifest", skills: "./custom/" }),
+          );
+          yield* fileSystem.makeDirectory(path.join(linkedManifest, ".cursor-plugin"));
+          yield* fileSystem.symlink(
+            outsideManifest,
+            path.join(linkedManifest, ".cursor-plugin", "plugin.json"),
+          );
+
+          expect(yield* probeCursorSkills(undefined, { HOME: userHome })).toEqual([
+            {
+              name: "from-default",
+              path: path.join(linkedManifest, "skills", "from-default", "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            },
+            {
+              name: "release",
+              path: path.join(pluginSkills, "release", "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            },
+            {
+              name: "review",
+              path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            },
+            {
+              name: "shared",
+              path: path.join(pluginSkills, "shared", "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            },
+          ]);
+        }),
+      ),
+  );
+
+  it("stops the plugin scan at the scan limits without failing discovery", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-skills-home-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (directory: string) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+        });
+        const marketplace = path.join(userHome, ".cursor", "plugins", "cache", "cursor-public");
+        const crowded = path.join(marketplace, "crowded", "3a7f1c9");
+        const later = path.join(marketplace, "later", "8e2b6d4");
+
+        yield* writeSkill(path.join(userHome, ".cursor", "skills", "review"));
+        yield* fileSystem.makeDirectory(path.join(crowded, ".cursor-plugin"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(crowded, ".cache-complete"), "");
+        yield* fileSystem.writeFileString(
+          path.join(crowded, ".cursor-plugin", "plugin.json"),
+          JSON.stringify({
+            name: "crowded",
+            description: "x".repeat(1_000_000),
+            skills: "./custom/",
+          }),
+        );
+        yield* writeSkill(path.join(crowded, "custom", "oversized-manifest"));
+        yield* writeSkill(path.join(crowded, "skills", "a-first"));
+        yield* Effect.forEach(
+          Array.from({ length: 10_000 }, (_, index) =>
+            path.join(crowded, "skills", `entry-${index}`),
+          ),
+          (file) => fileSystem.writeFileString(file, ""),
+          { concurrency: 64, discard: true },
+        );
+        yield* writeSkill(path.join(later, "skills", "after-limit"));
+        yield* fileSystem.writeFileString(path.join(later, ".cache-complete"), "");
+
+        expect(yield* probeCursorSkills(undefined, { HOME: userHome })).toEqual([
+          {
+            name: "a-first",
+            path: path.join(crowded, "skills", "a-first", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "review",
+            path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+        ]);
+      }),
+    ));
+
   it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
     await runNode(
       Effect.gen(function* () {

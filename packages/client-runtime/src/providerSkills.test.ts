@@ -199,6 +199,12 @@ describe("resolveProviderSkillSourceKind", () => {
         scope: "user",
       }),
     ).toBe("app");
+    expect(
+      resolveProviderSkillSourceKind({
+        path: "/Users/julius/.cursor/plugins/cache/cursor-public/slack/64c3f33/skills/slack-search/SKILL.md",
+        scope: "user",
+      }),
+    ).toBe("app");
   });
 
   it("maps standard scopes to source kinds", () => {
