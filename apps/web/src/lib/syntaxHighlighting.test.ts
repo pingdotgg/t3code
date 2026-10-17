@@ -26,3 +26,19 @@ it("caches the recovered text highlighter for unsupported languages", async () =
   expect(second).toBe(first);
   expect(getSharedHighlighter).toHaveBeenCalledTimes(2);
 });
+
+it("keeps a failed load cached so render-time callers get one stable rejection", async () => {
+  vi.resetModules();
+  const { getSyntaxHighlighterPromise: load } = await import("./syntaxHighlighting");
+  getSharedHighlighter.mockRejectedValue(new Error("chunk failed"));
+  const failed = load("typescript");
+  await expect(failed).rejects.toThrow("chunk failed");
+  const failedText = load("text");
+  await expect(failedText).rejects.toThrow("chunk failed");
+  const calls = getSharedHighlighter.mock.calls.length;
+
+  getSharedHighlighter.mockResolvedValue({} as DiffsHighlighter);
+  expect(load("typescript")).toBe(failed);
+  expect(load("text")).toBe(failedText);
+  expect(getSharedHighlighter).toHaveBeenCalledTimes(calls);
+});

@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - Vite build hooks run outside an Effect runtime.
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 import * as NodeZlib from "node:zlib";
 
 import react from "@vitejs/plugin-react";
@@ -15,6 +19,7 @@ import {
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
+import { lucideDynamicIconsPlugin, startupChunksPlugin } from "./vite/startupChunks";
 import { tailwindPlugins } from "./vite/tailwind";
 
 const repoEnv = loadRepoEnv();
@@ -134,6 +139,52 @@ const configuredAllowedHosts = (process.env.T3CODE_DEV_ALLOWED_HOSTS ?? "")
   .filter((entry) => entry.length > 0);
 const allowedHosts = [".ts.net", ...configuredAllowedHosts];
 
+// Only hashed assets get sidecars, so they cannot describe stale content.
+function precompressPlugin(): Plugin {
+  const brotli = NodeUtil.promisify(NodeZlib.brotliCompress);
+  const gzip = NodeUtil.promisify(NodeZlib.gzip);
+  return {
+    name: "t3code:precompress",
+    apply: "build",
+    async writeBundle(options, bundle) {
+      if (!options.dir) return;
+      const outDir = options.dir;
+      const files = Object.keys(bundle).filter(
+        (file) =>
+          file.startsWith("assets/") && /\.(?:js|mjs|css|json|svg|wasm|txt|xml)$/.test(file),
+      );
+      await Promise.all(
+        files.map(async (file) => {
+          const path = NodePath.join(outDir, file);
+          const source = await NodeFSP.readFile(path);
+          if (source.byteLength < 1024) return;
+          const copies = [
+            [
+              ".br",
+              brotli(source, {
+                params: {
+                  [NodeZlib.constants.BROTLI_PARAM_QUALITY]: 11,
+                  [NodeZlib.constants.BROTLI_PARAM_MODE]: file.endsWith(".wasm")
+                    ? NodeZlib.constants.BROTLI_MODE_GENERIC
+                    : NodeZlib.constants.BROTLI_MODE_TEXT,
+                  [NodeZlib.constants.BROTLI_PARAM_SIZE_HINT]: source.byteLength,
+                },
+              }),
+            ],
+            [".gz", gzip(source, { level: 9 })],
+          ] as const;
+          await Promise.all(
+            copies.map(async ([suffix, compressed]) => {
+              const copy = await compressed;
+              if (copy.byteLength < source.byteLength) await NodeFSP.writeFile(path + suffix, copy);
+            }),
+          );
+        }),
+      );
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     assetsInclude: ["**/*.wasm"],
@@ -151,6 +202,10 @@ export default defineConfig(() => {
       tanstackRouter({ autoCodeSplitting: true }),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),
+      lucideDynamicIconsPlugin(),
+      startupChunksPlugin(),
+      // Vercel compresses the hosted app itself; the T3 server serves these copies.
+      ...(process.env.VERCEL ? [] : [precompressPlugin()]),
     ],
     optimizeDeps: {
       include: [
@@ -244,7 +299,9 @@ export default defineConfig(() => {
     build: {
       outDir: "dist",
       emptyOutDir: true,
-      manifest: true,
+      // Not under .vite/: release artifact uploads skip hidden directories, and
+      // the server reads this file to mark hashed assets immutable.
+      manifest: "vite-manifest.json",
       sourcemap: buildSourcemap,
     },
     test: {

@@ -2313,11 +2313,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events,
       command,
     )({
-      type: "thread.visited",
+      type: "thread.visit-recorded",
       threadId: command.threadId,
       providerInstanceId: thread.providerInstanceId,
       occurredAt: yield* DateTime.now,
-      payload: movesForward ? { ...thread, lastVisitedAt: visitedAt.value } : thread,
+      payload: { lastVisitedAt: movesForward ? visitedAt.value : thread.lastVisitedAt },
     });
   });
 
@@ -3215,11 +3215,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         events,
         command,
       )({
-        type: "thread.pull-request-link-updated",
+        ...(command.type === "thread.pull-request-link.sync"
+          ? {
+              type: "thread.pull-request-link-synced" as const,
+              payload: {
+                ...normalizeThreadPullRequestKey(command),
+                snapshot: command.snapshot,
+                stack: command.stack,
+              },
+            }
+          : { type: "thread.pull-request-link-updated" as const, payload: link }),
         threadId: command.threadId,
         providerInstanceId: updatedThread.providerInstanceId,
         occurredAt: now,
-        payload: link,
       });
       return;
     }

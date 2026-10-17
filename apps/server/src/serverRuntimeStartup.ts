@@ -43,7 +43,7 @@ import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
-import { forkParked, forkParkedFiber } from "./serverActivation.ts";
+import { forkBackground, forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -342,11 +342,11 @@ const maybeOpenBrowser = (target: string) =>
     );
   });
 
+// Phase and server fields go on the startup spans only. As inherited span
+// annotations they were copied onto every span of the workers forked during
+// startup (the effect worker, PR sync), which is most of the trace file.
 const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    // Attributes on the span itself, not annotateSpans: an annotation follows
-    // every fiber forked inside the phase, such as the effect worker, for the
-    // life of the server.
     Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 
@@ -576,15 +576,16 @@ const make = (options?: StartupOptions) =>
           : importPendingTranscripts
       ).pipe(forkParked);
 
+      yield* forkBackground(
+        recordStartupHeartbeat.pipe(
+          Effect.withSpan("server.startup.heartbeat.record", {
+            attributes: { "startup.phase": "heartbeat.record" },
+          }),
+          Effect.ignoreCause({ log: true }),
+        ),
+      );
       yield* forkParked(
         Effect.gen(function* () {
-          yield* Effect.logDebug("startup phase: recording startup heartbeat");
-          yield* recordStartupHeartbeat.pipe(
-            Effect.withSpan("server.startup.heartbeat.record", {
-              attributes: { "startup.phase": "heartbeat.record" },
-            }),
-            Effect.ignoreCause({ log: true }),
-          );
           if (serverConfig.startupPresentation === "headless") {
             yield* Effect.logDebug("startup phase: headless access info");
             const accessInfo = yield* issueHeadlessServeAccessInfo();

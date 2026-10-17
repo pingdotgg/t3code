@@ -217,11 +217,14 @@ export const layer: Layer.Layer<
       "thread.model-selection-updated",
       "thread.provider-switched",
     ];
-    // Read-state events carry the whole thread too, but client reducers apply
-    // them without bumping updatedAt. They supersede only each other: a newer
+    // Read-state events do not bump updatedAt. They supersede only each other: a newer
     // visit must not delete the rename that carries the activity timestamp,
     // while any newer activity-bearing event supersedes both groups.
-    const READ_STATE_THREAD_EVENT_TYPES = ["thread.visited", "thread.marked-unread"];
+    const READ_STATE_THREAD_EVENT_TYPES = [
+      "thread.visited",
+      "thread.marked-unread",
+      "thread.visit-recorded",
+    ];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
@@ -280,7 +283,7 @@ export const layer: Layer.Layer<
                 AND event.event_type IN ('message.updated', 'node.updated')
               THEN json_extract(event.payload_json, '$.id')
               WHEN event.application_event_version = 2
-                AND event.event_type = 'thread.pull-request-link-updated'
+                AND event.event_type IN ('thread.pull-request-link-updated', 'thread.pull-request-link-synced')
               THEN json_array(json_extract(event.payload_json, '$.host'),
                 json_extract(event.payload_json, '$.repository'),
                 json_extract(event.payload_json, '$.number'))
@@ -322,13 +325,15 @@ export const layer: Layer.Layer<
                 obsolete.push(row.sequence);
               } else retainedReadStateThreadIds.add(row.stream_id);
             } else if (
-              row.event_type === "thread.pull-request-link-updated" &&
+              (row.event_type === "thread.pull-request-link-updated" ||
+                row.event_type === "thread.pull-request-link-synced") &&
               retainedThreadIds.has(row.stream_id)
             ) {
               // A newer whole-thread payload already carries this link's state.
               obsolete.push(row.sequence);
             } else if (
               row.event_type === "thread.pull-request-link-updated" ||
+              row.event_type === "thread.pull-request-link-synced" ||
               row.event_type === "message.updated" ||
               row.event_type === "node.updated"
             ) {

@@ -341,15 +341,26 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
-  syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
   if (suppressTransitions) {
-    // Force a reflow so the no-transitions class takes effect before removal
-    void document.documentElement.offsetHeight;
+    settleThemeAfterPaint();
+  } else {
+    syncBrowserChromeTheme();
+  }
+}
+
+let themeSettleGeneration = 0;
+
+// Wait for paint before reading colors or restoring transitions to avoid an extra style recalc.
+function settleThemeAfterPaint() {
+  const generation = ++themeSettleGeneration;
+  requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      if (generation !== themeSettleGeneration) return;
+      syncBrowserChromeTheme();
       document.documentElement.classList.remove("no-transitions");
     });
-  }
+  });
 }
 
 export async function syncDesktopThemePreference(

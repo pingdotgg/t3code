@@ -23,7 +23,7 @@ import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkBackground, forkParked } from "../serverActivation.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -580,6 +580,7 @@ export const make = Effect.gen(function* () {
         return cleanUpSettledThread(event.threadId);
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
+      case "thread.pull-request-link-synced":
       case "provider-session.detached":
         return worker.enqueue(event.threadId);
       case "provider-session.updated":
@@ -605,7 +606,7 @@ export const make = Effect.gen(function* () {
     const events = orchestrator.streamDomainEvents;
     const initialSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
     let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
-    yield* forkParked(
+    yield* forkBackground(
       Effect.gen(function* () {
         yield* worker.enqueue(undefined);
         yield* worker.drain;

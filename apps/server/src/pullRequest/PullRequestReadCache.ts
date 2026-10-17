@@ -21,7 +21,7 @@ import * as Persistable from "effect/persistence/Persistable";
 import * as PersistedCache from "effect/persistence/PersistedCache";
 import * as Persistence from "effect/persistence/Persistence";
 import * as ServerConfig from "../config.ts";
-import { forkParked } from "../serverActivation.ts";
+import { forkBackground } from "../serverActivation.ts";
 
 const CONCURRENT_READS = 512;
 // Persistence prefixes every entry key with the store id, so each entry file
@@ -216,7 +216,7 @@ export const layer = Layer.unwrap(
       Layer.provide(
         KeyValueStore.layerFileSystem(directory).pipe(
           Layer.tap(() =>
-            forkParked(
+            forkBackground(
               pruneExpiredEntryFiles(directory).pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("Failed to prune PR cache files", { cause }),

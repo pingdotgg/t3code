@@ -513,8 +513,14 @@ const loadImmutableBuildAssets = Effect.gen(function* () {
   if (!staticDir) return new Set<string>();
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  return yield* fileSystem.readFileString(path.join(staticDir, ".vite", "manifest.json")).pipe(
+  return yield* fileSystem.readFileString(path.join(staticDir, "vite-manifest.json")).pipe(
     Effect.flatMap(decodeBuildManifest),
+    // Older builds and custom static directories can still use Vite's default location.
+    Effect.catch(() =>
+      fileSystem
+        .readFileString(path.join(staticDir, ".vite", "manifest.json"))
+        .pipe(Effect.flatMap(decodeBuildManifest)),
+    ),
     Effect.map(
       (manifest) =>
         new Set(
@@ -549,6 +555,26 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
       return [bytes.value, offset + BigInt(bytes.value.byteLength)] as const;
     }),
   );
+
+/** Match the compression middleware's preference and reject malformed quality values. */
+function acceptedStaticEncodings(header: string | undefined): ReadonlyArray<"br" | "gzip"> {
+  if (!header?.trim()) return [];
+  const accepted = new Map<string, number>();
+  for (const part of header.split(",")) {
+    const member = part
+      .trim()
+      .toLowerCase()
+      .replace(/[ \t]*;[ \t]*/g, ";");
+    const match = /^([a-z0-9!#$%&'*+.^_`|~-]+)(?:;q=(0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?))?$/.exec(
+      member,
+    );
+    if (!match) return [];
+    accepted.set(match[1]!, match[2] === undefined ? 1 : Number(match[2]));
+  }
+  return (["br", "gzip"] as const).filter(
+    (encoding) => (accepted.get(encoding) ?? accepted.get("*") ?? 0) > 0,
+  );
+}
 
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
@@ -666,6 +692,19 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
 
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
+    // Only manifest-backed hashed assets can trust an adjacent compressed copy.
+    // Custom static files may be overwritten without updating their sidecars.
+    if (immutable) {
+      for (const encoding of acceptedStaticEncodings(request.headers["accept-encoding"])) {
+        const compressed = yield* openStaticFile(`${filePath}.${encoding === "br" ? "br" : "gz"}`);
+        if (!compressed) continue;
+        return HttpServerResponse.stream(streamStaticFile(compressed.file, compressed.info.size), {
+          headers: { ...headers, "Content-Encoding": encoding, Vary: "Accept-Encoding" },
+          contentType,
+          contentLength: Number(compressed.info.size),
+        });
+      }
+    }
     return HttpServerResponse.stream(streamStaticFile(opened.file, fileInfo.size), {
       headers,
       contentType,

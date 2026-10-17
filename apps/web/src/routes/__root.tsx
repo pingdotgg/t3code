@@ -22,7 +22,6 @@ import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -53,6 +52,8 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { isElectron } from "../env";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { cn } from "../lib/utils";
 import { applyAppearanceFontVariables } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
@@ -77,6 +78,7 @@ import {
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import { startEnvironmentShells } from "../state/shell";
 import {
   createKeybindingsUpdateToastController,
   type KeybindingsUpdateToastController,
@@ -97,6 +99,7 @@ export const Route = createRootRoute({
     }
 
     if (isLocalEnvironmentDisabled() || isHostedStaticApp(new URL(window.location.href))) {
+      startEnvironmentShells();
       return {
         authGateState: {
           status: "hosted-static",
@@ -104,7 +107,10 @@ export const Route = createRootRoute({
       };
     }
 
-    const authGateState = await resolveInitialServerAuthGateState();
+    const authGate = resolveInitialServerAuthGateState();
+    const authGateState = await authGate;
+    // Connect and read cached shells while the route chunks still load.
+    if (authGateState.status === "authenticated") startEnvironmentShells();
     if (
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
@@ -238,7 +244,7 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
+          {hasCloudPublicConfig() ? <ConnectOnboardingDialog /> : null}
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />

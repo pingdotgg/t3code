@@ -1151,4 +1151,46 @@ describe("PullRequestSyncReactor", () => {
       }),
     ),
   );
+
+  it.effect("retries a link whose first sync failed when a sibling link syncs", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      let hostDown = true;
+      const link = makeLink(7, { state: "open" });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([makeThread("one", { pullRequests: [link, makeLink(8)] })]),
+        summary: (input) =>
+          Effect.suspend(() =>
+            hostDown && input.number === 8
+              ? Effect.fail(
+                  new PullRequestOperationError({ operation: "summary", detail: "host down" }),
+                )
+              : Effect.succeed(makeSummary(input)),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        hostDown = false;
+        yield* Ref.set(fixture.syncCommands, []);
+
+        yield* Queue.offer(fixture.domainEvents, {
+          type: "thread.pull-request-link-synced",
+          id: EventId.make("event:one:link-synced"),
+          threadId: ThreadId.make("one"),
+          occurredAt: DateTime.makeUnsafe(NOW),
+          payload: { ...link, snapshot: link.snapshot! },
+        });
+        // The thread's lookup, then the requested sweep.
+        yield* Queue.take(fixture.snapshotReads);
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
+          [8],
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
 });

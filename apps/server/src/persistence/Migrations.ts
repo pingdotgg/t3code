@@ -65,6 +65,7 @@ import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
+import Migration0063 from "./Migrations/063_ProjectionThreadSweepIndexes.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -130,6 +131,7 @@ export const migrationEntries = [
   [60, "ThreadSnapshotWindowIndexes", Migration0060],
   [61, "PullRequestReviewGuides", Migration0061],
   [62, "ThreadFailureLookupIndex", Migration0062],
+  [63, "ProjectionThreadSweepIndexes", Migration0063],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -174,6 +176,8 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
       return [];
     const recordedName = recordedNames.get(id);
     if (recordedName === name) return [];
+    // Migration 63 repairs the index skipped by older sweep builds at id 62.
+    if (id === 62 && recordedName === "ProjectionThreadSweepIndexes") return [];
     return [`${id}_${name} (recorded: ${recordedName ?? "nothing"})`];
   });
   if (skipped.length === 0) return;
@@ -226,6 +230,18 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     yield* Effect.logWarning(
       "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
     ).pipe(Effect.annotateLogs({ divergent }));
+  }
+  // The migrator never runs an id at or below the latest recorded one, so a migration this
+  // build adds below another build's highest id never runs here.
+  const latestRecorded = Math.max(0, ...recorded.map((row) => row.migration_id));
+  const recordedKeys = new Set(recorded.map((row) => `${row.migration_id}_${row.name}`));
+  const skipped = migrationEntries.flatMap(([id, name]) =>
+    id <= latestRecorded && !recordedKeys.has(`${id}_${name}`) ? [`${id}_${name}`] : [],
+  );
+  if (skipped.length > 0) {
+    yield* Effect.logWarning(
+      "Migrations of this build never ran on this database: the migrator skips ids at or below its latest recorded migration.",
+    ).pipe(Effect.annotateLogs({ skipped }));
   }
   return executedMigrations;
 });

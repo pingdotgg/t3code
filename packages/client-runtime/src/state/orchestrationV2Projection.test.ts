@@ -106,6 +106,22 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("applies compact visits without changing activity or transcript state", () => {
+    const visitedAt = DateTime.add(now, { hours: 1 });
+    const event = {
+      id: "event-visit-recorded",
+      type: "thread.visit-recorded",
+      threadId,
+      occurredAt: visitedAt,
+      payload: { lastVisitedAt: visitedAt },
+    } as OrchestrationV2DomainEvent;
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, event);
+    expect(next?.thread.lastVisitedAt).toEqual(visitedAt);
+    expect(next?.thread.updatedAt).toEqual(now);
+    expect(next?.updatedAt).toEqual(now);
+    expect(next?.turnItems).toBe(emptyProjection.turnItems);
+  });
+
   it("applies a compact PR sync without replacing other links or thread metadata", () => {
     const link = (number: number): ThreadPullRequestLink => ({
       host: "github.com",
@@ -132,6 +148,27 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     });
     expect(next?.thread).toEqual({ ...projection.thread, pullRequests: [links[0], updated] });
     expect(next?.thread.pullRequests?.[0]).toBe(links[0]);
+    const snapshot = {
+      state: "open",
+      title: "Host title",
+      headBranch: "feature",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: DateTime.formatIso(now),
+      syncedAt: DateTime.formatIso(now),
+    };
+    const synced = applyOrchestrationV2ProjectionEvent(projection, {
+      id: "host-sync",
+      type: "thread.pull-request-link-synced",
+      threadId,
+      occurredAt: DateTime.add(now, { hours: 1 }),
+      payload: { ...links[1], snapshot, stack: null },
+    } as OrchestrationV2DomainEvent);
+    expect(synced?.thread.pullRequests?.[1]?.snapshot).toEqual(snapshot);
+    expect(synced?.thread.pullRequests?.[0]).toBe(links[0]);
+    expect(synced?.thread.updatedAt).toEqual(now);
+    expect(synced?.updatedAt).toEqual(now);
+    expect(synced?.turnItems).toBe(projection.turnItems);
   });
 
   it("keeps live token usage when the terminal provider turn omits it", () => {

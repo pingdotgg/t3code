@@ -39,6 +39,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
+import { Atom } from "effect/reactivity";
 
 import { APP_VERSION } from "../branding";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
@@ -415,6 +416,12 @@ const loadSecondaryConnectionRegistration = Effect.fn(
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
+/** Whether the latest platform poll ended without the primary environment, e.g. its discovery failed. */
+export const primaryEnvironmentMissingAtom = Atom.make(false).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-primary-environment-missing"),
+);
+
 export function secondaryBearerExpiresAtEpochMs(
   issuedAtEpochMs: number,
   expiresInSeconds: number,
@@ -712,6 +719,10 @@ const layerPlatformConnectionSource = Layer.effect(
       }
 
       yield* Ref.set(cacheRef, next);
+      const primaryMissing = !next.has(PRIMARY_LOCAL_ENVIRONMENT_ID);
+      if (appAtomRegistry.get(primaryEnvironmentMissingAtom) !== primaryMissing) {
+        appAtomRegistry.set(primaryEnvironmentMissingAtom, primaryMissing);
+      }
       return registrations as ReadonlyArray<PlatformConnectionRegistration>;
     }).pipe(Effect.provide(FetchHttpClient.layer));
 

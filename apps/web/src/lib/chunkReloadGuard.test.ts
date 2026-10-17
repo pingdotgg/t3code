@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./chunkReloadGuard";
+import { reloadOnceForChunkLoadError } from "./chunkReloadGuard";
 
 function createStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -25,22 +25,33 @@ describe("reloadOnceForChunkLoadError", () => {
     const storage = createStorageStub();
     const reload = vi.fn();
 
-    expect(reloadOnceForChunkLoadError(() => storage, reload)).toBe(true);
+    expect(reloadOnceForChunkLoadError("a", "chunk", () => storage, reload)).toBe(true);
     expect(reload).toHaveBeenCalledTimes(1);
 
-    expect(reloadOnceForChunkLoadError(() => storage, reload)).toBe(false);
+    expect(reloadOnceForChunkLoadError("a", "chunk", () => storage, reload)).toBe(false);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("reloads again after a successful boot cleared the guard", () => {
+  it("gives each build its own reload", () => {
     const storage = createStorageStub();
     const reload = vi.fn();
 
-    reloadOnceForChunkLoadError(() => storage, reload);
-    clearChunkReloadGuard(() => storage);
+    reloadOnceForChunkLoadError("a", "chunk", () => storage, reload);
 
-    expect(reloadOnceForChunkLoadError(() => storage, reload)).toBe(true);
+    expect(reloadOnceForChunkLoadError("b", "chunk", () => storage, reload)).toBe(true);
     expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds failures per build and resets the limit for the next build", () => {
+    const storage = createStorageStub();
+    const reload = vi.fn();
+    for (const build of ["a", "b"]) {
+      for (let index = 0; index < 20; index += 1) {
+        expect(reloadOnceForChunkLoadError(build, String(index), () => storage, reload)).toBe(true);
+      }
+      expect(reloadOnceForChunkLoadError(build, "20", () => storage, reload)).toBe(false);
+    }
+    expect(reload).toHaveBeenCalledTimes(40);
   });
 
   it("never reloads when storage is blocked, so a persistent failure cannot loop", () => {
@@ -49,8 +60,7 @@ describe("reloadOnceForChunkLoadError", () => {
       throw new DOMException("blocked", "SecurityError");
     };
 
-    expect(reloadOnceForChunkLoadError(blocked, reload)).toBe(false);
+    expect(reloadOnceForChunkLoadError("a", "chunk", blocked, reload)).toBe(false);
     expect(reload).not.toHaveBeenCalled();
-    expect(() => clearChunkReloadGuard(blocked)).not.toThrow();
   });
 });

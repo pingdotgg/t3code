@@ -8,6 +8,7 @@ import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 
@@ -19,6 +20,7 @@ export const layer = Layer.effect(
     const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const crypto = yield* Crypto.Crypto;
+    const backgroundStart = yield* ServerActivation.ServerBackgroundStart;
     return ProviderHost.ProviderHost.of({
       paths: {
         cwd: config.cwd,
@@ -34,6 +36,9 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
+      ...(backgroundStart === undefined
+        ? {}
+        : { awaitStartupProbe: backgroundStart.awaitFirstClient }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),
       credentials: (namespace, bindingId) =>

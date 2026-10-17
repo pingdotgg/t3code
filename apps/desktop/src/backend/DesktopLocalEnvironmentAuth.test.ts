@@ -67,6 +67,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
           {
             id: PRIMARY_LOCAL_ENVIRONMENT_ID,
             label: Effect.succeed("Windows"),
+            waitForReady: () => Effect.succeed(true),
             currentConfig: Effect.succeedSome(config),
           },
         ]),
@@ -120,6 +121,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
             {
               id: PRIMARY_LOCAL_ENVIRONMENT_ID,
               label: Effect.succeed("Windows"),
+              waitForReady: () => Effect.succeed(true),
               currentConfig: Effect.succeedSome({
                 ...config,
                 bootstrap: { ...config.bootstrap, desktopBootstrapSecret: "desktop-secret" },
@@ -166,6 +168,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
       {
         id: PRIMARY_LOCAL_ENVIRONMENT_ID,
         label: Effect.succeed("Windows"),
+        waitForReady: () => Effect.succeed(true),
         currentConfig: Effect.succeedSome(config),
       },
     ]),
@@ -230,6 +233,51 @@ describe("DesktopLocalEnvironmentAuth", () => {
 
       assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthSessionBootstrapError");
       assert.strictEqual(yield* Ref.get(requestCount), 1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([true, false])("waits for backend readiness before exchange: %s", (ready) =>
+    Effect.gen(function* () {
+      let requests = 0;
+      const pool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Local"),
+            waitForReady: () =>
+              Effect.sleep(ready ? "40 seconds" : "2 minutes").pipe(Effect.as(ready)),
+            currentConfig: Effect.succeedSome(config),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+      const client = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests++;
+            return ready
+              ? tokenResponse(request)
+              : HttpClientResponse.fromWeb(request, new Response("", { status: 503 }));
+          }),
+        ),
+      );
+      const result = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.flatMap((auth) => auth.getBearerToken),
+        Effect.match({ onSuccess: (token) => token, onFailure: (error) => error._tag }),
+        Effect.forkChild,
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(Layer.provide(Layer.merge(pool, client))),
+        ),
+      );
+      assert.equal(requests, 0);
+      yield* TestClock.adjust("3 minutes");
+      const token = yield* Fiber.join(result);
+      assert.equal(
+        token,
+        ready ? "desktop-bearer-token" : "DesktopLocalEnvironmentAuthSessionBootstrapError",
+      );
+      if (ready) assert.equal(requests, 1);
+      else assert.isAbove(requests, 0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });

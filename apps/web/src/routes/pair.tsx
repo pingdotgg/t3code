@@ -5,6 +5,8 @@ import {
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
+import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 
 export const Route = createFileRoute("/pair")({
   beforeLoad: async ({ context }) => {
@@ -42,8 +44,13 @@ function PairRouteView() {
     <PairingRouteSurface
       auth={authGateState.auth}
       onAuthenticated={() => {
-        // Recreate the primary connection so its WebSocket and cached scopes
-        // use the newly issued cookie after re-pairing.
+        // A first pairing has no connection yet, so the app continues in
+        // place. Re-pairing reloads to recreate the primary connection, so its
+        // WebSocket and cached scopes use the newly issued cookie.
+        if (!appAtomRegistry.getNodes().has(connectionAtomRuntime)) {
+          void router.navigate({ to: "/", replace: true });
+          return;
+        }
         router.history.replace("/");
         router.history.flush();
         window.location.reload();

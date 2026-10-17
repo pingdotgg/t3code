@@ -3,7 +3,10 @@ import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+import {
+  guardHttpResponseWriteErrors,
+  holdRequestsUntilServing,
+} from "./httpResponseErrorGuard.ts";
 
 const servers: NodeHttp.Server[] = [];
 
@@ -99,5 +102,57 @@ describe("guardHttpResponseWriteErrors", () => {
     await expect(fetchStatus(port, "/")).resolves.toBe(200);
     expect(responseErrorListeners).toBeGreaterThan(0);
     expect(writeErrors).toEqual([]);
+  });
+});
+
+describe("holdRequestsUntilServing", () => {
+  it("answers requests and upgrades accepted before handlers attach", async () => {
+    const server = holdRequestsUntilServing(guardHttpResponseWriteErrors(NodeHttp.createServer()));
+    const port = await listen(server);
+    const parked = Promise.withResolvers<void>();
+    let parsed = 0;
+    server.on("connection", (socket) =>
+      socket.once("data", () => {
+        if (++parsed === 2) parked.resolve();
+      }),
+    );
+    const response = fetchStatus(port, "/early");
+    const upgrade = new Promise<string>((resolve, reject) => {
+      const client = NodeNet.connect(port, "127.0.0.1", () => {
+        client.write(
+          "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        );
+      });
+      client.once("data", (data) => {
+        client.destroy();
+        resolve(data.toString().split("\r\n")[0]!);
+      });
+      client.on("error", reject);
+    });
+    await parked.promise;
+    server.on("request", (_, response) => {
+      response.writeHead(204);
+      response.end();
+    });
+    server.on("upgrade", (_, socket) => socket.end("HTTP/1.1 101 Switching Protocols\r\n\r\n"));
+    await expect(response).resolves.toBe(204);
+    await expect(upgrade).resolves.toBe("HTTP/1.1 101 Switching Protocols");
+  });
+
+  it("hands parked requests to the handler before later ones", async () => {
+    const server = holdRequestsUntilServing(NodeHttp.createServer());
+    const received: Array<unknown> = [];
+    server.emit("request", "parked");
+    // A request whose I/O callback is already queued when the handler attaches.
+    const laterEmitted = new Promise<void>((resolve) =>
+      setImmediate(() => {
+        server.emit("request", "later");
+        resolve();
+      }),
+    );
+    server.on("request", (request) => received.push(request));
+    await laterEmitted;
+
+    expect(received).toEqual(["parked", "later"]);
   });
 });

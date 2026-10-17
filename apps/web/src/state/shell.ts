@@ -17,8 +17,11 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
+import { primaryEnvironmentMissingAtom } from "../connection/platform";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { isHostedStaticApp } from "../hostedPairing";
+import { isLocalEnvironmentDisabled } from "../localEnvironment";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 
 export const shellEnvironment = createShellEnvironmentAtoms(connectionAtomRuntime);
 export const environmentShell = createEnvironmentShellAtoms(connectionAtomRuntime);
@@ -27,6 +30,17 @@ export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environment
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
   if (Option.isNone(catalog)) {
+    return false;
+  }
+  // Wait for primary discovery before treating a persisted catalog as complete.
+  if (
+    !isHostedStaticApp() &&
+    !isLocalEnvironmentDisabled() &&
+    !get(primaryEnvironmentMissingAtom) &&
+    !Array.from(catalog.value.entries.values()).some(
+      (entry) => entry.target._tag === "PrimaryConnectionTarget",
+    )
+  ) {
     return false;
   }
   for (const environmentId of enabledEnvironmentIds(catalog.value)) {
@@ -46,6 +60,15 @@ export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   }
   return true;
 }).pipe(Atom.withLabel("web-all-environment-shells-bootstrapped"));
+
+let environmentShellsStarted = false;
+
+// Keep the shell mounted for the session, starting cache reads and connections before render.
+export function startEnvironmentShells(): void {
+  if (environmentShellsStarted) return;
+  environmentShellsStarted = true;
+  appAtomRegistry.mount(allEnvironmentShellsBootstrappedAtom);
+}
 
 /**
  * The persisted catalog can emit before platform discovery registers the primary environment.

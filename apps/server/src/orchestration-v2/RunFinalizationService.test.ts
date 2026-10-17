@@ -20,7 +20,7 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
   const runId = RunId.make("run_finalize");
   const scopeId = CheckpointScopeId.make("scope_finalize");
   const capture = vi.fn(() => Effect.void);
-  const refresh = vi.fn(() => Effect.void);
+  const refresh = vi.fn(() => Effect.sync(() => assert.equal(capture.mock.calls.length, 1)));
   const checkpointContext = {
     runs: [],
     checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],

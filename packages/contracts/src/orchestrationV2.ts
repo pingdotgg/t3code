@@ -1569,6 +1569,18 @@ export const OrchestrationV2RawProviderEvent = Schema.Struct({
 });
 export type OrchestrationV2RawProviderEvent = typeof OrchestrationV2RawProviderEvent.Type;
 
+/** A host refresh carries one link snapshot. */
+const OrchestrationV2ThreadPullRequestLinkSynced = Schema.Struct({
+  ...ThreadPullRequestKey.fields,
+  snapshot: ThreadPullRequestSnapshot,
+  stack: Schema.NullOr(ThreadPullRequestStack),
+});
+
+/** The thread's read watermark after a visit, the only field a visit changes. */
+const OrchestrationV2ThreadVisitRecorded = Schema.Struct({
+  lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+
 const OrchestrationV2EventBase = Schema.Struct({
   id: EventId,
   threadId: ThreadId,
@@ -1611,6 +1623,16 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.provider-switched",
     ]),
     payload: OrchestrationV2AppThread,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.pull-request-link-synced"),
+    payload: OrchestrationV2ThreadPullRequestLinkSynced,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.visit-recorded"),
+    payload: OrchestrationV2ThreadVisitRecorded,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2420,6 +2442,19 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.pull-request-link-synced"),
+    payload: OrchestrationV2ThreadPullRequestLinkSynced,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.visit-recorded"),
+    payload: OrchestrationV2ThreadVisitRecorded.mapFields((fields) => ({
+      ...fields,
+      lastVisitedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    })),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.pull-request-link-updated"),
     payload: ThreadPullRequestLink,
   }),
@@ -3176,6 +3211,8 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
   acceptCompactTurnItems: Schema.optionalKey(Schema.Boolean),
+  /** Accepts compact read-watermark and pull-request-link events. */
+  acceptThreadFieldEvents: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 
