@@ -2,6 +2,7 @@ import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/Th
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
+  isThreadWokeUnseen,
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
@@ -5267,26 +5268,12 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadShell?.lastVisitedAt,
     activeThreadLocalVisitedAt,
   );
-  const activeThreadWokeVisible = useMemo(() => {
-    if (activeThreadWokeAt === null) return false;
-    if (activeThreadShell?.settledOverride === "settled") return false;
-    const wokeAtMs = Date.parse(activeThreadWokeAt);
-    if (Number.isNaN(wokeAtMs)) return false;
-    const storedVisitMs = activeThreadLastVisitedAt ? Date.parse(activeThreadLastVisitedAt) : NaN;
-    const completedAtMs = activeLatestRun?.completedAt
-      ? Date.parse(activeLatestRun.completedAt)
-      : NaN;
-    const lastVisitedMs = Math.max(
-      Number.isNaN(storedVisitMs) ? -Infinity : storedVisitMs,
-      Number.isNaN(completedAtMs) ? -Infinity : completedAtMs,
-    );
-    return lastVisitedMs < wokeAtMs;
-  }, [
-    activeLatestRun?.completedAt,
-    activeThreadLastVisitedAt,
-    activeThreadShell,
-    activeThreadWokeAt,
-  ]);
+  const activeThreadWokeVisible = isThreadWokeUnseen({
+    wokeAt: activeThreadWokeAt,
+    settled: activeThreadShell?.settledOverride === "settled",
+    lastVisitedAt: activeThreadLastVisitedAt,
+    latestRunCompletedAt: activeLatestRun?.completedAt ?? null,
+  });
   const activeThreadSettled =
     supportsSettlement && activeThreadShell?.settledOverride === "settled";
   const unsettleThreadMutation = useOrchestrationCommand(threadEnvironment.unsettle, {
