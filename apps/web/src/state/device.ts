@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
 import {
@@ -58,13 +57,9 @@ export function useDeviceHubAccess(
   const result = useAtomValue(
     environmentId === null ? EMPTY_ACCESS_ATOM : deviceHubAccessAtom(environmentId),
   );
-  return useMemo(
-    () =>
-      AsyncResult.isSuccess(result)
-        ? { ...result.value, query: { ...result.value.query, hostId } }
-        : null,
-    [result, hostId],
-  );
+  return AsyncResult.isSuccess(result)
+    ? { ...result.value, query: { ...result.value.query, hostId } }
+    : null;
 }
 
 const EMPTY_ACCESS_ATOM = Atom.make(AsyncResult.initial<DeviceHubAccess, never>()).pipe(
