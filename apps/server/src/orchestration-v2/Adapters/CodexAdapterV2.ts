@@ -1105,6 +1105,28 @@ function codexErrorInfoCode(value: unknown): string | null {
   return Object.keys(value)[0] ?? null;
 }
 
+function codexErrorInfoHttpStatus(value: unknown, code: string | null): number | null {
+  if (code === null || typeof value !== "object" || value === null) {
+    return null;
+  }
+  const detail = (value as Record<string, unknown>)[code];
+  if (typeof detail !== "object" || detail === null) {
+    return null;
+  }
+  const status = (detail as Record<string, unknown>).httpStatusCode;
+  return typeof status === "number" ? status : null;
+}
+
+/**
+ * Retry exhaustion is reported as `responseTooManyFailedAttempts`, and only the
+ * embedded last-attempt status says why. Exhaustion that ended on HTTP 429 is
+ * a usage or rate limit, so it keeps the Limited state and resume controls;
+ * exhaustion on other statuses stays a provider or transport error.
+ */
+function codexExhaustedOnRateLimit(code: string | null, info: unknown): boolean {
+  return code === "responseTooManyFailedAttempts" && codexErrorInfoHttpStatus(info, code) === 429;
+}
+
 interface ActiveCodexTurnContext {
   latestProviderFailure?: {
     readonly nativeMessage: string;
@@ -4504,7 +4526,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   code: notificationCode,
                   class:
                     notificationCode === "usageLimitExceeded" ||
-                    notificationCode === "rateLimitExceeded"
+                    notificationCode === "rateLimitExceeded" ||
+                    codexExhaustedOnRateLimit(notificationCode, payload.error.codexErrorInfo)
                       ? "usage_limit"
                       : "provider_error",
                 }),
@@ -4528,7 +4551,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   : additionalDetails,
               code,
               class:
-                code === "usageLimitExceeded" || code === "rateLimitExceeded"
+                code === "usageLimitExceeded" ||
+                code === "rateLimitExceeded" ||
+                codexExhaustedOnRateLimit(code, payload.error.codexErrorInfo)
                   ? "usage_limit"
                   : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
                     ? "transport_error"
@@ -5518,26 +5543,36 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             readonly status: OrchestrationV2ProviderTurn["status"];
             readonly failureMessage?: string;
             readonly failureCode?: string | null;
+            readonly failureInfo?: unknown;
             readonly providerRetry?: ActiveCodexProviderRetry;
           }): Effect.fn.Return<CodexRootTerminalEvent> {
             const terminalStatus = providerTurnStatusToTerminal(input.status);
             if (terminalStatus === "failed") {
               const previousFailure = input.context.latestProviderFailure ?? input.providerRetry;
+              const completionFailureClass =
+                input.failureCode === "usageLimitExceeded" ||
+                input.failureCode === "rateLimitExceeded" ||
+                codexExhaustedOnRateLimit(input.failureCode ?? null, input.failureInfo)
+                  ? "usage_limit"
+                  : "provider_error";
+              const completionHasExhaustionStatus =
+                input.failureCode === "responseTooManyFailedAttempts" &&
+                codexErrorInfoHttpStatus(input.failureInfo, input.failureCode) !== null;
+              // Keep richer notification evidence unless an explicit completion status
+              // contradicts its classification. Missing status is not new evidence.
               const failure =
                 previousFailure !== undefined &&
                 (input.failureMessage === undefined ||
                   input.failureMessage === previousFailure.nativeMessage) &&
                 (input.failureCode === undefined ||
-                  input.failureCode === previousFailure.failure.code)
+                  input.failureCode === previousFailure.failure.code) &&
+                (!completionHasExhaustionStatus ||
+                  previousFailure.failure.class === completionFailureClass)
                   ? previousFailure.failure
                   : makeProviderFailure({
                       message: input.failureMessage,
                       code: input.failureCode,
-                      class:
-                        input.failureCode === "usageLimitExceeded" ||
-                        input.failureCode === "rateLimitExceeded"
-                          ? "usage_limit"
-                          : "provider_error",
+                      class: completionFailureClass,
                     });
               return {
                 type: "turn.terminal",
@@ -5732,6 +5767,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt: DateTime.Utc;
           readonly failureMessage?: string;
           readonly failureCode?: string | null;
+          readonly failureInfo?: unknown;
         }) =>
           turnTerminalizationPermit.withPermits(1)(
             Effect.gen(function* () {
@@ -6005,6 +6041,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? {}
                       : {
                           failureCode: codexErrorInfoCode(payload.turn.error.codexErrorInfo),
+                          failureInfo: payload.turn.error.codexErrorInfo,
                         }),
                   }),
             });
