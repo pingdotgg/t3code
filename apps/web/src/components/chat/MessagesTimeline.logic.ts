@@ -893,8 +893,46 @@ function responseBoundaryRunId(entry: TimelineEntry): RunId | null {
  * message. Keep every provider turn since the initiating prompt in one visual
  * response until the replacement turn settles.
  */
-function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
-  return timelineEntries.findLastIndex(timelineEntryStartsResponse);
+function lastResponseBoundaryIndex(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  runningRunId: RunId | null = null,
+): number {
+  return timelineEntries.findLastIndex(
+    (entry, index) =>
+      timelineEntryStartsResponse(entry) &&
+      !isPendingQueuedPrompt(timelineEntries, index, runningRunId),
+  );
+}
+
+/**
+ * A queued message waits behind the running turn. The active turn's header
+ * and live tool row stay above it until its own run produces output; a started
+ * queued run that a promptless run later replaced is no longer pending.
+ */
+function isPendingQueuedPrompt(
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+  index: number,
+  runningRunId: RunId | null,
+): boolean {
+  const entry = timelineEntries[index];
+  if (
+    runningRunId === null ||
+    entry?.kind !== "message" ||
+    entry.message.inputIntent !== "queued_turn" ||
+    entry.message.runId === runningRunId
+  ) {
+    return false;
+  }
+  const queuedRunId = entry.message.runId;
+  return (
+    queuedRunId === null ||
+    !timelineEntries.some(
+      (later, laterIndex) =>
+        laterIndex > index &&
+        (later.kind === "event" ? later.projectedItem.item.runId : timelineEntryRunId(later)) ===
+          queuedRunId,
+    )
+  );
 }
 
 function deriveActiveVisualResponseRunIds(input: {
@@ -912,7 +950,10 @@ function deriveActiveVisualResponseRunIds(input: {
     return runIds;
   }
 
-  const latestResponseBoundaryIndex = lastResponseBoundaryIndex(input.timelineEntries);
+  const latestResponseBoundaryIndex = lastResponseBoundaryIndex(
+    input.timelineEntries,
+    input.unsettledRunId,
+  );
   for (
     let index = latestResponseBoundaryIndex + 1;
     index < input.timelineEntries.length;
@@ -1399,7 +1440,7 @@ export function deriveMessagesTimelineRows(input: {
     (entry.runId == null ? runlessWorkActive : entry.runId === unsettledRunId);
 
   const activeTurnHeaderIndex = input.isWorking
-    ? lastResponseBoundaryIndex(timelineEntries) + 1
+    ? lastResponseBoundaryIndex(timelineEntries, unsettledRunId) + 1
     : timelineEntries.length;
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
@@ -1407,6 +1448,7 @@ export function deriveMessagesTimelineRows(input: {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
+      if (isPendingQueuedPrompt(timelineEntries, index, unsettledRunId)) continue;
       if (
         entry.kind !== "work" ||
         entry.entry.tone === "error" ||
@@ -1868,11 +1910,27 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
+    // The active run's rows end before any pending queued prompt, which
+    // belongs to the next turn.
+    const pendingQueuedMessageIds = new Set<string>();
+    for (let index = activeTurnHeaderIndex; index < timelineEntries.length; index += 1) {
+      const entry = timelineEntries[index];
+      if (
+        entry?.kind === "message" &&
+        isPendingQueuedPrompt(timelineEntries, index, unsettledRunId)
+      ) {
+        pendingQueuedMessageIds.add(entry.message.id);
+      }
+    }
+    const pendingQueuedRowIndex = nextRows.findIndex(
+      (row) => row.kind === "message" && pendingQueuedMessageIds.has(row.message.id),
+    );
+    const insertAt = pendingQueuedRowIndex === -1 ? nextRows.length : pendingQueuedRowIndex;
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
       const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-      nextRows.push({
+      nextRows.splice(insertAt, 0, {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
@@ -1880,7 +1938,9 @@ export function deriveMessagesTimelineRows(input: {
         expanded,
       });
       if (expanded) {
-        nextRows.push(
+        nextRows.splice(
+          insertAt + 1,
+          0,
           expandedWorkGroupRow(
             groupId,
             failedGroupAnchor.createdAt,
@@ -1889,7 +1949,7 @@ export function deriveMessagesTimelineRows(input: {
         );
       }
     } else {
-      nextRows.push({
+      nextRows.splice(insertAt, 0, {
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
