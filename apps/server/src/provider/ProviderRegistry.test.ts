@@ -539,6 +539,49 @@ it.layer(
       }),
     );
 
+    it.effect("publishes native quota only when Codex authenticates through OpenAI", () =>
+      Effect.gen(function* () {
+        const rateLimits = {
+          snapshot: {
+            primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 },
+          },
+          rateLimitsByLimitId: null,
+          resetCredits: null,
+        };
+        const usageFor = (account: CodexAppServerProviderSnapshot["account"]) =>
+          checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(makeCodexProbeSnapshot({ account, rateLimits })),
+          ).pipe(Effect.map((status) => status.usageLimits));
+
+        const native = yield* usageFor({
+          account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
+          requiresOpenaiAuth: true,
+        });
+        assert.strictEqual(native?.windows.length, 1);
+        assert.strictEqual(native?.unavailable, undefined);
+
+        // A custom model_provider reports `requiresOpenaiAuth: false`, yet the
+        // CLI can still answer the usage read from a stored ChatGPT login that
+        // the provider's traffic never draws on.
+        for (const account of [
+          { account: null, requiresOpenaiAuth: false },
+          { account: { type: "apiKey" as const }, requiresOpenaiAuth: false },
+          {
+            account: {
+              type: "chatgpt" as const,
+              email: "test@example.com",
+              planType: "pro" as const,
+            },
+            requiresOpenaiAuth: false,
+          },
+        ]) {
+          const custom = yield* usageFor(account);
+          assert.deepStrictEqual(custom?.windows, []);
+          assert.strictEqual(custom?.unavailable?.reason, "unsupported");
+        }
+      }),
+    );
+
     it.effect("returns an Amazon Bedrock label for codex Bedrock auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>

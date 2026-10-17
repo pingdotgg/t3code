@@ -66,6 +66,51 @@ type CodexRateLimitsProbe =
     }
   | { readonly failure: string };
 
+const CodexRoutingConfig = Schema.Struct({
+  model_provider: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  openai_base_url: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  model_providers: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ base_url: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
+    ),
+  ),
+});
+const decodeCodexRoutingConfig = Schema.decodeUnknownOption(CodexRoutingConfig);
+
+/** `undefined` means no override: requests go to Codex's built-in OpenAI endpoints. */
+const activeProviderBaseUrl = (config: unknown): string | undefined => {
+  const routing = Option.getOrUndefined(decodeCodexRoutingConfig(config));
+  const providerId = routing?.model_provider ?? "openai";
+  return (
+    (providerId === "openai"
+      ? routing?.openai_base_url
+      : routing?.model_providers?.[providerId]?.base_url) ?? undefined
+  );
+};
+
+const isOpenAiEndpoint = (baseUrl: string): boolean => {
+  if (!URL.canParse(baseUrl)) return false;
+  const { hostname } = new URL(baseUrl);
+  return [".openai.com", ".chatgpt.com"].some((suffix) => `.${hostname}`.endsWith(suffix));
+};
+
+/**
+ * `requiresOpenaiAuth` follows the configured `model_provider`, not the login:
+ * it is `false` for a custom provider even when a ChatGPT login is stored, and
+ * a custom provider can set it `true` while routing to a non-OpenAI `base_url`.
+ * Either way that login's quota is not what the provider's traffic spends. API
+ * keys have no subscription windows. A `null` `baseUrl` means the route could
+ * not be read, so the quota cannot be attributed to it.
+ */
+const reportsNativeUsage = (
+  account: CodexSchema.V2GetAccountResponse,
+  baseUrl: string | null | undefined,
+): boolean =>
+  account.requiresOpenaiAuth &&
+  account.account?.type !== "apiKey" &&
+  (baseUrl === undefined || (baseUrl !== null && isOpenAiEndpoint(baseUrl)));
+
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
@@ -84,6 +129,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly baseUrl?: string | null;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -480,6 +526,11 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
+  const baseUrl = yield* client.request("config/read", {}).pipe(
+    Effect.map((response) => activeProviderBaseUrl(response.config)),
+    Effect.orElseSucceed(() => null),
+  );
+
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
@@ -488,7 +539,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       accountResponse.account?.type === "chatgpt"
         ? requestCodexChatGptModels({ client, codexHome: initialize.codexHome, spawnedAtMs })
         : requestAllCodexModels(client),
-      input.skipNativeUsage
+      input.skipNativeUsage || !reportsNativeUsage(accountResponse, baseUrl)
         ? Effect.succeed(undefined)
         : client.request("account/rateLimits/read", null).pipe(
             Effect.map((response): CodexRateLimitsProbe => ({
@@ -515,6 +566,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   return {
     account: accountResponse,
+    ...(baseUrl === undefined ? {} : { baseUrl }),
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
@@ -713,21 +765,20 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-      : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
-        ? makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
-          })
-        : codexRateLimitsToLimits({
-            snapshot: snapshot.rateLimits.snapshot,
-            rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
-            resetCredits: snapshot.rateLimits.resetCredits,
-            checkedAt,
-          });
+  const usageLimits = !reportsNativeUsage(snapshot.account, snapshot.baseUrl)
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+    : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
+      ? makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
+        })
+      : codexRateLimitsToLimits({
+          snapshot: snapshot.rateLimits.snapshot,
+          rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
+          resetCredits: snapshot.rateLimits.resetCredits,
+          checkedAt,
+        });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
