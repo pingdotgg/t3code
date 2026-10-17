@@ -419,6 +419,11 @@ interface PendingOpenCodeRequest {
   readonly createdAt: DateTime.Utc;
   readonly permission?: PermissionRequest;
   readonly question?: QuestionRequest;
+  /**
+   * T3 is sending, or sent, its own answer, which the orchestrator already
+   * recorded. It stays set if delivery fails: a retry still finds the request.
+   */
+  answering: boolean;
 }
 
 export interface OpenCodeAdapterV2Options {
@@ -1835,6 +1840,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             turnItemId,
             requestKind,
             createdAt: now,
+            answering: false,
             ...(request.type === "permission"
               ? { permission: request.value }
               : { question: request.value }),
@@ -1891,6 +1897,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           yield* updateProviderSession("waiting", null);
         });
 
+        /**
+         * Stops tracking a request. Requests T3 answered are only forgotten when
+         * OpenCode confirms them or their turn ends: the orchestrator already
+         * recorded their resolution and decision.
+         */
+        const forgetRuntimeRequest = Effect.fnUntraced(function* (pending: PendingOpenCodeRequest) {
+          pendingRequests.delete(String(pending.requestId));
+          pendingRequestsByNativeId.delete(pending.nativeRequestId);
+          const hasOtherPending = Array.from(pendingRequests.values()).some(
+            (candidate) => candidate.turn.isRoot,
+          );
+          if (!hasOtherPending) yield* updateProviderSession("running", null);
+        });
+
         const resolveRuntimeRequest = Effect.fnUntraced(function* (
           nativeRequestId: string,
           status: "resolved" | "cancelled",
@@ -1899,6 +1919,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (pending === undefined) return;
           const now = yield* DateTime.now;
           const current = pending.state.runtimeRequests.get(String(pending.requestId));
+          if (pending.answering) {
+            // Only snapshots learn of it: an event would replace the orchestrator's record.
+            if (current !== undefined) {
+              pending.state.runtimeRequests.set(String(pending.requestId), {
+                ...current,
+                status: "resolved",
+                resolvedAt: now,
+              });
+            }
+            return yield* forgetRuntimeRequest(pending);
+          }
           if (current !== undefined) {
             const resolved: OrchestrationV2RuntimeRequest = {
               ...current,
@@ -1944,12 +1975,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               now,
             ),
           });
-          pendingRequests.delete(String(pending.requestId));
-          pendingRequestsByNativeId.delete(nativeRequestId);
-          const hasOtherPending = Array.from(pendingRequests.values()).some(
-            (candidate) => candidate.turn.isRoot,
-          );
-          if (!hasOtherPending) yield* updateProviderSession("running", null);
+          yield* forgetRuntimeRequest(pending);
         });
 
         const resolveSessionOwner = Effect.fnUntraced(function* (sessionId: string) {
@@ -3455,6 +3481,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   pending.question,
                   requestInput.answers,
                 );
+                pending.answering = true;
                 yield* sdkCall(
                   "question.reply",
                   { requestID: pending.nativeRequestId, answers },
@@ -3475,6 +3502,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               const reply = OpenCodeRuntime.toOpenCodePermissionReply(requestInput.decision);
+              pending.answering = true;
               yield* sdkCall(
                 "permission.reply",
                 { requestID: pending.nativeRequestId, reply },

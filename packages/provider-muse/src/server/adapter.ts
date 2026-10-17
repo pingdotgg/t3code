@@ -901,6 +901,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         status: "resolved" | "cancelled",
       ) {
         const time = yield* DateTime.now;
+        const decision = entry.response?.decision;
+        // A declined request ends cancelled, as the orchestrator records T3's own answer.
+        const settled =
+          status === "resolved" && decision !== "decline" && decision !== "cancel"
+            ? "completed"
+            : "cancelled";
         entry.request = {
           ...entry.request,
           ...(status === "resolved" ? entry.response : undefined),
@@ -908,17 +914,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           resolvedAt: time,
           responseCapability: { type: "not_resumable", reason: "This Muse request has ended." },
         };
-        entry.node = {
-          ...entry.node,
-          status: status === "resolved" ? "completed" : "cancelled",
-          completedAt: time,
-        };
-        entry.item = {
-          ...entry.item,
-          status: status === "resolved" ? "completed" : "cancelled",
-          completedAt: time,
-          updatedAt: time,
-        };
+        entry.node = { ...entry.node, status: settled, completedAt: time };
+        entry.item = { ...entry.item, status: settled, completedAt: time, updatedAt: time };
         pending.delete(entry.request.id);
         yield* emit({
           type: "runtime_request.updated",

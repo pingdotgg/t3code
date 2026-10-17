@@ -506,7 +506,158 @@ describe("orchestrator replay fixtures", () => {
         }),
     );
   }
+
+  // Pi and OpenCode report a request answered after T3 sends its answer. The
+  // orchestrator's record (decision, decline status) must survive that
+  // acknowledgement.
+  it.effect.each(
+    (
+      [
+        ["opencode", "opencode_child_approval", "accept"],
+        ["opencode", "opencode_child_approval", "decline"],
+        ["pi", "simple", "accept"],
+        ["pi", "simple", "decline"],
+      ] as const
+    ).flatMap(([driver, fixtureName, decision]) => {
+      const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
+        (candidate) => candidate.name === fixtureName,
+      );
+      const provider = fixture?.providers.find((candidate) => candidate.driver === driver);
+      return fixture === undefined || provider === undefined
+        ? []
+        : [[driver, decision, fixture, provider] as const];
+    }),
+  )(
+    "keeps the answer through %s's acknowledgement (%s)",
+    ([driver, decision, fixture, provider]) => {
+      const prompt = fixture.buildInput().steps[0];
+      return runFixtureProviderWithRegisteredHarness({
+        fixtureName: fixture.name,
+        buildInput: () => ({
+          steps: [
+            ...(prompt === undefined ? [] : [prompt]),
+            { type: "approve_next_runtime_request", decision },
+          ],
+        }),
+        driver: {
+          ...provider,
+          assertOutput: (result) => {
+            const status = decision === "accept" ? "completed" : "cancelled";
+            const projection = [...result.projections.values()].find(
+              (candidate) => candidate.thread.lineage.parentThreadId === null,
+            );
+            const item = projection?.turnItems.find(
+              (candidate) => candidate.type === "approval_request",
+            );
+            assert.deepInclude(item, { status });
+            assert.deepInclude(projection?.runtimeRequests[0], { status: "resolved", decision });
+            // The last word on the card and the request, as every client and a replay read them.
+            const card = result.domainEvents.findLast(
+              (event) => event.type === "turn-item.updated" && event.payload.id === item?.id,
+            );
+            assert.deepInclude(card?.payload, { status });
+            const request = result.domainEvents.findLast(
+              (event) => event.type === "runtime-request.updated",
+            );
+            assert.deepInclude(request?.payload, { status: "resolved", decision });
+          },
+        },
+        transformTranscript: (transcript) =>
+          driver === "pi"
+            ? withPiConfirm(transcript, decision)
+            : withOpenCodeReply(transcript, decision),
+      });
+    },
+  );
+
+  it.effect("keeps a decline through muse's acknowledgement", () => {
+    const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
+      (candidate) => candidate.name === "muse_permission",
+    );
+    const provider = fixture?.providers.find((candidate) => candidate.driver === "muse");
+    assert.isDefined(fixture);
+    assert.isDefined(provider);
+    return runFixtureProviderWithRegisteredHarness({
+      fixtureName: fixture.name,
+      buildInput: fixture.buildInput,
+      driver: {
+        ...provider,
+        assertOutput: (result) => {
+          const projection = [...result.projections.values()].find(
+            (candidate) => candidate.thread.lineage.parentThreadId === null,
+          );
+          // Each request's card ends as the orchestrator recorded its answer.
+          assert.deepEqual(
+            (projection?.runtimeRequests ?? [])
+              .toSorted((left, right) => (left.createdAt < right.createdAt ? -1 : 1))
+              .map((request) => [
+                request.decision,
+                projection?.turnItems.find(
+                  (item) => item.type === "approval_request" && item.nodeId === request.nodeId,
+                )?.status,
+              ]),
+            [
+              ["accept", "completed"],
+              ["decline", "cancelled"],
+            ],
+          );
+        },
+      },
+    });
+  });
 });
+
+function withPiConfirm(
+  transcript: ProviderReplayTranscript,
+  decision: "accept" | "decline",
+): ProviderReplayTranscript {
+  const at = transcript.entries.findIndex(
+    (entry) => entry.type === "emit_inbound" && entry.label === "turn_start",
+  );
+  const id = "ui-approval";
+  return {
+    ...transcript,
+    entries: [
+      ...transcript.entries.slice(0, at + 1),
+      {
+        type: "emit_inbound",
+        label: "extension_ui_request.confirm",
+        frame: { type: "extension_ui_request", id, method: "confirm", title: "Allow bash?" },
+      },
+      {
+        type: "expect_outbound",
+        label: "extension_ui_response",
+        frame: { type: "extension_ui_response", id, confirmed: decision === "accept" },
+      },
+      ...transcript.entries.slice(at + 1),
+    ],
+  };
+}
+
+function withOpenCodeReply(
+  transcript: ProviderReplayTranscript,
+  decision: "accept" | "decline",
+): ProviderReplayTranscript {
+  if (decision === "accept") return transcript;
+  return {
+    ...transcript,
+    entries: transcript.entries.map((entry) => {
+      if (entry.type === "expect_outbound" && entry.label === "permission.reply") {
+        const frame = entry.frame as { readonly input: object };
+        return { ...entry, frame: { ...frame, input: { ...frame.input, reply: "reject" } } };
+      }
+      if (entry.type === "emit_inbound" && entry.label === "child.permission.replied") {
+        const frame = entry.frame as { readonly event: { readonly properties: object } };
+        const event = {
+          ...frame.event,
+          properties: { ...frame.event.properties, reply: "reject" },
+        };
+        return { ...entry, frame: { ...frame, event } };
+      }
+      return entry;
+    }),
+  };
+}
 
 function undecodableEvent(entry: ProviderReplayEntry): ProviderReplayEntry {
   if (entry.type !== "emit_inbound") return entry;
