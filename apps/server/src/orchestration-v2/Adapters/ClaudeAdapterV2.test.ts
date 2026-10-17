@@ -274,6 +274,63 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
+  const claudeSystemPromptAppend = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions) =>
+    (options.systemPrompt as { readonly append?: string }).append ?? "";
+
+  it.each([false, true])(
+    "folds append-system-prompt launch arguments into the SDK append with resume=%s",
+    (resume) => {
+      const t3Append = claudeSystemPromptAppend(
+        ClaudeAdapterV2.makeClaudeQueryOptions({
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          nativeThreadId: "native-append-prompt",
+          resume,
+          cwd: "/workspace",
+        }),
+      );
+      const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "native-append-prompt",
+        resume,
+        cwd: "/workspace",
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs:
+            '--append-system-prompt "Inline sentinel" --append-system-prompt-file rules.md --system-prompt Replacement',
+        },
+        appendSystemPromptFileText: "File sentinel\n",
+      });
+      assert.equal(
+        claudeSystemPromptAppend(options),
+        `${t3Append}\n\nFile sentinel\n\nInline sentinel`,
+      );
+      assert.isUndefined(options.extraArgs?.["append-system-prompt"]);
+      assert.isUndefined(options.extraArgs?.["append-system-prompt-file"]);
+      assert.equal(options.extraArgs?.["system-prompt"], "Replacement");
+    },
+  );
+
+  it("keeps the T3 append unchanged without append launch arguments", () => {
+    const withoutSettings = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-append-prompt",
+      resume: false,
+      cwd: "/workspace",
+    });
+    const withOtherArgs = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-append-prompt",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--chrome" },
+    });
+    assert.equal(
+      claudeSystemPromptAppend(withOtherArgs),
+      claudeSystemPromptAppend(withoutSettings),
+    );
+    assert.equal(withOtherArgs.extraArgs?.chrome, null);
+  });
+
   it("passes automatic compaction and resume-dialog controls to the SDK", () => {
     const onUserDialog = async () => ({
       behavior: "completed" as const,
@@ -1115,6 +1172,149 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
         ),
       ),
     ),
+  );
+});
+
+describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      environment: {},
+      attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
+      fileSystem,
+      path: yield* Path.Path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed("native-thread-claude-append-file"),
+        open: (input) =>
+          Effect.sync(() => {
+            opened.push(input.options);
+            return {
+              messages: Stream.never,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            };
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd,
+    });
+    const threadId = ThreadId.make("thread-claude-append-file");
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-claude-append-file"),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy,
+    });
+    const exit = yield* runtime
+      .startTurn(
+        makeClaudeTestTurnInput({
+          threadId,
+          providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-append-file"),
+          text: "What is the sentinel?",
+          attachments: [],
+          runtimePolicy,
+        }),
+      )
+      .pipe(Effect.exit);
+    return { exit, opened };
+  });
+
+  it.effect("reads the file relative to the thread cwd", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-cwd-" });
+        yield* fileSystem.writeFileString(NodePath.join(cwd, "rules.md"), "File sentinel\n");
+        const { exit, opened } = yield* startTurnWithLaunchArgs(
+          "--append-system-prompt-file rules.md",
+          cwd,
+        );
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.lengthOf(opened, 1);
+        const append = (opened[0]!.systemPrompt as { readonly append?: string }).append ?? "";
+        assert.isTrue(append.endsWith("\n\nFile sentinel"));
+        assert.isUndefined(opened[0]!.extraArgs?.["append-system-prompt-file"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails the turn before opening Claude when the file is unreadable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-cwd-" });
+        const { exit, opened } = yield* startTurnWithLaunchArgs(
+          "--append-system-prompt-file missing.md",
+          cwd,
+        );
+        assert.lengthOf(opened, 0);
+        assert.isTrue(Exit.isFailure(exit));
+        if (!Exit.isFailure(exit)) return;
+        assert.equal(
+          makeProviderFailure({ cause: exit.cause, class: "provider_error" }).message,
+          new ClaudeAdapterV2.ClaudeAppendSystemPromptFileError({
+            path: NodePath.join(cwd, "missing.md"),
+          }).message,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["--append-system-prompt-file", "--append-system-prompt-file="])(
+    "fails the turn before opening Claude when %s has no path",
+    (launchArgs) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-append-cwd-",
+          });
+          const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd);
+          assert.lengthOf(opened, 0);
+          assert.isTrue(Exit.isFailure(exit));
+          if (!Exit.isFailure(exit)) return;
+          assert.equal(
+            makeProviderFailure({ cause: exit.cause, class: "provider_error" }).message,
+            new ClaudeAdapterV2.ClaudeAppendSystemPromptFileMissingPathError().message,
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 });
 
@@ -10961,6 +11161,139 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         assert.lengthOf(processQueues, 3);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps the live process when its replacement cannot read the append file", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-append-replacement-",
+        });
+        const appendFile = NodePath.join(cwd, "rules.md");
+        yield* fileSystem.writeFileString(appendFile, "File sentinel\n");
+        const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+        let closes = 0;
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: {
+            ...DEFAULT_CLAUDE_SETTINGS,
+            launchArgs: "--append-system-prompt-file rules.md",
+          },
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-append-replacement-attachments-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          continuationRequests: { offer: () => Effect.void },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: () =>
+              Effect.gen(function* () {
+                const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                processQueues.push(sdkMessages);
+                return {
+                  messages: Stream.fromQueue(sdkMessages),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.sync(() => {
+                    closes += 1;
+                  }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        const threadId = ThreadId.make("thread-claude-append-replacement");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-append-replacement"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-append-replacement-a"),
+            text: "What is the sentinel?",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        yield* Queue.offer(
+          processQueues[0]!,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000a01",
+            result: "File sentinel",
+          }),
+        );
+        yield* awaitUntil(
+          () => events.some((event) => event.type === "turn.terminal"),
+          "first turn terminal",
+        );
+
+        yield* fileSystem.remove(appendFile);
+        // A thinking change cannot apply live, so this turn must replace the process.
+        const refused = yield* runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-append-replacement-b"),
+              text: "Switch model.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION,
+              runtimePolicy,
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.equal(
+          makeProviderFailure({ cause: refused, class: "provider_error" }).message,
+          new ClaudeAdapterV2.ClaudeAppendSystemPromptFileError({ path: appendFile }).message,
+        );
+        assert.lengthOf(processQueues, 1);
+        assert.equal(closes, 0);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

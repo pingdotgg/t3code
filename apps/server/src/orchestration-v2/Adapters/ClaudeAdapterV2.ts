@@ -445,6 +445,27 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   }
 }
 
+export class ClaudeAppendSystemPromptFileError extends Schema.TaggedError<ClaudeAppendSystemPromptFileError>()(
+  "ClaudeAppendSystemPromptFileError",
+  {
+    path: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Claude could not read the --append-system-prompt-file launch argument at ${this.path}. Fix the path in the Claude launch arguments, then send the message again.`;
+  }
+}
+
+export class ClaudeAppendSystemPromptFileMissingPathError extends Schema.TaggedError<ClaudeAppendSystemPromptFileMissingPathError>()(
+  "ClaudeAppendSystemPromptFileMissingPathError",
+  {},
+) {
+  override get message(): string {
+    return "The --append-system-prompt-file launch argument has no file path. Add the path after it in the Claude launch arguments, then send the message again.";
+  }
+}
+
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
@@ -1074,13 +1095,25 @@ export function makeClaudeQueryOptions(input: {
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
+  readonly appendSystemPromptFileText?: string;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection);
   const {
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
+    "append-system-prompt": launchArgAppendSystemPrompt,
+    "append-system-prompt-file": launchArgAppendSystemPromptFile,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  // Claude Code overwrites its CLI append text with the SDK's initialize
+  // appendSystemPrompt, so launch-argument text has to travel in that value.
+  // The CLI puts file text before inline text.
+  const launchAppendSystemPrompt = [
+    launchArgAppendSystemPromptFile === undefined
+      ? undefined
+      : input.appendSystemPromptFileText?.replace(/\r?\n$/, ""),
+    launchArgAppendSystemPrompt,
+  ].filter((text) => typeof text === "string" && text.length > 0);
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";
@@ -1156,9 +1189,11 @@ export function makeClaudeQueryOptions(input: {
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,
-      append:
+      append: [
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+          (input.mcpServers === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        ...launchAppendSystemPrompt,
+      ].join("\n\n"),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -1170,6 +1205,30 @@ export function makeClaudeQueryOptions(input: {
     additionalDirectories.length === 0 ? options : { ...options, additionalDirectories };
   return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
 }
+
+/** Reads the file the way the Claude CLI would, relative to the process cwd. */
+const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
+  readonly settings: ClaudeSettings | undefined;
+  readonly cwd: string | null;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+}) {
+  const file =
+    input.settings === undefined
+      ? undefined
+      : parseCliArgs(input.settings.launchArgs).flags["append-system-prompt-file"];
+  if (file === undefined) return undefined;
+  // parseCliArgs gives null for a trailing flag and "" for `--flag=`.
+  if (file === null || file === "") {
+    return yield* new ClaudeAppendSystemPromptFileMissingPathError();
+  }
+  const filePath = input.path.resolve(input.cwd ?? ".", file);
+  return yield* input.fileSystem
+    .readFileString(filePath)
+    .pipe(
+      Effect.mapError((cause) => new ClaudeAppendSystemPromptFileError({ path: filePath, cause })),
+    );
+});
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
@@ -8107,6 +8166,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
+          // Read before closing the live process so a bad path leaves it running.
+          const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
+            settings: adapterOptions.settings,
+            cwd: turnInput.runtimePolicy.cwd,
+            fileSystem,
+            path,
+          });
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
             yield* existing.query.close.pipe(Effect.ignore);
@@ -8151,6 +8217,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             canUseTool,
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
+            ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
           });
           const querySession = yield* queryRunner
             .open({
