@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo } from "react";
+import { useEffect, useEffectEvent } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -56,26 +56,23 @@ export function PullRequestGuideTab({
   const pending = usePendingReviewComments(reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
-  const commenting = useMemo<ExcerptCommenting | null>(
-    () =>
-      !canComment && onAskAboutLines === null
-        ? null
-        : {
-            canComment,
-            pending,
-            onComment: ({ path, oldPath, position, body }) =>
-              addComment(reviewKey, {
-                id: nextPendingReviewCommentId(),
-                path,
-                ...(oldPath === null ? {} : { oldPath }),
-                position,
-                body,
-              }),
-            onRemove: (commentId) => removeComment(reviewKey, commentId),
-            onAskAgent: onAskAboutLines,
-          },
-    [addComment, canComment, onAskAboutLines, pending, removeComment, reviewKey],
-  );
+  const commenting: ExcerptCommenting | null =
+    !canComment && onAskAboutLines === null
+      ? null
+      : {
+          canComment,
+          pending,
+          onComment: ({ path, oldPath, position, body }) =>
+            addComment(reviewKey, {
+              id: nextPendingReviewCommentId(),
+              path,
+              ...(oldPath === null ? {} : { oldPath }),
+              position,
+              body,
+            }),
+          onRemove: (commentId) => removeComment(reviewKey, commentId),
+          onAskAgent: onAskAboutLines,
+        };
   useEffect(() => {
     if (!active) return;
     useGuideRunStore.getState().setShown(runKey);
