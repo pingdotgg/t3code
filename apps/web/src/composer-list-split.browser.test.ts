@@ -19,7 +19,7 @@ import {
 } from "./composer-rich-text-doc";
 
 // ProseMirror's DOM observer can flush on a timer after a test ends, which
-// throws once jsdom is torn down, so every editor is destroyed after its test.
+// throws once its DOM is gone, so every editor is destroyed after its test.
 const editors: Editor[] = [];
 afterEach(() => {
   for (const editor of editors.splice(0)) editor.destroy();

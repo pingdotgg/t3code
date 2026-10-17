@@ -1370,7 +1370,7 @@ describe("terminal font resolution", () => {
   });
 
   it("ignores proportional families the cell grid cannot lay out", () => {
-    // jsdom has no canvas metrics, so the probe answers "monospace" and the
+    // Node has no canvas, so the probe answers "monospace" and the
     // family is kept; the guard is exercised in the browser instead.
     const stack = terminalFontFamily("Helvetica Neue");
     expect(stack.endsWith("monospace")).toBe(true);
