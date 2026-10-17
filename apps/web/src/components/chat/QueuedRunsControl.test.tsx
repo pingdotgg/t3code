@@ -1,3 +1,9 @@
+// @vitest-environment jsdom
+
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -167,5 +173,98 @@ describe("QueuedRunsControl attachments and edit mode", () => {
     );
 
     expect(html).toContain("Queued with a screenshot");
+  });
+});
+
+describe("QueuedRunsControl assistant quotes", () => {
+  const quote = serializeAssistantCitation({
+    version: 1,
+    environmentId: EnvironmentId.make("environment:test"),
+    threadId: ThreadId.make("thread:test"),
+    messageId: MessageId.make("message:assistant"),
+    text: "Cache the parsed config per worktree.",
+    start: 0,
+    end: 37,
+    prefix: "",
+    suffix: "",
+  });
+  const quoteAndText = `${quote}\n\nWhy per worktree?`;
+
+  async function renderQuotedQueue(onEditQueuedRun: (request: unknown) => void) {
+    state.projection = { projection: { messages: [] } };
+    state.workflow = {
+      activeRun: { id: "run:active" },
+      canPromoteToSteer: true,
+      canReorder: true,
+      queuedRuns: [
+        {
+          run: { id: "run:quote-only", userMessageId: "message:quote-only" },
+          text: quote,
+          attachments: [],
+        },
+        {
+          run: { id: "run:quote-and-text", userMessageId: "message:quote-and-text" },
+          text: quoteAndText,
+          attachments: [],
+        },
+      ],
+    };
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <QueuedRunsControl
+          environmentId={"environment:test" as never}
+          optimisticMessages={[]}
+          threadId={"thread:test" as never}
+          editingRunId={null}
+          onEditQueuedRun={onEditQueuedRun}
+          onCancelEdit={() => undefined}
+        />,
+      );
+    });
+    const cleanup = async () => {
+      await act(async () => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    };
+    return { container, cleanup };
+  }
+
+  it("previews quote-only and quote-plus-text items by their quoted text", async () => {
+    const { container, cleanup } = await renderQuotedQueue(() => undefined);
+    try {
+      const [quoteOnlyRow, quoteAndTextRow] = container.querySelectorAll("li");
+
+      expect(quoteOnlyRow?.textContent).toContain("Cache the parsed config per worktree.");
+      expect(quoteAndTextRow?.textContent).toContain("Cache the parsed config per worktree.");
+      expect(quoteAndTextRow?.textContent).toContain("Why per worktree?");
+      expect(container.textContent).not.toContain("t3-citation:");
+      expect(container.textContent).not.toContain("Assistant quote");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("edits the original message so the citation link survives", async () => {
+    const onEditQueuedRun = vi.fn();
+    const { container, cleanup } = await renderQuotedQueue(onEditQueuedRun);
+    try {
+      const editButton = container
+        .querySelectorAll("li")[1]
+        ?.querySelector<HTMLButtonElement>('[aria-label="Edit queued message"]');
+      await act(async () => editButton?.click());
+
+      expect(onEditQueuedRun).toHaveBeenCalledWith({
+        runId: "run:quote-and-text",
+        messageId: "message:quote-and-text",
+        text: quoteAndText,
+        attachments: [],
+      });
+    } finally {
+      await cleanup();
+    }
   });
 });
