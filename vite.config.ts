@@ -321,6 +321,31 @@ export default defineConfig({
         },
       },
       {
+        // Files the React Compiler must compile. Any bailout (a ref read in render, a
+        // setState in an effect, a manual memo it cannot preserve) fails lint instead of
+        // silently leaving the file unoptimized, and manual memoization is redundant here.
+        // Add a file once it compiles cleanly. ChatView is being split toward this list.
+        files: [
+          "apps/web/src/components/PersistentThreadTerminals.tsx",
+          "apps/web/src/components/terminal/**",
+        ],
+        rules: {
+          "react/exhaustive-effect-dependencies": "error",
+          "react/globals": "error",
+          "react/hooks": "error",
+          "react/immutability": "error",
+          "react/memo-dependencies": "error",
+          "react/preserve-manual-memoization": "error",
+          "react/purity": "error",
+          "react/refs": "error",
+          "react/set-state-in-effect": "error",
+          "react/set-state-in-render": "error",
+          "react/static-components": "error",
+          "react/unsupported-syntax": "error",
+          "t3code/no-manual-memo": "error",
+        },
+      },
+      {
         // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
         rules: { "shadcn/no-arbitrary-values": "off" },

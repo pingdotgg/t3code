@@ -53,3 +53,16 @@ Calls inside the component keep the plain function, so work that resumes after a
 acts on the render it started in. A function that a child calls during render, or after an
 `await`, comes from a module-level factory memoized on its inputs, so its closure keeps only
 those inputs.
+
+## React Compiler
+
+The compiler memoizes a component or hook only when it can prove the code follows React's rules.
+Anything it can't prove, such as reading a ref during render or calling `setState` from an effect,
+makes it skip the whole function without a build error. Lint reports each skip as a
+`react(...)` warning with the note "React Compiler skipped optimizing this component or hook".
+
+Files listed in the React Compiler override in [`vite.config.ts`](../../vite.config.ts) must
+compile. There those rules are errors, and `t3code/no-manual-memo` rejects `useMemo` and
+`useCallback`, which the compiler makes redundant. `useStableCallback` still marks handlers
+that leave a large component, as described above. Add a file to the list once its skips are
+fixed, and drop its manual memoization in the same change.
