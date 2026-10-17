@@ -2,6 +2,7 @@ import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -17,15 +18,20 @@ import {
   probeCodexSkillsForCwd,
 } from "../CodexProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   type ProviderDriverCreateInput,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { codexContinuationIdentity } from "./CodexHomeLayout.ts";
+import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
+  CodexShadowHomeSqliteRecoveryRequiredError,
+  codexContinuationIdentity,
+  mergeCodexEnvironment,
+} from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
+const isSqliteRecoveryRequired = Schema.is(CodexShadowHomeSqliteRecoveryRequiredError);
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -40,7 +46,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     instanceId,
     enabled,
     config,
-    environment: yield* mergeProviderInstanceEnvironment(input.environment),
+    environment: yield* mergeCodexEnvironment(input.environment),
   });
   const continuationIdentity = codexContinuationIdentity(runtime.homeLayout);
   const stamp = withInstanceIdentity({
@@ -163,7 +169,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             : {}),
         }),
       ),
-      Effect.catch(() =>
+      Effect.catch((cause) =>
         runtime.auth.read.pipe(
           Effect.orElseSucceed(() => Option.none()),
           Effect.map((current) => ({
@@ -188,7 +194,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             ...(Option.isSome(current) && current.value.scopes.includes("chatgpt.tokens.use.direct")
               ? { usageLimits }
               : {}),
-            message: "Could not check Codex right now. Retry, or reconnect in provider settings.",
+            message:
+              cause._tag === "ProviderSetupError" && cause.operation === "runtime"
+                ? cause.detail
+                : "Could not check Codex right now. Retry, or reconnect in provider settings.",
           })),
         ),
       ),
@@ -236,7 +245,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
         new ProviderDriverError({
           driver: DRIVER,
           instanceId,
-          detail: "Failed to build Codex orchestration adapter.",
+          detail: isSqliteRecoveryRequired(cause.cause)
+            ? CODEX_SQLITE_RECOVERY_GUIDANCE
+            : "Failed to build Codex orchestration adapter.",
           cause,
         }),
     ),

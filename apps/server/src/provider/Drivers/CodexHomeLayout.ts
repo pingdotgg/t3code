@@ -1,4 +1,9 @@
-import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type CodexSettings,
+  type ProviderInstanceEnvironment,
+} from "@t3tools/contracts";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -30,6 +35,59 @@ const KNOWN_SHARED_DIRECTORIES = [
 
 const PRIVATE_ENTRY_NAMES = new Set(["auth.json", "models_cache.json"]);
 const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp"]);
+const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:wal|shm|journal))?$/iu;
+
+// Normalize each environment source before merging: overwriting a property does
+// not move its insertion position, so final key order cannot encode precedence.
+export function normalizeCodexSqliteEnvironment(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+) {
+  if (platform !== "win32") return environment;
+  const normalized = { ...environment };
+  for (const key of Object.keys(environment)) {
+    if (key.toUpperCase() !== "CODEX_SQLITE_HOME") continue;
+    delete normalized[key];
+    normalized.CODEX_SQLITE_HOME = environment[key];
+  }
+  return normalized;
+}
+
+export const mergeCodexEnvironment = Effect.fn("mergeCodexEnvironment")(function* (
+  environment: ProviderInstanceEnvironment | undefined,
+  baseEnvironment?: NodeJS.ProcessEnv,
+) {
+  const platform = yield* HostProcess.Platform;
+  const base = normalizeCodexSqliteEnvironment(
+    baseEnvironment ?? (yield* HostProcess.Environment),
+    platform,
+  );
+  return yield* mergeProviderInstanceEnvironment(
+    platform === "win32"
+      ? environment?.map((variable) =>
+          variable.name.toUpperCase() === "CODEX_SQLITE_HOME"
+            ? { ...variable, name: "CODEX_SQLITE_HOME" }
+            : variable,
+        )
+      : environment,
+    base,
+  );
+});
+
+// SQLite must open the database and its sidecars through the same directory.
+// Individual links split the WAL across homes when a sidecar does not exist yet.
+export function withCodexSqliteHome(
+  layout: CodexHomeLayout,
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  if (layout.mode !== "authOverlay") return environment;
+  const normalized = normalizeCodexSqliteEnvironment(environment, platform);
+  return {
+    ...normalized,
+    CODEX_SQLITE_HOME: normalized.CODEX_SQLITE_HOME ?? layout.sharedHomePath,
+  };
+}
 // Codex creates these runtime locks itself when it starts in a shadow home before the shared
 // home has one. They guard shared state, so a local copy is replaced with the shared link.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set(["mcp-oauth-locks", ".sqlite-maintenance.lock"]);
@@ -110,6 +168,22 @@ export class CodexShadowHomeEntryConflictError extends Schema.TaggedError<CodexS
   }
 }
 
+export const CODEX_SQLITE_RECOVERY_GUIDANCE =
+  "Codex SQLite recovery is required. Stop all Codex processes using the shared or shadow home, back up and checkpoint or recover any shadow WAL/journal data, then remove only the old shadow SQLite symlinks. Do not delete real SQLite files or sidecars.";
+
+export class CodexShadowHomeSqliteRecoveryRequiredError extends Schema.TaggedError<CodexShadowHomeSqliteRecoveryRequiredError>()(
+  "CodexShadowHomeSqliteRecoveryRequiredError",
+  {
+    ...CodexShadowHomeContext,
+    entryName: Schema.String,
+    linkPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return CODEX_SQLITE_RECOVERY_GUIDANCE;
+  }
+}
+
 export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<CodexShadowHomePrivateEntrySymlinkError>()(
   "CodexShadowHomePrivateEntrySymlinkError",
   {
@@ -127,6 +201,7 @@ export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomeFileSystemError,
   CodexShadowHomePathConflictError,
   CodexShadowHomeEntryConflictError,
+  CodexShadowHomeSqliteRecoveryRequiredError,
   CodexShadowHomePrivateEntrySymlinkError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
@@ -184,27 +259,27 @@ const readLinkState = Effect.fn("CodexHomeLayout.readLinkState")(function* (inpu
   );
 });
 
-const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
+const removeShadowSymlink = Effect.fn("CodexHomeLayout.removeShadowSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string;
   readonly entryName: string;
 }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
-  const privatePath = path.join(input.effectiveHomePath, input.entryName);
+  const linkPath = path.join(input.effectiveHomePath, input.entryName);
   const state = yield* readLinkState({
     ...input,
-    linkPath: privatePath,
+    linkPath,
   });
   if (state._tag === "Symlink") {
-    yield* input.fileSystem.remove(privatePath).pipe(
+    yield* input.fileSystem.remove(linkPath).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           new CodexShadowHomeFileSystemError({
             sharedHomePath: input.sharedHomePath,
             effectiveHomePath: input.effectiveHomePath,
             operation: "remove",
-            path: privatePath,
+            path: linkPath,
             entryName: input.entryName,
             cause,
           }),
@@ -317,6 +392,54 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
   },
 );
 
+// Read-only preflight shared by materialization and provider-associated terminals.
+export const inspectCodexShadowSqlite = Effect.fn("inspectCodexShadowSqlite")(function* (
+  layout: CodexHomeLayout,
+) {
+  const effectiveHomePath = layout.effectiveHomePath;
+  if (layout.mode !== "authOverlay" || !effectiveHomePath) return;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const shadowEntryNames = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed<Array<string>>([])
+          : new CodexShadowHomeFileSystemError({
+              sharedHomePath: layout.sharedHomePath,
+              effectiveHomePath,
+              operation: "readDirectory",
+              path: effectiveHomePath,
+              cause,
+            }),
+    }),
+  );
+  // Even an orphan sidecar link is not launch-ready: a terminal or explicit
+  // SQLite override can create a database beside it. Leave all legacy SQLite
+  // links for operator recovery instead of giving launch paths different rules.
+  for (const entryName of shadowEntryNames) {
+    if (!SQLITE_ENTRY_NAME.test(entryName)) continue;
+    // Preserve the directory lookup spelling: path.join would collapse '..'
+    // before the filesystem can resolve an earlier directory symlink.
+    const linkPath = `${effectiveHomePath}${effectiveHomePath.endsWith(path.sep) ? "" : path.sep}${entryName}`;
+    const state = yield* readLinkState({
+      fileSystem,
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName,
+      linkPath,
+    });
+    if (state._tag === "Symlink") {
+      return yield* new CodexShadowHomeSqliteRecoveryRequiredError({
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+        linkPath,
+      });
+    }
+  }
+});
+
 export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome")(function* (
   layout: CodexHomeLayout,
 ) {
@@ -332,6 +455,8 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+
+  yield* inspectCodexShadowSqlite(layout);
 
   const makeDirectory = (directoryPath: string) =>
     fileSystem.makeDirectory(directoryPath, { recursive: true }).pipe(
@@ -372,7 +497,11 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   );
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (
+      !PRIVATE_ENTRY_NAMES.has(entryName) &&
+      !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
+      !SQLITE_ENTRY_NAME.test(entryName)
+    ) {
       entries.add(entryName);
     }
   }
@@ -382,7 +511,7 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     (entryName) =>
       entryName === "auth.json"
         ? Effect.void
-        : removePrivateSymlink({
+        : removeShadowSymlink({
             fileSystem,
             sharedHomePath: layout.sharedHomePath,
             effectiveHomePath,

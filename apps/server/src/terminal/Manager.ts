@@ -58,7 +58,15 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import { resolveManagedCodexHomeLayout } from "../provider/CodexManagedHome.ts";
+import {
+  CODEX_SQLITE_RECOVERY_GUIDANCE,
+  inspectCodexShadowSqlite,
+  mergeCodexEnvironment,
+  normalizeCodexSqliteEnvironment,
+  resolveCodexHomeLayout,
+  withCodexSqliteHome,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1282,11 +1290,11 @@ function createTerminalSpawnEnv(
   return stripAppImageRuntimeEnv(spawnEnv);
 }
 
-function normalizedRuntimeEnv(
-  env: Record<string, string> | undefined,
-): Record<string, string> | null {
+function normalizedRuntimeEnv(env: NodeJS.ProcessEnv | undefined): Record<string, string> | null {
   if (!env) return null;
-  const entries = Object.entries(env);
+  const entries = Object.entries(env).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  );
   if (entries.length === 0) return null;
   return Object.fromEntries(entries.toSorted(([left], [right]) => left.localeCompare(right)));
 }
@@ -1320,9 +1328,12 @@ interface TerminalManagerOptions {
   resolveProviderInstanceEnvironment?: (
     providerInstanceId: string,
     env: Record<string, string> | undefined,
+    inheritedEnvironment: NodeJS.ProcessEnv,
+    cwd: string,
   ) => Effect.Effect<
     Record<string, string>,
-    TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError
+    TerminalProviderInstanceNotFoundError | TerminalProviderEnvironmentError,
+    FileSystem.FileSystem
   >;
 }
 
@@ -1332,7 +1343,10 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
+  readonly stateDir: string;
+  readonly cwd: string;
   readonly env: Record<string, string> | undefined;
+  readonly inheritedEnvironment?: NodeJS.ProcessEnv;
 }) {
   const providerInstanceId = ProviderInstanceId.make(input.rawProviderInstanceId);
   const settings = yield* input.serverSettings.getSettings.pipe(
@@ -1343,15 +1357,136 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
     return yield* new TerminalProviderInstanceNotFoundError({ providerInstanceId });
   }
 
-  let resolved = yield* mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
+  const platform = yield* HostProcess.Platform;
+  const inheritedSqlite = Object.fromEntries(
+    Object.entries(input.inheritedEnvironment ?? {}).filter(([key]) =>
+      platform === "win32"
+        ? key.toUpperCase() === "CODEX_SQLITE_HOME"
+        : key === "CODEX_SQLITE_HOME",
+    ),
+  );
+  const codexHomeKey = (key: string) =>
+    platform === "win32" && key.toUpperCase() === "CODEX_HOME" ? "CODEX_HOME" : key;
+  let resolved = yield* instance.driver === "codex"
+    ? mergeCodexEnvironment(
+        instance.environment?.map((variable) => ({
+          ...variable,
+          name: codexHomeKey(variable.name),
+        })),
+        {
+          ...normalizeCodexSqliteEnvironment(inheritedSqlite, platform),
+          ...normalizeCodexSqliteEnvironment(
+            Object.fromEntries(
+              Object.entries(input.env ?? {}).map(([key, value]) => [codexHomeKey(key), value]),
+            ),
+            platform,
+          ),
+        },
+      )
+    : mergeProviderInstanceEnvironment(instance.environment, input.env ?? {});
   if (instance.driver === "codex") {
     const config = decodeCodexSettings(instance.config ?? {});
     if (Option.isSome(config)) {
       const layout = yield* resolveCodexHomeLayout(config.value).pipe(
         Effect.provideService(Path.Path, input.path),
       );
+      // Keep terminal CLI authentication unchanged, but inspect the managed
+      // account's actual shadow before allowing another shared SQLite writer.
+      const recoveryLayout =
+        config.value.setupMode === "managed"
+          ? yield* resolveManagedCodexHomeLayout(
+              input.stateDir,
+              providerInstanceId,
+              config.value,
+            ).pipe(Effect.provideService(Path.Path, input.path))
+          : layout;
+      resolved = withCodexSqliteHome(layout, resolved, platform);
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
+
+      // Use the same sorted/expanded environment as PTY spawning. Inherited
+      // homes stay unexpanded, and relative homes belong to the terminal cwd.
+      const terminalEnvironment = createTerminalSpawnEnv(
+        input.inheritedEnvironment ?? {},
+        normalizedRuntimeEnv(resolved),
+        platform,
+        yield* HostProcess.HomeDirectory,
+      );
+      yield* Effect.gen(function* () {
+        yield* inspectCodexShadowSqlite(recoveryLayout);
+        const explicitHome = Object.entries(terminalEnvironment).find(
+          ([key]) => codexHomeKey(key) === "CODEX_HOME",
+        )?.[1];
+        // POSIX Codex falls back to nonempty HOME, then the account database.
+        // Windows uses the Known Folder API, not HOME/USERPROFILE overrides.
+        const nativeHome =
+          !explicitHome && platform !== "win32"
+            ? terminalEnvironment.HOME || (yield* Effect.flatten(HostProcess.AccountHomeDirectory))
+            : undefined;
+        // Native HOME's AbsolutePathBuf expands '~/' once against HOME itself,
+        // then normalizes lexically. Explicit CODEX_HOME is canonicalized first.
+        const terminalHome =
+          explicitHome ||
+          (nativeHome
+            ? input.path.normalize(`${nativeHome}/.codex`.replace(/^~\/+/u, () => `${nativeHome}/`))
+            : undefined);
+        // Keep the cwd and explicit CODEX_HOME spelling: POSIX traverses symlinks
+        // before '..'. Even fs.realpath's JS implementation normalizes lexically.
+        // Windows resolves drive-relative paths using Win32 semantics.
+        const terminalHomePath = terminalHome
+          ? platform === "win32"
+            ? input.path.resolve(input.cwd, terminalHome)
+            : input.path.isAbsolute(terminalHome)
+              ? terminalHome
+              : `${input.cwd}${input.cwd.endsWith(input.path.sep) ? "" : input.path.sep}${terminalHome}`
+          : undefined;
+        if (
+          terminalHomePath === undefined ||
+          (recoveryLayout.mode === "authOverlay" &&
+            terminalHomePath === recoveryLayout.effectiveHomePath)
+        )
+          return;
+
+        if (layout.mode === "direct") {
+          // Shared homes may deliberately link a database. Directory identity
+          // also recognizes aliases without lexically collapsing symlink/.. paths.
+          if (terminalHomePath === layout.sharedHomePath) return;
+          const fileSystem = yield* FileSystem.FileSystem;
+          // Unverifiable identity keeps inspection; an unused shared home's
+          // metadata failure must not become another launch requirement.
+          const terminalInfo = yield* fileSystem.stat(terminalHomePath).pipe(Effect.option);
+          const sharedInfo = yield* fileSystem.stat(layout.sharedHomePath).pipe(Effect.option);
+          if (
+            Option.isSome(terminalInfo) &&
+            Option.isSome(sharedInfo) &&
+            terminalInfo.value.type === "Directory" &&
+            sharedInfo.value.type === "Directory" &&
+            Option.isSome(terminalInfo.value.ino) &&
+            Option.isSome(sharedInfo.value.ino) &&
+            terminalInfo.value.ino.value > 0 &&
+            terminalInfo.value.dev === sharedInfo.value.dev &&
+            terminalInfo.value.ino.value === sharedInfo.value.ino.value
+          )
+            return;
+        }
+        yield* inspectCodexShadowSqlite({
+          ...layout,
+          mode: "authOverlay",
+          effectiveHomePath: terminalHomePath,
+        });
+      }).pipe(
+        Effect.provideService(Path.Path, input.path),
+        Effect.mapError(
+          (cause) =>
+            new TerminalProviderEnvironmentError({
+              providerInstanceId,
+              cause,
+              ...(cause._tag === "CodexShadowHomeSqliteRecoveryRequiredError"
+                ? { detail: CODEX_SQLITE_RECOVERY_GUIDANCE }
+                : {}),
+            }),
+        ),
+      );
     }
   } else if (instance.driver === "claudeAgent") {
     const config = decodeClaudeSettings(instance.config ?? {});
@@ -1369,7 +1504,8 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("TerminalManager.make")(function* () {
-  const { terminalLogsDir, providerStatusCacheDir, baseDir } = yield* ServerConfig.ServerConfig;
+  const { terminalLogsDir, providerStatusCacheDir, baseDir, stateDir } =
+    yield* ServerConfig.ServerConfig;
   const ptyAdapter = yield* PtyAdapter.PtyAdapter;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
@@ -1377,13 +1513,22 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
-  )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
-    resolveProviderInstanceTerminalEnvironment({
-      serverSettings,
-      path,
-      rawProviderInstanceId,
-      env,
-    }),
+  )(
+    (
+      rawProviderInstanceId: string,
+      env: Record<string, string> | undefined,
+      inheritedEnvironment: NodeJS.ProcessEnv,
+      cwd: string,
+    ) =>
+      resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId,
+        stateDir,
+        env,
+        inheritedEnvironment,
+        cwd,
+      }),
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
@@ -1422,7 +1567,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const resolveLaunchInputEnvironment = Effect.fn("terminal.resolveLaunchInputEnvironment")(
-    function* <Input extends TerminalOpenInput | TerminalAttachInput | TerminalRestartInput>(
+    function* <Input extends TerminalOpenInput | TerminalRestartInput>(
       input: Input,
     ): Effect.fn.Return<
       Input,
@@ -1435,7 +1580,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           providerInstanceId: ProviderInstanceId.make(input.providerInstanceId),
         });
       }
-      const env = yield* resolver(input.providerInstanceId, input.env);
+      const env = yield* resolver(input.providerInstanceId, input.env, baseEnv, input.cwd).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
       return { ...input, env };
     },
   );

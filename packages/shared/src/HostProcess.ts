@@ -1,8 +1,18 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as NodeDns from "node:dns";
 import * as NodeOS from "node:os";
 import * as NodeSea from "node:sea";
+
+export class AccountHomeDirectoryError extends Schema.TaggedError<AccountHomeDirectoryError>()(
+  "AccountHomeDirectoryError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not resolve the OS account home directory.";
+  }
+}
 
 export const Platform = Context.Reference<NodeJS.Platform>("@t3tools/shared/HostProcess/Platform", {
   defaultValue: () => process.platform,
@@ -25,6 +35,19 @@ export const HomeDirectory = Context.Reference<string>(
     defaultValue: () => NodeOS.homedir(),
   },
 );
+
+// Account metadata ignores HOME, unlike homedir(), for native POSIX tools'
+// fallback when the child omits HOME or sets it to an empty string. A missing
+// passwd entry is a typed failure, not permission to inspect the ambient HOME.
+export const AccountHomeDirectory = Context.Reference<
+  Effect.Effect<string, AccountHomeDirectoryError>
+>("@t3tools/shared/HostProcess/AccountHomeDirectory", {
+  defaultValue: () =>
+    Effect.try({
+      try: () => NodeOS.userInfo().homedir,
+      catch: (cause) => new AccountHomeDirectoryError({ cause }),
+    }),
+});
 
 export const Environment = Context.Reference<NodeJS.ProcessEnv>(
   "@t3tools/shared/HostProcess/Environment",

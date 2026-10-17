@@ -34,6 +34,18 @@ function decodes<S extends Schema.Top>(schema: S, input: unknown): boolean {
 }
 
 describe("TerminalProviderEnvironmentError", () => {
+  it("round-trips an explicit safe recovery detail without exposing its cause", () => {
+    const detail = "Codex SQLite recovery is required. Stop all Codex processes before recovery.";
+    const error = new TerminalProviderEnvironmentError({
+      providerInstanceId: ProviderInstanceId.make("codex_work"),
+      cause: { detail: "secret backend unavailable" },
+      detail,
+    });
+    const decoded = decodeTerminalError(encodeTerminalError(error));
+    expect(decoded.message).toBe(detail);
+    expect(decoded.message).not.toContain("secret backend unavailable");
+  });
+
   it("round-trips its required cause without exposing it in the message", () => {
     const cause = { operation: "read-secret", detail: "secret backend unavailable" };
     const error = new TerminalProviderEnvironmentError({

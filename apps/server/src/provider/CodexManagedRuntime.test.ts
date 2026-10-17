@@ -44,8 +44,8 @@ it.effect("managed home defaults to the global Codex home and honors configured 
       ProviderInstanceId.make("codex-work"),
       decodeSettings({ homePath: "/custom/shared", shadowHomePath: "/custom/shadow" }),
     );
-    assert.equal(configured.sharedHomePath, "/custom/shared");
-    assert.equal(configured.effectiveHomePath, "/custom/shadow");
+    assert.equal(configured.sharedHomePath, path.resolve("/custom/shared"));
+    assert.equal(configured.effectiveHomePath, path.resolve("/custom/shadow"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 it.effect.each(
@@ -135,10 +135,12 @@ it.effect.each(
           if (account === "primary") {
             assert.equal(effective.config.homePath, sharedHome);
             assert.equal(runtime.homeLayout.mode, "direct");
+            assert.isUndefined(effective.environment.CODEX_SQLITE_HOME);
           } else {
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, "userdata/providers/codex");
+            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
             assert.equal(runtime.homeLayout.mode, "authOverlay");
+            assert.equal(effective.environment.CODEX_SQLITE_HOME, sharedHome);
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),
               path.join(sharedHome, "sessions"),
@@ -173,6 +175,43 @@ it.effect.each(
           assert.strictEqual(ambient.CODEX_HOME, "/user/.codex");
         }).pipe(Effect.scoped);
         assert.strictEqual(leases, 0);
+        if (account === "additional") {
+          yield* fs.writeFileString(path.join(sharedHome, "state_5.sqlite"), "");
+          yield* fs.symlink(
+            path.join(sharedHome, "state_5.sqlite"),
+            path.join(runtime.homePath, "state_5.sqlite"),
+          );
+          const error = yield* runtime.resolve.pipe(Effect.scoped, Effect.flip);
+          assert.equal(error._tag, "ProviderSetupError");
+          assert.include(error.detail, "Codex SQLite recovery is required");
+          assert.include(error.detail, "Stop all Codex processes");
+          assert.notInclude(error.detail, sharedHome);
+          assert.notInclude(error.detail, runtime.homePath);
+          assert.notInclude(error.message, sharedHome);
+          assert.notInclude(error.message, runtime.homePath);
+          assert.deepInclude(error.cause, {
+            _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
+            sharedHomePath: sharedHome,
+            linkPath: path.join(runtime.homePath, "state_5.sqlite"),
+          });
+          assert.strictEqual(leases, 0);
+          yield* fs.remove(path.join(runtime.homePath, "state_5.sqlite"));
+          yield* fs.remove(path.join(runtime.homePath, "config.toml"));
+          yield* fs.writeFileString(path.join(runtime.homePath, "config.toml"), "private config");
+          const conflict = yield* runtime.resolve.pipe(Effect.scoped, Effect.flip);
+          assert.equal(conflict._tag, "ProviderSetupError");
+          assert.equal(conflict.detail, "Could not prepare the managed Codex runtime.");
+          assert.notInclude(conflict.detail, sharedHome);
+          assert.notInclude(conflict.detail, runtime.homePath);
+          assert.notInclude(conflict.message, sharedHome);
+          assert.notInclude(conflict.message, runtime.homePath);
+          assert.deepInclude(conflict.cause, {
+            _tag: "CodexShadowHomeEntryConflictError",
+            entryName: "config.toml",
+            linkPath: path.join(runtime.homePath, "config.toml"),
+          });
+          assert.strictEqual(leases, 0);
+        }
         yield* runtime.auth.controller.logout(Effect.void);
         assert.equal(
           yield* fs.readFileString(path.join(sharedHome, "auth.json")),
