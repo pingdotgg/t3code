@@ -23,7 +23,7 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { GitManagerError } from "@t3tools/contracts";
+import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -209,6 +209,134 @@ describe("VcsStatusBroadcaster", () => {
         assert.equal(pullCalls, 1);
         assert.equal(status.behindCount, 0);
       }).pipe(Effect.provide(layerTest));
+    },
+  );
+
+  it.effect.each([
+    { refresh: "explicit", failure: "pull" },
+    { refresh: "explicit", failure: "post-pull remote read" },
+    { refresh: "explicit", failure: "recovery scan" },
+    { refresh: "background", failure: "pull" },
+    { refresh: "background", failure: "post-pull remote read" },
+    { refresh: "background", failure: "recovery scan" },
+  ] as const)(
+    "$refresh refresh reconciles local status after failure at $failure",
+    ({ refresh, failure }) => {
+      let local = { ...baseLocalStatus, isDefaultRef: true, refName: "main" };
+      const afterPull = { ...local, hasWorkingTreeChanges: true };
+      let pullCalls = 0;
+      let seeded = false;
+      const subscribed = Deferred.makeUnsafe<void>();
+      const outcome = Deferred.makeUnsafe<"updated" | "failed">();
+      const recoveryError = new GitManagerError({
+        operation: "test",
+        cwd: "/repo",
+        detail: "recovery scan failed",
+      });
+      const logger = Logger.make(({ message }) => {
+        if (Array.isArray(message) && message[0] === "VCS remote status refresh failed") {
+          Deferred.doneUnsafe(outcome, Effect.succeed("failed"));
+        }
+      });
+      const layerTest = VcsStatusBroadcaster.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(layerBackgroundPolicy(() => true)),
+        Layer.provide(
+          Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+            isEnabled: () => Effect.succeed(true),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            localStatus: () =>
+              Effect.suspend(() =>
+                failure === "recovery scan" && pullCalls > 0
+                  ? Effect.fail(recoveryError)
+                  : Effect.succeed(local),
+              ),
+            remoteStatus: () =>
+              Effect.suspend(() =>
+                failure === "post-pull remote read" && pullCalls > 0
+                  ? Effect.fail(
+                      new GitManagerError({
+                        operation: "test",
+                        cwd: "/repo",
+                        detail: "post-pull read failed",
+                      }),
+                    )
+                  : Effect.succeed({
+                      ...baseRemoteStatus,
+                      behindCount: 2,
+                      pr: seeded ? remoteStatusWithPr.pr : null,
+                    }),
+              ),
+            invalidateLocalStatus: () => Effect.void,
+            invalidateRemoteStatus: () => Effect.void,
+            invalidateStatus: () => Effect.void,
+            pullCurrentBranch: () =>
+              Effect.suspend(() => {
+                pullCalls += 1;
+                local = afterPull;
+                return failure !== "post-pull remote read"
+                  ? Effect.fail(
+                      new GitCommandError({
+                        operation: "test",
+                        command: "pull",
+                        cwd: "/repo",
+                        detail: "pull failed",
+                      }),
+                    )
+                  : Effect.succeed({
+                      status: "pulled" as const,
+                      refName: "main",
+                      upstreamRef: "origin/main",
+                    });
+              }),
+          }),
+        ),
+      );
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        // Seed the same divergence so background recovery cannot rely on a moved remote ref.
+        yield* broadcaster.getStatus({ cwd: "/repo" });
+        seeded = true;
+        if (refresh === "explicit") {
+          const result = yield* Effect.result(broadcaster.refreshStatus("/repo"));
+          if (failure === "recovery scan") {
+            assert.isTrue(result._tag === "Failure");
+            if (result._tag === "Failure") assert.strictEqual(result.failure, recoveryError);
+            return;
+          }
+          assert.isTrue(result._tag === "Success");
+          if (result._tag === "Success") assert.isTrue(result.success.hasWorkingTreeChanges);
+        } else {
+          yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
+            if (event._tag === "snapshot" && !event.local.hasWorkingTreeChanges) {
+              return Deferred.succeed(subscribed, undefined).pipe(Effect.asVoid);
+            }
+            return Deferred.succeed(outcome, "updated").pipe(Effect.asVoid);
+          }).pipe(Effect.forkScoped);
+          yield* Deferred.await(subscribed);
+          yield* TestClock.adjust(Duration.seconds(30));
+          assert.equal(
+            yield* Deferred.await(outcome),
+            failure === "recovery scan" ? "failed" : "updated",
+          );
+        }
+        assert.equal(pullCalls, 1);
+        if (failure !== "recovery scan") {
+          assert.isTrue((yield* broadcaster.getStatus({ cwd: "/repo" })).hasWorkingTreeChanges);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            layerTest,
+            TestClock.layer(),
+            Logger.layer([logger], { mergeWithExisting: true }),
+          ),
+        ),
+      );
     },
   );
 
