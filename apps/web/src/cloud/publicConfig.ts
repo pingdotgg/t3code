@@ -1,4 +1,7 @@
-import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
+import {
+  clerkFrontendApiHostnameFromPublishableKey,
+  relayClerkTokenOptions,
+} from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
@@ -71,7 +74,33 @@ export function resolveRelayTracingConfig() {
 
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
-  return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
+  if (!config.clerkPublishableKey || !config.clerkJwtTemplate || !config.relayUrl) {
+    return false;
+  }
+
+  // Packaged web clients also run on private hosts, where production Clerk keys are rejected.
+  if (
+    typeof window === "undefined" ||
+    window.desktopBridge !== undefined ||
+    !config.clerkPublishableKey.startsWith("pk_live_")
+  ) {
+    return true;
+  }
+
+  try {
+    const domain = clerkFrontendApiHostnameFromPublishableKey(config.clerkPublishableKey).replace(
+      /^clerk\./u,
+      "",
+    );
+    const { hostname, protocol, port } = window.location;
+    return (
+      protocol === "https:" &&
+      (port === "" || port === "443") &&
+      (hostname === domain || hostname.endsWith(`.${domain}`))
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function resolveRelayClerkTokenOptions() {
