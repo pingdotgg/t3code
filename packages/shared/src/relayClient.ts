@@ -135,7 +135,6 @@ const trimmedString = (name: string) =>
 
 const CloudflaredConfig = Config.all({
   executableOverride: trimmedString(CLOUDFLARED_PATH_ENV_NAME),
-  path: trimmedString("PATH"),
 });
 
 export interface CloudflaredRelayClientOptions {
@@ -331,8 +330,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const resolvePathExecutable = Effect.gen(function* () {
-    const config = yield* loadCloudflaredConfig;
-    const pathValue = Option.getOrUndefined(config.path);
+    // The default ConfigProvider is cached the first time any Config is read.
+    // Server startup reads its config before fixPath hydrates the environment,
+    // so reading PATH through Config here can retain the service's stale PATH.
+    const pathValue = (yield* HostProcess.Environment).PATH?.trim();
     if (!pathValue) return null;
     const delimiter = platform === "win32" ? ";" : ":";
     for (const directory of pathValue.split(delimiter)) {
