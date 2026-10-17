@@ -93,8 +93,6 @@ const KNOWN_BAILOUTS: Record<string, string> = {
   "src/features/threads/thread-work-log.tsx": "manual memo not preserved",
   "src/features/threads/use-composer-command-menu.ts": "manual memo not preserved",
   "src/features/threads/use-thread-list-v2-shelf-preferences.ts": "ref read during render",
-  "src/features/usage/UsageLimitsSection.tsx": "try without catch",
-  "src/features/usage/UsageRouteScreen.tsx": "try without catch",
   "src/features/voice-input/VoiceInputProvider.tsx": "ref read during render",
   "src/features/voice-input/useVoiceInputController.ts": "ref read during render",
   "src/lib/attachmentDocument.ts": "try/finally",
