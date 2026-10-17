@@ -4,11 +4,19 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  captureSupervisingAncestors,
+  createSupervisingParentWatch,
+} from "./dev-electron-parent.mjs";
+import {
   desktopDir,
   resolveDevProtocolClient,
   resolveElectronLaunchCommand,
 } from "./electron-launcher.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
+
+// Captured before the startup awaits. A parent killed while we wait is already
+// gone by the time Electron would launch.
+const supervisingAncestors = captureSupervisingAncestors();
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
 if (!devServerUrl) {
@@ -80,6 +88,8 @@ let currentApp = null;
 let restartQueue = Promise.resolve();
 const expectedExits = new WeakSet();
 const watchers = [];
+let stopSupervisingParentWatch = () => {};
+let supervisingParentHasExited = () => false;
 
 function killChildTreeByPid(pid, signal) {
   if (hostPlatform === "win32" || typeof pid !== "number") {
@@ -101,6 +111,11 @@ function cleanupStaleDevApps() {
 
 function startApp() {
   if (shuttingDown || currentApp !== null) {
+    return;
+  }
+
+  if (supervisingParentHasExited()) {
+    void shutdown(0);
     return;
   }
 
@@ -185,6 +200,11 @@ function scheduleRestart() {
     return;
   }
 
+  if (supervisingParentHasExited()) {
+    void shutdown(0);
+    return;
+  }
+
   if (restartTimer) {
     clearTimeout(restartTimer);
   }
@@ -194,6 +214,11 @@ function scheduleRestart() {
     restartQueue = restartQueue
       .catch(() => undefined)
       .then(async () => {
+        if (supervisingParentHasExited()) {
+          await shutdown(0);
+          return;
+        }
+
         await stopApp();
         if (!shuttingDown) {
           startApp();
@@ -233,6 +258,7 @@ function killChildTree(signal) {
 async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
+  stopSupervisingParentWatch();
 
   if (restartTimer) {
     clearTimeout(restartTimer);
@@ -253,8 +279,15 @@ async function shutdown(exitCode) {
   process.exit(exitCode);
 }
 
+const supervisingParentWatch = createSupervisingParentWatch(supervisingAncestors, () => {
+  void shutdown(0);
+});
+stopSupervisingParentWatch = supervisingParentWatch.stop;
+supervisingParentHasExited = supervisingParentWatch.hasExited;
+
 startWatchers();
 cleanupStaleDevApps();
+supervisingParentWatch.check();
 startApp();
 
 process.once("SIGINT", () => {
