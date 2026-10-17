@@ -18,11 +18,8 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
 }
 
-const SKILL_MENTION_SOURCE =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)/u
-    .source;
-const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
-export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\p{Sc}(?:"((?:\\[^\r\n]|[^"\\\r\n])+)"|(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*))(?=\s|$)/gu;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * Unbounded, every whitespace in the composer is a candidate start: the engine scans the rest
@@ -40,6 +37,52 @@ const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const SCOPED_PACKAGE_REFERENCE_REGEX =
   /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
+
+/** Complete skill references, including a final token in a sent message. */
+export function collectComposerSkillTokens(
+  text: string,
+): Extract<ComposerInlineToken, { type: "skill" }>[] {
+  return Array.from(text.matchAll(SKILL_TOKEN_REGEX), (match) => {
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    const end = (match.index ?? 0) + match[0].length;
+    const quotedValue = match[2]?.replace(/\\(.)/g, (escape) => {
+      if (escape === "\\n") return "\n";
+      if (escape === "\\r") return "\r";
+      return escape.slice(1);
+    });
+    return {
+      type: "skill",
+      value: quotedValue ?? match[3] ?? "",
+      source: text.slice(start, end),
+      start,
+      end,
+    };
+  });
+}
+
+/** Preserve the catalog name as one token when it contains spaces or punctuation. */
+export function serializeComposerSkillToken(name: string): string {
+  const bare = `$${name}`;
+  const token = collectComposerSkillTokens(bare)[0];
+  return token?.value === name && token.source === bare
+    ? bare
+    : `$"${name.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\r", "\\r").replaceAll("\n", "\\n")}"`;
+}
+
+/** Translate complete skill references without changing their surrounding text. */
+export function replaceComposerSkillTokens(
+  text: string,
+  replace: (token: Extract<ComposerInlineToken, { type: "skill" }>) => string,
+): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const token of collectComposerSkillTokens(text)) {
+    parts.push(text.slice(cursor, token.start), replace(token));
+    cursor = token.end;
+  }
+  parts.push(text.slice(cursor));
+  return parts.join("");
+}
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
@@ -98,23 +141,7 @@ export function collectComposerInlineTokens(
 ): ReadonlyArray<ComposerInlineToken> {
   const matches = collectMentionTokens(text);
 
-  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
-    const fullMatch = match[0];
-    const prefix = match[1] ?? "";
-    const value = match[2] ?? "";
-    if (!value) {
-      continue;
-    }
-    const start = (match.index ?? 0) + prefix.length;
-    const end = start + fullMatch.length - prefix.length;
-    matches.push({
-      type: "skill",
-      value,
-      source: text.slice(start, end),
-      start,
-      end,
-    });
-  }
+  matches.push(...collectComposerSkillTokens(text));
 
   for (const token of options.preserveTrailingFrom ?? []) {
     if (
@@ -129,5 +156,22 @@ export function collectComposerInlineTokens(
     }
   }
 
-  return [...matches].sort((left, right) => left.start - right.start);
+  let end = 0;
+  return matches
+    .sort((left, right) => left.start - right.start || right.end - left.end)
+    .filter((token) => {
+      if (token.start < end) return false;
+      end = token.end;
+      return (
+        token.type !== "skill" ||
+        token.end < text.length ||
+        options.preserveTrailingFrom?.some(
+          (previous) =>
+            previous.type === token.type &&
+            previous.source === token.source &&
+            previous.start === token.start &&
+            previous.end === token.end,
+        )
+      );
+    });
 }

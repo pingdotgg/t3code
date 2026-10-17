@@ -1,3 +1,5 @@
+import { serializeComposerSkillToken } from "./composerInlineTokens.ts";
+
 const CODEX_ARTIFACT_TEMPLATE_KINDS = [
   "document",
   "presentation",
@@ -107,7 +109,7 @@ const USE_PROMPT_BY_KIND: Record<CodexArtifactTemplateKind, (skill: string) => s
 };
 
 export function codexArtifactTemplateUsePrompt(template: CodexArtifactTemplate): string {
-  return USE_PROMPT_BY_KIND[template.artifactKind](`$${template.skillName}`);
+  return USE_PROMPT_BY_KIND[template.artifactKind](serializeComposerSkillToken(template.skillName));
 }
 
 export function codexArtifactTemplatePresentationLabel(kind: CodexArtifactTemplateKind): string {

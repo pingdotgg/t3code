@@ -88,6 +88,15 @@ describe("codexArtifactTemplateUsePrompt", () => {
       }),
     ).toBe("Create an image using this $artifact-template-hello-world of…");
   });
+
+  it("keeps a spaced skill name as one token", () => {
+    expect(
+      codexArtifactTemplateUsePrompt({
+        ...HELLO_WORLD_TEMPLATE,
+        skillName: "artifact-template-Hello World",
+      }),
+    ).toBe('Create a document using this $"artifact-template-Hello World" about…');
+  });
 });
 
 describe("appendCodexArtifactTemplateUsePrompt", () => {

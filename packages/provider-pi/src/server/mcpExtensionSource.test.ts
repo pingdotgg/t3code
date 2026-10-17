@@ -473,6 +473,31 @@ describe("Pi skill references", () => {
     }
   });
 
+  it("loads quoted names without matching their first word", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-skill-mentions-"));
+    try {
+      const poteto = NodePath.join(directory, "poteto.md");
+      const potetoMode = NodePath.join(directory, "poteto-mode.md");
+      const review = NodePath.join(directory, "review.md");
+      await NodeFSP.writeFile(poteto, "POTETO_INSTRUCTIONS");
+      await NodeFSP.writeFile(potetoMode, "POTETO_MODE_INSTRUCTIONS");
+      await NodeFSP.writeFile(review, "REVIEW_INSTRUCTIONS");
+      const hook = await loadInputHook([
+        { name: "skill:Poteto", source: "skill", sourceInfo: { path: poteto } },
+        { name: "skill:Poteto Mode", source: "skill", sourceInfo: { path: potetoMode } },
+        { name: "skill:review", source: "skill", sourceInfo: { path: review } },
+      ]);
+      const text = 'Use $"Poteto Mode" and $"review"';
+      const result = await hook({ text }, { ui: { notify: assert.fail } });
+      assert.isTrue(result?.text.startsWith(text + "\n\n"));
+      assert.include(result?.text ?? "", "POTETO_MODE_INSTRUCTIONS");
+      assert.include(result?.text ?? "", "REVIEW_INSTRUCTIONS");
+      assert.notInclude(result?.text ?? "", "POTETO_INSTRUCTIONS");
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true });
+    }
+  });
+
   it("leaves unknown references and native skill commands for Pi", async () => {
     const hook = await loadInputHook([
       { name: "skill:alpha", source: "skill", sourceInfo: { path: "/unused" } },

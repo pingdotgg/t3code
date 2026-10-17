@@ -7,6 +7,7 @@ import {
   enrichedSkillReference,
   ENRICHED_INLINE_FILE_LINK_REGEX,
 } from "./enrichedLinkPresentation";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 
 describe("Enriched link presentation", () => {
   it("recognizes file-shaped code without turning commands or URLs into links", () => {
@@ -52,6 +53,27 @@ describe("Enriched link presentation", () => {
       expect(regex.test(`${sigil}check-extra`)).toBe(false);
       expect(regex.test(`${sigil}unknown`)).toBe(false);
       expect(regex.test(`${sigil}${sigil}check`)).toBe(false);
+    },
+  );
+  it("recognizes quoted skill names as one reference", () => {
+    const skills = [{ name: "Poteto" }, { name: "Poteto Mode" }];
+    const regex = enrichedSkillLinkRegex(skills)!;
+    expect(regex.exec('Use $"Poteto Mode" next')?.[0]).toBe('$"Poteto Mode"');
+    expect(regex.exec('Use €"Poteto" next')?.[0]).toBe('€"Poteto"');
+    expect(enrichedSkillReference('$"Poteto Mode"', skills)).toBe(skills[1]);
+    expect(enrichedSkillReference('€"Poteto"', skills)).toBe(skills[0]);
+    expect(enrichedSkillReference("$Poteto Mode", skills)).toBe(skills[1]);
+  });
+  it.each(['Review "UI"', "Review \\Tools", "Review\nUI"])(
+    "recognizes %j as written by the picker and after Markdown escapes",
+    (name) => {
+      const skills = [{ name }];
+      const regex = enrichedSkillLinkRegex(skills)!;
+      const serialized = serializeComposerSkillToken(name);
+      for (const text of [serialized, `$"${name}"`]) {
+        expect(regex.exec(`Use ${text} next`)?.[0]).toBe(text);
+        expect(enrichedSkillReference(text, skills)).toBe(skills[0]);
+      }
     },
   );
   it("matches only the complete URL, including literal regex metacharacters", () => {

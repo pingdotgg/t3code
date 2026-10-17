@@ -138,6 +138,16 @@ it("indexes skill labels in prose but leaves links and code literal", () => {
   ).toEqual(["Use T3 App Testing now.", "$test-t3-app", "$test-t3-app"]);
 });
 
+it("indexes quoted skill names as one label", () => {
+  expect(
+    searchableMessageSegments(
+      { role: "user", streaming: false, text: 'Run $"Poteto Mode" and $"Review **UI**" now' },
+      undefined,
+      [{ name: "Poteto Mode" }, { name: "Review **UI**", displayName: "UI Review" }],
+    ),
+  ).toEqual(["Run Poteto Mode and UI Review now"]);
+});
+
 it("indexes the citation chip label instead of its link text", () => {
   const citation = {
     version: 1 as const,

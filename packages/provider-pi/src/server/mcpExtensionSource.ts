@@ -249,8 +249,14 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const nativeSkill = /^\\/skill:([^ ]+)(?: |$)/.exec(event.text)?.[1];
     const seen = new Set<string>(nativeSkill === undefined ? [] : [nativeSkill]);
     const blocks: string[] = [];
-    for (const match of event.text.matchAll(/(^|\\s)\\$([^\\s]+)(?=\\s|$)/g)) {
-      const name = match[2];
+    // T3 quotes names that are not one bare word, such as $"Poteto Mode".
+    for (const match of event.text.matchAll(
+      /(^|\\s)\\$(?:"((?:\\\\[^\\r\\n]|[^"\\\\\\r\\n])+)"|([^\\s]+))(?=\\s|$)/g,
+    )) {
+      const name =
+        match[2]?.replace(/\\\\./g, (escape) =>
+          escape === "\\\\n" ? "\\n" : escape === "\\\\r" ? "\\r" : escape.slice(1),
+        ) ?? match[3];
       if (name === undefined || seen.has(name)) continue;
       const command = commands.find((candidate) => candidate.name === "skill:" + name);
       if (command === undefined) continue;

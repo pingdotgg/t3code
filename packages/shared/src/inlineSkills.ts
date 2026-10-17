@@ -1,4 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
+import { collectComposerSkillTokens, serializeComposerSkillToken } from "./composerInlineTokens.ts";
 
 export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
@@ -21,15 +22,10 @@ export function formatProviderSkillDisplayName(
   return titleCaseWords(skill.name);
 }
 
-const SKILL_TOKEN_REGEX =
-  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
-
 export function* matchInlineSkills(text: string, skills: readonly InlineSkill[]) {
-  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
-    const name = match[2] ?? "";
+  for (const { value: name, start, end } of collectComposerSkillTokens(text)) {
     const skill = skills.find((candidate) => candidate.name === name);
     if (!skill) continue;
-    const start = match.index + (match[1]?.length ?? 0);
-    yield { start, end: match.index + match[0].length, skill, rawText: `$${name}` };
+    yield { start, end, skill, rawText: serializeComposerSkillToken(name) };
   }
 }

@@ -32,7 +32,10 @@ import {
   ProviderDriverKind,
   type ProviderSetupError,
 } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import {
+  collectComposerSkillTokens,
+  replaceComposerSkillTokens,
+} from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -411,12 +414,44 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
   }
 }
 
+/** Whether Codex reads `$name` in text as a skill mention; it skips common environment variables. */
+const isCodexTextMention = (name: string) =>
+  /^[A-Za-z0-9_:-]+$/.test(name) &&
+  ![
+    "PATH",
+    "HOME",
+    "USER",
+    "SHELL",
+    "PWD",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "LANG",
+    "TERM",
+    "XDG_CONFIG_HOME",
+  ].includes(name.toUpperCase());
+
 /**
  * The composers let a skill be typed with any currency sigil (`€review`), but
- * Codex only parses `$name` as a skill mention.
+ * Codex only parses `$name` as a skill mention. Codex reads `$Poteto Mode` as
+ * `$Poteto`, so other names keep their quoted source and go out as structured
+ * skill inputs (see {@link codexStructuredSkillNames}).
  */
 export function codexSkillMentionText(text: string): string {
-  return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
+  return replaceComposerSkillTokens(text, (token) =>
+    isCodexTextMention(token.value) ? `$${token.value}` : token.source,
+  );
+}
+
+/** Skill names a prompt references that Codex cannot read as text mentions. */
+export function codexStructuredSkillNames(text: string): ReadonlyArray<string> {
+  return [
+    ...new Set(
+      collectComposerSkillTokens(text).flatMap((token) =>
+        isCodexTextMention(token.value) ? [] : [token.value],
+      ),
+    ),
+  ];
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
@@ -3139,12 +3174,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             } satisfies CodexSchema.V2TurnStartParams__UserInput;
           });
 
+        // Codex selects structured skills by path, so resolve each name against its own catalog.
+        // A name that is missing or ambiguous there stays quoted text, as Codex treats plain names.
+        const resolveCodexSkillInputs = (text: string, cwd: string | null) => {
+          const names = codexStructuredSkillNames(text);
+          if (names.length === 0) {
+            return Effect.succeed<Array<CodexSchema.V2TurnStartParams__UserInput>>([]);
+          }
+          return client.request("skills/list", cwd === null ? {} : { cwds: [cwd] }).pipe(
+            Effect.timeout("5 seconds"),
+            Effect.map((response) => {
+              const skills = response.data
+                .flatMap((entry) => entry.skills)
+                .filter((skill) => skill.enabled);
+              return names.flatMap((name): Array<CodexSchema.V2TurnStartParams__UserInput> => {
+                const paths = new Set(
+                  skills.filter((skill) => skill.name === name).map((skill) => skill.path),
+                );
+                const [path] = paths;
+                return paths.size === 1 && path !== undefined
+                  ? [{ type: "skill", name, path }]
+                  : [];
+              });
+            }),
+            Effect.orElseSucceed(() => []),
+          );
+        };
+
         const toCodexInput = (
           turnInput: Pick<
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
           >,
+          cwd: string | null,
         ) =>
           Effect.gen(function* () {
             const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
@@ -3160,6 +3223,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 text,
               });
             }
+            inputItems.push(...(yield* resolveCodexSkillInputs(turnInput.message.text, cwd)));
             const attachmentItems = yield* Effect.forEach(
               turnInput.message.attachments.filter(isProviderNativeImageAttachment),
               resolveCodexAttachment,
@@ -6294,10 +6358,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* startNativeTurn(
                 turnInput,
                 command.type === "set"
-                  ? yield* toCodexInput({
-                      ...turnInput,
-                      message: { ...turnInput.message, text: command.objective },
-                    })
+                  ? yield* toCodexInput(
+                      {
+                        ...turnInput,
+                        message: { ...turnInput.message, text: command.objective },
+                      },
+                      turnInput.runtimePolicy.cwd,
+                    )
                   : [],
               );
               if (activation.stopped) return;
@@ -6617,7 +6684,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
+                  ? yield* toCodexInput(turnInput, turnInput.runtimePolicy.cwd)
                   : [],
               );
             }).pipe(
@@ -6651,7 +6718,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               }
 
-              const codexInput = yield* toCodexInput(turnInput);
+              const codexInput = yield* toCodexInput(turnInput, activeTurn.input.runtimePolicy.cwd);
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
                 input: codexInput,

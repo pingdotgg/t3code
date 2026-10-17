@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 import { createRoot } from "react-dom/client";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
@@ -602,6 +603,75 @@ describe("hasMarkdownFilePrimaryAction", () => {
 });
 
 describe("ChatMarkdown skill chips", () => {
+  it.each(['Review "UI"', "Review \\Tools", "Review **UI**"])(
+    "preserves %s through Markdown rendering and copying",
+    async (name) => {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      let renderer: ReactTestRenderer | undefined;
+      const source = serializeComposerSkillToken(name);
+      try {
+        await act(async () => {
+          renderer = create(
+            <ChatMarkdown
+              cwd="/tmp/project"
+              text={`Use ${source} next`}
+              skills={[
+                { name, displayName: "Expected skill" },
+                { name: "Review Tools", displayName: "Wrong skill" },
+              ]}
+            />,
+          );
+        });
+        const chips = renderer!.root.findAll(
+          (node) => node.type === "span" && node.props["data-markdown-copy"] !== undefined,
+        );
+        expect(chips.map((node) => node.props["data-markdown-copy"])).toEqual([source]);
+        expect(
+          renderer!.root
+            .findAllByType("span")
+            .some((node) => node.children.includes("Wrong skill")),
+        ).toBe(false);
+      } finally {
+        await act(async () => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("renders the full multiword skill and retains its copyable source", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={'Use $"Poteto Mode" next'}
+            skills={[
+              { name: "Poteto Mode", displayName: "Poteto workflow" },
+              { name: "Poteto", displayName: "Wrong skill" },
+            ]}
+          />,
+        );
+      });
+      const chips = renderer!.root.findAll(
+        (node) => node.type === "span" && node.props["data-markdown-copy"] !== undefined,
+      );
+      expect(chips.map((node) => node.props["data-markdown-copy"])).toEqual(['$"Poteto Mode"']);
+      expect(
+        renderer!.root
+          .findAllByType("span")
+          .some((node) => node.children.includes("Poteto workflow")),
+      ).toBe(true);
+      expect(
+        renderer!.root.findAllByType("span").some((node) => node.children.includes("Wrong skill")),
+      ).toBe(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("updates digit-leading skill labels when discovered skills change", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     let renderer: ReactTestRenderer | undefined;
