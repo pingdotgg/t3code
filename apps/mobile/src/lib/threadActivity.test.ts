@@ -2430,6 +2430,22 @@ it("uses a compact reasoning preview and a short expanded heading", () => {
   expect(workEntryRowLabel({ ...entry, toolLifecycleStatus: "completed" }, true)).toBe("Thought");
 });
 
+it("caps one-line work-log labels for multi-kilobyte commands", () => {
+  const command = `cd /repo && python3 - <<'PY'\n${"print('x')\n".repeat(400)}PY`;
+  const entry = {
+    id: "heredoc",
+    label: "Ran command",
+    createdAt: "2026-09-17T12:00:00Z",
+    itemType: "command_execution" as const,
+    tone: "tool" as const,
+    command,
+  };
+  for (const label of [workEntryRowLabel(entry), workEntryRowLabel(entry, true)]) {
+    expect(label.startsWith("cd /repo && python3 - <<'PY' print('x')")).toBe(true);
+    expect(label.length).toBeLessThanOrEqual(203);
+  }
+});
+
 it("keeps search output in expanded details rather than the compact label", () => {
   const entry = {
     id: "search",
