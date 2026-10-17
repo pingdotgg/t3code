@@ -5,10 +5,12 @@ import {
   CheckpointRef,
   EnvironmentId,
   MessageId,
+  OrchestrationV2TurnItem,
   ProjectId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { DateTime, Schema } from "effect";
 import {
   act,
   createRef,
@@ -277,6 +279,7 @@ beforeAll(async () => {
 }, 120_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
+const decodeTurnItem = Schema.decodeSync(OrchestrationV2TurnItem);
 const MESSAGE_CREATED_AT = "2026-03-17T19:12:28.000Z";
 
 describe("timeline tooltip scroll dismissal", () => {
@@ -492,6 +495,108 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it.each(["Enter", " "])("leaves nested tool actions usable with %j", async (key) => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    Object.defineProperty(window, "matchMedia", { value: matchMedia, configurable: true });
+    activityTestState.expanded = true;
+    const query = await import("../../state/query");
+    const querySpy = vi.spyOn(query, "useEnvironmentQuery").mockReturnValue({
+      data: null,
+      dataUpdatedAt: 0,
+      error: null,
+      failure: null,
+      isPending: false,
+      isSuccess: false,
+      refresh: vi.fn(),
+    });
+    const item = decodeTurnItem({
+      id: "file-change-1",
+      threadId: "thread-1",
+      runId: "run-1",
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed",
+      title: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe(MESSAGE_CREATED_AT),
+      type: "file_change",
+      fileName: "src/index.ts",
+    });
+    const onOpenTurnDiff = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const pressKey = async (target: HTMLElement) => {
+      target.focus();
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      await act(() => target.dispatchEvent(event));
+      return event;
+    };
+    try {
+      await act(() =>
+        root.render(
+          <MessagesTimeline
+            {...buildProps()}
+            onOpenTurnDiff={onOpenTurnDiff}
+            timelineEntries={[
+              {
+                id: item.id,
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: item.id,
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "Updated src/index.ts",
+                  tone: "tool",
+                  itemType: "file_change",
+                  toolLifecycleStatus: "completed",
+                  projectedItem: {
+                    position: 0,
+                    visibility: "local",
+                    sourceThreadId: item.threadId,
+                    sourceItemId: item.id,
+                    item,
+                  },
+                },
+              },
+            ]}
+          />,
+        ),
+      );
+      const row = container.querySelector<HTMLElement>('[data-v2-item-type="file_change"]')!;
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+      expect((await pressKey(row)).defaultPrevented).toBe(true);
+      expect(row.getAttribute("aria-expanded")).toBe("true");
+      const button = Array.from(row.querySelectorAll("button")).find(
+        (candidate) => candidate.textContent === "Open diff",
+      )!;
+      expect(button).toBeDefined();
+      const event = await pressKey(button);
+      expect(event.defaultPrevented).toBe(false);
+      expect(button.isConnected).toBe(true);
+      expect(row.getAttribute("aria-expanded")).toBe("true");
+      // jsdom does not synthesize native button activation from keyboard events.
+      await act(() => button.click());
+      expect(onOpenTurnDiff).toHaveBeenCalledWith(item.runId, "src/index.ts");
+      expect(row.getAttribute("aria-expanded")).toBe("true");
+      expect((await pressKey(row)).defaultPrevented).toBe(true);
+      expect(row.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      await act(() => root.unmount());
+      querySpy.mockRestore();
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("shows dynamic tool input without cached output when the row is expanded", async () => {
     activityTestState.expanded = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
