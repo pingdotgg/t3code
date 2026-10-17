@@ -404,7 +404,6 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
     turnDiffSummaries: [],
-    providerStatuses: [],
     runs: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
@@ -1975,10 +1974,21 @@ describe("MessagesTimeline", () => {
       } as never,
     });
 
-    const markup = renderToStaticMarkup(
+    const { RegistryProvider } = await import("@effect/atom-react");
+    const { serverEnvironment } = await import("../../state/server");
+    const renderWithProviders = (element: ReactElement) =>
+      renderToStaticMarkup(
+        <RegistryProvider
+          initialValues={[
+            [serverEnvironment.providersValueAtom(ACTIVE_THREAD_ENVIRONMENT_ID), providerStatuses],
+          ]}
+        >
+          {element}
+        </RegistryProvider>,
+      );
+    const markup = renderWithProviders(
       <MessagesTimeline
         {...buildProps()}
-        providerStatuses={providerStatuses}
         timelineEntries={[
           buildHandoffEntry({
             fromProviderInstanceIds: ["codex_personal"],
@@ -2010,10 +2020,9 @@ describe("MessagesTimeline", () => {
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5" },
       },
     ] as never;
-    const legacyMarkup = renderToStaticMarkup(
+    const legacyMarkup = renderWithProviders(
       <MessagesTimeline
         {...buildProps()}
-        providerStatuses={providerStatuses}
         runs={legacyRuns}
         timelineEntries={[
           buildHandoffEntry({
@@ -2028,10 +2037,9 @@ describe("MessagesTimeline", () => {
     expect(legacyMarkup).toContain("Claude Fable 5");
     expect(legacyMarkup).not.toContain("Full conversation context");
 
-    const bareMarkup = renderToStaticMarkup(
+    const bareMarkup = renderWithProviders(
       <MessagesTimeline
         {...buildProps()}
-        providerStatuses={providerStatuses}
         timelineEntries={[
           buildHandoffEntry({
             fromProviderInstanceIds: ["codex_personal"],
