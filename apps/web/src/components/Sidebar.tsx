@@ -210,6 +210,7 @@ import {
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
+  shouldClearPersistedSidebarProjectScope,
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   shouldRecedeSidebarThread,
@@ -2698,6 +2699,7 @@ export default function Sidebar() {
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
+  const projectCatalogReady = allProjectSnapshotsReady && allProjectConfigsReady;
   const headerSearchRef = useRef<HTMLDivElement | null>(null);
   // Safari can send a click after Ctrl+click opens settings. Ignore that one
   // selection, then clear the guard when the picker opens again.
@@ -2745,7 +2747,10 @@ export default function Sidebar() {
   const routeThreadKeyRef = useRef(routeThreadKey);
 
   // A selection made under one scope can hold threads the next scope hides.
+  // A scope loaded with the page can be cleared. A pick in this session is kept.
+  const userChoseProjectScopeRef = useRef(false);
   const setProjectScopeKey = (key: string | null) => {
+    userChoseProjectScopeRef.current = true;
     clearSelection();
     setPersistedProjectScopeKey(key);
   };
@@ -2790,23 +2795,37 @@ export default function Sidebar() {
           ),
         );
   useEffect(() => {
-    const nextKey = resolveSidebarProjectScopeKey({
+    const resolvedKey = resolveSidebarProjectScopeKey({
       groups: projectGroups,
       key: persistedProjectScopeKey,
       settings: projectGroupingSettings,
-      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+      canClearMissingScope: projectCatalogReady,
     });
+    const resolvedGroup =
+      resolvedKey === null
+        ? null
+        : (projectGroups.find((group) => group.projectKey === resolvedKey) ?? null);
+    const nextKey = shouldClearPersistedSidebarProjectScope({
+      scopeKey: resolvedKey,
+      snapshotsReady: projectCatalogReady,
+      restored: !userChoseProjectScopeRef.current,
+      scopedGroup: resolvedGroup,
+      scratchWorkspaceRootFor: (environmentId) =>
+        serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+    })
+      ? null
+      : resolvedKey;
     if (nextKey !== persistedProjectScopeKey) {
       clearSelection();
       setPersistedProjectScopeKey(nextKey);
     }
   }, [
-    allProjectConfigsReady,
-    allProjectSnapshotsReady,
     clearSelection,
     persistedProjectScopeKey,
+    projectCatalogReady,
     projectGroups,
     projectGroupingSettings,
+    serverConfigs,
     setPersistedProjectScopeKey,
   ]);
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
