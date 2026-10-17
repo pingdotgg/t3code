@@ -26,4 +26,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/hooks/useRightPanelSurfaceClose.ts",
   "apps/web/src/components/ui/tooltip.tsx",
   "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+  "apps/web/src/browser/ServerBrowserSurface.tsx",
 ] as const;

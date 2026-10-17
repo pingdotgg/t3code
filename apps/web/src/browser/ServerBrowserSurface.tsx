@@ -26,7 +26,6 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type Ref,
-  useCallback,
   useEffect,
   useEffectEvent,
   useImperativeHandle,
@@ -216,11 +215,13 @@ export function ServerBrowserSurface(props: {
   const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
   const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
 
-  const send = useCallback((input: PreviewStreamInput) => {
+  // These read only refs, so each is cached once. The stream effect keys on
+  // clearInput and would reconnect if it changed.
+  const send = (input: PreviewStreamInput) => {
     clientRef.current?.send(input);
-  }, []);
+  };
 
-  const clearInput = useCallback(() => {
+  const clearInput = () => {
     if (inputFrameRef.current !== null) cancelAnimationFrame(inputFrameRef.current);
     inputFrameRef.current = null;
     pendingMoveRef.current = pendingWheelRef.current = null;
@@ -231,9 +232,9 @@ export function ServerBrowserSurface(props: {
     keySentRef.current = false;
     if (inputRef.current) inputRef.current.value = INPUT_SENTINEL;
     inputRef.current?.blur();
-  }, []);
+  };
 
-  const flushInput = useCallback(() => {
+  const flushInput = () => {
     if (inputFrameRef.current !== null) cancelAnimationFrame(inputFrameRef.current);
     inputFrameRef.current = null;
     const move = pendingMoveRef.current;
@@ -242,52 +243,46 @@ export function ServerBrowserSurface(props: {
     pendingWheelRef.current = null;
     if (move) send(move);
     if (wheel) send(wheel);
-  }, [send]);
+  };
 
-  const scheduleFlush = useCallback(() => {
-    inputFrameRef.current ??= requestAnimationFrame(flushInput);
-  }, [flushInput]);
+  const scheduleFlush = () => {
+    if (inputFrameRef.current === null) inputFrameRef.current = requestAnimationFrame(flushInput);
+  };
 
-  const queueWheel = useCallback(
-    (point: PagePoint, deltaX: number, deltaY: number, modifiers: number) => {
-      const pending = pendingWheelRef.current;
-      pendingWheelRef.current = {
-        type: "wheel",
-        x: point.x,
-        y: point.y,
-        deltaX: (pending?.deltaX ?? 0) + deltaX,
-        deltaY: (pending?.deltaY ?? 0) + deltaY,
-        modifiers,
-      };
-      scheduleFlush();
-    },
-    [scheduleFlush],
-  );
+  const queueWheel = (point: PagePoint, deltaX: number, deltaY: number, modifiers: number) => {
+    const pending = pendingWheelRef.current;
+    pendingWheelRef.current = {
+      type: "wheel",
+      x: point.x,
+      y: point.y,
+      deltaX: (pending?.deltaX ?? 0) + deltaX,
+      deltaY: (pending?.deltaY ?? 0) + deltaY,
+      modifiers,
+    };
+    scheduleFlush();
+  };
 
-  const pagePoint = useCallback(
-    (clientX: number, clientY: number, clamp: boolean): PagePoint | null => {
-      const canvas = canvasRef.current;
-      const viewport = viewportRef.current;
-      if (!canvas || !viewport || !hasFrameRef.current || controlRef.current?.controller !== "you")
-        return null;
-      const rect = canvas.getBoundingClientRect();
-      const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
-      const width = canvas.width * fit;
-      const height = canvas.height * fit;
-      if (!(width > 0 && height > 0)) return null;
-      const scale = viewport.width / width;
-      const x = (clientX - rect.left - (rect.width - width) / 2) * scale;
-      const y = (clientY - rect.top - (rect.height - height) / 2) * (viewport.height / height);
-      const inside = x >= 0 && y >= 0 && x <= viewport.width && y <= viewport.height;
-      if (!inside && !clamp) return null;
-      return {
-        x: Math.min(Math.max(x, 0), viewport.width),
-        y: Math.min(Math.max(y, 0), viewport.height),
-        scale,
-      };
-    },
-    [],
-  );
+  const pagePoint = (clientX: number, clientY: number, clamp: boolean): PagePoint | null => {
+    const canvas = canvasRef.current;
+    const viewport = viewportRef.current;
+    if (!canvas || !viewport || !hasFrameRef.current || controlRef.current?.controller !== "you")
+      return null;
+    const rect = canvas.getBoundingClientRect();
+    const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+    const width = canvas.width * fit;
+    const height = canvas.height * fit;
+    if (!(width > 0 && height > 0)) return null;
+    const scale = viewport.width / width;
+    const x = (clientX - rect.left - (rect.width - width) / 2) * scale;
+    const y = (clientY - rect.top - (rect.height - height) / 2) * (viewport.height / height);
+    const inside = x >= 0 && y >= 0 && x <= viewport.width && y <= viewport.height;
+    if (!inside && !clamp) return null;
+    return {
+      x: Math.min(Math.max(x, 0), viewport.width),
+      y: Math.min(Math.max(y, 0), viewport.height),
+      scale,
+    };
+  };
 
   const countClick = (button: PreviewStreamMouseButton, x: number, y: number, time: number) => {
     const last = lastClickRef.current;
