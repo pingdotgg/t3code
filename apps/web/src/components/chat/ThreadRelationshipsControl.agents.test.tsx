@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   projection: null as unknown,
+  projections: new Map<string, unknown>(),
   navigate: vi.fn(),
   shells: [] as unknown[],
   projects: [] as unknown[],
@@ -24,7 +25,8 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../../state/entities", () => ({
-  useThreadProjection: () => ({ projection: state.projection }),
+  useThreadProjection: (ref: { threadId: string } | null) =>
+    ref === null ? undefined : { projection: state.projections.get(ref.threadId) ?? state.projection },
   useThreadShells: () => state.shells,
   useProjects: () => state.projects,
   useServerConfigs: () => state.configs,
@@ -74,6 +76,7 @@ afterEach(async () => {
   state.workflowCommand.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toast.mockClear();
   state.projection = null;
+  state.projections.clear();
 });
 
 it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
@@ -1262,3 +1265,74 @@ it.each(["source", "target"])(
     }
   },
 );
+
+it("shows the native coordinator's status from a member and respects follow-up activity", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const environmentId = EnvironmentId.make("test");
+  const coordinator = {
+    id: "coordinator",
+    title: "Workflow coordinator",
+    status: "idle",
+    creationSource: "provider",
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+  };
+  const member = {
+    id: "member",
+    title: "Reviewer",
+    status: "idle",
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: "coordinator", relationshipToParent: "subagent" },
+  };
+  const emptyProjection = {
+    runs: [],
+    nodes: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [],
+  };
+  state.projection = { ...emptyProjection, thread: member };
+  state.shells = [coordinator, member].map((source) => ({ environmentId, source }));
+  const panel = (
+    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("member")} />
+  );
+  await act(async () => {
+    renderer = create(panel);
+  });
+  const visibleText = () =>
+    renderer.root
+      .findAll((node) => typeof node.type === "string" && node.props.className !== "sr-only")
+      .flatMap((node) => node.children.filter((child) => typeof child === "string"))
+      .join(" ");
+  expect(visibleText()).toContain("Idle");
+  for (const [status, label] of [
+    ["running", "Running"],
+    ["completed", "Done"],
+  ]) {
+    state.projections.set("coordinator", {
+      ...emptyProjection,
+      thread: coordinator,
+      nodes: [
+        {
+          kind: "root_turn",
+          runId: null,
+          status,
+          startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+          completedAt: status === "completed" ? DateTime.makeUnsafe("2026-09-16T12:00:10Z") : null,
+        },
+      ],
+    });
+    await act(async () => renderer.update(cloneElement(panel)));
+    expect(visibleText()).toContain("Workflow coordinator");
+    expect(visibleText()).toContain(label);
+    expect(visibleText()).not.toContain("Idle");
+  }
+  state.shells = [
+    { environmentId, source: { ...coordinator, activityRunStatus: "running" } },
+    { environmentId, source: member },
+  ];
+  await act(async () => renderer.update(cloneElement(panel)));
+  expect(visibleText()).toContain("Running");
+  expect(visibleText()).not.toContain("Done");
+});

@@ -11,6 +11,7 @@ import {
   projectedSubagentsToRuntime,
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thread-execution";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   deriveThreadRelationshipGraph,
@@ -274,6 +275,13 @@ export function ThreadRelationshipsPanel(props: {
     props.environmentId,
   );
   const currentThread = projection?.thread ?? graph.nodes.get(props.threadId)?.thread;
+  const parentRef = currentThread?.lineage.parentThreadId
+    ? scopeThreadRef(props.environmentId, currentThread.lineage.parentThreadId)
+    : null;
+  const parentProjection = useThreadProjection(parentRef)?.projection;
+  const parentNativeStatus = parentProjection
+    ? deriveProviderSubagentStatus(parentProjection)?.status
+    : undefined;
   const currentProject = projects.find((project) => project.id === currentThread?.projectId);
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
@@ -440,7 +448,10 @@ export function ThreadRelationshipsPanel(props: {
               const isSubagent = edge.kind === "subagent";
               const isMergeTarget = threadId === mergeTargetThreadId;
               const isParent = isParentThreadRelationship(edge, props.threadId);
-              const rowStatus = threadRelationshipRowStatus(graph, { threadId, edge });
+              const rowStatus =
+                (isParent && threadId === parentRef?.threadId
+                  ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
+                  : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge });
               const RelationshipIcon = isParent
                 ? CornerLeftUpIcon
                 : isSubagent
