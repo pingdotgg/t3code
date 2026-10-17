@@ -43,6 +43,19 @@ export function nativeWorkspacePopAction(
     : null;
 }
 
+/**
+ * Back from a collapsed Split pops the whole detail column without dismissing the screens inside
+ * it, so the router still holds them. Only drop them while nothing was pushed or presented above.
+ */
+export function nativeCollapsedRevealPopAction(
+  state: Pick<NavigationState, "key" | "index" | "routes">,
+  detail: readonly Pick<Route, "key">[],
+) {
+  const first = detail[0];
+  if (!first || state.routes[state.index]?.key !== detail.at(-1)?.key) return null;
+  return nativeWorkspacePopAction(state, first.key);
+}
+
 /** A native card pop must preserve pushes made before its completion event reaches JS. */
 export function nativeStackPopAction(
   state: Pick<NavigationState, "key" | "index" | "routes">,

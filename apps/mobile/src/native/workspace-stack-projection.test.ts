@@ -3,6 +3,7 @@ import type { ParamListBase, StackNavigationState } from "@react-navigation/nati
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  nativeCollapsedRevealPopAction,
   nativeStackPopAction,
   nativeWorkspacePopAction,
   nativeWorkspacePopCount,
@@ -125,6 +126,24 @@ describe("native workspace dismissal", () => {
     const state = history([home, thread, files]);
     expect(nativeWorkspacePopCount(state, home.key)).toBe(0);
     expect(nativeWorkspacePopCount({ ...state, index: 1 }, files.key)).toBe(0);
+  });
+});
+
+describe("collapsed split reveal", () => {
+  it("drops the hidden detail column so the next selection opens a fresh thread", () => {
+    const state = history([home, thread, files]);
+    const next = StackRouter({}).getStateForAction(
+      state,
+      nativeCollapsedRevealPopAction(state, [thread, files])!,
+      { routeNames: state.routeNames, routeParamList: {}, routeGetIdList: {} },
+    );
+    expect(next?.routes).toEqual([home]);
+    expect(next?.index).toBe(0);
+  });
+
+  it("keeps history when nothing is hidden or something sits above the detail column", () => {
+    expect(nativeCollapsedRevealPopAction(history([home]), [])).toBeNull();
+    expect(nativeCollapsedRevealPopAction(history([home, thread, settings]), [thread])).toBeNull();
   });
 });
 

@@ -43,6 +43,7 @@ import {
 import { V5StackHeader } from "../../native/V5StackHeader.ios";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import {
+  nativeCollapsedRevealPopAction,
   nativeWorkspacePopAction,
   projectWorkspaceStack,
   partitionStackPresentations,
@@ -63,6 +64,7 @@ function ColumnScreen(props: {
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
   readonly onDismiss: (routeKey: string) => void;
+  readonly onDidAppear?: () => void;
   readonly navigation: ViewProps["navigation"];
 }) {
   const { descriptor } = props;
@@ -86,9 +88,10 @@ function ColumnScreen(props: {
       onWillAppear={() =>
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: false } })
       }
-      onDidAppear={() =>
-        props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: false } })
-      }
+      onDidAppear={() => {
+        props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: false } });
+        props.onDidAppear?.();
+      }}
       onWillDisappear={() =>
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: true } })
       }
@@ -166,6 +169,13 @@ function WorkspaceColumns(
     },
     [props.navigation],
   );
+  const collapsed = useRef(!layout.usesSplitView);
+  const handlePrimaryDidAppear = useCallback(() => {
+    // Expanding also reveals the list; skip unless UIKit and the JS layout both say collapsed.
+    if (!collapsed.current || layout.usesSplitView) return;
+    const action = nativeCollapsedRevealPopAction(props.navigation.getState(), props.detail);
+    if (action) props.navigation.dispatch(action);
+  }, [layout.usesSplitView, props.detail, props.navigation]);
 
   useEffect(() => {
     if (layout.usesSplitView || shownCompactColumn.current === compactColumn) return;
@@ -187,6 +197,12 @@ function WorkspaceColumns(
           : "secondaryOnly"
       }
       displayModeButtonVisibility="never"
+      onCollapse={() => {
+        collapsed.current = true;
+      }}
+      onExpand={() => {
+        collapsed.current = false;
+      }}
       presentsWithGesture
       showInspector={inspector.visible}
       onInspectorHide={() => {
@@ -207,6 +223,7 @@ function WorkspaceColumns(
             selectedThreadKey={selectedThreadKey}
             selectedPullRequestKey={selectedPullRequestKey}
             onDismiss={handleNativeDismiss}
+            onDidAppear={handlePrimaryDidAppear}
             navigation={props.navigation}
           />
         </Split.Stack>
