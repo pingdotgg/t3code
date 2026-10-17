@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -6,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
@@ -18,20 +19,8 @@ const state = vi.hoisted(() => ({
   commits: 0,
   metadataRequests: [] as { environmentId: string; branch: string }[],
   afterGitAction: undefined as (() => void) | undefined,
-  run: null as ((input: { action: "commit"; featureBranch?: boolean }) => Promise<void>) | null,
 }));
 
-vi.mock("react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("react")>()),
-  useCallback: (callback: typeof state.run) => {
-    if (callback?.constructor.name === "AsyncFunction") state.run = callback;
-    return callback;
-  },
-  useMemo: (factory: () => unknown) => factory(),
-  useState: (initial: unknown) => [typeof initial === "function" ? initial() : initial, () => {}],
-  useRef: (current: unknown) => ({ current }),
-  useEffect: () => {},
-}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) => (atom === "vcs-state" ? { isRunning: false } : null),
 }));
@@ -48,7 +37,8 @@ vi.mock("~/state/session", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
-vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: {} }));
+vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: { discovery: () => null } }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => () => {} }));
 vi.mock("~/state/vcs", () => ({
   vcsEnvironment: { status: () => null },
   vcsActionManager: { stateAtom: () => "vcs-state" },
@@ -74,8 +64,9 @@ vi.mock("~/state/threads", () => ({
 vi.mock("~/state/query", () => ({
   useEnvironmentQuery: () => ({
     data: {
+      sourceControlProviders: [],
       isRepo: true,
-      refName: "main",
+      refName: state.branch,
       isDefaultRef: false,
       hasPrimaryRemote: true,
       hasWorkingTreeChanges: true,
@@ -171,17 +162,52 @@ vi.mock("./AnimatedHeight", () => ({ AnimatedHeight: "AnimatedHeight" }));
 
 import GitActionsControl from "./GitActionsControl";
 
-function renderActions() {
-  GitActionsControl({
+import { createElement } from "react";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
+
+vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+
+let renderer: ReactTestRenderer | null = null;
+
+// Opens the commit dialog and returns its buttons' handlers from this render, so a test can
+// change grants afterwards and still click what the user saw.
+async function renderActions() {
+  const element = createElement(GitActionsControl, {
     gitCwd: "/repo",
     activeThreadRef: {
       environmentId: EnvironmentId.make("environment"),
       threadId: ThreadId.make("thread"),
     },
   });
-  if (!state.run) throw new Error("Git action missing");
-  return state.run;
+  await act(async () => {
+    if (renderer) renderer.update(element);
+    else renderer = create(element);
+  });
+  const root = renderer!.root;
+  const commitMenuItem = root.find(
+    (node) => String(node.type) === "MenuItemLabel" && node.props.children === "Commit",
+  ).parent!;
+  await act(async () => {
+    commitMenuItem.props.onClick();
+  });
+  const buttonHandler = (label: string): (() => void) =>
+    root.find((node) => String(node.type) === "Button" && node.props.children === label).props
+      .onClick;
+  const commit = buttonHandler("Commit");
+  const commitOnNewBranch = buttonHandler("Commit on new branch");
+  return async ({ featureBranch }: { action: "commit"; featureBranch?: boolean }) => {
+    await act(async () => {
+      (featureBranch ? commitOnNewBranch : commit)();
+    });
+  };
 }
+
+afterEach(async () => {
+  await act(async () => {
+    renderer?.unmount();
+  });
+  renderer = null;
+});
 
 describe("Git actions while thread details load", () => {
   beforeEach(() => {
@@ -194,11 +220,12 @@ describe("Git actions while thread details load", () => {
     state.commits = 0;
     state.metadataRequests = [];
     state.afterGitAction = undefined;
-    state.run = null;
   });
 
   it("does not create a feature branch for a server thread without task permission", async () => {
-    await renderActions()({ action: "commit", featureBranch: true });
+    await (
+      await renderActions()
+    )({ action: "commit", featureBranch: true });
 
     expect(state.branch).toBe("main");
     expect(state.commits).toBe(0);
@@ -208,7 +235,9 @@ describe("Git actions while thread details load", () => {
   it("commits and synchronizes the server thread before details finish loading", async () => {
     state.primaryScopes.clear();
     state.scopes.add(AuthOrchestrationOperateScope);
-    await renderActions()({ action: "commit", featureBranch: true });
+    await (
+      await renderActions()
+    )({ action: "commit", featureBranch: true });
 
     expect(state.branch).toBe("feature");
     expect(state.commits).toBe(1);
@@ -219,10 +248,12 @@ describe("Git actions while thread details load", () => {
   it("synchronizes archived thread detail after its shell disappears", async () => {
     state.scopes.add(AuthOrchestrationOperateScope);
     state.detail = { branch: "main" };
-    renderActions();
+    await renderActions();
     state.shell = null;
 
-    await renderActions()({ action: "commit", featureBranch: true });
+    await (
+      await renderActions()
+    )({ action: "commit", featureBranch: true });
 
     expect(state.commits).toBe(1);
     expect(state.branch).toBe("feature");
@@ -234,7 +265,9 @@ describe("Git actions while thread details load", () => {
     state.shell = null;
     state.detail = { branch: "main" };
 
-    await renderActions()({ action: "commit", featureBranch: true });
+    await (
+      await renderActions()
+    )({ action: "commit", featureBranch: true });
 
     expect(state.commits).toBe(0);
     expect(state.detail.branch).toBe("main");
@@ -245,7 +278,9 @@ describe("Git actions while thread details load", () => {
     state.scopes.add(AuthOrchestrationOperateScope);
     state.detail = { branch: "feature" };
 
-    await renderActions()({ action: "commit", featureBranch: true });
+    await (
+      await renderActions()
+    )({ action: "commit", featureBranch: true });
 
     expect(state.commits).toBe(1);
     expect(state.shell?.branch).toBe("feature");
@@ -253,7 +288,7 @@ describe("Git actions while thread details load", () => {
   });
 
   it("synchronizes a retained callback after the thread grant is gained", async () => {
-    const run = renderActions();
+    const run = await renderActions();
     state.scopes.add(AuthOrchestrationOperateScope);
     await run({ action: "commit", featureBranch: true });
     expect(state.commits).toBe(1);
@@ -269,7 +304,9 @@ describe("Git actions while thread details load", () => {
     async (revokedScope, syncsThread) => {
       state.scopes.add(AuthOrchestrationOperateScope);
       state.afterGitAction = () => state.scopes.delete(revokedScope);
-      await renderActions()({ action: "commit", featureBranch: true });
+      await (
+        await renderActions()
+      )({ action: "commit", featureBranch: true });
       expect(state.commits).toBe(1);
       expect(state.branch).toBe("feature");
       expect(state.shell?.branch).toBe(syncsThread ? "feature" : "main");
@@ -278,7 +315,9 @@ describe("Git actions while thread details load", () => {
   );
 
   it("keeps ordinary commits available while details load", async () => {
-    await renderActions()({ action: "commit" });
+    await (
+      await renderActions()
+    )({ action: "commit" });
 
     expect(state.commits).toBe(1);
     expect(state.branch).toBe("main");
@@ -287,7 +326,9 @@ describe("Git actions while thread details load", () => {
   it("keeps feature-branch commits available for a local draft", async () => {
     state.shell = null;
     state.draft = { branch: "main", worktreePath: null, envMode: "local" };
-    await renderActions()({ action: "commit", featureBranch: true });
+    await (
+      await renderActions()
+    )({ action: "commit", featureBranch: true });
 
     expect(state.commits).toBe(1);
     expect(state.draft.branch).toBe("feature");
