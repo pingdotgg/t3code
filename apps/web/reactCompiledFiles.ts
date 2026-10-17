@@ -91,4 +91,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/ThemeImportDialog.tsx",
   "apps/web/src/components/settings/SnapShotSettings.tsx",
   "apps/web/src/components/settings/ConnectionsSettings.tsx",
+  "apps/web/src/hooks/useResizeDrag.ts",
 ] as const;
