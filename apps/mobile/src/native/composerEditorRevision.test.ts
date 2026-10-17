@@ -5,6 +5,7 @@ import {
   assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
+  reconcileComposerSubmitSnapshot,
   resolveComposerControlledEventCount,
 } from "./composerEditorRevision";
 
@@ -201,5 +202,84 @@ describe("typing immediately before an intercepted paste", () => {
     );
     expect(isComposerNativeEcho("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(false);
     expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
+  });
+});
+
+describe("committed submission snapshot", () => {
+  it("allows clearing the corrected draft while rejecting delayed pre-submit events", () => {
+    const correction = { eventCount: 8, value: "The", selection: { start: 3, end: 3 } };
+    // Native advances once more after resignFirstResponder commits the correction.
+    const submitted = { ...correction, eventCount: 9 };
+    const eventCount = acknowledgeComposerNativeEvent(7, submitted.eventCount)!;
+    const snapshots = [
+      { eventCount: 7, value: "Teh", selection: { start: 3, end: 3 } },
+      correction,
+      submitted,
+    ];
+
+    expect(resolveComposerControlledEventCount("", null, eventCount, snapshots)).toBe(9);
+    expect(isComposerNativeEcho("", null, eventCount, snapshots)).toBe(false);
+    expect(acknowledgeComposerNativeEvent(eventCount, correction.eventCount)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(eventCount, 7)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(eventCount, 10)).toBe(10);
+  });
+});
+
+describe("cancelled submit preparation", () => {
+  it.each(["", "previous draft", "corrected edit"])(
+    "allows replacement content %j after discarding a prepared snapshot",
+    (replacement) => {
+      const history = [
+        { eventCount: 7, value: replacement, selection: { start: 0, end: 0 } },
+        { eventCount: 8, value: "queued edit", selection: { start: 11, end: 11 } },
+      ];
+      const prepared = {
+        eventCount: 9,
+        value: "corrected edit",
+        selection: { start: 14, end: 14 },
+      };
+      const recovered = reconcileComposerSubmitSnapshot(8, history, prepared, false);
+      // A cancelled response still has to advance JS past the revision that
+      // native created. Otherwise native rejects the replacement document.
+      expect(recovered).not.toBeNull();
+      if (!recovered) return;
+      const controlledCount = resolveComposerControlledEventCount(
+        replacement,
+        null,
+        recovered.eventCount,
+        recovered.snapshots,
+      );
+      expect(controlledCount).toBeGreaterThanOrEqual(prepared.eventCount);
+      expect(isComposerNativeEcho(replacement, null, controlledCount, recovered.snapshots)).toBe(
+        false,
+      );
+      expect(acknowledgeComposerNativeEvent(recovered.eventCount, 8)).toBeNull();
+      expect(acknowledgeComposerNativeEvent(recovered.eventCount, 10)).toBe(10);
+    },
+  );
+
+  it("does not roll back newer native edits when a cancelled response arrives late", () => {
+    expect(
+      reconcileComposerSubmitSnapshot(
+        10,
+        [],
+        {
+          eventCount: 9,
+          value: "discarded",
+          selection: null,
+        },
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  it("retains the accepted submit snapshot for native echo detection", () => {
+    const snapshot = { eventCount: 9, value: "corrected", selection: null };
+    const accepted = reconcileComposerSubmitSnapshot(8, [], snapshot, true);
+    expect(accepted).not.toBeNull();
+    if (!accepted) return;
+    expect(isComposerNativeEcho("corrected", null, accepted.eventCount, accepted.snapshots)).toBe(
+      true,
+    );
   });
 });

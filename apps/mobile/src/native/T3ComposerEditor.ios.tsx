@@ -27,6 +27,7 @@ import {
   assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
+  reconcileComposerSubmitSnapshot,
   resolveComposerControlledEventCount,
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
@@ -62,6 +63,7 @@ type NativePasteTextEvent = NativeSyntheticEvent<{
 interface NativeComposerEditorRef {
   focus: () => Promise<void>;
   blur: () => Promise<void>;
+  prepareForSubmit: () => Promise<NativeEditorEvent["nativeEvent"]>;
   setSelection: (start: number, end: number) => Promise<void>;
 }
 
@@ -140,17 +142,6 @@ export function ComposerEditor({
   const bodyText = useScaledTextRole("body");
   const theme = useUniwindTheme();
   const fontFamily = useFontFamily("regular");
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
-      setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
-    }),
-    [],
-  );
 
   const skillLabels = useMemo(
     () => new Map(skills.map((skill) => [skill.name, skill.displayName?.trim() || skill.name])),
@@ -252,6 +243,36 @@ export function ComposerEditor({
       return acknowledgedEventCount;
     },
     [],
+  );
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => void nativeRef.current?.focus(),
+      blur: () => void nativeRef.current?.blur(),
+      prepareForSubmit: async (isCurrent) => {
+        const editor = nativeRef.current;
+        const snapshot = await editor?.prepareForSubmit();
+        if (!snapshot || nativeRef.current !== editor) return false;
+        const current = isCurrent();
+        const reconciled = reconcileComposerSubmitSnapshot(
+          mostRecentEventCountRef.current,
+          nativeEventSnapshotsRef.current,
+          snapshot,
+          current,
+        );
+        if (!reconciled) return false;
+        mostRecentEventCountRef.current = reconciled.eventCount;
+        nativeEventSnapshotsRef.current = reconciled.snapshots;
+        setMostRecentEventCount(reconciled.eventCount);
+        if (!current) return false;
+        onChangeText(snapshot.value);
+        onSelectionChange?.(snapshot.selection);
+        return true;
+      },
+      setSelection: (nextSelection) =>
+        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+    }),
+    [onChangeText, onSelectionChange],
   );
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};

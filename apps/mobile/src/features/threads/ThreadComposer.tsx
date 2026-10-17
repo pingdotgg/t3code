@@ -64,6 +64,7 @@ import {
   countComposerDraftAttachmentsAfterSelection,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { submitComposer } from "../../state/submit-composer";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -404,6 +405,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
+  const activeDraftKeyRef = useRef<string | null>(composerDraftKey);
+  useLayoutEffect(() => {
+    activeDraftKeyRef.current = composerDraftKey;
+    return () => {
+      activeDraftKeyRef.current = null;
+    };
+  }, [composerDraftKey]);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -567,7 +575,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (inFlightThreadIdsRef.current.has(threadKey)) return;
       inFlightThreadIdsRef.current.add(threadKey);
       try {
-        const messageId = await onSendMessage(followUp);
+        const messageId = await submitComposer(
+          threadKey,
+          inputRef.current,
+          () => onSendMessage(followUp),
+          () => activeDraftKeyRef.current === composerDraftKey && navigation.isFocused(),
+        );
         if (messageId === null) {
           return;
         }
@@ -589,6 +602,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       openUsageLimits,
       usageLimitsOffered,
       onSendMessage,
+      composerDraftKey,
+      navigation,
       props.environmentId,
       props.environmentLabel,
       props.selectedThread.id,

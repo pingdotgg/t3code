@@ -121,3 +121,17 @@ export function pruneAcknowledgedComposerNativeEvents(
       index === latestAcknowledgedIndex || snapshot.eventCount > acknowledgedEventCount,
   );
 }
+
+/** Acknowledge submit preparation even when its text no longer belongs to the draft. */
+export function reconcileComposerSubmitSnapshot(
+  mostRecentEventCount: number,
+  snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
+  snapshot: ComposerNativeEventSnapshot,
+  isCurrent: boolean,
+): { eventCount: number; snapshots: ComposerNativeEventSnapshot[] } | null {
+  const eventCount = acknowledgeComposerNativeEvent(mostRecentEventCount, snapshot.eventCount);
+  if (eventCount === null) return null;
+  // Old history can stamp replacement content with an obsolete revision or
+  // classify it as an echo. A discarded submit must allow a fresh controlled edit.
+  return { eventCount, snapshots: isCurrent ? [...snapshots, snapshot] : [] };
+}
