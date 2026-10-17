@@ -1,5 +1,5 @@
-import { CommonActions, useNavigation } from "@react-navigation/native";
-import { useCallback } from "react";
+import { CommonActions, NavigationContainerRefContext } from "@react-navigation/native";
+import { use, useCallback } from "react";
 import { Keyboard } from "react-native";
 import {
   androidWorkspaceNavigationState,
@@ -8,22 +8,28 @@ import {
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 
 export function useAndroidWorkspaceSelection() {
-  const navigation = useNavigation();
+  // Resets the root stack even while a nested navigator such as Settings has
+  // focus; a plain dispatch from the workspace layout reaches that navigator,
+  // which has no Home or Thread routes.
+  const root = use(NavigationContainerRefContext);
   const dispatch = useWorkspaceTabs()?.dispatch;
   return useCallback(
     (
       destination: AndroidWorkspaceDestination,
       reviewers?: ReactNavigation.RootParamList["PullRequestReviewers"],
     ) => {
+      const state = root?.getRootState();
+      if (!root || !state) return;
       Keyboard.dismiss();
       dispatch?.({
         type: "select",
         tab: destination.name === "Thread" ? "threads" : "pullRequests",
       });
-      navigation.dispatch((state) =>
-        CommonActions.reset(androidWorkspaceNavigationState(state, destination, reviewers)),
-      );
+      root.dispatch({
+        ...CommonActions.reset(androidWorkspaceNavigationState(state, destination, reviewers)),
+        target: state.key,
+      });
     },
-    [navigation, dispatch],
+    [root, dispatch],
   );
 }
