@@ -192,6 +192,16 @@ describe("Claude model catalog", () => {
     assert.isFalse(hasValidClaudeManifestAdapters(malformed));
   });
 
+  it("preserves only SDK effort levels for uncatalogued models", () => {
+    const catalog = catalogFromManifest(manifest());
+    for (const effort of ["low", "medium", "high", "xhigh", "max"]) {
+      assert.strictEqual(resolveClaudeCatalogEffort(catalog, "custom", ` ${effort} `), effort);
+    }
+    for (const effort of [undefined, null, "", "  ", "brutal", "extreme", "HIGH", "ultrathink"]) {
+      assert.isUndefined(resolveClaudeCatalogEffort(catalog, "custom", effort));
+    }
+  });
+
   it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",
@@ -215,7 +225,9 @@ describe("Claude model catalog", () => {
     ]);
 
     assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
-    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), undefined);
+    assert.isUndefined(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"));
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "max"), "max");
+    assert.strictEqual(normalizeClaudeCatalogEffort(catalog, "max", "synthetic"), "max");
 
     assert.strictEqual(
       resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),
