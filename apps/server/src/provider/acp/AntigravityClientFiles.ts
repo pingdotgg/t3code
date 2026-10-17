@@ -15,6 +15,41 @@ function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+const resolveRealOrNearestExistingPath = Effect.fn(
+  "AntigravityClientFiles.resolveRealOrNearestExistingPath",
+)(function* (input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly targetPath: string;
+  readonly rejectDanglingLink?: EffectAcpErrors.AcpError;
+}): Effect.fn.Return<string, EffectAcpErrors.AcpError> {
+  const { fileSystem, path } = input;
+  let current = path.resolve(input.targetPath);
+  const suffix: Array<string> = [];
+  while (true) {
+    const real = yield* fileSystem.realPath(current).pipe(Effect.option);
+    if (real._tag === "Some") {
+      return suffix.length === 0 ? real.value : path.join(real.value, ...suffix.reverse());
+    }
+    if (input.rejectDanglingLink !== undefined) {
+      const entryExists = yield* fileSystem.readLink(current).pipe(
+        Effect.as(true),
+        Effect.catch(() => fileSystem.exists(current)),
+        Effect.orElseSucceed(() => true),
+      );
+      if (entryExists) {
+        return yield* input.rejectDanglingLink;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return path.resolve(input.targetPath);
+    }
+    suffix.push(path.basename(current));
+    current = parent;
+  }
+});
+
 /**
  * Symlinks resolve before the check, including the final component, so a link
  * inside the workspace cannot read or write through to a file outside it.
@@ -27,30 +62,21 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     readonly requestPath: string;
   }) {
     const { path } = input;
-    const resolved = path.resolve(input.requestPath);
     const outside = EffectAcpErrors.AcpRequestError.invalidParams(
       `Path '${input.requestPath}' is outside the session workspace.`,
     );
-    const real = yield* input.fileSystem.realPath(resolved).pipe(
-      Effect.catch(() =>
-        Effect.gen(function* () {
-          // Only a missing file (a new write) falls back to its parent; a
-          // dangling or unreadable link must not be followed on write.
-          const entryExists = yield* input.fileSystem.readLink(resolved).pipe(
-            Effect.as(true),
-            Effect.catch(() => input.fileSystem.exists(resolved)),
-            Effect.orElseSucceed(() => true),
-          );
-          if (entryExists) return yield* outside;
-          const parent = yield* input.fileSystem
-            .realPath(path.dirname(resolved))
-            .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-          return path.join(parent, path.basename(resolved));
-        }),
-      ),
-    );
+    const real = yield* resolveRealOrNearestExistingPath({
+      fileSystem: input.fileSystem,
+      path,
+      targetPath: input.requestPath,
+      rejectDanglingLink: outside,
+    });
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
-      input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
+      resolveRealOrNearestExistingPath({
+        fileSystem: input.fileSystem,
+        path,
+        targetPath: root,
+      }),
     );
     if (!roots.some((root) => isInsideRoot(path, root, real))) {
       return yield* outside;

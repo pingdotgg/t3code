@@ -27,6 +27,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
+import { resolveAntigravityInstanceDirectories } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -70,6 +71,8 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.equal(batch?.prompt, "Started two agents.");
     assert.isNull(batch?.result);
     assert.isTrue(flavor.subagentsIdleOnTurnCompletion);
+    assert.isTrue(flavor.preferResumeSession);
+    assert.isTrue(flavor.restartRuntimeAfterInterrupt);
   });
 
   it("maps runtime modes to the agent's native permission modes", () => {
@@ -161,7 +164,7 @@ describe("AntigravityAdapterV2 client file system", () => {
               command: process.execPath,
               args: [mockAgentPath],
               cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
+              env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_FAIL_LOAD_SESSION: "1" },
             },
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
@@ -204,7 +207,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         modelSelection,
         runtimePolicy,
       });
-      yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+      const ensuredThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
       if (readTextFile === undefined || writeTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file requests");
       }
@@ -221,6 +224,53 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+
+      const instanceDirs = yield* resolveAntigravityInstanceDirectories(
+        host.paths.stateDir,
+        instanceId,
+      );
+      const brainTaskLog = path.join(
+        instanceDirs.profile,
+        "antigravity-acp",
+        "brain",
+        "mock-session-1",
+        "tasks",
+        "task-1.log",
+      );
+      yield* writeTextFile(
+        { sessionId: "mock-session-1", path: brainTaskLog, content: "task output" },
+        context("fs/write_text_file"),
+      );
+      const readBrainLog = yield* readTextFile(
+        { sessionId: "mock-session-1", path: brainTaskLog },
+        context("fs/read_text_file"),
+      );
+      assert.equal(readBrainLog.content, "task output");
+
+      const profileToken = path.join(instanceDirs.profile, "acp_token.json");
+      yield* fileSystem.makeDirectory(instanceDirs.profile, { recursive: true });
+      yield* fileSystem.writeFileString(profileToken, "oauth-secret");
+      const tokenRead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: profileToken },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(tokenRead), "profile root credentials remain unreadable");
+
+      // Activating a second session id must use session/resume (preferResumeSession)
+      // rather than session/load (which is configured to fail via T3_ACP_FAIL_LOAD_SESSION=1).
+      const resumed = yield* session.resumeThread({
+        providerThread: {
+          ...ensuredThread,
+          nativeThreadRef: {
+            driver: ensuredThread.driver,
+            nativeId: "mock-session-2",
+            strength: "strong",
+          },
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.equal(resumed.status, "idle");
 
       const outsideRead = yield* readTextFile(
         { sessionId: "mock-session-1", path: outsideFile },

@@ -2418,9 +2418,13 @@ export const make = (
       loadSession: (sessionId, activationOptions) =>
         start.pipe(
           Effect.flatMap((started) => {
+            const additionalDirectories = options.additionalDirectories?.length
+              ? { additionalDirectories: options.additionalDirectories }
+              : {};
             const requestPayload = {
               sessionId,
               cwd: options.cwd,
+              ...additionalDirectories,
               mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
             } satisfies EffectAcpSchema.LoadSessionRequest;
             return runLoadSessionWithReplayIdle(requestPayload, started.initializeResult);
@@ -2430,25 +2434,39 @@ export const make = (
       resumeSession: (sessionId, activationOptions) =>
         start.pipe(
           Effect.flatMap((started) => {
+            if (
+              started.sessionId === sessionId &&
+              options.resumeSessionId === sessionId &&
+              options.resumeMethod === "resume"
+            ) {
+              return Effect.succeed(started);
+            }
+            const additionalDirectories = options.additionalDirectories?.length
+              ? { additionalDirectories: options.additionalDirectories }
+              : {};
             const requestPayload = {
               sessionId,
               cwd: options.cwd,
+              ...additionalDirectories,
               mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
             } satisfies EffectAcpSchema.ResumeSessionRequest;
             return runLoggedRequest(
               "session/resume",
               requestPayload,
               acp.agent.resumeSession(requestPayload),
-            );
+            ).pipe(Effect.flatMap((response) => adoptSession(sessionId, response)));
           }),
-          Effect.flatMap((response) => adoptSession(sessionId, response)),
         ),
       forkSession: (sessionId, activationOptions) =>
         start.pipe(
           Effect.flatMap((started) => {
+            const additionalDirectories = options.additionalDirectories?.length
+              ? { additionalDirectories: options.additionalDirectories }
+              : {};
             const requestPayload = {
               sessionId,
               cwd: options.cwd,
+              ...additionalDirectories,
               mcpServers: sessionMcpServers(started.initializeResult, activationOptions),
             } satisfies EffectAcpSchema.ForkSessionRequest;
             return runLoggedRequest(

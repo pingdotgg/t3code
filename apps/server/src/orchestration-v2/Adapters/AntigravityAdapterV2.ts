@@ -22,6 +22,7 @@ import {
   applyAntigravityAcpModelSelection,
   type AntigravityAcpRuntimeInput,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
+import { resolveAntigravityInstanceDirectories } from "../../provider/antigravityAuthSupport.ts";
 import {
   readAntigravityClientTextFile,
   writeAntigravityClientTextFile,
@@ -113,13 +114,17 @@ interface AntigravityFlavorServices {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly host: ProviderHost.ProviderHost["Service"];
+  readonly additionalAllowedRoots?: ReadonlyArray<string>;
 }
 
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
+  const extraRoots = options.additionalAllowedRoots ?? [];
   const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+    cwd === null
+      ? [options.host.paths.attachmentsDir, ...extraRoots]
+      : [cwd, options.host.paths.attachmentsDir, ...extraRoots];
   const makeRuntime = (input: AcpAdapterV2RuntimeInput) =>
     Effect.gen(function* () {
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -129,7 +134,7 @@ export function makeAntigravityAcpAdapterFlavor(
           options.makeRuntime({
             ...input,
             clientFileSystem: true,
-            additionalDirectories: [options.host.paths.attachmentsDir],
+            additionalDirectories: [options.host.paths.attachmentsDir, ...extraRoots],
           }),
         )
         .pipe(Effect.provideService(Scope.Scope, scope));
@@ -161,6 +166,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // Loading history replays every tool call; resume restores the session
     // without the replay and is what the official client does.
     preferResumeSession: true,
+    restartRuntimeAfterInterrupt: true,
     subagentsIdleOnTurnCompletion: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: ({ runtime, modelSelection }) =>
@@ -219,11 +225,24 @@ export function makeAntigravityAcpAdapterFlavor(
 export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(function* (
   options: AntigravityAdapterV2Options,
 ) {
+  const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const host = yield* ProviderHost.ProviderHost;
+  const directories = yield* resolveAntigravityInstanceDirectories(
+    host.paths.stateDir,
+    options.instanceId,
+  );
   const services: AntigravityFlavorServices = {
-    crypto: yield* Crypto.Crypto,
-    fileSystem: yield* FileSystem.FileSystem,
-    path: yield* Path.Path,
-    host: yield* ProviderHost.ProviderHost,
+    crypto,
+    fileSystem,
+    path,
+    host,
+    additionalAllowedRoots: [
+      path.join(directories.profile, "antigravity-acp", "brain"),
+      path.join(directories.profile, "antigravity-acp", "tmp"),
+      directories.runtimeTemp,
+    ],
   };
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
