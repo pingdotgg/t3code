@@ -1096,9 +1096,13 @@ const make = Effect.gen(function* () {
       const failures: Array<
         Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
       > = [];
+      const stoppedChildThreadIds = new Set<ThreadId>();
       for (const task of subagents) {
         if (task.origin !== "app_owned" || task.childThreadId === null) continue;
         const threadId = task.childThreadId;
+        // Follow-up tasks reuse a child thread; walk its subtree only once.
+        if (stoppedChildThreadIds.has(threadId)) continue;
+        stoppedChildThreadIds.add(threadId);
         yield* dispatch({
           type: "thread.stop",
           commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
