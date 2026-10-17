@@ -7,11 +7,12 @@ import {
   type EditorId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
-import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { AsyncResult } from "effect/reactivity";
-import { cloneElement, type ReactElement, type ReactNode } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+import { useRightPanelStore } from "../rightPanelStore";
 
 const state = vi.hoisted(() => ({
   allowed: true,
@@ -23,48 +24,30 @@ const state = vi.hoisted(() => ({
   openFile: vi.fn(),
   openExternal: vi.fn(),
   copy: vi.fn(),
-  toast: vi.fn(),
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
 }));
 
-vi.mock("@effect/atom-react", async () => {
-  const { AtomRegistry } = await import("effect/reactivity");
-  const registry = AtomRegistry.make();
-  return { useAtomValue: (atom: never) => registry.get(atom) };
+vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
+  ...(await original()),
+  useAtomQueryRunner: (() => state.search) as never,
+}));
+vi.mock(import("../state/use-atom-command"), async (original) => {
+  const { threadEnvironment } = await import("../state/threads");
+  return {
+    ...(await original()),
+    useAtomCommand: ((command: unknown) =>
+      command === threadEnvironment.updateMetadata
+        ? state.updateMetadata
+        : state.openEditor) as never,
+  };
 });
-vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
-vi.mock("../hooks/useSettings", () => ({
-  getClientSettings: () => DEFAULT_CLIENT_SETTINGS,
-  useClientSettings: (select?: (value: typeof DEFAULT_CLIENT_SETTINGS) => unknown) =>
-    select ? select(DEFAULT_CLIENT_SETTINGS) : DEFAULT_CLIENT_SETTINGS,
-}));
-vi.mock("./ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ render, children }: { render: ReactElement; children?: ReactNode }) =>
-    children === undefined ? render : cloneElement(render, undefined, children),
-  TooltipPopup: () => null,
-}));
-vi.mock("./chat/PierreEntryIcon", () => ({ PierreEntryIcon: () => null }));
-vi.mock("./ui/toast", () => ({
-  toastManager: { add: state.toast },
-  stackedThreadToast: (value: unknown) => value,
-}));
-vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.search }));
-vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: (command: string) =>
-    command === "updateMetadata" ? state.updateMetadata : state.openEditor,
-}));
-vi.mock("../state/session", async () => {
+vi.mock(import("../state/session"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
     (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
   return {
-    environmentSession: {
-      sessionStateAtom: () => ({}),
-      preparedConnectionValueAtom: () => ({}),
-    },
+    ...(await original()),
     readEnvironmentScope,
     useEnvironmentScope: (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
       useSyncExternalStore(
@@ -76,59 +59,57 @@ vi.mock("../state/session", async () => {
       ),
   };
 });
-vi.mock("../state/server", async () => {
+// Atoms derived from the server config run in the real registry over this config.
+vi.mock(import("../state/server"), async (original) => {
+  const actual = await original();
   const { Atom } = await import("effect/reactivity");
   const config = Atom.make(() => serverConfig);
   return {
-    serverEnvironment: { configValueAtom: () => config },
+    ...actual,
+    serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => config) as never },
     environmentServerConfigsAtom: Atom.make(
       () => new Map([[threadRef.environmentId, serverConfig]]),
-    ),
+    ) as never,
   };
 });
-vi.mock("../state/threads", () => ({
-  threadEnvironment: { updateMetadata: "updateMetadata" },
+vi.mock(import("../state/entities"), async (original) => ({
+  ...(await original()),
+  readThreadShell: (() => ({ linkedPullRequest: state.linkedPullRequest })) as never,
+  useProjects: (() => [
+    { id: linkedPullRequest.projectId, environmentId: threadRef.environmentId },
+  ]) as never,
 }));
-vi.mock("../state/entities", () => ({
-  readEnvironmentSupportsServerBrowser: () => false,
-  readThreadShell: () => ({ linkedPullRequest: state.linkedPullRequest }),
-  useProjects: () => [{ id: linkedPullRequest.projectId, environmentId: threadRef.environmentId }],
+vi.mock(import("../remoteOpen"), async (original) => ({
+  ...(await original()),
+  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
 }));
-vi.mock("../rightPanelStore", () => ({
-  useRightPanelStore: { getState: () => ({ openFile: state.openFile }) },
+vi.mock(import("../hooks/useLocalStorage"), async (original) => ({
+  ...(await original()),
+  useLocalStorage: (() => ["vscode", vi.fn()]) as never,
+  getLocalStorageItem: (() => "vscode") as never,
 }));
-vi.mock("../remoteOpen", () => ({
-  useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
+vi.mock(import("../localApi"), async (original) => ({
+  ...(await original()),
+  readLocalApi: () =>
+    ({
+      contextMenu: { show: state.choose },
+      shell: { openExternal: state.openExternal },
+    }) as never,
 }));
-vi.mock("../hooks/useLocalStorage", () => ({
-  useLocalStorage: () => ["vscode", vi.fn()],
-  getLocalStorageItem: () => "vscode",
-  setLocalStorageItem: vi.fn(),
-}));
-vi.mock("../hooks/useCopyToClipboard", () => ({
-  writeTextToClipboard: state.copy,
-  useCopyToClipboard: () => ({ copyToClipboard: state.copy, isCopied: false }),
-}));
-vi.mock("../localApi", () => ({
-  readLocalApi: () => ({
-    contextMenu: { show: state.choose },
-    shell: { openExternal: state.openExternal },
-  }),
-}));
-vi.mock("~/lib/openPullRequestLink", () => ({
+vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
+  ...(await original()),
   resolvePullRequestPreviewTarget: () => null,
-  findProjectForChangeRequest: (projects: readonly { id: ProjectId }[]) => projects[0],
+  findProjectForChangeRequest: ((projects: readonly { id: ProjectId }[]) => projects[0]) as never,
   matchesLinkedPullRequestUrl: (candidate: ThreadLinkedPullRequest, href: string) =>
     candidate.url === href,
-  parseChangeRequestUrl: (href: string) =>
+  parseChangeRequestUrl: ((href: string) =>
     href === linkedPullRequest.url
       ? {
           host: "github.com",
           repository: linkedPullRequest.repository,
           number: linkedPullRequest.number,
         }
-      : null,
-  useOpenChangeRequestLink: () => vi.fn(),
+      : null) as never,
 }));
 
 import ChatMarkdown from "./ChatMarkdown";
@@ -149,7 +130,8 @@ const serverConfig = {
   shellRevealInFileManagerKind: "xdg-open",
   environment: { platform: { os: "linux" }, capabilities: { threadPullRequestLinking: true } },
 };
-let renderer: ReactTestRenderer | undefined;
+const roots: Root[] = [];
+let container: HTMLDivElement;
 
 beforeEach(() => {
   state.allowed = true;
@@ -162,53 +144,60 @@ beforeEach(() => {
   state.openFile.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
   state.copy.mockReset().mockResolvedValue(undefined);
-  state.toast.mockReset();
+  useRightPanelStore.setState({ openFile: state.openFile });
+  vi.spyOn(navigator.clipboard, "writeText").mockImplementation(state.copy);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", {});
-  vi.stubGlobal("navigator", { clipboard: { writeText: state.copy } });
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  for (const root of roots.splice(0)) await act(async () => root.unmount());
+  document.body.replaceChildren();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 async function renderMarkdown(text: string) {
-  await act(async () => {
-    renderer = create(<ChatMarkdown cwd="/work" threadRef={threadRef} text={text} />);
-  });
-}
-
-function menuEvent() {
-  return { preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 10, clientY: 10 };
+  container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
+  roots.push(root);
+  await act(async () =>
+    root.render(<ChatMarkdown cwd="/work" threadRef={threadRef} text={text} />),
+  );
 }
 
 function anchor() {
-  return renderer!.root.findByType("a");
+  return container.querySelector("a")!;
 }
 
 async function openContextMenu() {
-  await act(async () => anchor().props.onContextMenu(menuEvent()));
+  await act(async () => {
+    anchor().dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }),
+    );
+  });
 }
 
 function offeredActions() {
   return state.choose.mock.lastCall![0].map((item: { id: string }) => item.id);
 }
 
+async function setAllowed(allowed: boolean) {
+  await act(async () => {
+    state.allowed = allowed;
+    for (const listener of state.listeners) listener();
+  });
+}
+
 it("removes host actions after revocation while keeping file preview and copying", async () => {
   await renderMarkdown("[Readme](docs/readme.md)");
   await openContextMenu();
   expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
-  await act(async () => {
-    state.allowed = false;
-    for (const listener of state.listeners) listener();
-  });
+  await setAllowed(false);
   state.choose.mockResolvedValue("copy-full");
   await openContextMenu();
   expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
-  expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md");
-  await act(async () => anchor().props.onClick(menuEvent()));
+  await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md"));
+  await act(async () => anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
 });
@@ -263,7 +252,7 @@ it.each([false, true])(
     await renderMarkdown(`[Review](${linkedPullRequest.url})`);
     await openContextMenu();
     expect(offeredActions()).toEqual(["open-external", "copy-link"]);
-    expect(state.openExternal).toHaveBeenCalledWith(linkedPullRequest.url);
+    await vi.waitFor(() => expect(state.openExternal).toHaveBeenCalledWith(linkedPullRequest.url));
     expect(state.updateMetadata).not.toHaveBeenCalled();
   },
 );
@@ -290,18 +279,17 @@ it.each(["link-to-thread", "unlink-from-thread"])(
     });
     expect(state.updateMetadata).not.toHaveBeenCalled();
 
-    await act(async () => {
-      state.allowed = true;
-      for (const listener of state.listeners) listener();
-    });
+    await setAllowed(true);
     state.choose.mockResolvedValue(action);
     await openContextMenu();
-    expect(state.updateMetadata).toHaveBeenCalledExactlyOnceWith({
-      environmentId: threadRef.environmentId,
-      input: {
-        threadId: threadRef.threadId,
-        linkedPullRequest: action === "link-to-thread" ? linkedPullRequest : null,
-      },
-    });
+    await vi.waitFor(() =>
+      expect(state.updateMetadata).toHaveBeenCalledExactlyOnceWith({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          linkedPullRequest: action === "link-to-thread" ? linkedPullRequest : null,
+        },
+      }),
+    );
   },
 );
