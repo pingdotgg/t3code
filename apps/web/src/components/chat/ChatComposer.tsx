@@ -62,7 +62,11 @@ import {
 } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  draftModelPickMatchesThread,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   memo,
@@ -1897,7 +1901,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -2347,6 +2351,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModel,
     selectedModelOptionsForDispatch,
   );
+  // A model pick overrides the thread only until the thread runs on it. Dropping the pick
+  // then lets this composer follow model changes made later from other clients.
+  const draftModelPickInUse =
+    isServerThread &&
+    multipleModelSelections === null &&
+    (composerDraft.activeProvider !== null ||
+      Object.keys(composerDraft.modelSelectionByProvider).length > 0) &&
+    activeThreadModelSelection != null &&
+    draftModelPickMatchesThread(selectedModelSelection, activeThreadModelSelection);
+  const clearComposerDraftModelSelection = useComposerDraftStore(
+    (store) => store.clearModelSelection,
+  );
+  useEffect(() => {
+    if (draftModelPickInUse) clearComposerDraftModelSelection(composerDraftTarget);
+  }, [clearComposerDraftModelSelection, composerDraftTarget, draftModelPickInUse]);
   const selectedModelForPicker = selectedModel;
   const modelOptionsByInstance = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
   for (const entry of providerInstanceEntries) {

@@ -36,6 +36,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
@@ -72,6 +73,7 @@ import {
   insertComposerDraftText,
   insertComposerDraftContext,
   clearComposerDraftContent,
+  clearComposerDraftModelSelection,
   composerDraftsAtom,
   composerContextImportsAtom,
   ensureComposerDraftsLoaded,
@@ -321,6 +323,17 @@ export function useThreadComposerState() {
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft?.modelSelection ?? selectedThread?.modelSelection ?? null;
+  // A model pick overrides the thread only until the thread runs on it. Dropping the pick
+  // then lets this composer follow model changes made later from other clients.
+  const draftModelPickInUse =
+    selectedDraft?.modelSelection !== undefined &&
+    selectedThread?.modelSelection !== undefined &&
+    draftModelPickMatchesThread(selectedDraft.modelSelection, selectedThread.modelSelection);
+  useEffect(() => {
+    if (draftModelPickInUse && selectedThreadKey) {
+      clearComposerDraftModelSelection(selectedThreadKey);
+    }
+  }, [draftModelPickInUse, selectedThreadKey]);
   const pendingHandoff = useMemo(
     () =>
       resolvePendingHandoff(

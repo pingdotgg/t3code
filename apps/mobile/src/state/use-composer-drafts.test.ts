@@ -159,6 +159,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  clearComposerDraftModelSelection,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
   composerDraftsAtom,
@@ -193,6 +194,7 @@ import {
   stickyComposerModelSelectionAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
@@ -423,6 +425,22 @@ describe("mobile composer drafts", () => {
 
     const [record] = draft.context?.records ?? [];
     expect(draft.text).toContain(String(record?.contextId));
+  });
+
+  it("drops the model pick without touching the draft text", () => {
+    const key = "environment-1:thread-1";
+    setComposerDraftText(key, "keep me");
+    updateComposerDraftSettings(key, {
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    });
+
+    clearComposerDraftModelSelection(key);
+
+    expect(getComposerDraftSnapshot(key)).toMatchObject({ text: "keep me" });
+    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
+
+    setComposerDraftText(key, "");
+    expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
   });
 
   it("drops chips and records for attachments a replace no longer keeps", () => {

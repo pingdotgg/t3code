@@ -502,6 +502,8 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
+  /** Drops the draft's model pick so the composer follows the thread's model again. */
+  clearModelSelection: (threadRef: ComposerThreadTarget) => void;
   setModelOptions: (
     threadRef: ComposerThreadTarget,
     modelOptions:
@@ -2951,6 +2953,35 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               modelSelectionByProvider: nextMap,
               activeProvider: nextActiveProvider,
               ...(opts?.explicit === true ? { modelSelectionExplicit: true as const } : {}),
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        clearModelSelection: (threadRef) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (
+              !existing ||
+              (existing.activeProvider === null &&
+                Object.keys(existing.modelSelectionByProvider).length === 0)
+            ) {
+              return state;
+            }
+            const { modelSelectionExplicit: _modelSelectionExplicit, ...retained } = existing;
+            const nextDraft: ComposerThreadDraftState = {
+              ...retained,
+              modelSelectionByProvider: {},
+              activeProvider: null,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

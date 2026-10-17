@@ -1937,6 +1937,25 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("drops the model pick without touching the prompt", () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "keep me");
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+      explicit: true,
+    });
+
+    store.clearModelSelection(threadRef);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.prompt).toBe("keep me");
+    expect(draft?.modelSelectionByProvider).toEqual({});
+    expect(draft?.activeProvider).toBeNull();
+    expect(draft?.modelSelectionExplicit).toBeUndefined();
+
+    store.setPrompt(threadRef, "");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
   it("keeps default-only model selections on the draft", () => {
     const store = useComposerDraftStore.getState();
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));

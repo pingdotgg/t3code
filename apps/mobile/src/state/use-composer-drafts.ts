@@ -1455,6 +1455,18 @@ export function updateComposerDraftSettings(
   });
 }
 
+/** Drops the draft's model pick so the composer follows the thread's model again. */
+export function clearComposerDraftModelSelection(draftKey: string): void {
+  updateComposerDrafts((current) => {
+    const existing = current[draftKey];
+    if (existing?.modelSelection === undefined) {
+      return current;
+    }
+    const { modelSelection: _modelSelection, ...draft } = existing;
+    return withComposerDraft(current, draftKey, draft);
+  });
+}
+
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
