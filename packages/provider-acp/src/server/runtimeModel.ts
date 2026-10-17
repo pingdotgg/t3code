@@ -1062,10 +1062,13 @@ const T3_MCP_TITLE_SUFFIX_CALL =
 
 /**
  * glm-acp-agent and Kimi CLI register injected MCP tools under their bare
- * names; Kimi additionally appends ": <raw args json>". Safe only because the
- * match is gated on the known T3 tool inventory.
+ * names; Kimi additionally appends ": <raw args json>". Antigravity titles a
+ * call "Running <tool>" with no server or MCP `_meta` once its SDK has
+ * unwrapped the `call_mcp_tool` envelope, which is every call it runs without
+ * a permission prompt. Safe only because the match is gated on the known T3
+ * tool inventory.
  */
-const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
+const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
 
 /**
  * ACP has no typed MCP tool-call item, so agents surface MCP calls in agent-specific shapes:

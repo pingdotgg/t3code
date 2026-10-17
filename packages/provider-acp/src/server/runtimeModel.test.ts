@@ -1497,6 +1497,33 @@ describe("extractMcpToolCallIdentity", () => {
     expect(extractMcpToolCallIdentity(qwen)).toEqual({ server: "t3-code", tool: "task_status" });
   });
 
+  it("recovers T3 identity from Antigravity's unwrapped MCP call titles", () => {
+    // agy_acp_server 1.3.0 and 1.4.0, without a permission prompt: the SDK has
+    // already unwrapped the call_mcp_tool envelope, so the call carries no
+    // server, no MCP _meta, and only the tool's own arguments.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "3b6d3519-d9c1-46c6-b2b3-b09fe2cfb64d:127",
+      kind: "other",
+      title: "Running html_render",
+      status: "in_progress",
+      rawInput: { html: "<p>Revenue</p>", title: "Revenue", height: 240 },
+    });
+    const builtIn = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "3b6d3519-d9c1-46c6-b2b3-b09fe2cfb64d:128",
+      kind: "other",
+      title: "Running start_subagent",
+      status: "in_progress",
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(extractMcpToolCallIdentity(builtIn)).toBeUndefined();
+  });
+
   it("recovers T3 identity across the registry agents' naming conventions", () => {
     for (const title of [
       "t3-code___delegate_task",
