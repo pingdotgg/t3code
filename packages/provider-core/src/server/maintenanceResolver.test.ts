@@ -339,6 +339,66 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     }),
   );
 
+  it.effect("recognizes Vite+ global installs under every VP_HOME layout", () =>
+    Effect.gen(function* () {
+      const installs = [
+        {
+          platform: "darwin",
+          shim: "/Users/theo/.vite-plus/bin/claude",
+          real: "/Users/theo/.vite-plus/current/bin/vp",
+        },
+        {
+          platform: "linux",
+          shim: "/home/theo/.local/share/vite-plus/bin/claude",
+          real: "/home/theo/.local/share/vite-plus/current/bin/vp",
+        },
+        {
+          platform: "win32",
+          shim: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\bin\\claude.cmd",
+          real: "C:\\Users\\Theo\\AppData\\Local\\vite-plus\\packages\\@anthropic-ai\\claude-code\\lib\\node_modules\\@anthropic-ai\\claude-code\\cli.js",
+        },
+      ] as const;
+      for (const install of installs) {
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(
+          {
+            provider: driver("claudeAgent"),
+            npmPackageName: "@anthropic-ai/claude-code",
+            nativeUpdate: null,
+          },
+          {
+            binaryPath: "claude",
+            resolvedCommandPath: install.shim,
+            realCommandPath: install.real,
+            env: {},
+            platform: install.platform,
+          },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toMatchObject({
+          command: "vp i -g @anthropic-ai/claude-code",
+          lockKey: "vite-plus-global",
+        });
+      }
+
+      // A project checkout named vite-plus is not a VP_HOME.
+      const projectLocal = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("claudeAgent"),
+          npmPackageName: "@anthropic-ai/claude-code",
+          nativeUpdate: null,
+        },
+        {
+          binaryPath: "claude",
+          resolvedCommandPath: "/work/vite-plus/bin/claude",
+          realCommandPath: "/work/vite-plus/node_modules/@anthropic-ai/claude-code/cli.js",
+          env: {},
+          platform: "linux",
+        },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+      expect(projectLocal.update).toBeNull();
+    }),
+  );
+
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-npm-windows-capabilities");
