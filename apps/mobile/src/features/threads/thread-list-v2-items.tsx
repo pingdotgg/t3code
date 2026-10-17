@@ -1198,7 +1198,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       </RowPressable>
     );
 
-  if (!canOperateThread) return rowContent(() => {});
+  // Read-only rows skip the swipe layer but keep its container insets.
+  if (!canOperateThread) {
+    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+  }
 
   return (
     <View collapsable={false}>
