@@ -77,4 +77,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/UsageProviderSettings.tsx",
   "apps/web/src/components/settings/TelemetryExportSettings.tsx",
   "apps/web/src/components/settings/useHostConnectionChecks.ts",
+  "apps/web/src/components/settings/useProjectScriptSettings.ts",
 ] as const;
