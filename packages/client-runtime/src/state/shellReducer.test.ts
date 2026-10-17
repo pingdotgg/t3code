@@ -148,6 +148,19 @@ describe("applyShellStreamEvent", () => {
     expect(next.projects[0]?.repositoryIdentity).toEqual(repositoryIdentity);
   });
 
+  it("keeps the object of a project a full snapshot left unchanged", () => {
+    const prior = { ...v2Project, repositoryIdentity };
+    const next = mergeShellSnapshotProjects(
+      { ...v2ShellSnapshot, projects: [prior] },
+      {
+        ...v2ShellSnapshot,
+        snapshotSequence: 2,
+        projects: [{ ...v2Project, repositoryIdentity: structuredClone(repositoryIdentity) }],
+      },
+    );
+    expect(next.projects[0]).toBe(prior);
+  });
+
   it("authoritative lower-sequence reset replaces client-ahead structural state", () => {
     const previous = {
       ...v2ShellSnapshot,

@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import { AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
 import {
   type EnvironmentMachineKind,
@@ -689,6 +690,7 @@ export const ServerConfigStreamSnapshotEvent = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("snapshot"),
   config: ServerConfig,
+  configVersion: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerConfigStreamSnapshotEvent = typeof ServerConfigStreamSnapshotEvent.Type;
 
@@ -751,6 +753,33 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSettingsUpdatedEvent,
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("configUnchanged"),
+    configVersion: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("configDelta"),
+    configVersion: TrimmedNonEmptyString,
+    changes: ServerConfig.mapFields(Struct.map(Schema.optionalKey)),
+    removed: Schema.Array(Schema.String),
+    providerChanges: Schema.Array(
+      Schema.Struct({
+        instanceId: ProviderInstanceId,
+        // Omitted fields must not clear values. Drop unreadable providers as snapshots do.
+        changes: Schema.UndefinedOr(
+          Schema.Struct({
+            ...ServerProvider.mapFields(Struct.map(Schema.optionalKey)).fields,
+            slashCommands: Schema.optionalKey(Schema.Array(ServerProviderSlashCommand)),
+            skills: Schema.optionalKey(Schema.Array(ServerProviderSkill)),
+          }),
+        ).pipe(Schema.catchDecoding(() => Effect.succeedSome(undefined))),
+        removed: Schema.Array(Schema.String),
+      }),
+    ),
+    providerOrder: Schema.optionalKey(Schema.Array(ProviderInstanceId)),
+  }),
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

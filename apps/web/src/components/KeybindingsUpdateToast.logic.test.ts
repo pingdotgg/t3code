@@ -59,6 +59,40 @@ describe("keybindings update toast policy", () => {
     });
   });
 
+  it.each(["snapshot", "seed"])("reports unchanged-bindings recovery after %s", (initial) => {
+    const controller = createKeybindingsUpdateToastController({});
+    const malformed = {
+      kind: "keybindings.malformed-config",
+      message: "Expected JSON array",
+    } as const;
+    const delta = (
+      changes: Extract<ServerConfigStreamEvent, { type: "configDelta" }>["changes"],
+    ): ServerConfigStreamEvent => ({
+      version: 1,
+      type: "configDelta",
+      configVersion: "v2",
+      changes,
+      removed: [],
+      providerChanges: [],
+    });
+    if (initial === "seed") {
+      controller.seed([malformed]);
+      controller.seed([]);
+    } else
+      controller.handle({ version: 1, type: "snapshot", config: { issues: [malformed] } as never });
+    expect(controller.handle(delta({ issues: [malformed] }))).toBeNull();
+    expect(controller.handle(delta({ issues: [] }))).toEqual({ _tag: "Success" });
+    expect(controller.handle(delta({ issues: [] }))).toBeNull();
+    expect(controller.handle(delta({ issues: [malformed] }))).toEqual({
+      _tag: "InvalidConfiguration",
+      message: malformed.message,
+    });
+    expect(controller.handle(delta({ cwd: "/repo" }))).toBeNull();
+    expect(createKeybindingsUpdateToastController({}).handle(delta({ keybindings: [] }))).toEqual({
+      _tag: "Success",
+    });
+  });
+
   it("ignores unrelated server config notifications", () => {
     const controller = createKeybindingsUpdateToastController({});
 

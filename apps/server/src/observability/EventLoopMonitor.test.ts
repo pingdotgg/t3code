@@ -11,7 +11,7 @@ import * as EventLoopMonitor from "./EventLoopMonitor.ts";
 
 const ms = (value: number) => value * 1e6;
 
-// Node reports a stall of S as a gap of up to S + 1 s, the histogram resolution.
+// Node reports a stall of S as a gap of up to S + 100 ms, the histogram resolution.
 const stalled: EventLoopMonitor.EventLoopReadings = {
   delayMaxNs: ms(5_950),
   activeMs: 6_200,
@@ -25,7 +25,8 @@ const stalled: EventLoopMonitor.EventLoopReadings = {
   },
   rssBytes: 1536 * 1024 * 1024,
 };
-const quiet: EventLoopMonitor.EventLoopReadings = { ...stalled, delayMaxNs: ms(2_950) };
+// Over the threshold as read, but not once the resolution is subtracted.
+const quiet: EventLoopMonitor.EventLoopReadings = { ...stalled, delayMaxNs: ms(300) };
 
 const monitor = (
   samples: Array<EventLoopMonitor.EventLoopReadings>,
@@ -51,18 +52,20 @@ describe("EventLoopMonitor", () => {
       });
       yield* Effect.gen(function* () {
         yield* monitor([stalled, quiet, stalled]);
-        yield* TestClock.adjust("60 seconds");
-        assert.lengthOf(spans, 0);
-        yield* TestClock.adjust("30 seconds");
+        yield* TestClock.adjust("1 second");
+        assert.lengthOf(spans, 1);
+        yield* TestClock.adjust("1 second");
+        assert.lengthOf(spans, 1);
+        yield* TestClock.adjust("1 second");
       }).pipe(Effect.scoped, Effect.withTracer(tracer));
 
       assert.deepStrictEqual(
         spans.map((span) => span.name),
-        ["server.eventLoop.stall"],
+        ["server.eventLoop.stall", "server.eventLoop.stall"],
       );
       const [span] = spans;
       assert.deepStrictEqual(Object.fromEntries(span!.attributes), {
-        delayMaxMs: 4_950,
+        delayMaxMs: 5_850,
         utilization: 0.18,
         cpuUserMs: 310,
         cpuSystemMs: 96,
@@ -73,7 +76,7 @@ describe("EventLoopMonitor", () => {
       });
       assert.deepStrictEqual(
         span!.events.map(([name, , attributes]) => [name, attributes["effect.logLevel"]]),
-        [["event loop stalled for 4950 ms", "WARN"]],
+        [["event loop stalled for 5850 ms", "WARN"]],
       );
     }),
   );
@@ -87,15 +90,15 @@ describe("EventLoopMonitor", () => {
         filePath,
         maxBytes: 300,
       });
-      yield* TestClock.adjust("120 seconds");
+      yield* TestClock.adjust("4 seconds");
 
       const lines = (yield* fs.readFileString(filePath)).trim().split("\n");
       assert.deepStrictEqual(
         lines.map((line) => JSON.parse(line)),
         [
           {
-            time: "1970-01-01T00:02:00.000Z",
-            delayMaxMs: 6_000,
+            time: "1970-01-01T00:00:04.000Z",
+            delayMaxMs: 6_900,
             utilization: 0.18,
             cpuUserMs: 310,
             cpuSystemMs: 96,
@@ -120,9 +123,9 @@ describe("EventLoopMonitor", () => {
       const fs = yield* FileSystem.FileSystem;
       const filePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-event-loop-" });
       yield* monitor([stalled, stalled], { filePath, maxBytes: 1024 * 1024 });
-      yield* TestClock.adjust("60 seconds");
+      yield* TestClock.adjust("1 second");
       assert.deepStrictEqual(warnings, [
-        "event loop stalled for 4950 ms",
+        "event loop stalled for 5850 ms",
         "event loop stall log write failed",
       ]);
     }).pipe(
@@ -133,7 +136,56 @@ describe("EventLoopMonitor", () => {
     );
   });
 
-  it("ignores delay the loop spent idle, such as a system sleep", () => {
+  it.effect("samples every second at startup and every 30 seconds after", () =>
+    Effect.gen(function* () {
+      let samples = 0;
+      yield* Layer.build(
+        EventLoopMonitor.layerWith(Effect.succeed(Effect.sync(() => (++samples, quiet))), {
+          filePath: "/missing/event-loop-stalls.ndjson",
+          maxBytes: 1024,
+        }),
+      );
+      yield* TestClock.adjust("30 seconds");
+      assert.strictEqual(samples, 30);
+      yield* TestClock.adjust("29 seconds");
+      assert.strictEqual(samples, 30);
+      yield* TestClock.adjust("1 second");
+      assert.strictEqual(samples, 31);
+    }).pipe(Effect.scoped),
+  );
+
+  it("reports only stalls over 2 s after startup", () => {
+    // Read at the steady 1 s resolution.
+    assert.isUndefined(
+      EventLoopMonitor.stallMs({ ...stalled, delayMaxNs: ms(2_900), steady: true }),
+    );
+    assert.strictEqual(
+      EventLoopMonitor.stallMs({ ...stalled, delayMaxNs: ms(4_000), steady: true }),
+      3_000,
+    );
+  });
+
+  it("reports short stalls even when ELU active time lags the delay reading", () => {
+    const short: EventLoopMonitor.EventLoopReadings = {
+      ...stalled,
+      delayMaxNs: ms(850),
+      activeMs: 100,
+    };
+    assert.strictEqual(EventLoopMonitor.stallMs(short), 750);
+    // Before the loop starts, ELU reads 0 and CPU time shows the loop was busy.
+    const busyBeforeLoop = {
+      ...quiet,
+      activeMs: 0,
+      usage: { ...quiet.usage, userCPUTime: 52_000_000, systemCPUTime: 900_000 },
+    };
+    assert.strictEqual(
+      EventLoopMonitor.stallMs({ ...busyBeforeLoop, tickDelayMs: 53_000 }),
+      53_000,
+    );
+    assert.isUndefined(EventLoopMonitor.stallMs(quiet));
+  });
+
+  it("ignores a long gap the loop spent idle, such as a system sleep", () => {
     // Waking from sleep reads as a long gap, but the loop was idle in poll for it.
     const asleep: EventLoopMonitor.EventLoopReadings = {
       ...stalled,
@@ -141,6 +193,7 @@ describe("EventLoopMonitor", () => {
       activeMs: 900,
     };
     assert.isUndefined(EventLoopMonitor.stallMs(asleep));
-    assert.strictEqual(EventLoopMonitor.stallMs({ ...asleep, activeMs: 600_000 }), 599_000);
+    assert.isUndefined(EventLoopMonitor.stallMs({ ...quiet, tickDelayMs: 7_200_000 }));
+    assert.strictEqual(EventLoopMonitor.stallMs({ ...asleep, activeMs: 600_000 }), 599_900);
   });
 });

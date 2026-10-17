@@ -115,6 +115,10 @@ rewriting an identical entry while the portal may be reading it. On Wayland, Ele
 shortcut-registration result only confirms submission; it does not confirm desktop consent or
 an active binding.
 
+The window opens before the login shell finishes. Main-process spawns must await
+`DesktopShellEnvironment.installIntoProcess` to inherit the user's PATH. The backend's
+`beforeSpawn` gate and spawning IPC handlers share that single import.
+
 Native modules never load in the Electron main process on the startup path, and the two the
 snapshot feature keeps are isolated: `@crowecawcaw/xa11y` runs only in forked Node-mode children
 (`SnapShotAccessibilityWorker`, `RegionSnapShotWorker`) and a worker thread, and `ffi-rs` loads

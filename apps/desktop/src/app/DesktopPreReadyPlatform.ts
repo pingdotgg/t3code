@@ -31,7 +31,7 @@ function readCommandLineSwitchValue(
   return value.length > 0 ? value : null;
 }
 
-export const resolveEarlyLinuxElectronOptionsFromProcess = (
+const resolveEarlyLinuxElectronOptionsFromProcess = (
   homeDirectory: string,
 ): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
   DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({

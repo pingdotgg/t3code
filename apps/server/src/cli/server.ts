@@ -7,7 +7,6 @@ import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
 import * as ServerConfig from "../config.ts";
-import { runServer } from "../server.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
@@ -23,6 +22,7 @@ const runServerCommand = (
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveServerConfig(flags, logLevel, options);
+    const { runServer } = yield* Effect.promise(() => import("../server.ts"));
     return yield* runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config));
   });
 

@@ -182,6 +182,10 @@
     "./server/usageLimits": {
       "types": "./src/server/usageLimits.ts",
       "import": "./src/server/usageLimits.ts"
+    },
+    "./server/lazyAdapter": {
+      "types": "./src/server/lazyAdapter.ts",
+      "import": "./src/server/lazyAdapter.ts"
     }
   },
   "scripts": {

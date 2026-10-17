@@ -150,6 +150,7 @@ packageExtensionsChecksum: sha256-EowbsmlBFaoO0Ypufw901RnvdyjKG5dcdk2FRbc7Dr0=
 
 patchedDependencies:
   '@clerk/expo-native-components@0.2.0': 7a808b92da8460750b85818552e13be3fb73d111691c7db76965970351e124e4
+  '@effect/platform-node-shared@4.0.5': d8494abaca191d0504929916c22a9d37fc242b0e2e3a2020c73e1fc26f0cc1d9
   '@effect/vitest@4.0.5': 2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02
   '@expo/fingerprint@0.21.5': 8fba80d6bbce46c72de427fe8c7907462d262a0bfe50c6b2b7ee9c4e0c61e5e1
   '@expo/metro-config@58.0.14': 90fa980e8b6480631fb2fbb04559834e3c612db40c550cd828f11be297d8d760
@@ -626,7 +627,7 @@ importers:
         version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.0.5
-        version: 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)
+        version: 4.0.5(patch_hash=d8494abaca191d0504929916c22a9d37fc242b0e2e3a2020c73e1fc26f0cc1d9)(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)
       '@ff-labs/fff-node':
         specifier: 0.11.0
         version: 0.11.0(patch_hash=cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c)
@@ -14000,7 +14001,7 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  '@effect/platform-node-shared@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)':
+  '@effect/platform-node-shared@4.0.5(patch_hash=d8494abaca191d0504929916c22a9d37fc242b0e2e3a2020c73e1fc26f0cc1d9)(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)':
     dependencies:
       '@types/ws': 8.18.2
       effect: 4.0.5
@@ -14011,7 +14012,7 @@ snapshots:
 
   '@effect/platform-node@4.0.5(bufferutil@4.1.0)(effect@4.0.5)(redis@6.2.1)(utf-8-validate@6.0.6)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.5(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)
+      '@effect/platform-node-shared': 4.0.5(patch_hash=d8494abaca191d0504929916c22a9d37fc242b0e2e3a2020c73e1fc26f0cc1d9)(bufferutil@4.1.0)(effect@4.0.5)(utf-8-validate@6.0.6)
       effect: 4.0.5
       redis: 6.2.1
       undici: 8.11.2

@@ -4,6 +4,7 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
 import { ChevronsUpDownIcon, SearchIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -154,7 +155,7 @@ function ComboboxPopup({
   const anchor = anchorProp ?? (multiple ? chipsRef : undefined);
 
   return (
-    <ComboboxPrimitive.Portal>
+    <ComboboxPrimitive.Portal container={usePortalContainer()}>
       <ComboboxPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

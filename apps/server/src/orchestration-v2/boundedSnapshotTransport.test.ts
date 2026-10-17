@@ -2,6 +2,9 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   AuthOrchestrationReadScope,
   AuthSessionId,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
@@ -203,6 +206,68 @@ function itemUpdated(
   };
 }
 
+const forkCheckpointId = CheckpointId.make("checkpoint:compact-transport:fork");
+const forkCheckpointItemId = TurnItemId.make(`turn-item:${FORK}:checkpoint`);
+const checkpointFiles = [
+  { path: "src/a.ts", kind: "modified", additions: 3, deletions: 1 },
+  { path: "src/b.ts", kind: "added", additions: 10, deletions: 0 },
+];
+
+// A captured checkpoint and its turn item, which repeats the checkpoint's files.
+function forkCheckpoint(at: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEvent> {
+  const scopeId = CheckpointScopeId.make(`checkpoint-scope:${FORK}`);
+  const nodeId = NodeId.make(`node:${FORK}:checkpoint`);
+  return [
+    {
+      id: EventId.make(`event:${FORK}:checkpoint-captured`),
+      type: "checkpoint.captured",
+      threadId: FORK,
+      nodeId,
+      occurredAt: at,
+      payload: {
+        id: forkCheckpointId,
+        threadId: FORK,
+        scopeId,
+        runId: null,
+        nodeId,
+        parentCheckpointId: null,
+        ordinalWithinScope: 1,
+        appRunOrdinal: null,
+        ref: CheckpointRef.make("refs/t3/compact-transport/1"),
+        status: "ready",
+        files: checkpointFiles,
+        capturedAt: at,
+      },
+    },
+    {
+      id: EventId.make(`event:${FORK}:checkpoint-item`),
+      type: "turn-item.updated",
+      threadId: FORK,
+      occurredAt: at,
+      payload: {
+        id: forkCheckpointItemId,
+        threadId: FORK,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 5,
+        status: "completed",
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        type: "checkpoint",
+        checkpointId: forkCheckpointId,
+        scopeId,
+        files: checkpointFiles,
+      },
+    },
+  ];
+}
+
 const seed = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const at = yield* DateTime.now;
@@ -212,6 +277,7 @@ const seed = Effect.gen(function* () {
     ...[1, 2, 3].map((n) => itemUpdated(PARENT, parentRun, `parent-${n}`, n, at)),
     threadCreated(FORK, at, parentRun),
     ...[1, 2, 3, 4].map((n) => itemUpdated(FORK, null, `fork-${n}`, n, at)),
+    ...forkCheckpoint(at),
     threadCreated(LONG, at),
     runCreated(LONG, longRun, at),
     itemUpdated(LONG, longRun, "request", 1, at, "run_interrupt_request"),
@@ -350,6 +416,20 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
         const { projection: _legacyProjection, ...legacyRest } = legacy;
         assert.deepStrictEqual(compactRest, legacyRest);
         assert.deepStrictEqual(boundedSnapshotProjection(compact), legacy.projection);
+
+        // Checkpoint items are compacted only when that opt-in is exact too.
+        assert.notInclude(compactBody, "checkpointFilesOmittedItemIds");
+        const bothBody = await (
+          await get(`${base}?compactTurnItems=1&compactCheckpointItems=1`)
+        ).text();
+        const both = decodeBounded(bothBody);
+        assert.deepStrictEqual(boundedSnapshotProjection(both), legacy.projection);
+        if (threadId === FORK) {
+          assert.deepStrictEqual(both.checkpointFilesOmittedItemIds, [forkCheckpointItemId]);
+          assert.isBelow(bothBody.length, compactBody.length);
+        } else {
+          assert.isUndefined(both.checkpointFilesOmittedItemIds);
+        }
         return { legacy, compact };
       }).pipe(
         Effect.tap(({ legacy }) =>
@@ -361,6 +441,7 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
                 "inherited",
                 "inherited",
                 "synthetic",
+                "local",
                 "local",
                 "local",
                 "local",
@@ -408,6 +489,22 @@ it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
             turnItemsOmitLocalVisible: undefined,
           },
           { ...legacy.decoded, turnItemsOmitLocalVisible: undefined },
+        );
+
+        const compactCheckpoints = yield* firstSnapshot({
+          threadId,
+          acceptBoundedSnapshot: true,
+          acceptCompactTurnItems: true,
+          acceptCompactCheckpointItems: true,
+        });
+        assert.isUndefined(compact.decoded.checkpointFilesOmittedItemIds);
+        assert.deepStrictEqual(
+          compactCheckpoints.decoded.checkpointFilesOmittedItemIds,
+          threadId === FORK ? [forkCheckpointItemId] : undefined,
+        );
+        assert.deepStrictEqual(
+          boundedSnapshotProjection(compactCheckpoints.decoded),
+          legacy.decoded.projection,
         );
       }),
     );

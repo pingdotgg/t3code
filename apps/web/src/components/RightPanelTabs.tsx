@@ -94,6 +94,7 @@ import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
+import { queryShownElement } from "~/lib/shownElement";
 
 interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -400,7 +401,8 @@ function RightPanelEmptyState(props: {
     const handler = (event: KeyboardEvent) => {
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
-      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      if (queryShownElement(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      // The composed path starts at the real target, which may sit inside a shadow root.
       const target = event.composedPath()[0] ?? event.target;
       if (target instanceof Element && surfaceShortcutTargetsTypingContext(target)) return;
       event.preventDefault();
@@ -839,7 +841,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       }) !== "rightPanel.new"
     )
       return;
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+    if (!addSurfaceMenuOpen && queryShownElement(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) {

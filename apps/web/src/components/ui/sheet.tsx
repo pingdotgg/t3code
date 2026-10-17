@@ -3,6 +3,7 @@
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 
@@ -73,7 +74,7 @@ function SheetPopup({
   const instant = transitionDurationMs === 0;
 
   return (
-    <SheetPortal keepMounted={keepMounted}>
+    <SheetPortal container={usePortalContainer()} keepMounted={keepMounted}>
       <SheetBackdrop
         className={
           instant

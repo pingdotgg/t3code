@@ -7,6 +7,8 @@ import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as NodeSqlite from "node:sqlite";
+import { prepareServiceDatabaseBackup } from "./serviceDatabaseBackup.ts";
 import { vi } from "vite-plus/test";
 
 import {
@@ -126,6 +128,50 @@ const writeFakeRuntime = (
   });
 
 it.layer(NodeServices.layer)("service state persistence", (it) => {
+  it.effect("online update backups retain acknowledged writes after the snapshot", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-online-backup-" });
+      const sourcePath = path.join(root, "source.sqlite");
+      const writer = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(sourcePath)),
+        (db) => Effect.sync(() => db.close()),
+      );
+      writer.exec(
+        "PRAGMA journal_mode=WAL; CREATE TABLE records(id INTEGER PRIMARY KEY, value TEXT); INSERT INTO records VALUES(1,'before'); PRAGMA wal_checkpoint(TRUNCATE)",
+      );
+      const prepared = yield* Effect.acquireRelease(
+        Effect.tryPromise(async () => {
+          const backup = await prepareServiceDatabaseBackup(sourcePath, path.join(root, "backup"));
+          if (backup === undefined) throw new Error("A WAL database is copied online.");
+          return backup;
+        }),
+        (backup) => Effect.sync(() => backup.close()),
+      );
+      writer.exec(
+        "UPDATE records SET value='acknowledged'; INSERT INTO records VALUES(2,'after'); CREATE TABLE later(id INTEGER)",
+      );
+      assert.equal(writer.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get()?.busy, 1);
+      yield* Effect.tryPromise(() => prepared.finish());
+      const restored = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(path.join(root, "backup", "database"))),
+        (db) => Effect.sync(() => db.close()),
+      );
+      assert.deepEqual(
+        restored
+          .prepare("SELECT * FROM records ORDER BY id")
+          .all()
+          .map((row) => ({ ...row })),
+        [
+          { id: 1, value: "acknowledged" },
+          { id: 2, value: "after" },
+        ],
+      );
+      assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+      assert.equal(restored.prepare("SELECT COUNT(*) AS n FROM later").get()?.n, 0);
+    }),
+  );
   it.effect("durably replaces and strictly reads one state document", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -228,6 +274,9 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-stop-" });
       const statePath = path.join(root, "runtime", "service-state.json");
+      const stagingDir = path.join(root, "runtime", "db-backup", "failed-online-backup.staging");
+      yield* fs.makeDirectory(stagingDir, { recursive: true });
+      yield* fs.writeFileString(path.join(stagingDir, "database"), "incomplete online backup");
       yield* writeFakeRuntime(
         fs,
         path,
@@ -238,6 +287,12 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         writeServiceState(statePath, {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.0.0",
+          update: {
+            id: "failed-online-backup",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            status: "failed",
+          },
         }),
       );
 
@@ -247,6 +302,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
       yield* Effect.promise(() => stopping);
       yield* Effect.promise(() => running);
+      assert.isFalse(yield* fs.exists(stagingDir));
     }),
   );
 
@@ -357,6 +413,67 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  it.effect("restores an online backup when a trial migration fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-online-rollback-" });
+      const databasePath = path.join(root, "userdata", "state.sqlite");
+      yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+      const original = new NodeSqlite.DatabaseSync(databasePath);
+      original.exec(
+        "PRAGMA journal_mode=WAL; CREATE TABLE records(value TEXT); INSERT INTO records VALUES('before')",
+      );
+      original.close();
+      const childSource = `
+import { DatabaseSync } from "node:sqlite";
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  const db = new DatabaseSync(context.update.dbPath);
+  db.exec("CREATE TABLE trial_migration(id INTEGER); UPDATE records SET value='trial'");
+  db.close();
+  process.exit(1);
+} else if (context.update === undefined) {
+  process.send({type:"request-update",targetVersion:"1.1.0",dbPath:${JSON.stringify(databasePath)}});
+  setInterval(() => {}, 1000);
+} else process.exit(0);
+`;
+      for (const version of ["1.0.0", "1.1.0"]) {
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", version),
+          childSource,
+        );
+      }
+      const launcher = new Launcher(root, {
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.0.0",
+      });
+      yield* Effect.promise(() => launcher.run().catch(() => undefined));
+      const state = yield* Effect.promise(() =>
+        readServiceState(path.join(root, "runtime", "service-state.json")),
+      );
+      assert.equal(state.activeVersion, "1.0.0");
+      assert.equal(state.update?.status, "rolled-back");
+      const restored = new NodeSqlite.DatabaseSync(databasePath);
+      try {
+        assert.equal(restored.prepare("SELECT value FROM records").get()?.value, "before");
+        assert.equal(
+          restored
+            .prepare("SELECT COUNT(*) n FROM sqlite_schema WHERE name='trial_migration'")
+            .get()?.n,
+          0,
+        );
+        assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+      } finally {
+        restored.close();
+      }
+    }),
+  );
+
+  // Migrations on a large database can keep a trial busy for minutes before it
+  // reports prepared. Only a trial that stays stuck past the window rolls back.
   it.effect.each([
     { prepares: true, status: "committed", activeVersion: "1.1.0" },
     { prepares: false, status: "rolled-back", activeVersion: "1.0.0" },

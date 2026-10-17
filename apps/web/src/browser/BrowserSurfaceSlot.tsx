@@ -1,9 +1,10 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useContext, useLayoutEffect, useRef } from "react";
 
 import { acquireBrowserSurface } from "./browserSurfaceStore";
 import { observeResize } from "../lib/observeResize";
+import { KeptViewWarmingContext } from "../components/keptView";
 
 export function BrowserSurfaceSlot(props: {
   readonly tabId: string;
@@ -16,13 +17,16 @@ export function BrowserSurfaceSlot(props: {
 }) {
   const {
     tabId,
-    visible,
     cornerRadius = 0,
     zIndex = 30,
     layoutVersion,
     className,
     fitSourceContent = false,
   } = props;
+  // A thread view warming up out of sight is invisible only to CSS; the
+  // native surface would show over the thread on screen.
+  const warming = useContext(KeptViewWarmingContext);
+  const visible = props.visible && !warming;
   const elementRef = useRef<HTMLDivElement | null>(null);
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
   const updateRef = useRef<(() => void) | null>(null);

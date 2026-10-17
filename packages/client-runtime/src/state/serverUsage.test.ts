@@ -7,7 +7,7 @@ import {
   WS_METHODS,
   type ServerConfig,
   type ServerConfigStreamEvent,
-  type ServerSettings,
+  ServerSettings,
   type UsageSource,
   type UsageSummary,
   type UsageSummaryInput,
@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -190,8 +191,11 @@ const makeHarness = Effect.fn("ServerUsageTest.makeHarness")(function* (
       type: "settingsUpdated",
       payload: { settings },
     });
+    // An update equal to the current settings keeps the current object.
     yield* AtomRegistry.toStream(registry, atoms.settingsValueAtom(TARGET.environmentId)).pipe(
-      Stream.filter((current) => current === next),
+      Stream.filter(
+        (current) => current !== null && Schema.toEquivalence(ServerSettings)(current, next),
+      ),
       Stream.runHead,
     );
   });

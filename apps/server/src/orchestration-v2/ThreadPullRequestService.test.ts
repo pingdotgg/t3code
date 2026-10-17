@@ -218,7 +218,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const service = yield* ThreadPullRequestService.make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          // Startup backfill reads every active thread.
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            compactPullRequests: true,
+            unsettledOnly: false,
+          });
           yield* service.drain;
           yield* PubSub.publish(events, {
             type: "thread.metadata-updated",
@@ -305,10 +310,19 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const service = yield* ThreadPullRequestService.make;
           yield* service.start();
           yield* Deferred.succeed(activation, undefined);
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
+          // Backfill finds the settled branch thread and must read it again.
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            compactPullRequests: true,
+            unsettledOnly: false,
+          });
           yield* service.drain;
           yield* TestClock.adjust("1 minute");
-          expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: true });
+          expect(yield* Queue.take(reads)).toEqual({
+            location: "active",
+            compactPullRequests: true,
+            unsettledOnly: true,
+          });
           yield* service.drain;
         }).pipe(Effect.provide(layerDependencies));
       }),

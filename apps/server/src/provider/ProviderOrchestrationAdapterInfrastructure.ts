@@ -1,7 +1,7 @@
+import * as CodexAppServerClientFactoryService from "./CodexAppServerClientFactory.ts";
+import * as ClaudeAgentSdkQueryRunnerService from "./ClaudeAgentSdkQueryRunner.ts";
 import * as Layer from "effect/Layer";
 
-import * as ClaudeAdapterV2 from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import * as CodexAdapterV2 from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
@@ -9,8 +9,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 export type ProviderOrchestrationAdapterInfrastructure =
-  | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
-  | CodexAdapterV2.CodexAppServerClientFactory
+  | ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner
+  | CodexAppServerClientFactoryService.CodexAppServerClientFactory
   | CursorAgentSdk.CursorAgentSdkRunner
   | CursorSdk.CursorSdk
   | CursorKeychain.CursorKeychain
@@ -22,8 +22,8 @@ export type ProviderOrchestrationAdapterInfrastructure =
  * memoization yields one shared queue.
  */
 export const layer = Layer.mergeAll(
-  ClaudeAdapterV2.layerQueryRunner,
-  CodexAdapterV2.layerAppServerClientFactory,
+  ClaudeAgentSdkQueryRunnerService.layer,
+  CodexAppServerClientFactoryService.layer,
   CursorAgentSdk.layer.pipe(Layer.provideMerge(CursorSdk.layer)),
   CursorKeychain.layer,
   IdAllocator.layer,

@@ -13,8 +13,12 @@ import {
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { useProgressiveRowLimit } from "../../hooks/useProgressiveRowLimit";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+
+/** Enough rows to fill a tall window; the rest render right after the first paint. */
+const INITIAL_LICENSE_ROWS = 40;
 
 type LicenseManifestState =
   | { readonly status: "loading" }
@@ -63,7 +67,8 @@ function LicenseNoticeRow({
 }) {
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
-      <article>
+      {/* Rows out of view skip style and layout until scrolled to. */}
+      <article className="[contain-intrinsic-size:auto_2.5rem] [content-visibility:auto] sm:[contain-intrinsic-size:auto_2.25rem]">
         <div className="flex min-h-10 items-center hover:bg-muted/35 sm:min-h-9">
           <CollapsibleTrigger className="group flex min-h-10 min-w-0 flex-1 items-center gap-2.5 px-3 text-left sm:min-h-9 sm:px-4">
             <ChevronRightIcon
@@ -243,6 +248,9 @@ export function OpenSourceLicensesPanel() {
     [entries, query],
   );
   const retry = useCallback(() => setRequestVersion((value) => value + 1), []);
+  const rowLimit = useProgressiveRowLimit(INITIAL_LICENSE_ROWS);
+  const shownEntries =
+    filteredEntries.length > rowLimit ? filteredEntries.slice(0, rowLimit) : filteredEntries;
 
   return (
     <SettingsPageContainer>
@@ -264,7 +272,7 @@ export function OpenSourceLicensesPanel() {
         {state.status === "ready" ? (
           <div className="text-base sm:text-sm">
             {filteredEntries.length > 0 ? (
-              filteredEntries.map((entry) => {
+              shownEntries.map((entry) => {
                 const entryKey = thirdPartyLicenseEntryKey(entry);
                 return (
                   <LicenseNoticeRow

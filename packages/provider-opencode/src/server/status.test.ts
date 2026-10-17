@@ -254,9 +254,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
         : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
-    return {} as unknown as ReturnType<
-      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
-    >;
+    return Effect.succeed(
+      {} as unknown as Effect.Success<
+        ReturnType<OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]>
+      >,
+    );
   },
   loadOpenCodeInventory: () =>
     runtimeMock.state.inventoryError

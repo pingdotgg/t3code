@@ -41,6 +41,7 @@ const isDesktopBackendObservabilitySettingsReadError = Schema.is(
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
     installIntoProcess: Effect.succeed(prepared),
+    secretStorageReady: Effect.void,
   });
 
 const layerBackendConfiguration = (prepared = true) =>
@@ -124,6 +125,7 @@ const withHarness = <A, E, R>(
     | DesktopBackendConfiguration.DesktopBackendConfiguration
   >,
   prepared = true,
+  platform: NodeJS.Platform = "darwin",
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -138,7 +140,7 @@ const withHarness = <A, E, R>(
           Layer.provideMerge(DesktopAppSettings.layerTest()),
           Layer.provideMerge(DesktopWslEnvironment.layerTest()),
           Layer.provideMerge(DesktopWslServerTree.layerTest()),
-          Layer.provideMerge(layerEnvironment(baseDir)),
+          Layer.provideMerge(layerEnvironment(baseDir, { platform })),
         ),
       ),
     );
@@ -347,7 +349,7 @@ describe("DesktopBackendConfiguration", () => {
     ),
   );
 
-  it.effect("keeps server hydration enabled when desktop preparation failed", () =>
+  it.effect("keeps server hydration enabled when Windows preparation failed", () =>
     withHarness(
       Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
@@ -355,6 +357,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(primary.bootstrap.shellEnvironmentPrepared, false);
       }),
       false,
+      "win32",
     ),
   );
 

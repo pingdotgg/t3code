@@ -13,6 +13,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useAtomValue } from "@effect/atom-react";
+import { environmentSession } from "../state/session";
+import { serverEnvironment } from "../state/server";
 import {
   readProject,
   useAllEnvironmentShellsBootstrapped,
@@ -55,9 +58,23 @@ function IndexDraftLanding() {
     [bootstrapped, projects, threads],
   );
 
+  const liveConfig = useAtomValue(
+    serverEnvironment.configValueAtom(mostRecentProject?.environmentId ?? null),
+  );
+  const sessionConfig = useAtomValue(
+    mostRecentProject === null
+      ? serverEnvironment.configValueAtom(null)
+      : environmentSession.initialConfigValueAtom(mostRecentProject.environmentId),
+  );
   useEffect(() => {
     // Starting a draft after the user has left would replace the page they picked.
-    if (mostRecentProject === null || startingRef.current || !isStillOnIndex()) {
+    if (
+      liveConfig === null ||
+      sessionConfig === null ||
+      mostRecentProject === null ||
+      startingRef.current ||
+      !isStillOnIndex()
+    ) {
       return;
     }
     const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
@@ -76,7 +93,7 @@ function IndexDraftLanding() {
         startingRef.current = false;
         setStartState((state) => ({ ...state, failed: true }));
       });
-  }, [handleNewThread, mostRecentProject, startState.retryRequest]);
+  }, [handleNewThread, liveConfig, mostRecentProject, sessionConfig, startState.retryRequest]);
 
   if (!bootstrapped) {
     return null;

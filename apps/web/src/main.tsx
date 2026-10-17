@@ -4,6 +4,8 @@ import { createHashHistory, createBrowserHistory } from "@tanstack/react-router"
 
 import "./index.css";
 
+import { ensureClientSettingsHydrated } from "./hooks/useSettings";
+import { projectFaviconCache } from "./assets/projectFaviconCache";
 import { prepareProviderAuthDelivery } from "./providerAuthDelivery";
 import { isElectron } from "./env";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
@@ -13,9 +15,19 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
-import { reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import {
+  isRoutePreloadPending,
+  isSpeculativeLoadFailure,
+  isSpeculativeLoadPending,
+  reloadOnceForChunkLoadError,
+} from "./lib/chunkReloadGuard";
 
+import { restoreStackTraces } from "./lib/bootStackTraces";
+
+restoreStackTraces();
 prepareProviderAuthDelivery();
+void ensureClientSettingsHydrated().catch(() => undefined);
+void projectFaviconCache.hydrate();
 
 // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
 const history = isElectron ? createHashHistory() : createBrowserHistory();
@@ -34,11 +46,20 @@ const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string
 // a deploy; one guarded reload picks up the fresh index.html.
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
-  if (reloadScheduled) return;
-  if (reloadOnceForChunkLoadError(import.meta.url, String(event.payload))) {
-    reloadScheduled = true;
-    event.preventDefault();
+  if (reloadScheduled || isRoutePreloadPending()) return;
+  const reload = () => {
+    if (reloadScheduled) return false;
+    reloadScheduled = reloadOnceForChunkLoadError(import.meta.url, String(event.payload));
+    return reloadScheduled;
+  };
+  if (!isSpeculativeLoadPending()) {
+    if (reload()) event.preventDefault();
+    return;
   }
+  // A real load overlapping a preload keeps its rejection and still reloads.
+  setTimeout(() => {
+    if (!isSpeculativeLoadFailure(event.payload)) reload();
+  }, 0);
 });
 
 const app = <AppRoot router={router} />;

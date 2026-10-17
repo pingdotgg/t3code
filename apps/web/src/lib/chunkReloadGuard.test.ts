@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { reloadOnceForChunkLoadError } from "./chunkReloadGuard";
+import {
+  isRoutePreloadPending,
+  isSpeculativeLoadFailure,
+  isSpeculativeLoadPending,
+  preloadRouteSpeculatively,
+  preloadSpeculatively,
+  reloadOnceForChunkLoadError,
+} from "./chunkReloadGuard";
 
 function createStorageStub(): Storage {
   const store = new Map<string, string>();
@@ -64,3 +71,33 @@ describe("reloadOnceForChunkLoadError", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 });
+
+it.each([preloadSpeculatively, preloadRouteSpeculatively])(
+  "attributes speculative failures and resets pending state: %s",
+  async (load) => {
+    let reject!: (error: unknown) => void;
+    const pending = new Promise<never>((_, fail) => {
+      reject = fail;
+    });
+    const preload = load(() => pending);
+    expect(
+      load === preloadSpeculatively ? isSpeculativeLoadPending() : isRoutePreloadPending(),
+    ).toBe(true);
+    const failure = new TypeError(
+      "Failed to fetch dynamically imported module: https://app.t3.codes/assets/chunk.js",
+    );
+    reject(failure);
+    if (load === preloadSpeculatively) await expect(preload).resolves.toBeUndefined();
+    else await expect(preload).rejects.toBe(failure);
+    expect(isSpeculativeLoadPending() || isRoutePreloadPending()).toBe(false);
+    expect(isSpeculativeLoadFailure(failure)).toBe(load === preloadSpeculatively);
+    expect(
+      isSpeculativeLoadFailure(
+        new TypeError(
+          "Failed to fetch dynamically imported module: https://app.t3.codes/assets/chunk.js",
+        ),
+      ),
+    ).toBe(false);
+    await expect(load(async () => "module")).resolves.toBe("module");
+  },
+);

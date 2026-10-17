@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -25,7 +26,10 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
+    const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+    // Persist before waiting; shortcut setup needs the shell's session bus.
     yield* clientSettings.set(settings);
+    yield* shellEnvironment.installIntoProcess;
     yield* snapShot.configure(settings);
   }),
 });

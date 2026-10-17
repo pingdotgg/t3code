@@ -1,3 +1,4 @@
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
@@ -15,10 +16,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import {
-  createClaudeAdapterV2,
-  type ClaudeAdapterV2DriverEnv,
-} from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import type { ClaudeAdapterV2DriverEnv } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
@@ -158,25 +156,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
-      const orchestrationAdapter = yield* createClaudeAdapterV2(
-        {
-          instanceId,
-          displayName,
-          accentColor,
-          environment,
-          enabled,
-          config,
-        },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Claude orchestration adapter.",
-              cause,
-            }),
+      const orchestrationAdapter = yield* makeLazyAdapter(
+        instanceId,
+        DRIVER_KIND,
+        Effect.promise(() => import("../../orchestration-v2/Adapters/ClaudeAdapterV2.ts")).pipe(
+          Effect.flatMap(({ createClaudeAdapterV2 }) =>
+            createClaudeAdapterV2(
+              {
+                instanceId,
+                displayName,
+                accentColor,
+                environment,
+                enabled,
+                config,
+              },
+              { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: "Failed to build Claude orchestration adapter.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
         ),
       );
       const textGeneration = yield* makeClaudeTextGeneration(

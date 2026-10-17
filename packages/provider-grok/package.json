@@ -22,6 +22,10 @@
     "./testing": {
       "types": "./src/testing.ts",
       "import": "./src/testing.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
     }
   },
   "scripts": {

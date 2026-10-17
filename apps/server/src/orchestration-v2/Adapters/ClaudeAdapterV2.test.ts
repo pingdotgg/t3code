@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- workflow fixtures use files and the fake Claude CLI uses Node streams
+import * as ClaudeAgentSdkQueryRunnerService from "../../provider/ClaudeAgentSdkQueryRunner.ts";
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -1178,7 +1179,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
         prefix: "t3-claude-binary-path-",
       }),
     ),
-    Effect.provideService(ClaudeAdapterV2.ClaudeAgentSdkQueryRunner, {
+    Effect.provideService(ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner, {
       allocateSessionId: Effect.succeed("native-thread-claude-binary-path"),
       open: (input) =>
         Effect.sync(() => {
@@ -1991,7 +1992,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
   };
   const openWith = (cli: ReturnType<typeof makeFakeClaudeCli>) =>
     Effect.gen(function* () {
-      const runner = yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner;
+      const runner = yield* ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner;
       return yield* runner.open({
         threadId: ThreadId.make("thread-claude-mcp-channel"),
         providerSessionId: ProviderSessionId.make("provider-session-claude-mcp-channel"),

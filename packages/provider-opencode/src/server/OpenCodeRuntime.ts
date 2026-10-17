@@ -1,17 +1,16 @@
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
-import {
-  createOpencodeClient,
-  type Agent,
-  type Command,
-  type FilePartInput,
-  type Model,
-  type OpencodeClient,
-  type PermissionRuleset,
-  type ProviderListResponse,
-  type QuestionAnswer,
-  type QuestionRequest,
+import type {
+  Agent,
+  Command,
+  FilePartInput,
+  Model,
+  OpencodeClient,
+  PermissionRuleset,
+  ProviderListResponse,
+  QuestionAnswer,
+  QuestionRequest,
 } from "@opencode-ai/sdk/v2";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -274,7 +273,7 @@ export class OpenCodeRuntime extends Context.Service<
       readonly baseUrl: string;
       readonly directory: string;
       readonly serverPassword?: string;
-    }) => OpencodeClient;
+    }) => Effect.Effect<OpencodeClient>;
     readonly loadOpenCodeInventory: (
       client: OpencodeClient,
     ) => Effect.Effect<OpenCodeInventory, OpenCodeRuntimeError>;
@@ -644,18 +643,22 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
     );
 
   const createOpenCodeSdkClient: OpenCodeRuntime["Service"]["createOpenCodeSdkClient"] = (input) =>
-    createOpencodeClient({
-      baseUrl: input.baseUrl,
-      directory: input.directory,
-      ...(input.serverPassword
-        ? {
-            headers: {
-              Authorization: `Basic ${Buffer.from(`opencode:${input.serverPassword}`, "utf8").toString("base64")}`,
-            },
-          }
-        : {}),
-      throwOnError: true,
-    });
+    Effect.promise(() => import("@opencode-ai/sdk/v2")).pipe(
+      Effect.map(({ createOpencodeClient }) =>
+        createOpencodeClient({
+          baseUrl: input.baseUrl,
+          directory: input.directory,
+          ...(input.serverPassword
+            ? {
+                headers: {
+                  Authorization: `Basic ${Buffer.from(`opencode:${input.serverPassword}`, "utf8").toString("base64")}`,
+                },
+              }
+            : {}),
+          throwOnError: true,
+        }),
+      ),
+    );
 
   const startOpenCodeServerProcess: OpenCodeRuntime["Service"]["startOpenCodeServerProcess"] = (
     input,
@@ -839,13 +842,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const url = readyOption.value;
       const version = yield* (
         input.verify?.(url) ??
-          verifyOpenCodeServerVersion(
-            createOpenCodeSdkClient({
-              baseUrl: url,
-              directory: input.directory,
-              ...(serverPassword !== undefined ? { serverPassword } : {}),
-            }),
-          )
+          createOpenCodeSdkClient({
+            baseUrl: url,
+            directory: input.directory,
+            ...(serverPassword !== undefined ? { serverPassword } : {}),
+          }).pipe(Effect.flatMap(verifyOpenCodeServerVersion))
       );
 
       return {
@@ -869,21 +870,21 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         external: true,
         ...(input.serverPassword !== undefined ? { serverPassword: input.serverPassword } : {}),
       });
-      return verifyOpenCodeServerVersion(
-        createOpenCodeSdkClient({
-          baseUrl: serverUrl,
-          directory: input.directory,
-          ...(serverPassword !== undefined ? { serverPassword } : {}),
-        }),
-      ).pipe(
-        Effect.map((version) => ({
-          url: serverUrl,
-          ...(serverPassword !== undefined ? { serverPassword } : {}),
-          version,
-          exitCode: null,
-          external: true,
-        })),
-      );
+      return createOpenCodeSdkClient({
+        baseUrl: serverUrl,
+        directory: input.directory,
+        ...(serverPassword !== undefined ? { serverPassword } : {}),
+      })
+        .pipe(Effect.flatMap(verifyOpenCodeServerVersion))
+        .pipe(
+          Effect.map((version) => ({
+            url: serverUrl,
+            ...(serverPassword !== undefined ? { serverPassword } : {}),
+            version,
+            exitCode: null,
+            external: true,
+          })),
+        );
     }
 
     return startOpenCodeServerProcess({

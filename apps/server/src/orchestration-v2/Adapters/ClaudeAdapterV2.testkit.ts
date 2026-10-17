@@ -1,3 +1,4 @@
+import * as ClaudeAgentSdkQueryRunnerService from "../../provider/ClaudeAgentSdkQueryRunner.ts";
 import {
   forkSession,
   query,
@@ -942,13 +943,13 @@ const makeClaudeAgentSdkReplayQueryRunner = Effect.fn("ClaudeAgentSdkReplayQuery
 function replayQueryRunnerService(
   transcript: ClaudeAgentSdkReplayTranscript,
   queryRunner: ClaudeQueryRunner,
-): ClaudeAdapterV2.ClaudeAgentSdkQueryRunner["Service"] {
+): ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner["Service"] {
   const replay = <A>(run: () => A) =>
     Effect.try({
       try: run,
       catch: (cause) => replayQueryRunnerError(transcript, cause),
     });
-  return ClaudeAdapterV2.ClaudeAgentSdkQueryRunner.of({
+  return ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner.of({
     allocateSessionId: Effect.succeed(nativeSessionIdFor(transcript)),
     open: (input) => replay(() => queryRunner.open(input)),
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
@@ -960,9 +961,9 @@ function replayQueryRunnerService(
 function layerClaudeAgentSdkReplayQueryRunner(
   transcript: ClaudeAgentSdkReplayTranscript,
   options: { readonly replayGate?: ProviderReplayGate } = {},
-): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
+): Layer.Layer<ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner> {
   return Layer.effect(
-    ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+    ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner,
     makeClaudeAgentSdkReplayQueryRunner(transcript, options),
   );
 }
@@ -973,16 +974,16 @@ function layerClaudeAgentSdkReplay(
     readonly replayGate?: ProviderReplayGate;
     readonly queryRunner?: ClaudeQueryRunner;
   } = {},
-): Layer.Layer<ClaudeAdapterV2.ClaudeAgentSdkQueryRunner> {
+): Layer.Layer<ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner> {
   if (options.queryRunner !== undefined) {
     return Layer.succeed(
-      ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+      ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner,
       replayQueryRunnerService(transcript, options.queryRunner),
     );
   }
   const queryRunner = makeReplayQueryRunner(transcript, options);
   return Layer.effect(
-    ClaudeAdapterV2.ClaudeAgentSdkQueryRunner,
+    ClaudeAgentSdkQueryRunnerService.ClaudeAgentSdkQueryRunner,
     Effect.gen(function* () {
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {

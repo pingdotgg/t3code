@@ -1,8 +1,12 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { Spinner } from "~/components/ui/spinner";
 import { useShortcutModifierState } from "~/shortcutModifierState";
 import type { PullRequestSpeedActionResult } from "~/components/pullRequest/PullRequestSpeedActions";
-import { usePullRequestCloseBatch } from "~/components/pullRequest/usePullRequestActions";
+import {
+  isPullRequestActionPending,
+  usePullRequestCloseBatch,
+} from "~/components/pullRequest/usePullRequestActions";
 import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
@@ -218,6 +222,73 @@ function PullRequestGroupHeader({
   );
 }
 
+type PullRequestListItem =
+  | {
+      readonly kind: "group";
+      readonly key: string;
+      readonly gap: "none" | "group";
+      readonly group: { key: string; label: string; entries: ReadonlyArray<unknown> };
+    }
+  | {
+      readonly kind: "row";
+      readonly key: string;
+      readonly gap: "none" | "row" | "group";
+      readonly entryKey: string;
+      readonly entry: EnvironmentPullRequestEntry;
+    };
+
+const EMPTY_PULL_REQUEST_LIST_ITEMS: ReadonlyArray<PullRequestListItem> = [];
+
+function pullRequestListItems(
+  groups: ReadonlyArray<{
+    readonly key: string;
+    readonly label: string;
+    readonly entries: ReadonlyArray<EnvironmentPullRequestEntry>;
+  }>,
+): ReadonlyArray<PullRequestListItem> {
+  const items: PullRequestListItem[] = [];
+  for (const [groupIndex, group] of groups.entries()) {
+    if (group.label) {
+      items.push({
+        kind: "group",
+        key: `group:${group.key}`,
+        gap: groupIndex === 0 ? "none" : "group",
+        group,
+      });
+    }
+    for (const [index, entry] of group.entries.entries()) {
+      const entryKey = pullRequestEntryKey(entry);
+      const startsGroup = index === 0 && !group.label;
+      items.push({
+        kind: "row",
+        key: `${group.key}:${entryKey}`,
+        gap: !startsGroup ? "row" : groupIndex === 0 ? "none" : "group",
+        entryKey,
+        entry,
+      });
+    }
+  }
+  return items;
+}
+
+const pullRequestListItemKey = (item: PullRequestListItem) => item.key;
+const pullRequestListItemType = (item: PullRequestListItem) => item.kind;
+
+function PullRequestListLane({
+  className,
+  children,
+}: {
+  className?: string | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <WorkspacePageContainer width="expanded" className={cn("gap-0 pt-0 pb-0", className)}>
+      {children}
+    </WorkspacePageContainer>
+  );
+}
+
+// The state filters wear the same glyphs the rows do, so the two read as one vocabulary.
 const INVOLVEMENT_TABS = [
   { value: "all", label: "All", Icon: LayersIcon },
   { value: "reviewing", label: "Reviewing", Icon: EyeIcon },
@@ -1411,9 +1482,7 @@ function PullRequestsRouteView() {
         row.entry.state === "open" &&
         closeSweepRef.current.hostActionsOf(row.entry).has("close") &&
         !closeSweepRef.current.closingKeys.has(key) &&
-        !scrollRef.current?.querySelector(
-          `[data-pull-request-key="${CSS.escape(key)}"] [data-pull-request-action-pending="true"]`,
-        )
+        !isPullRequestActionPending(key)
       );
     };
     let sweptKeys: string[] = [];
@@ -1442,11 +1511,22 @@ function PullRequestsRouteView() {
         if (!viewport) return;
         const bounds = viewport.getBoundingClientRect();
         const visibleY = Math.min(Math.max(y, bounds.top), bounds.bottom - 1);
+        // Recycled rows' DOM order differs from their screen order.
         let key: string | null = null;
+        let keyTop = -Infinity;
+        let topmost: { key: string | null; top: number } | null = null;
         for (const row of viewport.querySelectorAll<HTMLElement>("[data-pull-request-key]")) {
-          if (key !== null && row.getBoundingClientRect().top > visibleY) break;
-          key = row.dataset.pullRequestKey ?? null;
+          const rect = row.getBoundingClientRect();
+          if (rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue;
+          const top = rect.top;
+          const rowKey = row.dataset.pullRequestKey ?? null;
+          if (top <= visibleY && top > keyTop) {
+            key = rowKey;
+            keyTop = top;
+          }
+          if (topmost === null || top < topmost.top) topmost = { key: rowKey, top };
         }
+        key ??= topmost?.key ?? null;
         if (key !== null) sweepTo(key);
       },
       onEnd: () => {
@@ -1632,6 +1712,76 @@ function PullRequestsRouteView() {
   );
   const carriedToNothing =
     showingCarried && listQuery.isPending && shownCount === 0 && typedQuery.length === 0;
+  const listRowsShown =
+    capabilityKnown &&
+    pullRequestsSupported &&
+    !firstLoad &&
+    !(listQuery.error && shownCount === 0) &&
+    !carriedToNothing &&
+    shownCount > 0;
+  const listItems = useMemo(
+    () => (listRowsShown ? pullRequestListItems(displayGroups) : EMPTY_PULL_REQUEST_LIST_ITEMS),
+    [displayGroups, listRowsShown],
+  );
+  const renderListItem = useCallback(
+    ({ item }: { item: PullRequestListItem }) => {
+      return (
+        <PullRequestListLane
+          className={item.gap === "row" ? "pt-0.5" : item.gap === "group" ? "pt-3" : undefined}
+        >
+          {item.kind === "group" ? (
+            <PullRequestGroupHeader group={item.group} />
+          ) : (
+            <PullRequestRow
+              statsKey={item.entryKey}
+              statsRef={registerStatsRow}
+              entry={item.entry}
+              showProjectTitle
+              showProvider={showProvider}
+              {...(capableEnvironments.length > 1 &&
+              environmentLabels.get(item.entry.environmentId) !== undefined
+                ? { environmentLabel: environmentLabels.get(item.entry.environmentId)! }
+                : {})}
+              // Ten is the floor the ranking gives a row whose own fields say nothing
+              // about the search: the host matched something this row cannot show.
+              matchedElsewhere={
+                typedParsed.text.length > 0 &&
+                scorePullRequestMatch(item.entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
+              }
+              selected={
+                selected?.environmentId === item.entry.environmentId &&
+                selected.repository === item.entry.repository &&
+                selected.host?.toLowerCase() === item.entry.host.toLowerCase() &&
+                selected.number === item.entry.number
+              }
+              onSelect={selectEntry}
+              speedMode={speedMode}
+              hostActions={hostActionsOf(item.entry)}
+              onActed={onSpeedAction}
+              closing={closingKeys.has(item.entryKey)}
+              sweeping={closeSweepKeys.has(item.entryKey)}
+              onCloseSweepStart={startCloseSweep}
+            />
+          )}
+        </PullRequestListLane>
+      );
+    },
+    [
+      capableEnvironments.length,
+      environmentLabels,
+      typedParsed.text,
+      selected,
+      selectEntry,
+      speedMode,
+      onSpeedAction,
+      closingKeys,
+      closeSweepKeys,
+      showProvider,
+      hostActionsOf,
+      registerStatsRow,
+      startCloseSweep,
+    ],
+  );
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -1670,49 +1820,7 @@ function PullRequestsRouteView() {
           onClearQuery={() => updateListScope({ q: undefined })}
           onLoadMore={loadMore}
         />
-      ) : (
-        <div className={cn("space-y-3", closeSweepKeys.size > 0 && "**:pointer-events-none")}>
-          {displayGroups.map((group) => (
-            <div key={group.key} className="space-y-0.5">
-              {group.label ? <PullRequestGroupHeader group={group} /> : null}
-              {group.entries.map((entry) => {
-                const entryKey = pullRequestEntryKey(entry);
-                return (
-                  <PullRequestRow
-                    key={entryKey}
-                    statsKey={entryKey}
-                    statsRef={registerStatsRow}
-                    entry={entry}
-                    showProjectTitle
-                    showProvider={showProvider}
-                    {...(capableEnvironments.length > 1 &&
-                    environmentLabels.get(entry.environmentId) !== undefined
-                      ? { environmentLabel: environmentLabels.get(entry.environmentId)! }
-                      : {})}
-                    matchedElsewhere={
-                      typedParsed.text.length > 0 &&
-                      scorePullRequestMatch(entry, typedParsed.text) <= MATCHED_ELSEWHERE_SCORE
-                    }
-                    selected={
-                      selected?.environmentId === entry.environmentId &&
-                      selected.repository === entry.repository &&
-                      selected.host?.toLowerCase() === entry.host.toLowerCase() &&
-                      selected.number === entry.number
-                    }
-                    onSelect={selectEntry}
-                    speedMode={speedMode}
-                    hostActions={hostActionsOf(entry)}
-                    onActed={onSpeedAction}
-                    closing={closingKeys.has(entryKey)}
-                    sweeping={closeSweepKeys.has(entryKey)}
-                    onCloseSweepStart={startCloseSweep}
-                  />
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      )}
+      ) : null}
 
       {listQuery.error && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
@@ -1861,6 +1969,9 @@ function PullRequestsRouteView() {
     rightPanelOpen: rightPanelState.isOpen,
     maximizedAway: rightPanelMaximized,
     listBody,
+    listItems,
+    renderListItem,
+    listLocked: closeSweepKeys.size > 0,
     scrollRef,
   };
 
@@ -2251,6 +2362,9 @@ function PullRequestsColumn({
   rightPanelOpen,
   maximizedAway,
   listBody,
+  listItems,
+  renderListItem,
+  listLocked,
   scrollRef,
 }: {
   refreshing: boolean;
@@ -2271,9 +2385,18 @@ function PullRequestsColumn({
   rightPanelOpen: boolean;
   maximizedAway: boolean;
   listBody: ReactNode;
+  listItems: ReadonlyArray<PullRequestListItem>;
+  renderListItem: (info: { item: PullRequestListItem }) => ReactNode;
+  listLocked: boolean;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
   const markerRef = useRef<HTMLDivElement | null>(null);
+  const attachList = useCallback(
+    (list: LegendListRef | null) => {
+      scrollRef.current = (list?.getScrollableNode() as HTMLDivElement | null) ?? null;
+    },
+    [scrollRef],
+  );
   const [condensed, setCondensed] = useState(false);
   useEffect(() => {
     const marker = markerRef.current;
@@ -2390,38 +2513,59 @@ function PullRequestsColumn({
         {rightPanelControl}
       </WorkspacePageHeader>
 
-      <div
-        ref={scrollRef}
-        className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto"
-      >
-        <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
-          <div className="flex flex-col gap-3">
-            <div ref={inFlowSearchRef} className="flex flex-wrap items-center gap-2">
-              <div className="min-w-0 basis-full @lg/pr-list:basis-0 @lg/pr-list:flex-1">
-                {searchInput}
+      {/* Only the rows in view render; the controls scroll with them as the list header. */}
+      <LegendList<PullRequestListItem>
+        ref={attachList}
+        data={listItems}
+        keyExtractor={pullRequestListItemKey}
+        getItemType={pullRequestListItemType}
+        renderItem={renderListItem}
+        extraData={renderListItem}
+        estimatedItemSize={56}
+        recycleItems={false}
+        className={cn(
+          "topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-x-hidden",
+          listLocked && "**:pointer-events-none",
+        )}
+        // The footer fills what the rows leave, so the empty states stay centered.
+        contentContainerClassName="flex flex-col [&>:last-child]:flex [&>:last-child]:flex-1 [&>:last-child]:flex-col"
+        ListHeaderComponent={
+          <WorkspacePageContainer width="expanded" className="gap-4 pb-4">
+            <div className="flex flex-col gap-3">
+              <div ref={inFlowSearchRef} className="flex flex-wrap items-center gap-2">
+                <div className="min-w-0 basis-full @lg/pr-list:basis-0 @lg/pr-list:flex-1">
+                  {searchInput}
+                </div>
+                {sortMenu}
+                {filtersMenu}
+                <CompactFilterMenu
+                  label="Filter by provider"
+                  outlined
+                  iconOnly={host !== undefined}
+                  triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
+                  triggerLabel="All"
+                  value={host ?? ""}
+                  options={hostMenuOptions}
+                  onChange={(next) => onHost(next === "" ? undefined : next)}
+                />
+                {!condensed ? (
+                  <PullRequestRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+                ) : null}
               </div>
-              {sortMenu}
-              {filtersMenu}
-              <CompactFilterMenu
-                label="Filter by provider"
-                outlined
-                iconOnly={host !== undefined}
-                triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
-                triggerLabel="All"
-                value={host ?? ""}
-                options={hostMenuOptions}
-                onChange={(next) => onHost(next === "" ? undefined : next)}
-              />
-              {!condensed ? (
-                <PullRequestRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-              ) : null}
+              {/* Scrolled past this marker, the controls are gone and the title takes over. */}
+              <div ref={markerRef} aria-hidden className="-mt-3 h-px w-full" />
             </div>
-            <div ref={markerRef} aria-hidden className="-mt-3 h-px w-full" />
-          </div>
-
-          {listBody}
-        </WorkspacePageContainer>
-      </div>
+          </WorkspacePageContainer>
+        }
+        ListFooterComponent={
+          <WorkspacePageContainer
+            width="expanded"
+            className={cn("flex-1 gap-4", listItems.length > 0 ? "pt-4" : "pt-0")}
+          >
+            {listBody}
+          </WorkspacePageContainer>
+        }
+      />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -585,6 +586,37 @@ function serverWelcomeStateChanges(environmentId: EnvironmentId) {
   );
 }
 
+// Avoid repeated config walks from hashing/schema equivalence during boot.
+function sameConfigValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++) {
+      if (!sameConfigValue(left[index], right[index])) return false;
+    }
+    return true;
+  }
+  if (
+    Object.getPrototypeOf(left) !== Object.prototype ||
+    Object.getPrototypeOf(right) !== Object.prototype
+  ) {
+    return Equal.equals(left, right);
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = Object.keys(leftRecord);
+  if (keys.length !== Object.keys(rightRecord).length) return false;
+  for (const key of keys) {
+    if (!Object.hasOwn(rightRecord, key) || !sameConfigValue(leftRecord[key], rightRecord[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
@@ -652,7 +684,11 @@ export function createServerEnvironmentAtoms<R, E>(
         projection,
         get(options.initialConfigValueAtom(environmentId)),
       );
-    }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
+    }).pipe(
+      // Cache/session/live handoffs must not rerender readers of an equal config.
+      Atom.withEquality(sameConfigValue),
+      Atom.withLabel(`environment-data:server:config:${environmentId}`),
+    );
   });
   const updateStateValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) =>

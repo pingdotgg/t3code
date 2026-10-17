@@ -11,6 +11,7 @@ import { errorTag } from "@t3tools/shared/observability";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -183,6 +184,8 @@ export class DesktopUpdates extends Context.Service<
     readonly emitState: Effect.Effect<void>;
     readonly disabledReason: Effect.Effect<Option.Option<string>>;
     readonly configure: Effect.Effect<void, DesktopUpdateConfigureError, Scope.Scope>;
+    /** Waits until `configure` has run, so the channel and availability are settled. */
+    readonly whenConfigured: Effect.Effect<void>;
     readonly setChannel: (
       channel: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
@@ -348,6 +351,7 @@ export const make = Effect.gen(function* () {
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
+  const configureDone = yield* Deferred.make<void>();
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const notAppliedVersionRef = yield* Ref.make(Option.none<string>());
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
@@ -1087,7 +1091,11 @@ export const make = Effect.gen(function* () {
       });
 
       yield* startUpdatePollers;
-    }).pipe(Effect.withSpan("desktop.updates.configure")),
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(configureDone, undefined)),
+      Effect.withSpan("desktop.updates.configure"),
+    ),
+    whenConfigured: Deferred.await(configureDone),
     setChannel: Effect.fn("desktop.updates.setChannel")(function* (
       nextChannel: DesktopUpdateChannel,
     ) {

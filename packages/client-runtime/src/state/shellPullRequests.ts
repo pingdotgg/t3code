@@ -1,5 +1,7 @@
 import {
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellPullRequestLink,
+  type OrchestrationV2ThreadShell,
   type ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
@@ -18,8 +20,24 @@ export interface DeferredShellSnapshot extends OrchestrationV2ShellSnapshot {
 const yieldToHost = Effect.sleep("1 millis");
 
 const decodeThreadLinks = Schema.decodeUnknownEffect(
-  Schema.UndefinedOr(Schema.toCodecJson(Schema.Array(ThreadPullRequestLink))),
+  Schema.UndefinedOr(Schema.toCodecJson(Schema.Array(OrchestrationV2ShellPullRequestLink))),
 );
+
+const restoreStackReferences = (links: ReadonlyArray<OrchestrationV2ShellPullRequestLink>) =>
+  links.some((link) => link.stackReference !== undefined)
+    ? links.map(({ stackReference, ...link }) => ({
+        ...link,
+        stack: stackReference === undefined ? link.stack : (links[stackReference]?.stack ?? null),
+      }))
+    : links;
+
+/** Restore before reducers, cached snapshots, badges or PR navigation use the links. */
+export const restoreShellPullRequestStacks = (thread: OrchestrationV2ThreadShell) => {
+  if (thread.pullRequests === undefined) return thread;
+  const links = restoreStackReferences(thread.pullRequests);
+  return links === thread.pullRequests ? thread : { ...thread, pullRequests: links };
+};
+// Bounds each uninterrupted stretch of decoding, so taps and frames run between batches.
 const LINKS_PER_BATCH = 400;
 
 /**
@@ -64,7 +82,7 @@ export function deferPullRequests<S extends OrchestrationV2ShellSnapshot>(
           }).pipe(Effect.as(undefined)),
         ),
       );
-      if (links !== undefined) linksByThreadId.set(threadId, links);
+      if (links !== undefined) linksByThreadId.set(threadId, restoreStackReferences(links));
     }
     return linksByThreadId as ReadonlyMap<ThreadId, ReadonlyArray<ThreadPullRequestLink>>;
   });

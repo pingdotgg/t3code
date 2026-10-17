@@ -75,6 +75,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { keybindingSearchAnchorId, searchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useProgressiveRowLimit } from "../../hooks/useProgressiveRowLimit";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 function KeybindingPill({ value }: { value: string }) {
@@ -1228,9 +1229,20 @@ interface KeybindingsGroupsProps extends KeybindingRowActions {
 
 function KeybindingsGroups(props: KeybindingsGroupsProps) {
   const { groups, anchorIds, savingCommand, ...rowActions } = props;
-  return groups.map((group) => (
+  const rowLimit = useProgressiveRowLimit(INITIAL_KEYBINDING_ROWS);
+  const shownGroups: Array<{ group: KeybindingGroup; rows: KeybindingGroup["rows"] }> = [];
+  let budget = rowLimit;
+  for (const group of groups) {
+    if (budget <= 0) break;
+    shownGroups.push({
+      group,
+      rows: group.rows.length > budget ? group.rows.slice(0, budget) : group.rows,
+    });
+    budget -= group.rows.length;
+  }
+  return shownGroups.map(({ group, rows }) => (
     <SettingsSection key={group.id} id={`keybindings-${group.id}`} title={group.title}>
-      {group.rows.map((row) => (
+      {rows.map((row) => (
         <KeybindingSettingsRow
           key={row.id}
           row={row}
@@ -1243,6 +1255,10 @@ function KeybindingsGroups(props: KeybindingsGroupsProps) {
   ));
 }
 
+/** Enough rows to fill a tall window; the rest render right after the first paint. */
+const INITIAL_KEYBINDING_ROWS = 24;
+
+/** Shown in the browser build only; the desktop app receives every shortcut. */
 function BrowserKeybindingNotice() {
   const message = "The browser may claim some shortcuts first. The desktop app receives them all.";
   return (

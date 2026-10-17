@@ -1,3 +1,4 @@
+import * as CodexFactory from "../../provider/CodexAppServerClientFactory.ts";
 import * as NodeOS from "node:os";
 
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
@@ -770,7 +771,7 @@ describe("CodexAdapterV2 process spawning", () => {
           PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
         );
       });
-      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+      const factory = yield* CodexFactory.CodexAppServerClientFactory.pipe(
         Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(
@@ -1993,7 +1994,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const serverConfig = yield* makeReplayServerConfig(transcript.scenario).pipe(Effect.orDie);
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
-      const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
+      const clientFactory: CodexFactory.CodexAppServerClientFactory["Service"] = {
         open: (openInput) =>
           Layer.build(CodexReplay.layerReplay(transcript)).pipe(
             Effect.mapError(

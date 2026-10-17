@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./serverConfigDelta": {
+      "types": "./src/serverConfigDelta.ts",
+      "import": "./src/serverConfigDelta.ts"
+    },
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"
@@ -494,6 +498,10 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
+    },
+    "./lazyService": {
+      "types": "./src/lazyService.ts",
+      "import": "./src/lazyService.ts"
     }
   },
   "scripts": {

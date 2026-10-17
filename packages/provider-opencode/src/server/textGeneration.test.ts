@@ -91,7 +91,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
         }),
   runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+    Effect.succeed({
       session: {
         create: async () => {
           runtimeMock.state.sessionCreateCalls += 1;
@@ -126,9 +126,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           );
         },
       },
-    }) as unknown as ReturnType<
-      OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]
-    >,
+    } as unknown as Effect.Success<
+      ReturnType<OpenCodeRuntime.OpenCodeRuntime["Service"]["createOpenCodeSdkClient"]>
+    >),
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({

@@ -17,6 +17,12 @@ import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 const DEFAULT_BOUNDED_THREAD_SNAPSHOT_TIMEOUT_MS = 6_000;
 
+/**
+ * Load a bounded recent-window thread snapshot over HTTP. Opts into compact
+ * turnItems and checkpoint items and restores them, so callers always see the
+ * full bounded shape.
+ * Older servers ignore the query and send the full shape.
+ */
 export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
   "clientRuntime.state.fetchEnvironmentBoundedThreadSnapshot",
 )(function* (input: {
@@ -30,7 +36,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
 }) {
   const endpoint = {
     params: { threadId: input.threadId },
-    query: { compactTurnItems: "1" },
+    query: { compactTurnItems: "1", compactCheckpointItems: "1" },
   };
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
@@ -44,9 +50,14 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
         headers: withOrchestrationProtocolHeader(headers),
       }),
   }).pipe(
-    Effect.map(({ turnItemsOmitLocalVisible, ...snapshot }) => ({
+    // Drop the markers with the restore so nothing can restore twice.
+    Effect.map(({ turnItemsOmitLocalVisible, checkpointFilesOmittedItemIds, ...snapshot }) => ({
       ...snapshot,
-      projection: boundedSnapshotProjection({ ...snapshot, turnItemsOmitLocalVisible }),
+      projection: boundedSnapshotProjection({
+        ...snapshot,
+        turnItemsOmitLocalVisible,
+        checkpointFilesOmittedItemIds,
+      }),
     })),
   );
 });

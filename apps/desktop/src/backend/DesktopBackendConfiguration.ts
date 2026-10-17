@@ -820,7 +820,12 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    const shellEnvironmentPrepared = yield* shellEnvironment.installIntoProcess;
+    // POSIX installation always returns true and runs at the spawn gate. Keep
+    // Windows probes here so a failure still enables server-side hydration.
+    const shellEnvironmentPrepared =
+      environment.platform === "darwin" ||
+      environment.platform === "linux" ||
+      (yield* shellEnvironment.installIntoProcess);
     return yield* resolvePrimaryStartConfig({
       ...shared,
       resourceMonitorPath,

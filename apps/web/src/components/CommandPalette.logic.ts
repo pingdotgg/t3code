@@ -78,7 +78,9 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
   | { readonly _tag: "OpenChangeTheme" }
-  | { readonly _tag: "ClearOpenIntent" };
+  | { readonly _tag: "ClearOpenIntent" }
+  /** Text typed while the open view loads; it becomes that view's query. */
+  | { readonly _tag: "TypeAhead"; readonly query: string };
 
 export function reduceCommandPaletteUiState(
   state: CommandPaletteUiState,
@@ -111,6 +113,18 @@ export function reduceCommandPaletteUiState(
       return { open: true, mode: "command", openIntent: { kind: "change-theme" } };
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
+    case "TypeAhead": {
+      const intent = state.openIntent;
+      if (!state.open || (intent !== null && intent.kind !== "search")) return state;
+      return {
+        ...state,
+        openIntent: {
+          kind: "search",
+          query: action.query,
+          ...(intent?.linkedThreads ? { linkedThreads: intent.linkedThreads } : {}),
+        },
+      };
+    }
   }
 }
 

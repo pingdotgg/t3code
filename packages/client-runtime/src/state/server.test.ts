@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -457,6 +458,25 @@ describe("server state projection", () => {
     expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
   });
 
+  it("keeps an equal config when a machine publishes no themes or usage sources", () => {
+    const snapshot = Option.getOrThrow(
+      applyServerConfigProjection(Option.none(), { version: 1, type: "snapshot", config: CONFIG }),
+    );
+    const themes = applyServerConfigProjection(Option.some(snapshot), {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes: [] },
+    });
+    const sources = applyServerConfigProjection(themes, {
+      version: 1,
+      type: "usageLimitSourcesUpdated",
+      payload: { sources: [] },
+    });
+    expect(Equal.equals(Option.getOrThrow(sources).config, snapshot.config)).toBe(true);
+  });
+
+  // A snapshot never carries published themes, so taking it wholesale would
+  // clear them on every reconnect and repaint anyone wearing one.
   it("keeps published themes across a reconnect snapshot", () => {
     const themes = [
       {

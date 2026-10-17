@@ -359,6 +359,7 @@ export interface OrchestratorV2Shape {
   >;
   readonly getThreadShell: (
     threadId: ThreadId,
+    options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, OrchestratorV2Error>;
   readonly getThreadEventSequence: (
     threadId: ThreadId,
@@ -738,6 +739,25 @@ export function shouldPrepareLegacyImportHandoff(input: {
 }): boolean {
   return (
     input.historyOrigin === "v1_import" && !input.hasCompletedRun && input.legacyImportItemCount > 0
+  );
+}
+
+/**
+ * The last change automatic settlement decides from: activity, or a pull request host sync,
+ * which records its time on the link instead of bumping the thread's activity timestamp.
+ */
+export function autoSettleSnapshotAt(thread: {
+  readonly updatedAt: DateTime.Utc;
+  readonly pullRequests?:
+    | ReadonlyArray<{ readonly snapshot: { readonly syncedAt: string } | null }>
+    | undefined;
+}): DateTime.Utc {
+  return (thread.pullRequests ?? []).reduce(
+    (latest, link) =>
+      link.snapshot === null
+        ? latest
+        : DateTime.max(latest, DateTime.makeUnsafe(link.snapshot.syncedAt)),
+    thread.updatedAt,
   );
 }
 
@@ -10668,7 +10688,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           );
         if (
           thread.settledOverride !== null ||
-          DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
+          DateTime.toEpochMillis(autoSettleSnapshotAt(thread)) >
+            DateTime.toEpochMillis(command.snapshotAt)
         ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -11430,9 +11451,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           Effect.mapError(shellProjectionError),
           Effect.map(Effect.mapError(shellProjectionError)),
         ),
-    getThreadShell: (threadId) =>
+    getThreadShell: (threadId, options) =>
       projectionStore
-        .getThreadShell(threadId)
+        .getThreadShell(threadId, options)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadEventSequence: (threadId) =>
       eventSink

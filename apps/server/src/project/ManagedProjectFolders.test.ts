@@ -1,3 +1,4 @@
+import * as ProjectLayers from "../orchestration-v2/runtimeLayer.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -20,7 +21,6 @@ import * as Scope from "effect/Scope";
 import * as ServerConfig from "../config.ts";
 import * as GitManager from "../git/GitManager.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
-import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -73,7 +73,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
             ProjectService.ProjectService.pipe(Effect.map(options.projects)),
           ),
     ),
-    Layer.provideMerge(RuntimeLayer.layerProjectService),
+    Layer.provideMerge(ProjectLayers.layerProjectService),
     Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
     Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),

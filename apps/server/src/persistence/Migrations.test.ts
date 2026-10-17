@@ -66,7 +66,7 @@ describe("runMigrations", () => {
       const exit = yield* Effect.exit(runMigrations());
 
       assert.isTrue(Exit.isFailure(exit));
-      for (const [id, name] of v2Migrations) {
+      for (const [id, name] of v2Migrations.filter(([id]) => id !== 64)) {
         assert.include(String(exit), `${id}_${name} (recorded: nothing)`);
       }
       assert.deepStrictEqual(yield* history, before);

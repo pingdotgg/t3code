@@ -2,7 +2,9 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -11,12 +13,12 @@ import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import * as OpenCodeAdapterV2 from "./adapter.ts";
-import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
+import type * as OpenCodeAdapterV2 from "./adapter.ts";
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
+
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -247,22 +249,30 @@ export const OpenCodeDriver: ProviderDriver<
                 Effect.andThen(cachedMaintenance({ fresh: true })),
               )
             : cachedMaintenance();
-      const openCodeV1Adapter = yield* OpenCodeAdapterV2.OpenCodeAdapterV2Driver.create({
+      const openCodeV1Adapter = yield* makeLazyAdapter(
         instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
+        DRIVER_KIND,
+        Effect.promise(() => import("./adapter.ts")).pipe(
+          Effect.flatMap(({ OpenCodeAdapterV2Driver }) =>
+            OpenCodeAdapterV2Driver.create({
               instanceId,
-              detail: "Failed to build OpenCode orchestration adapter.",
-              cause,
-            }),
+              displayName,
+              accentColor,
+              environment,
+              enabled,
+              config,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: "Failed to build OpenCode orchestration adapter.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
         ),
       );
       const openCode2Server = yield* OpenCode2Server.make({
@@ -283,8 +293,13 @@ export const OpenCodeDriver: ProviderDriver<
       const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
         probe: runtimeProbe,
         v1: openCodeV1Adapter,
-        v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
-          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+        v2: yield* makeLazyAdapter(
+          instanceId,
+          DRIVER_KIND,
+          Effect.promise(() => import("./v2/adapter.ts")).pipe(
+            Effect.flatMap((adapter) => adapter.make(instanceId)),
+            Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+          ),
         ),
       });
       const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
@@ -338,9 +353,37 @@ export const OpenCodeDriver: ProviderDriver<
         yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
           Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         ),
-        yield* OpenCode2TextGeneration.make().pipe(
-          Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
-        ),
+        yield* Effect.gen(function* () {
+          const context =
+            yield* Effect.context<
+              Exclude<
+                Effect.Services<ReturnType<typeof import("./v2/textGeneration.ts").make>>,
+                OpenCode2Server.OpenCode2Server
+              >
+            >();
+          // A failed load is not kept, so the next request retries it.
+          const generation = yield* Effect.cachedWithTTL(
+            Effect.promise(() => import("./v2/textGeneration.ts")).pipe(
+              Effect.flatMap((module) => module.make()),
+              Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+              Effect.provideContext(context),
+            ),
+            (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+          );
+          const deferred: ProviderTextGeneration = {
+            generateCommitMessage: (input) =>
+              generation.pipe(Effect.flatMap((value) => value.generateCommitMessage(input))),
+            generatePrContent: (input) =>
+              generation.pipe(Effect.flatMap((value) => value.generatePrContent(input))),
+            generateBranchName: (input) =>
+              generation.pipe(Effect.flatMap((value) => value.generateBranchName(input))),
+            generateThreadTitle: (input) =>
+              generation.pipe(Effect.flatMap((value) => value.generateThreadTitle(input))),
+            generateReviewGuide: (input) =>
+              generation.pipe(Effect.flatMap((value) => value.generateReviewGuide(input))),
+          };
+          return deferred;
+        }),
       );
 
       const checkProvider = Effect.all(
@@ -398,7 +441,7 @@ export const OpenCodeDriver: ProviderDriver<
                     : {}),
                   environment: processEnv,
                 });
-                const client = openCodeRuntime.createOpenCodeSdkClient({
+                const client = yield* openCodeRuntime.createOpenCodeSdkClient({
                   baseUrl: server.url,
                   directory: cwd,
                   ...(effectiveConfig.serverPassword
@@ -409,15 +452,15 @@ export const OpenCodeDriver: ProviderDriver<
               }),
             )
           : serverOwner.withServer((server) =>
-              loadWorkspaceInventory(
-                openCodeRuntime.createOpenCodeSdkClient({
+              openCodeRuntime
+                .createOpenCodeSdkClient({
                   baseUrl: server.url,
                   directory: cwd,
                   ...(server.serverPassword !== undefined
                     ? { serverPassword: server.serverPassword }
                     : {}),
-                }),
-              ),
+                })
+                .pipe(Effect.flatMap(loadWorkspaceInventory)),
             );
 
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);

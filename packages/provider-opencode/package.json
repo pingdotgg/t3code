@@ -42,6 +42,10 @@
     "./server/v2/textGeneration": {
       "types": "./src/server/v2/textGeneration.ts",
       "import": "./src/server/v2/textGeneration.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
     }
   },
   "scripts": {

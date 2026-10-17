@@ -77,6 +77,14 @@ export const primaryServerConfigEventAtom = Atom.make(
   (get): ServerConfigStreamEvent | null => get(primaryServerStateAtom).latestEvent,
 ).pipe(Atom.withLabel("web-primary-server-config-event"));
 
+/** The primary server's first config this session. */
+export const primaryServerSessionConfigAtom = Atom.make((get): ServerConfig | null => {
+  const environmentId = get(primaryEnvironmentIdAtom);
+  return environmentId === null
+    ? null
+    : get(environmentSession.initialConfigValueAtom(environmentId));
+}).pipe(Atom.withLabel("web-primary-server-session-config"));
+
 export const primaryServerWelcomeAtom = Atom.make(
   (get): ServerLifecycleWelcomePayload | null => get(primaryServerStateAtom).welcome,
 ).pipe(Atom.withLabel("web-primary-server-welcome"));

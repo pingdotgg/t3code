@@ -9,7 +9,7 @@ import type {
   PullRequestMergeMethod,
   PullRequestRef,
 } from "@t3tools/contracts";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
 import {
@@ -118,6 +118,32 @@ const ACTION_FAILURE_HINTS: Record<PullRequestAction, string> = {
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
 };
 
+// Share pending actions across virtualized row remounts and other PR surfaces.
+const pendingActionKeys = new Set<string>();
+const pendingActionListeners = new Set<() => void>();
+
+function setPullRequestActionPending(key: string, pending: boolean) {
+  if (pending) pendingActionKeys.add(key);
+  else pendingActionKeys.delete(key);
+  for (const listener of pendingActionListeners) listener();
+}
+
+function subscribePullRequestActionsPending(listener: () => void) {
+  pendingActionListeners.add(listener);
+  return () => {
+    pendingActionListeners.delete(listener);
+  };
+}
+
+/** Whether a host action is running against this pull request. */
+export function isPullRequestActionPending(key: string): boolean {
+  return pendingActionKeys.has(key);
+}
+
+/**
+ * Runs one host action against a pull request, with the toasts every surface should say the same
+ * way. `onSuccess` is where the caller re-reads whatever it is showing.
+ */
 export function usePullRequestActionRunner({
   environmentId,
   reference,
@@ -133,13 +159,23 @@ export function usePullRequestActionRunner({
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
     reportFailure: false,
   });
-  const [actionPending, setActionPending] = useState(false);
-  const pendingRef = useRef(false);
+  const key =
+    reference === null
+      ? null
+      : pullRequestEntryKey({
+          environmentId,
+          host: reference.host ?? "",
+          repository: reference.repository,
+          number: reference.number,
+        });
+  const actionPending = useSyncExternalStore(
+    subscribePullRequestActionsPending,
+    () => key !== null && pendingActionKeys.has(key),
+  );
 
   const perform = async (action: PullRequestAction, method?: PullRequestMergeMethod) => {
-    if (pendingRef.current || reference === null) return;
-    pendingRef.current = true;
-    setActionPending(true);
+    if (reference === null || key === null || pendingActionKeys.has(key)) return;
+    setPullRequestActionPending(key, true);
     try {
       const result = await runAction({
         environmentId,
@@ -159,8 +195,7 @@ export function usePullRequestActionRunner({
         description: readableFailure(failure, ACTION_FAILURE_HINTS[action]),
       });
     } finally {
-      pendingRef.current = false;
-      setActionPending(false);
+      setPullRequestActionPending(key, false);
     }
   };
 

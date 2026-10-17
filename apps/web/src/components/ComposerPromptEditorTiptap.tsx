@@ -11,13 +11,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tip
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
-import {
-  type EditorState,
-  NodeSelection,
-  Plugin,
-  PluginKey,
-  TextSelection,
-} from "@tiptap/pm/state";
+import { EditorState, NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import type { NodeType, ResolvedPos } from "@tiptap/pm/model";
 import type {
@@ -46,7 +40,8 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import type { Editor } from "@tiptap/core";
+import { KeptEditorContent, useKeptEditor } from "./keptView";
 
 import {
   clampCollapsedComposerCursor,
@@ -139,6 +134,13 @@ export interface ComposerPromptEditorHandle {
 export interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
+  /** Resets undo history when a kept editor switches threads. */
+  historyScope?: string;
+  /**
+   * Render Markdown styling (bold, italic, code, strike, task checkboxes).
+   * Off renders the same Tiptap engine as plain text: every marker stays a
+   * literal character.
+   */
   richTextEnabled?: boolean;
   literalText?: boolean;
   contextRecords: ComposerDraftContextRecords;
@@ -745,7 +747,11 @@ const ComposerMarkersExtension = Extension.create({
   },
 });
 
-type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
+// Document model (markdown ⇄ ProseMirror) lives in ~/composer-rich-text-doc so
+// unit tests can round-trip it without a browser.
+// ── Editor component ───────────────────────────────────────────────────────
+
+type TiptapEditor = Editor;
 
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // Extensions are creation-time, so changing text mode remounts the editor.
@@ -779,6 +785,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const {
     value,
     cursor,
+    historyScope,
     richTextEnabled,
     literalText = false,
     contextRecords,
@@ -994,7 +1001,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     [activeSuggestionId, ariaLabel, className, disabled, placeholder, richText, suggestionListId],
   );
 
-  const editor = useEditor(
+  const editor = useKeptEditor(
     {
       extensions: [
         StarterKit.configure({
@@ -1587,6 +1594,16 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     value,
   ]);
 
+  // Runs after the effect above has loaded the new thread's prompt, so undo
+  // cannot bring back the previous thread's prompt.
+  const historyScopeRef = useRef(historyScope);
+  useLayoutEffect(() => {
+    if (!editor || historyScopeRef.current === historyScope) return;
+    historyScopeRef.current = historyScope;
+    const { doc, selection, plugins } = editor.state;
+    editor.view.updateState(EditorState.create({ doc, selection, plugins }));
+  }, [editor, historyScope]);
+
   const focusAt = useCallback(
     (nextCursor: number) => {
       if (!editor) return;
@@ -1743,7 +1760,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               containerClassName,
             )}
           >
-            <EditorContent
+            <KeptEditorContent
               editor={editor}
               onKeyDown={(event) => {
                 if (

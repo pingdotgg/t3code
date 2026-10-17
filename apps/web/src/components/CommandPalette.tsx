@@ -549,6 +549,11 @@ function CommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const composerHandleRef = useComposerHandleContext();
+  // File and content search start from text typed while they loaded.
+  const typedAheadQuery =
+    props.mode !== "command" && props.openIntent?.kind === "search" && props.openIntent.query
+      ? { initialQuery: props.openIntent.query }
+      : {};
 
   return (
     <CommandDialogPopup
@@ -572,9 +577,9 @@ function CommandPaletteDialog(props: {
       }}
     >
       {props.mode === "files" ? (
-        <ProjectFilePicker setOpen={props.setOpen} />
+        <ProjectFilePicker setOpen={props.setOpen} {...typedAheadQuery} />
       ) : props.mode === "content" ? (
-        <ProjectContentSearchDialog onOpenChange={props.setOpen} />
+        <ProjectContentSearchDialog onOpenChange={props.setOpen} {...typedAheadQuery} />
       ) : (
         <OpenCommandPaletteDialog
           openIntent={props.openIntent}

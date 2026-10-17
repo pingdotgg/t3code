@@ -19,7 +19,8 @@ import * as CursorKeychain from "./CursorKeychain.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import { Cursor } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+const { Cursor } = loadCursorSdk();
 
 const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(NodeServices.layer),

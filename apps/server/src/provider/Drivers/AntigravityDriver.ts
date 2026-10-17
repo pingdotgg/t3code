@@ -50,7 +50,7 @@ import {
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makeAntigravityAdapterV2 } from "../../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
@@ -411,29 +411,39 @@ export const AntigravityDriver: ProviderDriver<
         ),
       );
       const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
-      const orchestrationAdapter = yield* makeAntigravityAdapterV2({
+      const orchestrationAdapter = yield* makeLazyAdapter(
         instanceId,
-        selfInvocation,
-        makeRuntime,
-        withProcess: authFlow.withProcess,
-        defaultModel,
-        onSessionStarted: provider.onSessionStarted,
-        onSessionEvent: (event) => {
-          if (event._tag === "ConfigOptionsUpdated") {
-            return provider.onConfigOptionsUpdated(event.configOptions);
-          }
-          return event._tag === "AvailableCommandsUpdated"
-            ? provider.onAvailableCommands(event.availableCommands)
-            : Effect.void;
-        },
-        continuationRequests,
-        nativeLogging: (threadId) =>
-          makeNativeLogger({
-            nativeEventLogger: loggers.native,
-            provider: DRIVER,
-            threadId,
-          }),
-      });
+        DRIVER,
+        Effect.promise(
+          () => import("../../orchestration-v2/Adapters/AntigravityAdapterV2.ts"),
+        ).pipe(
+          Effect.flatMap(({ makeAntigravityAdapterV2 }) =>
+            makeAntigravityAdapterV2({
+              instanceId,
+              selfInvocation,
+              makeRuntime,
+              withProcess: authFlow.withProcess,
+              defaultModel,
+              onSessionStarted: provider.onSessionStarted,
+              onSessionEvent: (event) => {
+                if (event._tag === "ConfigOptionsUpdated") {
+                  return provider.onConfigOptionsUpdated(event.configOptions);
+                }
+                return event._tag === "AvailableCommandsUpdated"
+                  ? provider.onAvailableCommands(event.availableCommands)
+                  : Effect.void;
+              },
+              continuationRequests,
+              nativeLogging: (threadId) =>
+                makeNativeLogger({
+                  nativeEventLogger: loggers.native,
+                  provider: DRIVER,
+                  threadId,
+                }),
+            }),
+          ),
+        ),
+      );
       const textGeneration = yield* makeAntigravityTextGeneration({
         profileDirectory,
         defaultModel,

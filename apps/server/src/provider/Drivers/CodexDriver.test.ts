@@ -1,3 +1,4 @@
+import * as CodexAppServerClientFactoryService from "../CodexAppServerClientFactory.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
@@ -35,7 +36,6 @@ import {
   resolveLatestProviderVersion,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import { CodexDriver } from "./CodexDriver.ts";
-import * as CodexAdapterV2 from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCredentialStore from "../ProviderCredentialStore.ts";
@@ -48,7 +48,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
   Layer.provideMerge(
-    Layer.mock(CodexAdapterV2.CodexAppServerClientFactory)({
+    Layer.mock(CodexAppServerClientFactoryService.CodexAppServerClientFactory)({
       open: () => Effect.die("Maintenance resolution must not open a Codex session"),
     }),
   ),
@@ -136,7 +136,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const serverConfig = yield* ServerConfig.ServerConfig;
         const sharedHome = NodePath.join(serverConfig.stateDir, "shared-codex-home");
         const launches: Array<
-          Parameters<CodexAdapterV2.CodexAppServerClientFactoryShape["open"]>[0]
+          Parameters<
+            CodexAppServerClientFactoryService.CodexAppServerClientFactory["Service"]["open"]
+          >[0]
         > = [];
 
         let interruptedChecks = 0;
@@ -159,8 +161,8 @@ it.layer(layerTest)("CodexDriver", (it) => {
           config: { ...CodexDriver.defaultConfig(), setupMode: "managed", homePath: sharedHome },
         }).pipe(
           Effect.provideService(
-            CodexAdapterV2.CodexAppServerClientFactory,
-            CodexAdapterV2.CodexAppServerClientFactory.of({
+            CodexAppServerClientFactoryService.CodexAppServerClientFactory,
+            CodexAppServerClientFactoryService.CodexAppServerClientFactory.of({
               open: (launch) =>
                 Effect.sync(() => launches.push(launch)).pipe(
                   Effect.andThen(Effect.die("The fixture stops after recording the launch")),

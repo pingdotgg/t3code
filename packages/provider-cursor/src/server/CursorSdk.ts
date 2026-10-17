@@ -3,7 +3,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { Agent, createAgentPlatform, SqliteLocalAgentStore } from "./sdk.ts";
+import { loadCursorSdk, loadCursorSqlite } from "./sdk.ts";
+import type { Agent, createAgentPlatform } from "@cursor/sdk";
+import type { SqliteLocalAgentStore } from "@cursor/sdk/sqlite";
 
 /**
  * The SDK listens for that error, then rejects an internal promise nothing awaits.
@@ -70,5 +72,19 @@ export const layer = Layer.effect(
       Effect.sync(() => {
         process.off("unhandledRejection", onUnhandledRejection);
       }),
-  ).pipe(Effect.as(CursorSdk.of({ Agent, createAgentPlatform, SqliteLocalAgentStore }))),
+  ).pipe(
+    Effect.as(
+      CursorSdk.of({
+        get Agent() {
+          return loadCursorSdk().Agent;
+        },
+        get createAgentPlatform() {
+          return loadCursorSdk().createAgentPlatform;
+        },
+        get SqliteLocalAgentStore() {
+          return loadCursorSqlite().SqliteLocalAgentStore;
+        },
+      }),
+    ),
+  ),
 );

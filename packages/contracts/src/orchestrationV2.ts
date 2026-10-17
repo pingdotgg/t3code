@@ -1806,6 +1806,13 @@ export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
 export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
+/** Opted-in shells reference an earlier link's identical native stack. */
+export const OrchestrationV2ShellPullRequestLink = Schema.Struct({
+  ...ThreadPullRequestLink.fields,
+  stackReference: Schema.optionalKey(NonNegativeInt),
+});
+export type OrchestrationV2ShellPullRequestLink = typeof OrchestrationV2ShellPullRequestLink.Type;
+
 export const OrchestrationV2ThreadShell = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -1818,7 +1825,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
-  pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
+  pullRequests: Schema.optional(Schema.Array(OrchestrationV2ShellPullRequestLink)),
+  /** Pull request discovered from the thread's current branch. */
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
@@ -3202,6 +3210,8 @@ export type OrchestrationV2GetThreadProjectionInput =
 export const OrchestrationV2SubscribeShellInput = Schema.Struct({
   afterSequence: Schema.optionalKey(NonNegativeInt),
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /** PR views load full snapshots separately; shells need badge and chain summaries. */
+  compactPullRequests: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SubscribeShellInput = typeof OrchestrationV2SubscribeShellInput.Type;
 
@@ -3211,6 +3221,11 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
   acceptCompactTurnItems: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Allows bounded snapshot fallbacks to send checkpoint turn items without the
+   * file list their checkpoint already carries. See `checkpointFilesOmittedItemIds`.
+   */
+  acceptCompactCheckpointItems: Schema.optionalKey(Schema.Boolean),
   /** Accepts compact read-watermark and pull-request-link events. */
   acceptThreadFieldEvents: Schema.optionalKey(Schema.Boolean),
 });
@@ -3246,6 +3261,13 @@ export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
    * with `boundedSnapshotProjection` before using the projection.
    */
   turnItemsOmitLocalVisible: Schema.optionalKey(Schema.Literal(true)),
+  /**
+   * Set only for clients that opted in: these checkpoint turn items are sent
+   * with empty `files`, which equal their checkpoint's `files` in
+   * `projection.checkpoints`. Clients must restore them with
+   * `boundedSnapshotProjection` before using the projection.
+   */
+  checkpointFilesOmittedItemIds: Schema.optionalKey(Schema.Array(TurnItemId)),
 });
 export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadBoundedSnapshot.Type;
 
@@ -3325,6 +3347,8 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
     latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
     payloadBudgetExceeded: Schema.optionalKey(Schema.Boolean),
     turnItemsOmitLocalVisible: Schema.optionalKey(Schema.Literal(true)),
+    /** Same meaning as on `OrchestrationV2ThreadBoundedSnapshot`. */
+    checkpointFilesOmittedItemIds: Schema.optionalKey(Schema.Array(TurnItemId)),
   }),
   Schema.Struct({
     kind: Schema.Literal("event"),

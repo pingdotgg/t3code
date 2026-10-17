@@ -65,6 +65,10 @@ export function applyServerConfigProjection(
   event: ServerConfigStreamEvent,
 ): Option.Option<ServerConfigProjection> {
   switch (event.type) {
+    // This client requests full events, so unsolicited delta acknowledgements carry no state.
+    case "configUnchanged":
+    case "configDelta":
+      return current;
     case "snapshot": {
       // Wire snapshots never contain published themes. Keep the previous set
       // until a capable server sends its authoritative theme event. A legacy
@@ -116,23 +120,30 @@ export function applyServerConfigProjection(
         latestEvent: event,
         source: "live",
       }));
+    // Match the cache's omitted empty sets to preserve config equality.
     case "environmentThemesUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          environmentThemes: event.payload.themes.length > 0 ? event.payload.themes : undefined,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
+      return Option.map(current, (projection) => {
+        const { environmentThemes: _previous, ...config } = projection.config;
+        return {
+          config:
+            event.payload.themes.length > 0
+              ? { ...config, environmentThemes: event.payload.themes }
+              : config,
+          latestEvent: event,
+          source: "live",
+        };
+      });
     case "usageLimitSourcesUpdated":
-      return Option.map(current, (projection) => ({
-        config: {
-          ...projection.config,
-          usageLimitSources: event.payload.sources.length > 0 ? event.payload.sources : undefined,
-        },
-        latestEvent: event,
-        source: "live",
-      }));
+      return Option.map(current, (projection) => {
+        const { usageLimitSources: _previous, ...config } = projection.config;
+        return {
+          config:
+            event.payload.sources.length > 0
+              ? { ...config, usageLimitSources: event.payload.sources }
+              : config,
+          latestEvent: event,
+          source: "live",
+        };
+      });
   }
 }

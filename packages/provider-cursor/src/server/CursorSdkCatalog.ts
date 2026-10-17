@@ -7,7 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
-import { AuthenticationError, Cursor, CursorSdkError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
 
 export interface CursorSdkCatalogSnapshot {
   readonly user: SDKUser;
@@ -38,6 +38,7 @@ export class CursorSdkCatalog extends Context.Service<
 >()("@t3tools/provider-cursor/server/CursorSdkCatalog") {}
 
 function isAuthenticationFailure(cause: unknown): boolean {
+  const { AuthenticationError, CursorSdkError } = loadCursorSdk();
   return (
     cause instanceof AuthenticationError ||
     (cause instanceof CursorSdkError && cause.status === 401)
@@ -62,8 +63,8 @@ const sdkRequest = <A>(tryRequest: () => Promise<A>) =>
   });
 
 const liveProbes: CursorSdkCatalogProbes = {
-  readUser: (apiKey) => sdkRequest(() => Cursor.me({ apiKey })),
-  readModels: (apiKey) => sdkRequest(() => Cursor.models.list({ apiKey })),
+  readUser: (apiKey) => sdkRequest(() => loadCursorSdk().Cursor.me({ apiKey })),
+  readModels: (apiKey) => sdkRequest(() => loadCursorSdk().Cursor.models.list({ apiKey })),
 };
 
 export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function* (

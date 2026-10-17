@@ -29,6 +29,7 @@ import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
 import { cn } from "~/lib/utils";
+import { queryShownElement } from "~/lib/shownElement";
 import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -219,6 +220,28 @@ export function McpAppFrame(props: {
       cancelled = true;
     };
   }, [props.environmentId, props.threadId, props.itemId, app.tool]);
+  // Activity preserves iframe DOM; stop hidden apps and reinitialize on reveal.
+  const [parked, setParked] = useState(false);
+  useEffect(() => {
+    if (parked) {
+      minting.current = false;
+      // oxlint-disable-next-line react/set-state-in-effect -- A kept view shown again loads a new document.
+      setSrc(null);
+      setNavigatedAway(false);
+      setDisplayMode("inline");
+      setDocumentGeneration((value) => value + 1);
+      setParked(false);
+      return;
+    }
+    const box = boxRef.current;
+    return () => {
+      if (!box?.isConnected) return;
+      const frame = frameRef.current;
+      if (frame !== null) frame.src = "about:blank";
+      setParked(true);
+    };
+  }, [parked]);
+
   // The bridge belongs to the captured document. A frame that navigates keeps
   // its window, so a second load stops the app rather than letting a page T3
   // never served pose as it.
@@ -339,7 +362,10 @@ export function McpAppFrame(props: {
         if (result._tag !== "Success") throw commandFailure(result);
       },
       requestDisplayMode: async (mode) => {
-        const otherFullscreen = document.querySelector("[data-mcp-app-fullscreen]");
+        // Full screen would cover the approval or question the agent waits
+        // on, or a confirmation any app is waiting on. Another app already
+        // full screen keeps the page; two would stack.
+        const otherFullscreen = queryShownElement("[data-mcp-app-fullscreen]");
         if (
           mode === "fullscreen" &&
           (latest.current.props.awaitingUser === true ||
@@ -447,7 +473,7 @@ export function McpAppFrame(props: {
         // the frame to another parent would reload the app, and the timeline's
         // rows contain fixed positioning, which the top layer escapes.
         {...(fullscreenSupported ? { popover: "manual" as const } : {})}
-        data-mcp-app-fullscreen={fullscreen ? "" : undefined}
+        data-mcp-app-fullscreen={fullscreen && !parked ? "" : undefined}
         className={cn(
           "relative size-full overflow-hidden",
           app.prefersBorder === true && !fullscreen && "rounded-lg border border-border",
@@ -473,7 +499,7 @@ export function McpAppFrame(props: {
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
             The {app.server} app left its page and was stopped
           </p>
-        ) : src !== null ? (
+        ) : src !== null && !parked ? (
           <iframe
             ref={frameRef}
             src={src}

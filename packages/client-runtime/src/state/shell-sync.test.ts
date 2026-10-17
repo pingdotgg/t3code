@@ -1,7 +1,7 @@
 import {
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
-  type OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
   ThreadId,
   type ThreadPullRequestLink,
@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -31,6 +32,7 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { makeEnvironmentShellState } from "./shell.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
+import { decodeShellSnapshotDeferringPullRequests } from "./shellPullRequests.ts";
 import { v2Project, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -53,6 +55,32 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
   ...v2ShellSnapshot,
   snapshotSequence: 1,
 };
+const encodeShellSnapshotJson = Schema.encodeEffect(
+  Schema.toCodecJson(OrchestrationV2ShellSnapshot),
+);
+
+const sharedStack = {
+  kind: "native" as const,
+  id: "stack:shared",
+  number: 1,
+  url: "https://github.com/pingdotgg/t3code/stack/1",
+  base: "main",
+  layers: [7, 8, 9].map((number) => ({
+    number,
+    headBranch: `branch-${number}`,
+    state: "open" as const,
+  })),
+};
+const sharedStackLink: ThreadPullRequestLink = {
+  host: "github.com",
+  repository: "pingdotgg/t3code",
+  number: 7,
+  url: "https://github.com/pingdotgg/t3code/pull/7",
+  source: "agent",
+  linkedAt: "2026-06-20T00:00:00.000Z",
+  snapshot: null,
+  stack: sharedStack,
+};
 
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
@@ -66,6 +94,37 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
 }
 
 describe("environment shell synchronization", () => {
+  it.effect("restores shared native stacks after deferred HTTP decoding", () =>
+    Effect.gen(function* () {
+      const link = sharedStackLink;
+      const stack = sharedStack;
+      const expected = [
+        link,
+        { ...link, number: 8 },
+        { ...link, number: 9, stack: { ...stack, base: "older-base" } },
+      ];
+      const source = {
+        ...v2ShellSnapshot,
+        threads: [
+          {
+            ...v2ThreadShell,
+            pullRequests: [
+              link,
+              { ...link, number: 8, stack: null, stackReference: 0 },
+              expected[2]!,
+            ],
+          },
+        ],
+      };
+      const json = yield* encodeShellSnapshotJson(source);
+      const decoded = yield* decodeShellSnapshotDeferringPullRequests(json);
+      expect(decoded.threads[0]?.pullRequests).toBeUndefined();
+      const loading = yield* decoded.loadPullRequests.pipe(Effect.forkScoped);
+      yield* TestClock.adjust("1 millis");
+      const restored = yield* Fiber.join(loading);
+      expect(restored.get(v2ThreadShell.id)).toEqual(expected);
+    }),
+  );
   it.effect("publishes live state before persistence and preserves it when ready", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
@@ -153,6 +212,23 @@ describe("environment shell synchronization", () => {
       const state = yield* SubscriptionRef.get(shellState);
       expect(state.status).toBe("live");
       expect(Option.getOrThrow(state.snapshot)).toEqual(LIVE_SHELL_SNAPSHOT);
+      const link = sharedStackLink;
+      yield* Queue.offer(events, {
+        kind: "thread.updated",
+        sequence: 2,
+        location: "active",
+        thread: {
+          ...v2ThreadShell,
+          pullRequests: [link, { ...link, number: 8, stack: null, stackReference: 0 }],
+        },
+      });
+      const updated = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((value) => Option.getOrNull(value.snapshot)?.snapshotSequence === 2),
+        Stream.runHead,
+      );
+      expect(
+        Option.getOrThrow(Option.getOrThrow(updated).snapshot).threads[0]?.pullRequests,
+      ).toEqual([link, { ...link, number: 8 }]);
     }),
   );
 

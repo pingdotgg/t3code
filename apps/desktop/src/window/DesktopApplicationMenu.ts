@@ -91,6 +91,8 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
 const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
+  // The menu exists before the updater is configured; a click then waits for it.
+  yield* updates.whenConfigured;
   const disabledReason = yield* updates.disabledReason;
   if (Option.isSome(disabledReason)) {
     yield* logUpdaterInfo("manual update check requested, but updates are disabled", {

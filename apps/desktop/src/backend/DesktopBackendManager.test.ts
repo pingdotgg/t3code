@@ -141,6 +141,7 @@ interface MakeInstanceInput {
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  readonly beforeSpawn?: Effect.Effect<void>;
 }
 
 function makeTestInstance(input: MakeInstanceInput) {
@@ -187,6 +188,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
+    ...(input.beforeSpawn ? { beforeSpawn: input.beforeSpawn } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -931,6 +933,42 @@ describe("DesktopBackendManager", () => {
         assert.equal(stoppedSnapshot.desiredRunning, false);
         assert.equal(stoppedSnapshot.ready, false);
         assert.equal(Option.isNone(stoppedSnapshot.activePid), true);
+      }),
+    ),
+  );
+
+  it.effect("publishes its config before the spawn gate and never spawns once stopped", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const spawned = yield* Queue.unbounded<void>();
+        const gate = yield* Deferred.make<void>();
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Queue.offer(spawned, undefined).pipe(
+              Effect.as(makeProcess({ exitCode: Effect.never })),
+            ),
+          ),
+        );
+        const instance = yield* makeTestInstance({
+          spawnerLayer: layerSpawner,
+          beforeSpawn: Deferred.await(gate),
+        });
+
+        // The endpoint and token are readable while the spawn waits.
+        yield* instance.start;
+        assert.deepEqual(yield* instance.currentConfig, Option.some(baseConfig));
+        assert.equal(yield* Queue.size(spawned), 0);
+
+        yield* instance.stop().pipe(Effect.timeout("1 second"));
+        yield* Deferred.succeed(gate, undefined);
+        yield* Effect.yieldNow;
+        assert.equal(yield* Queue.size(spawned), 0);
+        assert.isTrue(Option.isNone((yield* instance.snapshot).activePid));
+
+        // A later start spawns as soon as the gate is open.
+        yield* instance.start;
+        yield* Queue.take(spawned).pipe(Effect.timeout("1 second"));
       }),
     ),
   );

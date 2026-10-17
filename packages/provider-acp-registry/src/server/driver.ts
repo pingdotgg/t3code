@@ -1,3 +1,4 @@
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import {
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
@@ -22,7 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import type { AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -498,22 +499,30 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         environment,
         hostEnvironment,
       );
-      const orchestrationAdapter = yield* AcpRegistryAdapterV2Driver.create({
+      const orchestrationAdapter = yield* makeLazyAdapter(
         instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
+        DRIVER_KIND,
+        Effect.promise(() => import("./adapter.ts")).pipe(
+          Effect.flatMap(({ AcpRegistryAdapterV2Driver }) =>
+            AcpRegistryAdapterV2Driver.create({
               instanceId,
-              detail: "Failed to build ACP Registry orchestration adapter.",
-              cause,
-            }),
+              displayName,
+              accentColor,
+              environment,
+              enabled,
+              config,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: "Failed to build ACP Registry orchestration adapter.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
         ),
       );
       const readinessInput = {

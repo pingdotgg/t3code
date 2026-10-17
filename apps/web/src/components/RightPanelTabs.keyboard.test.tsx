@@ -33,6 +33,14 @@ beforeEach(() => {
     configurable: true,
     value: () => [],
   });
+  // jsdom has no layout. An element is shown unless an ancestor hides it, as a hidden kept
+  // thread view hides its popups.
+  Object.defineProperty(Element.prototype, "checkVisibility", {
+    configurable: true,
+    value(this: Element) {
+      return this.closest('[style*="display: none"]') === null;
+    },
+  });
   vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   addFiles.mockClear();
   container = document.createElement("div");
@@ -197,6 +205,18 @@ describe("right panel new-tab shortcut", () => {
     container.append(dialog);
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
     expect(document.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("opens over a popup that a hidden thread view keeps", async () => {
+    await renderPanel();
+    const hiddenView = document.createElement("div");
+    hiddenView.style.display = "none";
+    const popup = document.createElement("div");
+    popup.dataset.slot = "menu-popup";
+    hiddenView.append(popup);
+    container.append(hiddenView);
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("Linked pull requests");
   });
 
   it("supports arrow keys with an existing tab in sheet mode and clears the menu on close", async () => {

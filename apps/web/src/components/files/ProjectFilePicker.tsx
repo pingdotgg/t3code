@@ -18,6 +18,8 @@ import { useProjectFilePickerQuery } from "./projectFilesQueryState";
 
 interface ProjectFilePickerProps {
   readonly setOpen: (open: boolean) => void;
+  /** Text typed while the palette loaded. */
+  readonly initialQuery?: string;
 }
 
 function HighlightedFuzzyText(props: {
@@ -70,7 +72,7 @@ function EmptyProjectFilePicker() {
 
 function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveProjectTarget }) {
   const { target } = props;
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(props.initialQuery ?? "");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const result = useProjectFilePickerQuery(
     target.environmentId,
@@ -159,5 +161,11 @@ export function ProjectFilePicker(props: ProjectFilePickerProps) {
     return <EmptyProjectFilePicker />;
   }
 
-  return <OpenProjectFilePicker setOpen={props.setOpen} target={target} />;
+  return (
+    <OpenProjectFilePicker
+      setOpen={props.setOpen}
+      target={target}
+      {...(props.initialQuery ? { initialQuery: props.initialQuery } : {})}
+    />
+  );
 }

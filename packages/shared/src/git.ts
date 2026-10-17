@@ -353,6 +353,9 @@ export function applyGitStatusStreamEvent(
   event: VcsStatusStreamEvent,
 ): VcsStatusResult {
   switch (event._tag) {
+    case "unchanged":
+      if (current === null) throw new Error("VCS version requires a cached status.");
+      return current;
     case "snapshot":
       return mergeGitStatusParts(event.local, event.remote);
     case "localUpdated":

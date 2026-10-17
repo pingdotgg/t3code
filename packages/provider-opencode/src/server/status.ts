@@ -678,14 +678,15 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     readonly version: string;
   }) =>
     openCodeRuntime
-      .loadOpenCodeInventory(
-        openCodeRuntime.createOpenCodeSdkClient({
-          baseUrl: server.url,
-          directory: cwd,
-          ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
-        }),
-      )
-      .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
+      .createOpenCodeSdkClient({
+        baseUrl: server.url,
+        directory: cwd,
+        ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
+      })
+      .pipe(
+        Effect.flatMap((client) => openCodeRuntime.loadOpenCodeInventory(client)),
+        Effect.map((inventory) => ({ inventory, version: server.version })),
+      );
   const inventoryEffect = isExternalServer
     ? openCodeRuntime
         .connectToOpenCodeServer({

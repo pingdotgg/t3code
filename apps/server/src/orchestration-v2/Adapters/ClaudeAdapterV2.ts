@@ -1,3 +1,4 @@
+import { ClaudeAgentSdkQueryRunner } from "../../provider/ClaudeAgentSdkQueryRunner.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
@@ -21,7 +22,6 @@ import {
   forkSession as forkClaudeSession,
   type EffortLevel,
   type ForkSessionOptions,
-  type ForkSessionResult,
   getSubagentMessages,
   query,
   type Options as ClaudeQueryOptions,
@@ -89,7 +89,6 @@ import {
 } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
-import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
@@ -444,25 +443,6 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
     return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
   }
 }
-
-export interface ClaudeAgentSdkQueryRunnerShape {
-  readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
-  readonly open: (
-    input: ClaudeAgentSdkQueryOpenInput,
-  ) => Effect.Effect<ClaudeAgentSdkQuerySession, ClaudeAgentSdkQueryRunnerError>;
-  readonly forkSession: (
-    input: ClaudeAgentSdkSessionForkInput,
-  ) => Effect.Effect<ForkSessionResult, ClaudeAgentSdkQueryRunnerError>;
-  readonly subagentLaunchToolUseId: (
-    input: ClaudeAgentSdkSubagentLookupInput,
-  ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
-  readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
-}
-
-export class ClaudeAgentSdkQueryRunner extends Context.Service<
-  ClaudeAgentSdkQueryRunner,
-  ClaudeAgentSdkQueryRunnerShape
->()("t3/orchestration-v2/Adapters/ClaudeAdapterV2/ClaudeAgentSdkQueryRunner") {}
 
 export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
@@ -3329,7 +3309,7 @@ export interface ClaudeAdapterV2Options {
   readonly path: Path.Path;
   readonly crypto: Crypto.Crypto;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-  readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
+  readonly queryRunner: ClaudeAgentSdkQueryRunner["Service"];
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   readonly continuationRequests?: {

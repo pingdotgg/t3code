@@ -1,0 +1,69 @@
+diff --git a/dist/NodeChildProcessSpawner.d.ts b/dist/NodeChildProcessSpawner.d.ts
+--- a/dist/NodeChildProcessSpawner.d.ts
++++ b/dist/NodeChildProcessSpawner.d.ts
+@@ -35,6 +35,8 @@
+ import * as Path from "effect/Path";
+ import * as ChildProcess from "effect/process/ChildProcess";
+ import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
++import type * as NodeChildProcess from "node:child_process";
++import type { Readable, Writable } from "node:stream";
+ /**
+  * Layer that provides the `NodeChildProcessSpawner` implementation.
+  *
+@@ -44,6 +46,25 @@
+  */
+ export declare const layer: Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path>;
+ /**
++ * The part of `ChildProcess` the spawner uses: `spawn`, `error` and `exit`
++ * events, the pid, stdio streams, `kill`, `ref` and `unref`.
++ */
++export interface SpawnedChildProcess extends NodeJS.EventEmitter {
++    readonly pid?: number | undefined;
++    readonly stdin: Writable | null;
++    readonly stdout: Readable | null;
++    readonly stderr: Readable | null;
++    readonly stdio: ReadonlyArray<Readable | Writable | null | undefined>;
++    kill(signal?: NodeJS.Signals | number): boolean;
++    ref(): void;
++    unref(): void;
++}
++/**
++ * `layer` with a replacement for `child_process.spawn` that returns a
++ * `ChildProcess`-compatible object.
++ */
++export declare const layerWithSpawn: (spawnProcess: (command: string, args: ReadonlyArray<string>, options: NodeChildProcess.SpawnOptions) => SpawnedChildProcess) => Layer.Layer<ChildProcessSpawner, never, FileSystem.FileSystem | Path.Path>;
++/**
+  * Result of flattening a pipeline of commands.
+  *
+  * @stability unstable
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -62,7 +62,7 @@
+     windowsHide: true
+   }, onExit);
+ };
+-const make = /*#__PURE__*/Effect.gen(function* () {
++const makeWithSpawn = spawnProcess => Effect.gen(function* () {
+   const fs = yield* FileSystem.FileSystem;
+   const path = yield* Path.Path;
+   const resolveWorkingDirectory = Effect.fnUntraced(function* (options) {
+@@ -278,7 +278,7 @@
+   };
+   const spawn = (command, spawnOptions) => Effect.callback(resume => {
+     const deferred = Deferred.makeUnsafe();
+-    const handle = NodeChildProcess.spawn(command.command, command.args, spawnOptions);
++    const handle = spawnProcess(command.command, command.args, spawnOptions);
+     handle.on("error", error => {
+       resume(Effect.fail(toPlatformError("spawn", error, command)));
+     });
+@@ -570,7 +570,8 @@
+  * @category layers
+  * @since 4.0.0
+  */
+-export const layer = /*#__PURE__*/Layer.effect(ChildProcessSpawner, make);
++export const layer = /*#__PURE__*/Layer.effect(ChildProcessSpawner, /*#__PURE__*/makeWithSpawn(NodeChildProcess.spawn));
++export const layerWithSpawn = spawnProcess => Layer.effect(ChildProcessSpawner, makeWithSpawn(spawnProcess));
+ /**
+  * Flattens a `Command` into an array of `StandardCommand`s along with pipe
+  * options for each connection.

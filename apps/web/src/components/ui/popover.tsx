@@ -2,6 +2,7 @@
 
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
@@ -61,7 +62,7 @@ function PopoverPopup({
   // single-trigger forms need a stable container to retain drafts and submit guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
   return (
-    <PopoverPrimitive.Portal keepMounted={keepMounted}>
+    <PopoverPrimitive.Portal container={usePortalContainer()} keepMounted={keepMounted}>
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

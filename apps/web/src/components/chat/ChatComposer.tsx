@@ -189,6 +189,7 @@ import {
 } from "../../lib/attachmentUploadState";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
+import { usePortalContainer } from "../../lib/portalContainer";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
 import {
@@ -965,6 +966,7 @@ function composerCommandMenuPositionsEqual(
 }
 
 function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children: ReactNode }) {
+  const portalContainer = usePortalContainer();
   const [position, setPosition] = useState<ComposerCommandMenuPosition | null>(null);
 
   useLayoutEffect(() => {
@@ -1032,7 +1034,7 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
     >
       {props.children}
     </div>,
-    document.body,
+    portalContainer ?? document.body,
   );
 }
 import { Button } from "../ui/button";
@@ -1094,6 +1096,7 @@ import {
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useDelayedStatus } from "../../hooks/useDelayedStatus";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useElementState } from "../../hooks/useElementState";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -1131,7 +1134,7 @@ const extendReplacementRangeForTrailingSpace = (
 };
 
 function useRestingComposerControlsLayout(host: HTMLDivElement | null, useControlsAsHost = false) {
-  const [controls, setControls] = useState<HTMLDivElement | null>(null);
+  const [controls, setControls] = useElementState<HTMLDivElement>();
   const controlsRef = useRef<HTMLDivElement>(null);
   const attachControls = (element: HTMLDivElement | null) => {
     controlsRef.current = element;
@@ -1586,7 +1589,7 @@ export interface ChatComposerProps {
   composerImagesRef: React.RefObject<ComposerImageAttachment[]>;
   composerFilesRef: React.RefObject<ComposerFileAttachment[]>;
   composerTerminalContextsRef: React.RefObject<TerminalContextDraft[]>;
-  composerRef: React.RefObject<ChatComposerHandle | null>;
+  composerRef: React.Ref<ChatComposerHandle>;
   onPageScrollKeyDown: (key: "PageUp" | "PageDown") => void;
   onPageScrollKeyUp: (key: string) => void;
   onPageScrollRelease: () => void;
@@ -2259,6 +2262,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.instanceId ?? NO_PROVIDER_MODEL_SELECTION.instanceId;
   const noProviderAvailable =
     selectedProviderEntry === undefined && multipleModelSelections === null;
+  // A first connection attempt is connecting, not disconnected.
+  const environmentConnecting = environmentUnavailable?.connection.phase === "connecting";
+  // Before the catalog arrives, every thread resolves to "no provider". Send
+  // stays blocked either way; only the chrome waits, keeping the picker with
+  // the thread's own selection instead of swapping in the setup button and
+  // back once the catalog lands.
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
   const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
   const providerSetupInstanceId = noProviderAvailable
@@ -2408,7 +2417,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
     null,
   );
-  const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
+  const [composerMenuAnchor, setComposerMenuAnchor] = useElementState<HTMLDivElement>();
   const hasWrappedPrompt = useComposerMultilinePrompt(composerMenuAnchor);
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
@@ -2859,9 +2868,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerOwned: true,
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
-  const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
-    null,
-  );
+  const [inlineRestingControlsHost, setInlineRestingControlsHost] =
+    useElementState<HTMLDivElement>();
   const {
     controlsRef: restingComposerControlsRef,
     attachControls: attachRestingComposerControls,
@@ -4803,7 +4811,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useLayoutEffect(() => {
     onRestingChange(isComposerResting);
   }, [isComposerResting, onRestingChange]);
-  const [restingActionsElement, setRestingActionsElement] = useState<HTMLDivElement | null>(null);
+  // The resting footer floats over the prompt row, so the row reserves its
+  // measured width. Wide actions like the compact-before-send chip vary too much for a fixed inset.
+  const [restingActionsElement, setRestingActionsElement] = useElementState<HTMLDivElement>();
   const [restingActionsWidth, setRestingActionsWidth] = useState<number | null>(null);
   useLayoutEffect(() => {
     if (!isComposerResting || !restingActionsElement) return;
@@ -6444,9 +6454,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               promptHasText={false}
                               isSendBusy={isSendBusy}
                               sendDisabledReason={sendDisabledReason}
-                              isConnecting={isConnecting}
+                              isConnecting={isConnecting || environmentConnecting}
                               isEnvironmentUnavailable={
-                                environmentUnavailable !== null ||
+                                (environmentUnavailable !== null && !environmentConnecting) ||
                                 noProviderAvailable ||
                                 projectSelectionRequired
                               }
@@ -7065,6 +7075,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           : prompt
                     }
                     cursor={composerCursor}
+                    historyScope={`${routeThreadRef.environmentId}:${routeThreadRef.threadId}`}
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragmentStable}
                     importContextFragment={importContextFragmentStable}
@@ -7131,9 +7142,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       promptHasText={false}
                       isSendBusy={isSendBusy}
                       sendDisabledReason={sendDisabledReason}
-                      isConnecting={isConnecting}
+                      isConnecting={isConnecting || environmentConnecting}
                       isEnvironmentUnavailable={
-                        environmentUnavailable !== null ||
+                        (environmentUnavailable !== null && !environmentConnecting) ||
                         noProviderAvailable ||
                         projectSelectionRequired
                       }
@@ -7256,9 +7267,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
                     sendDisabledReason={sendDisabledReason}
-                    isConnecting={isConnecting}
+                    isConnecting={isConnecting || environmentConnecting}
                     isEnvironmentUnavailable={
-                      environmentUnavailable !== null ||
+                      (environmentUnavailable !== null && !environmentConnecting) ||
                       noProviderAvailable ||
                       projectSelectionRequired
                     }

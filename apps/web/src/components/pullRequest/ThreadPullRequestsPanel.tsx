@@ -26,7 +26,12 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { findProjectForChangeRequest, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "~/shortcutModifierState";
-import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadProjection,
+  useThreadShell,
+} from "~/state/entities";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -212,11 +217,13 @@ function LinkRowImpl({
             ) : null
           }
           status={
-            <PullRequestDiffStat
-              additions={snapshot?.additions ?? 0}
-              deletions={snapshot?.deletions ?? 0}
-              className="font-mono"
-            />
+            snapshot?.additions === undefined && snapshot?.deletions === undefined ? null : (
+              <PullRequestDiffStat
+                additions={snapshot?.additions ?? 0}
+                deletions={snapshot?.deletions ?? 0}
+                className="font-mono"
+              />
+            )
           }
           meta={
             <>
@@ -354,8 +361,28 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   return <EnabledThreadPullRequestsPanel threadRef={threadRef} />;
 }
 
+/** Prefer full detail snapshots unless the compact shell has synced more recently. */
+function freshestPullRequests(
+  shellLinks: ReadonlyArray<ThreadPullRequestLink> | undefined,
+  detailLinks: ReadonlyArray<ThreadPullRequestLink> | undefined,
+): ReadonlyArray<ThreadPullRequestLink> {
+  if (shellLinks === undefined || detailLinks === undefined) return shellLinks ?? detailLinks ?? [];
+  const key = (link: ThreadPullRequestLink) => `${link.host}/${link.repository}#${link.number}`;
+  const detailSnapshots = new Map(detailLinks.map((link) => [key(link), link.snapshot]));
+  return shellLinks.map((link) => {
+    const full = detailSnapshots.get(key(link));
+    return full != null && link.snapshot !== null && full.syncedAt >= link.snapshot.syncedAt
+      ? { ...link, snapshot: full }
+      : link;
+  });
+}
+
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const thread = useThreadShell(threadRef);
+  const shell = useThreadShell(threadRef);
+  const detail = useThreadProjection(threadRef);
+  const thread = detail?.projection.thread ?? shell;
+  const shellPullRequests = shell?.pullRequests;
+  const detailPullRequests = detail?.projection.thread.pullRequests;
   const projects = useProjects();
   const environmentProjects = useMemo(
     () =>
@@ -374,7 +401,10 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
-  const links = useMemo(() => visibleThreadPullRequests(thread?.pullRequests ?? []), [thread]);
+  const links = useMemo(
+    () => visibleThreadPullRequests(freshestPullRequests(shellPullRequests, detailPullRequests)),
+    [shellPullRequests, detailPullRequests],
+  );
   const lines = useMemo(() => pullRequestListLines(resolveThreadPullRequestChains(links)), [links]);
   const handleUnlink = useCallback(
     (link: ThreadPullRequestLink) => {

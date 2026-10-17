@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import {
@@ -83,7 +84,31 @@ import {
 } from "./methods/cliCommand.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
-  const ipc = yield* DesktopIpc.DesktopIpc;
+  const desktopIpc = yield* DesktopIpc.DesktopIpc;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+  // Process-spawning handlers need the login environment before they run.
+  const ipc = {
+    handle: <E, R>(method: DesktopIpc.DesktopIpcMethod<E, R>) =>
+      desktopIpc.handle({
+        channel: method.channel,
+        handler: (raw, event) =>
+          shellEnvironment.installIntoProcess.pipe(
+            Effect.andThen(() => method.handler(raw, event)),
+          ),
+      }),
+    // For handlers that spawn nothing and read no login shell variables.
+    handleWithoutShell: desktopIpc.handle,
+    // For handlers that use safeStorage, which can need the shell's session bus.
+    handleSecretStorage: <E, R>(method: DesktopIpc.DesktopIpcMethod<E, R>) =>
+      desktopIpc.handle({
+        channel: method.channel,
+        handler: (raw, event) =>
+          shellEnvironment.secretStorageReady.pipe(
+            Effect.andThen(() => method.handler(raw, event)),
+          ),
+      }),
+    handleSync: desktopIpc.handleSync,
+  };
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 
@@ -99,11 +124,11 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handleSync(getLocalEnvironmentBootstraps);
   yield* ipc.handleSync(getLocalEnvironmentEnabled);
   yield* ipc.handle(setLocalEnvironmentEnabled);
-  yield* ipc.handle(getLocalEnvironmentBearerToken);
+  yield* ipc.handleWithoutShell(getLocalEnvironmentBearerToken);
 
-  yield* ipc.handle(getClientSettings);
-  yield* ipc.handle(setClientSettings);
-  yield* ipc.handle(getConnectionCatalog);
+  yield* ipc.handleWithoutShell(getClientSettings);
+  yield* ipc.handleWithoutShell(setClientSettings);
+  yield* ipc.handleSecretStorage(getConnectionCatalog);
   yield* ipc.handle(getSnapShotState);
   yield* ipc.handle(setupSnapShot);
   yield* ipc.handle(previewSnapShotConfig);
@@ -116,8 +141,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(setSnapShotAnimationDestination);
   yield* ipc.handle(dismissSnapShotAnimation);
   yield* ipc.handle(acknowledgeSnapShot);
-  yield* ipc.handle(setConnectionCatalog);
-  yield* ipc.handle(clearConnectionCatalog);
+  yield* ipc.handleSecretStorage(setConnectionCatalog);
+  yield* ipc.handleSecretStorage(clearConnectionCatalog);
 
   yield* ipc.handle(discoverSshHosts);
   yield* ipc.handle(resolveSshHost);
@@ -142,8 +167,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(pickThemeFiles);
-  yield* ipc.handle(setTheme);
-  yield* ipc.handle(showContextMenu);
+  yield* ipc.handleWithoutShell(setTheme);
+  yield* ipc.handleWithoutShell(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);

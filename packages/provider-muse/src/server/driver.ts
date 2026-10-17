@@ -1,3 +1,4 @@
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -14,7 +15,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { makeMuseTextGeneration } from "./textGeneration.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
-import { makeMuseAdapterV2 } from "./adapter.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { checkMuseProviderStatus, makePendingMuseProvider } from "./status.ts";
@@ -157,14 +157,22 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         ),
       );
       const modelCatalog = snapshot.getSnapshot.pipe(Effect.map((current) => current.models));
-      const orchestrationAdapter = yield* makeMuseAdapterV2({
+      const orchestrationAdapter = yield* makeLazyAdapter(
         instanceId,
-        settings: effectiveConfig,
-        environment: processEnvironment,
-        modelCatalog,
-        ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
-        continuationRequests,
-      });
+        DRIVER_KIND,
+        Effect.promise(() => import("./adapter.ts")).pipe(
+          Effect.flatMap(({ makeMuseAdapterV2 }) =>
+            makeMuseAdapterV2({
+              instanceId,
+              settings: effectiveConfig,
+              environment: processEnvironment,
+              modelCatalog,
+              ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+              continuationRequests,
+            }),
+          ),
+        ),
+      );
       const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
         environment: processEnvironment,
         modelCatalog,

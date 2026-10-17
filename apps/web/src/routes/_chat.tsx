@@ -1,10 +1,11 @@
 import { AuthPreviewOperateScope } from "@t3tools/contracts";
 import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { ThreadRouteView } from "../components/ThreadRouteView";
+import { registerChatSurface } from "../components/chatSurfaceSlot";
+import { KeptChatSurface } from "../components/ThreadRouteView";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
@@ -210,19 +211,19 @@ function ChatRouteGlobalShortcuts() {
 }
 
 function ChatRouteLayout() {
-  // Both thread routes render here, not in their own leaf components, so the
-  // draft-to-thread promotion keeps one ChatView mounted across the swap.
   const threadTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
   });
+  // Root owns the chat view so it survives route swaps.
+  useLayoutEffect(() => registerChatSurface(<KeptChatSurface />), []);
   return (
     <>
       <ChatRouteGlobalShortcuts />
       {threadTarget?.kind === "server" ? (
         <ThreadLinkPrompt threadRef={threadTarget.threadRef} />
       ) : null}
-      {threadTarget ? <ThreadRouteView target={threadTarget} /> : <Outlet />}
+      <Outlet />
     </>
   );
 }

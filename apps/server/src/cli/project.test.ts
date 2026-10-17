@@ -1,3 +1,4 @@
+import * as ProjectLayers from "../orchestration-v2/runtimeLayer.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
@@ -31,7 +32,6 @@ import * as ServerConfig from "../config.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
-import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -89,7 +89,7 @@ const makeConfig = (baseDir: string) =>
 const readProjects = (baseDir: string) =>
   Effect.gen(function* () {
     const config = yield* makeConfig(baseDir);
-    const layer = RuntimeLayer.layerProjectService.pipe(
+    const layer = ProjectLayers.layerProjectService.pipe(
       Layer.provideMerge(ProjectEnrichmentService.layer),
       Layer.provideMerge(RepositoryIdentityResolver.layer),
       Layer.provideMerge(ProjectFaviconResolver.layer),
@@ -171,7 +171,7 @@ const makeThreadPersistenceLayer = Effect.fn("ProjectCliTest.makeThreadPersisten
   function* (baseDir: string) {
     const config = yield* makeConfig(baseDir);
     return Layer.mergeAll(
-      RuntimeLayer.layerEventSink,
+      ProjectLayers.layerEventSink,
       ProjectionStore.layer,
       EventStore.layer,
     ).pipe(

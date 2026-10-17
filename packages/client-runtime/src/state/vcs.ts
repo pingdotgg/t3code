@@ -2,7 +2,6 @@ import {
   type EnvironmentId,
   type VcsListRefsInput,
   type VcsListRefsResult,
-  type VcsStatusResult,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
@@ -11,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -280,16 +280,16 @@ export function createVcsEnvironmentAtoms<R, E>(
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
-      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>
-        subscribe(WS_METHODS.subscribeVcsStatus, input).pipe(
-          Stream.mapAccum(
-            () => null as VcsStatusResult | null,
-            (current, event) => {
-              const next = applyGitStatusStreamEvent(current, event);
-              return [next, [next]] as const;
-            },
-          ),
-        ),
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) => {
+        let current: ReturnType<typeof applyGitStatusStreamEvent> | null = null;
+        return subscribe(WS_METHODS.subscribeVcsStatus, { ...input, compact: true }).pipe(
+          Stream.filterMap((event) => {
+            if (event._tag === "unchanged") return Result.failVoid;
+            current = applyGitStatusStreamEvent(current, event);
+            return Result.succeed(current);
+          }),
+        );
+      },
     }),
     pull: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:pull",

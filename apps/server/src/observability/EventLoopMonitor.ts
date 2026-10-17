@@ -11,18 +11,19 @@ import type * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
 
-// Node's delay histogram wakes a native timer every RESOLUTION_MS and records the
-// gap between wakeups, so an idle loop reads about RESOLUTION_MS and a stall of S
-// reads between S and S + RESOLUTION_MS. We subtract the resolution, so a delay can
-// undercount a stall by up to RESOLUTION_MS.
-const RESOLUTION_MS = 1000;
-const STALL_THRESHOLD_MS = 2000;
-const SAMPLE_INTERVAL = "30 seconds";
+// Subtract the histogram resolution to exclude idle delay; stalls can undercount by that much.
+// Sample startup more closely, then reduce wakeups so an idle backend stays idle.
+const STARTUP = { resolutionMs: 100, stallThresholdMs: 250, sampleIntervalMs: 1000 };
+const STEADY = { resolutionMs: 1000, stallThresholdMs: 2000, sampleIntervalMs: 30_000 };
+const STARTUP_SAMPLES = 30;
+const SLEEP_CHECK_MS = 5000;
 const STALL_LOG_MAX_BYTES = 256 * 1024;
 
 /** Delay in ns, active time in ms, CPU in µs. */
 export interface EventLoopReadings {
   readonly delayMaxNs: number;
+  /** Timer drift also covers startup and the histogram's first gap after reset. */
+  readonly tickDelayMs?: number;
   readonly activeMs: number;
   readonly utilization: number;
   readonly usage: Pick<
@@ -34,28 +35,42 @@ export interface EventLoopReadings {
     | "involuntaryContextSwitches"
   >;
   readonly rssBytes: number;
+  readonly steady?: boolean;
 }
 
 // Node skips the first gap after a reset, so a stall right at a sample boundary can be missed.
 const makeNodeSampler = Effect.gen(function* () {
-  const histogram = yield* Effect.acquireRelease(
-    Effect.sync(() => {
-      const histogram = NodePerfHooks.monitorEventLoopDelay({ resolution: RESOLUTION_MS });
-      histogram.enable();
-      return histogram;
-    }),
-    (histogram) => Effect.sync(() => histogram.disable()),
-  );
+  const monitor = (resolution: number) => {
+    const histogram = NodePerfHooks.monitorEventLoopDelay({ resolution });
+    histogram.enable();
+    return histogram;
+  };
+  let histogram = monitor(STARTUP.resolutionMs);
+  yield* Effect.addFinalizer(() => Effect.sync(() => histogram.disable()));
+  let samplesRead = 0;
   let elu = NodePerfHooks.performance.eventLoopUtilization();
   let usage = process.resourceUsage();
+  let sampledAt = NodePerfHooks.performance.now();
+  // Cover stalls before the histogram's first wakeup.
+  const armedAt = sampledAt;
+  let startupDelayMs = 0;
+  // @effect-diagnostics-next-line globalTimersInEffect:off -- The native boot probe must arm before Effect scheduling can run startup work.
+  const startupProbe = setTimeout(() => {
+    startupDelayMs = Math.max(0, NodePerfHooks.performance.now() - armedAt - STARTUP.resolutionMs);
+  }, STARTUP.resolutionMs);
+  yield* Effect.addFinalizer(() => Effect.sync(() => clearTimeout(startupProbe)));
 
   // @effect-diagnostics-next-line returnEffectInGen:off - the read effect is the result.
   return Effect.sync(() => {
     const nextElu = NodePerfHooks.performance.eventLoopUtilization();
     const nextUsage = process.resourceUsage();
+    const now = NodePerfHooks.performance.now();
     const loop = NodePerfHooks.performance.eventLoopUtilization(nextElu, elu);
+    const steady = samplesRead >= STARTUP_SAMPLES;
+    const intervalMs = (steady ? STEADY : STARTUP).sampleIntervalMs;
     const readings: EventLoopReadings = {
       delayMaxNs: histogram.max,
+      tickDelayMs: Math.max(startupDelayMs, now - sampledAt - intervalMs, 0),
       activeMs: loop.active,
       utilization: loop.utilization,
       usage: {
@@ -67,19 +82,40 @@ const makeNodeSampler = Effect.gen(function* () {
           nextUsage.involuntaryContextSwitches - usage.involuntaryContextSwitches,
       },
       rssBytes: process.memoryUsage.rss(),
+      ...(steady ? { steady } : {}),
     };
-    histogram.reset();
+    samplesRead += 1;
+    if (samplesRead === STARTUP_SAMPLES) {
+      histogram.disable();
+      histogram = monitor(STEADY.resolutionMs);
+    } else {
+      histogram.reset();
+    }
+    startupDelayMs = 0;
     elu = nextElu;
     usage = nextUsage;
+    sampledAt = now;
     return readings;
   });
 });
 
-export const stallMs = ({ delayMaxNs, activeMs }: EventLoopReadings) => {
-  const delayMs = Math.round(delayMaxNs / 1e6) - RESOLUTION_MS;
-  // libuv's clock keeps running while the system sleeps on macOS and Windows, so a
-  // sleep also reads as delay, but the loop spent it idle in poll.
-  if (delayMs <= STALL_THRESHOLD_MS || activeMs < delayMs) return undefined;
+/**
+ * Returns the stall to report for one sample in ms, or undefined when there was none.
+ */
+export const stallMs = ({
+  delayMaxNs,
+  tickDelayMs = 0,
+  activeMs,
+  usage,
+  steady,
+}: EventLoopReadings) => {
+  const { resolutionMs, stallThresholdMs } = steady ? STEADY : STARTUP;
+  const delayMs = Math.round(Math.max(delayMaxNs / 1e6 - resolutionMs, tickDelayMs));
+  if (delayMs <= stallThresholdMs) return undefined;
+  // System sleep produces an idle gap. CPU time covers startup before ELU counts active time;
+  // short stalls bypass this check because those readings can lag.
+  const busyMs = Math.max(activeMs, (usage.userCPUTime + usage.systemCPUTime) / 1000);
+  if (delayMs > SLEEP_CHECK_MS && busyMs < delayMs / 2) return undefined;
   return delayMs;
 };
 
@@ -142,16 +178,14 @@ export const layerWith = (
           );
         }
       });
-      const wait = Effect.sleep(SAMPLE_INTERVAL);
-      // The layer builds before the rest of the server, so the first sample covers
-      // startup work such as migrations and projection bootstrap. That can block the
-      // loop for seconds on a large database, so skip it rather than warn at every
-      // launch.
-      yield* wait.pipe(
-        Effect.andThen(sample),
-        Effect.andThen(wait.pipe(Effect.andThen(tick), Effect.forever)),
-        Effect.forkScoped,
-      );
+      const sampleAfter = (intervalMs: number) =>
+        Effect.sleep(intervalMs).pipe(Effect.andThen(tick));
+      yield* Effect.gen(function* () {
+        for (let sample = 0; sample < STARTUP_SAMPLES; sample++) {
+          yield* sampleAfter(STARTUP.sampleIntervalMs);
+        }
+        return yield* sampleAfter(STEADY.sampleIntervalMs).pipe(Effect.forever);
+      }).pipe(Effect.forkScoped);
     }),
   );
 

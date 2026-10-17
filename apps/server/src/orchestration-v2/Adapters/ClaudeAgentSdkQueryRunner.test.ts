@@ -14,11 +14,8 @@ import { vi } from "vite-plus/test";
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
-  ClaudeAgentSdkQueryRunner,
-  layerQueryRunner,
-} from "./ClaudeAdapterV2.ts";
+import { ClaudeAgentSdkQueryRunner } from "../../provider/ClaudeAgentSdkQueryRunner.ts";
+import { CLAUDE_AGENT_SDK_QUERY_PROTOCOL, layerQueryRunner } from "./ClaudeAdapterV2.ts";
 
 vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 

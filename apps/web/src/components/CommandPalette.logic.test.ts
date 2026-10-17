@@ -273,6 +273,31 @@ describe("reduceCommandPaletteUiState", () => {
       openIntent: null,
     });
   });
+
+  it("keeps text typed while a view loads as that view's query", () => {
+    const contentOpen = reduceCommandPaletteUiState(closedState, {
+      _tag: "ToggleMode",
+      mode: "content",
+    });
+    expect(
+      reduceCommandPaletteUiState(contentOpen, { _tag: "TypeAhead", query: "fo" }).openIntent,
+    ).toEqual({ kind: "search", query: "fo" });
+
+    const linkedThreads = { environmentId: EnvironmentId.make("env"), threads: [] };
+    const prSearch = reduceCommandPaletteUiState(closedState, {
+      _tag: "OpenSearch",
+      query: "#4",
+      linkedThreads,
+    });
+    expect(
+      reduceCommandPaletteUiState(prSearch, { _tag: "TypeAhead", query: "#42" }).openIntent,
+    ).toEqual({ kind: "search", query: "#42", linkedThreads });
+
+    const addProject = reduceCommandPaletteUiState(closedState, { _tag: "OpenAddProject" });
+    expect(reduceCommandPaletteUiState(addProject, { _tag: "TypeAhead", query: "a" })).toBe(
+      addProject,
+    );
+  });
 });
 
 describe("enumerateCommandPaletteItems", () => {

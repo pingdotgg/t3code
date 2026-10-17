@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import {
   AuthStandardClientScopes,
   EnvironmentId,
@@ -5,8 +6,10 @@ import {
   type DesktopBridge,
   type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { PlatformConnectionSource } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -18,6 +21,7 @@ import {
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
   nextRejectedSecondaryBootstrap,
+  layerPlatformConnectionSource,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
@@ -303,5 +307,47 @@ describe("primary topology cache", () => {
         target: null,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("cached primary discovery", () => {
+  afterEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it.live("retains the early primary through failed discovery and retries discovery", () => {
+    const target = {
+      _tag: "PrimaryConnectionTarget",
+      environmentId: EnvironmentId.make("cached-primary"),
+      label: "Cached primary",
+      httpBaseUrl: `${window.location.origin}/`,
+      wsBaseUrl: `${window.location.origin.replace("http", "ws")}/`,
+    };
+    localStorage.setItem("t3code:desktop-primary-target:v1", JSON.stringify(target));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementation(() =>
+        Promise.resolve(
+          Response.json({
+            environmentId: target.environmentId,
+            label: "Discovered primary",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          }),
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    return Effect.gen(function* () {
+      const source = yield* PlatformConnectionSource.PlatformConnectionSource;
+      const emissions = yield* source.registrations.pipe(Stream.take(3), Stream.runCollect);
+      expect(
+        emissions.map((registrations) => registrations.map((entry) => entry.target.label)),
+      ).toEqual([["Cached primary"], ["Cached primary"], ["Discovered primary"]]);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layerPlatformConnectionSource));
   });
 });

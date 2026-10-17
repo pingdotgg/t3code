@@ -17,6 +17,7 @@ export const getUpdateState = DesktopIpc.makeIpcMethod({
   result: DesktopUpdateStateSchema,
   handler: Effect.fn("desktop.ipc.updates.getState")(function* () {
     const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.whenConfigured;
     return yield* updates.getState;
   }),
 });
@@ -27,6 +28,7 @@ export const setUpdateChannel = DesktopIpc.makeIpcMethod({
   result: DesktopUpdateStateSchema,
   handler: Effect.fn("desktop.ipc.updates.setChannel")(function* (channel) {
     const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.whenConfigured;
     return yield* updates.setChannel(channel);
   }),
 });
@@ -37,6 +39,7 @@ export const downloadUpdate = DesktopIpc.makeIpcMethod({
   result: DesktopUpdateActionResultSchema,
   handler: Effect.fn("desktop.ipc.updates.download")(function* () {
     const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.whenConfigured;
     return yield* updates.download;
   }),
 });
@@ -47,6 +50,7 @@ export const installUpdate = DesktopIpc.makeIpcMethod({
   result: DesktopUpdateActionResultSchema,
   handler: Effect.fn("desktop.ipc.updates.install")(function* () {
     const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.whenConfigured;
     return yield* updates.install;
   }),
 });
@@ -57,6 +61,7 @@ export const checkForUpdate = DesktopIpc.makeIpcMethod({
   result: DesktopUpdateCheckResultSchema,
   handler: Effect.fn("desktop.ipc.updates.check")(function* () {
     const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.whenConfigured;
     return yield* updates.check("web-ui");
   }),
 });

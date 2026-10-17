@@ -29,6 +29,16 @@ export function useEnvironmentScope(
   return sessionHasScope(result, scope);
 }
 
+/** True until the environment's session has answered once, so grants are unknown. */
+export function useEnvironmentSessionPending(environmentId: EnvironmentId | null): boolean {
+  const result = useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+  );
+  return result._tag !== "Failure" && Option.isNone(AsyncResult.value(result));
+}
+
 function sessionHasScope(
   result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
   scope: AuthEnvironmentScope,

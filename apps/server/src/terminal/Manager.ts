@@ -38,7 +38,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { mergePathEntries } from "@t3tools/shared/shell";
 
-import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
+import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";

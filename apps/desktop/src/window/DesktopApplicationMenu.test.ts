@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import type * as Electron from "electron";
 
@@ -56,7 +57,7 @@ const layerElectronDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
   showErrorBox: () => Effect.void,
 } satisfies ElectronDialog.ElectronDialog["Service"]);
 
-const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
+const desktopUpdates = {
   getState: Effect.die("unexpected getState"),
   isActionActive: Effect.succeed(false),
   isInstallActive: Effect.succeed(false),
@@ -64,12 +65,15 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   emitState: Effect.void,
   disabledReason: Effect.succeedNone,
   configure: Effect.void,
+  whenConfigured: Effect.void,
   setChannel: () => Effect.die("unexpected setChannel"),
   check: () => Effect.die("unexpected check"),
   download: Effect.die("unexpected download"),
   install: Effect.die("unexpected install"),
   installPrepared: () => Effect.die("unexpected installPrepared"),
-} satisfies DesktopUpdates.DesktopUpdates["Service"]);
+} satisfies DesktopUpdates.DesktopUpdates["Service"];
+const layerDesktopUpdates = (updates: Partial<DesktopUpdates.DesktopUpdates["Service"]>) =>
+  Layer.succeed(DesktopUpdates.DesktopUpdates, { ...desktopUpdates, ...updates });
 
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
@@ -106,6 +110,7 @@ const configureMenu = (
   selectedAction: Deferred.Deferred<string>,
   applicationMenuTemplate: Deferred.Deferred<readonly Electron.MenuItemConstructorOptions[]>,
   environment: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
+  updates: Partial<DesktopUpdates.DesktopUpdates["Service"]> = {},
 ) =>
   Effect.gen(function* () {
     const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
@@ -115,7 +120,7 @@ const configureMenu = (
       DesktopApplicationMenu.layer.pipe(
         Layer.provideMerge(layerElectronMenu(applicationMenuTemplate)),
         Layer.provideMerge(layerDesktopWindow(selectedAction)),
-        Layer.provideMerge(layerDesktopUpdates),
+        Layer.provideMerge(layerDesktopUpdates(updates)),
         Layer.provideMerge(layerElectronDialog),
         Layer.provideMerge(layerElectronApp),
         Layer.provideMerge(
@@ -300,6 +305,46 @@ describe("DesktopApplicationMenu", () => {
 
       reload.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
       assert.equal(yield* Deferred.await(selectedAction), "main-reload");
+    }),
+  );
+
+  it.effect("waits for the updater's configuration before a menu update check", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      const calls: Array<string> = [];
+      const checked = yield* Deferred.make<void>();
+
+      yield* configureMenu(
+        selectedAction,
+        applicationMenuTemplate,
+        {},
+        {
+          whenConfigured: Effect.sync(() => {
+            calls.push("whenConfigured");
+          }),
+          disabledReason: Effect.sync(() => {
+            calls.push("disabledReason");
+          }).pipe(
+            Effect.andThen(Deferred.succeed(checked, undefined)),
+            Effect.as(Option.some("Updates are off in this test.")),
+          ),
+        },
+      );
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const checkForUpdates = template
+        .flatMap((item) => (Array.isArray(item.submenu) ? item.submenu : []))
+        .find((item) => item.label === "Check for Updates...");
+      assert.isFunction(checkForUpdates?.click);
+      checkForUpdates!.click!(
+        {} as Electron.MenuItem,
+        {} as Electron.BrowserWindow,
+        {} as KeyboardEvent,
+      );
+      yield* Deferred.await(checked);
+      assert.deepStrictEqual(calls, ["whenConfigured", "disabledReason"]);
     }),
   );
 });

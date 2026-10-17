@@ -9,6 +9,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { prepareServiceDatabaseBackup } from "./serviceDatabaseBackup.ts";
 
 import type {
   PendingServiceUpdate,
@@ -334,8 +335,10 @@ async function restoreDatabaseBackup(
 
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, updateId);
-  if (!(await pathExists(backupDir))) return;
+  const stagingDir = `${backupDir}.staging`;
+  if (!(await pathExists(backupDir)) && !(await pathExists(stagingDir))) return;
   await NodeFSP.rm(backupDir, { recursive: true, force: true });
+  await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await syncDirectory(NodePath.dirname(backupDir));
 }
 
@@ -700,8 +703,35 @@ export class Launcher {
       return;
     }
     this.#timer = undefined;
+    // Back up every update: even a trial without migrations can write incompatible payloads.
+    const backupDir = databaseBackupDir(this.#baseDir, pending.id);
+    const stagingDir = `${backupDir}.staging`;
+    let prepared: Awaited<ReturnType<typeof prepareServiceDatabaseBackup>> | undefined;
+    try {
+      if (!(await pathExists(backupDir))) {
+        prepared = await prepareServiceDatabaseBackup(pending.dbPath, stagingDir);
+      }
+    } catch {
+      // The accepted update must proceed; #startTrial falls back to a stopped copy.
+      prepared = undefined;
+    }
     this.#child = null;
-    await terminateChild(child.process);
+    try {
+      await terminateChild(child.process);
+      if (prepared !== undefined) {
+        await prepared.finish();
+        await syncDirectory(stagingDir);
+        await NodeFSP.rename(stagingDir, backupDir);
+        await syncDirectory(NodePath.dirname(backupDir));
+      }
+    } catch {
+      prepared?.close();
+      prepared = undefined;
+      await this.#returnToPrevious(pending, "failed", "db-backup-failed");
+      return;
+    } finally {
+      prepared?.close();
+    }
     await this.#startTrial(pending);
   }
 

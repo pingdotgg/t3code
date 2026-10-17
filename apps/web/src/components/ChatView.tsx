@@ -44,6 +44,7 @@ import {
   eventPathContainsSelector,
   pasteTextToFocusComposer,
   shouldRedirectInputToComposer,
+  shouldTypeToFocusComposer,
   TYPE_TO_FOCUS_EDITABLE_SELECTOR,
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
@@ -146,6 +147,7 @@ import {
   type SetStateAction,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -154,9 +156,18 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+import {
+  eraseHeldText,
+  holdTextForUrlRouteTarget,
+  isUrlTargetSidebarTextKey,
+  isUrlRouteTargetElsewhere,
+  KeptViewWarmingContext,
+  insertHeldText,
+} from "./keptView";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
+import { queryShownElement } from "../lib/shownElement";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -217,6 +228,7 @@ import { settleAndAdvance } from "../settleAndAdvance";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { useElementState } from "../hooks/useElementState";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
 import { usePreviewPanelInlineSize } from "../hooks/usePreviewPanelInlineSize";
 import {
@@ -364,7 +376,7 @@ import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnect
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
-import { useEnvironmentScope } from "~/state/session";
+import { useEnvironmentScope, useEnvironmentSessionPending } from "~/state/session";
 import {
   environmentServerConfigsAtom,
   primaryServerAvailableEditorsAtom,
@@ -419,7 +431,7 @@ import {
   RightPanelMaximizeControl,
 } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
-import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
+import type { ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   type EnvironmentOption,
@@ -479,6 +491,8 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
+  isInitialEnvironmentConnect,
+  markEnvironmentConnected,
   scheduleEnvironmentReconnectWarning,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
@@ -670,12 +684,45 @@ const ThreadPreviewMiniPlayer = lazy(() =>
     default: module.ThreadPreviewMiniPlayer,
   })),
 );
+const ThreadDetailsPanel = lazy(() =>
+  import("./chat/ThreadDetailsPanel").then((module) => ({ default: module.ThreadDetailsPanel })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly connection: EnvironmentConnectionPresentation;
 };
+
+/** A character typed into the chat composer itself. */
+function isComposerTextKey(event: KeyboardEvent): boolean {
+  if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return false;
+  return (
+    event.key.length === 1 &&
+    event.target instanceof Element &&
+    event.target.closest('[data-testid="composer-editor"]') !== null
+  );
+}
+
+const COMPOSER_EDIT_KEYS = new Set(["Enter", "Backspace", "Delete", "ArrowUp", "ArrowDown"]);
+const COMPOSER_EDIT_SHORTCUT_KEYS = new Set(["x", "v", "z", "y"]);
+
+/**
+ * A key that sends, edits or recalls a prompt in the chat composer itself:
+ * Enter, Backspace, Delete, the arrows that recall earlier prompts, and cut,
+ * paste, undo and redo.
+ */
+function isComposerEditKey(event: KeyboardEvent): boolean {
+  if (event.isComposing) return false;
+  if (!(event.target instanceof Element)) return false;
+  if (event.target.closest('[data-testid="composer-editor"]') === null) return false;
+  if (COMPOSER_EDIT_KEYS.has(event.key)) return true;
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    COMPOSER_EDIT_SHORTCUT_KEYS.has(event.key.toLowerCase())
+  );
+}
 
 // Kept per route so a send in flight, and the multiple-model selections, survive
 // ChatView remounting while the user navigates.
@@ -1016,6 +1063,9 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
+/** The composer inset the last chat view measured; seeds the next view (see ChatView). */
+let lastComposerTimelineInset = 0;
+
 // The factories below build functions ChatView calls during render, or hands
 // to ChatComposer, which can call them after an await. They live outside the
 // component so each closure keeps only its inputs, not a whole render scope
@@ -1090,6 +1140,8 @@ export default function ChatView(props: ChatViewProps) {
     forceExpandedMobileComposer = false,
   } = props;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  // Before the session answers, missing grants mean "not connected yet".
+  const sessionPending = useEnvironmentSessionPending(environmentId);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = () =>
     readEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -1102,6 +1154,9 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  // This view's route target, as `threadRouteTargetKey` names it.
+  const viewRouteTargetKey =
+    routeKind === "server" ? `server:${routeThreadKey}` : `draft:${draftId}`;
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
   useLayoutEffect(() => {
     currentRouteThreadKeyRef.current = routeThreadKey;
@@ -1176,8 +1231,24 @@ export default function ChatView(props: ChatViewProps) {
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
   const promptRef = useRef("");
-  const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  // Each view owns a composer; only the shown view publishes the shared ref.
+  const composerRef = useRef<ChatComposerHandle | null>(null);
+  const sharedComposerRef = useComposerHandleContext();
+  const publishesComposerRef = useRef(false);
+  const setComposerHandle = useCallback(
+    (handle: ChatComposerHandle | null) => {
+      const previous = composerRef.current;
+      composerRef.current = handle;
+      if (
+        sharedComposerRef !== null &&
+        publishesComposerRef.current &&
+        sharedComposerRef.current === previous
+      ) {
+        sharedComposerRef.current = handle;
+      }
+    },
+    [sharedComposerRef],
+  );
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
@@ -1319,7 +1390,7 @@ export default function ChatView(props: ChatViewProps) {
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
-    useState<HTMLDivElement | null>(null);
+    useElementState<HTMLDivElement>();
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
   const citeAssistantText = (
     citation: AssistantCitation,
@@ -1416,9 +1487,15 @@ export default function ChatView(props: ChatViewProps) {
   const legendListRef = useRef<LegendListRef | null>(null);
   const getTimelineScrollableNode = () => legendListRef.current?.getScrollableNode() ?? null;
   const getTimelineScrollableNodeStable = useStableCallback(getTimelineScrollableNode);
-  const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
-  const [composerTimelineInset, setComposerTimelineInset] = useState(0);
-  const composerTimelineInsetRef = useRef(0);
+  const [composerOverlayElement, setComposerOverlayElement] = useElementState<HTMLDivElement>();
+  // Space the timeline keeps clear above its end. Tracks the overlay while the
+  // composer is expanded and holds that height while it rests, so the resting
+  // composer never exposes rows that its expansion will cover.
+  // Seed the inset so new views start at the true end before measuring.
+  const [composerTimelineInset, setComposerTimelineInset] = useState(
+    () => lastComposerTimelineInset,
+  );
+  const composerTimelineInsetRef = useRef(lastComposerTimelineInset);
   const composerRestingRef = useRef(false);
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
@@ -2084,6 +2161,18 @@ export default function ChatView(props: ChatViewProps) {
       setReconnectWarningGraceElapsedEnvironmentId(activeReconnectingEnvironmentId),
     );
   }, [activeReconnectingEnvironmentId]);
+  const activeEnvironmentIdForConnection = activeEnvironment?.environmentId ?? null;
+  useEffect(() => {
+    if (
+      activeEnvironmentIdForConnection !== null &&
+      activeEnvironmentConnectionPhase === "connected"
+    ) {
+      markEnvironmentConnected(activeEnvironmentIdForConnection);
+    }
+  }, [activeEnvironmentConnectionPhase, activeEnvironmentIdForConnection]);
+  const activeEnvironmentInitialConnect =
+    activeEnvironmentIdForConnection !== null &&
+    isInitialEnvironmentConnect(activeEnvironmentIdForConnection, activeEnvironmentConnectionPhase);
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
   const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
@@ -2308,8 +2397,26 @@ export default function ChatView(props: ChatViewProps) {
   };
   const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
 
+  const keptViewWarming = useContext(KeptViewWarmingContext);
+  // Warming views must not take over the shared composer.
+  useLayoutEffect(() => {
+    if (sharedComposerRef === null || keptViewWarming) return;
+    publishesComposerRef.current = true;
+    sharedComposerRef.current = composerRef.current;
+    return () => {
+      publishesComposerRef.current = false;
+      if (sharedComposerRef.current === composerRef.current) sharedComposerRef.current = null;
+    };
+  }, [keptViewWarming, sharedComposerRef]);
+  // Activity hides must end visits so reveals count as reopening.
+  useEffect(
+    () => () => {
+      lastDispatchedVisitRef.current = null;
+    },
+    [],
+  );
   useEffect(() => {
-    if (!serverThread?.id) return;
+    if (!serverThread?.id || keptViewWarming) return;
     const threadUpdatedAt = Date.parse(serverThread.updatedAt);
     if (Number.isNaN(threadUpdatedAt)) return;
     const effectiveLastVisitedAt = resolveThreadLastVisitedAt(
@@ -2355,6 +2462,7 @@ export default function ChatView(props: ChatViewProps) {
     );
   }, [
     activeThreadLocalLastVisitedAt,
+    keptViewWarming,
     markThreadVisited,
     routeThreadKey,
     serverThread?.environmentId,
@@ -2477,7 +2585,8 @@ export default function ChatView(props: ChatViewProps) {
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
     const suppressUnavailableBanner =
-      environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
+      environmentReconnecting &&
+      (updateRunning || !reconnectWarningGraceElapsed || activeEnvironmentInitialConnect);
     if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
@@ -2596,6 +2705,7 @@ export default function ChatView(props: ChatViewProps) {
     setDismissedVersionMismatchKey,
     showVersionMismatchBanner,
     reconnectWarningGraceElapsed,
+    activeEnvironmentInitialConnect,
     serverUpdateFailureDismissed,
     serverUpdateState,
     versionMismatch,
@@ -3266,6 +3376,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   useLayoutEffect(() => {
     if (
+      keptViewWarming ||
       threadDetailLoading ||
       timelineEntries.length === 0 ||
       timelineHasEphemeralPreviewUrls(timelineEntries)
@@ -3278,7 +3389,14 @@ export default function ChatView(props: ChatViewProps) {
       markdownCwd: gitCwd,
       workspaceRoot: activeWorkspaceRoot ?? null,
     });
-  }, [activeThreadKey, activeWorkspaceRoot, gitCwd, threadDetailLoading, timelineEntries]);
+  }, [
+    activeThreadKey,
+    activeWorkspaceRoot,
+    gitCwd,
+    keptViewWarming,
+    threadDetailLoading,
+    timelineEntries,
+  ]);
   const heldPaintContext = paintOnlyDisplayedTimeline
     ? peekHeldThreadTimeline<typeof timelineEntries>()
     : null;
@@ -4504,7 +4622,7 @@ export default function ChatView(props: ChatViewProps) {
             event.metaKey ||
             event.shiftKey ||
             eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR) ||
-            document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)
+            queryShownElement(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)
           ) {
             return;
           }
@@ -4757,7 +4875,8 @@ export default function ChatView(props: ChatViewProps) {
       frame = window.requestAnimationFrame(() => {
         frame = window.requestAnimationFrame(() => {
           frame = null;
-          if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
+          // A full-screen app owns the page; refocusing the composer would close it.
+          if (queryShownElement("[data-mcp-app-fullscreen]") !== null) return;
           if (shouldRefocusComposerOnWindowFocus(document.activeElement)) focusComposerStable();
         });
       });
@@ -4891,6 +5010,7 @@ export default function ChatView(props: ChatViewProps) {
     });
     if (composerTimelineInsetRef.current !== nextInset) {
       composerTimelineInsetRef.current = nextInset;
+      lastComposerTimelineInset = nextInset;
       setComposerTimelineInset(nextInset);
     }
     const mainSurface = composerOverlayElement?.querySelector<HTMLElement>(
@@ -5818,6 +5938,61 @@ export default function ChatView(props: ChatViewProps) {
     getShortcutContext: getShortcutContextStable,
     threadFindActive: isThreadFindActive,
     typeIntoComposer: (key) => composerRef.current?.insertTextAtEnd(key) === true,
+    interceptKey: (event, shortcutContext) => {
+      const typesToComposer =
+        !shortcutContext.terminalFocus &&
+        !shortcutContext.modelPickerOpen &&
+        shouldTypeToFocusComposer(event);
+      const sidebarTextKey =
+        !shortcutContext.terminalFocus &&
+        !shortcutContext.modelPickerOpen &&
+        isUrlTargetSidebarTextKey(event) &&
+        !queryShownElement(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR);
+
+      // A kept thread the user just switched to is revealed in a transition;
+      // text typed meanwhile, into this view's composer or to focus it, goes
+      // to the thread the URL names.
+      if (
+        isUrlRouteTargetElsewhere(viewRouteTargetKey) &&
+        (typesToComposer || isComposerTextKey(event) || sidebarTextKey) &&
+        holdTextForUrlRouteTarget(viewRouteTargetKey, event.key)
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        // Leave the row's activation keys alone; subsequent typing uses type-to-focus.
+        if (sidebarTextKey && event.target instanceof HTMLElement) event.target.blur();
+        return true;
+      }
+      // The other keys would send, edit or recall in this thread's draft.
+      // Backspace takes back held text instead, and the rest do nothing.
+      const erasedHeldText =
+        event.key === "Backspace" &&
+        !event.isComposing &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        shouldRedirectInputToComposer(event) &&
+        eraseHeldText(viewRouteTargetKey);
+      if (
+        isUrlRouteTargetElsewhere(viewRouteTargetKey) &&
+        (isComposerEditKey(event) || erasedHeldText)
+      ) {
+        if (event.key === "Backspace" && !erasedHeldText) eraseHeldText(viewRouteTargetKey);
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+      }
+
+      if (typesToComposer || sidebarTextKey) {
+        if (composerRef.current?.insertTextAtEnd(event.key)) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+      }
+
+      return false;
+    },
     closeThreadFind: () => {
       closeThreadFindStable();
       focusComposerStable();
@@ -5932,13 +6107,24 @@ export default function ChatView(props: ChatViewProps) {
     },
   });
 
-  // A focused desktop browser page forwards these chords as menu actions.
+  // Text typed on the way to this view, while the view the user left was still shown.
   useEffect(() => {
+    if (keptViewWarming || isUrlRouteTargetElsewhere(viewRouteTargetKey)) return;
+    insertHeldText(
+      viewRouteTargetKey,
+      (text) => composerRef.current?.insertTextAtEnd(text) === true,
+    );
+  });
+
+  // A focused desktop browser page forwards these chords as menu actions. They
+  // are for the shown thread, not one warming up out of sight.
+  useEffect(() => {
+    if (keptViewWarming) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
     });
-  }, [toggleRightPanelStable, toggleRightPanelMaximizedStable]);
+  }, [keptViewWarming, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
   // Paste-to-focus: the resting composer blurs on a click into the timeline,
   // so a paste that follows has no editable target and would be dropped.
@@ -8042,6 +8228,7 @@ export default function ChatView(props: ChatViewProps) {
           mode="embedded"
           composerDraftTarget={composerDraftTarget}
           workspaceMutationId={workspaceMutationId}
+          threadRef={routeKind === "server" ? routeThreadRef : null}
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
@@ -8537,6 +8724,7 @@ export default function ChatView(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
+                loading={threadDetailLoading && !isDraftHeroState}
                 topFadeEnabled={!hasTimelineTopBanner}
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
@@ -8646,7 +8834,7 @@ export default function ChatView(props: ChatViewProps) {
                                 true
                               }
                               onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
-                              composerRef={composerRef}
+                              composerRef={setComposerHandle}
                               composerDraftTarget={composerDraftTarget}
                               environmentId={environmentId}
                               attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
@@ -8683,19 +8871,21 @@ export default function ChatView(props: ChatViewProps) {
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
-                                !canOperateThread
-                                  ? "This connection cannot change threads."
-                                  : isEnvironmentChanging
-                                    ? "Preparing machine"
-                                    : isRevertingCheckpoint
-                                      ? "Rewinding conversation"
-                                      : feedbackUploading
-                                        ? "Sending feedback"
-                                        : threadDetailLoading
-                                          ? "Messages loading"
-                                          : worktreeSetupBlocksSend
-                                            ? "Preparing worktree"
-                                            : projectCloneSendBlockReason
+                                !canOperateThread && sessionPending
+                                  ? "Connecting"
+                                  : !canOperateThread
+                                    ? "This connection cannot change threads."
+                                    : isEnvironmentChanging
+                                      ? "Preparing machine"
+                                      : isRevertingCheckpoint
+                                        ? "Rewinding conversation"
+                                        : feedbackUploading
+                                          ? "Sending feedback"
+                                          : threadDetailLoading
+                                            ? "Messages loading"
+                                            : worktreeSetupBlocksSend
+                                              ? "Preparing worktree"
+                                              : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                               queuedRunsControl={queuedRunsControl}
@@ -8933,7 +9123,9 @@ export default function ChatView(props: ChatViewProps) {
               </AlertDialogPopup>
             </AlertDialog>
 
-            <ThreadDetailsPanel {...threadDetailsPanelProps} />
+            <Suspense fallback={null}>
+              <ThreadDetailsPanel {...threadDetailsPanelProps} />
+            </Suspense>
 
             {pullRequestDialogState ? (
               <PullRequestThreadDialog

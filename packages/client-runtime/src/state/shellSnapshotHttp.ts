@@ -38,12 +38,13 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     ...input,
     group: "orchestration",
     method: "GET",
-    url: (urls) => urls.shellSnapshot(),
+    url: (urls) => urls.shellSnapshot({ query: { compactPullRequests: "true" } }),
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client
         .shellSnapshot({
           headers: withOrchestrationProtocolHeader(headers),
+          query: { compactPullRequests: "true" },
           responseMode: "response-only",
         })
         .pipe(Effect.flatMap(decodeShellSnapshotResponse)),

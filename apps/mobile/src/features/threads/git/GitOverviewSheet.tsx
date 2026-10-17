@@ -234,7 +234,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         return undefined;
       }
       if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
-        const fileCount = status.workingTree?.files.length ?? 0;
+        const fileCount = status.workingTree?.fileCount ?? status.workingTree?.files.length ?? 0;
         return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
       }
       if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {

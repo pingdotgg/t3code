@@ -762,7 +762,7 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 });
 
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({ refresh: Schema.optionalKey(Schema.Boolean) }),
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
 });
@@ -1741,6 +1741,9 @@ export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerCon
      * client would send it to the provider as an ordinary prompt.
      */
     usageLimitsCommand: Schema.optional(Schema.Boolean),
+    /** Opt-in config deltas and conditional reconnect snapshots. */
+    configDeltas: Schema.optionalKey(Schema.Boolean),
+    knownConfigVersion: Schema.optionalKey(TrimmedNonEmptyString),
   }),
   success: ServerConfigStreamEvent,
   error: Schema.Union([KeybindingsConfigError, ServerSettingsError, EnvironmentAuthorizationError]),

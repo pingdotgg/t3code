@@ -1,3 +1,4 @@
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { GrokSettings } from "../settings.ts";
 import * as Crypto from "effect/Crypto";
@@ -12,7 +13,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { makeGrokTextGeneration } from "./textGeneration.ts";
-import { GrokAdapterV2Driver, type GrokAdapterV2DriverEnv } from "./adapter.ts";
+import type { GrokAdapterV2DriverEnv } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialGrokProviderSnapshot,
@@ -124,22 +125,30 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
           Effect.provideService(Path.Path, path),
         ),
       );
-      const orchestrationAdapter = yield* GrokAdapterV2Driver.create({
+      const orchestrationAdapter = yield* makeLazyAdapter(
         instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
+        DRIVER_KIND,
+        Effect.promise(() => import("./adapter.ts")).pipe(
+          Effect.flatMap(({ GrokAdapterV2Driver }) =>
+            GrokAdapterV2Driver.create({
               instanceId,
-              detail: "Failed to build Grok orchestration adapter.",
-              cause,
-            }),
+              displayName,
+              accentColor,
+              environment,
+              enabled,
+              config,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: "Failed to build Grok orchestration adapter.",
+                    cause,
+                  }),
+              ),
+            ),
+          ),
         ),
       );
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);

@@ -1,3 +1,4 @@
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import { ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
@@ -10,7 +11,7 @@ import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
-import { CursorAdapterV2Driver, type CursorAdapterV2DriverEnv } from "./adapter.ts";
+import type { CursorAdapterV2DriverEnv } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { buildInitialCursorProviderSnapshot, checkCursorProviderStatus } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
@@ -154,48 +155,56 @@ export const CursorDriver: ProviderDriver<
           },
         });
 
-      const orchestrationAdapter = yield* CursorAdapterV2Driver.create({
+      const orchestrationAdapter = yield* makeLazyAdapter(
         instanceId,
-        displayName,
-        accentColor,
-        environment,
-        enabled,
-        config,
-      }).pipe(
-        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-          ...sdkRunner,
-          open: (input) =>
-            auth.requireApiKey.pipe(
-              Effect.flatMap((apiKey) =>
-                Effect.acquireRelease(
-                  sdkRunner
-                    .open({ ...input, options: { ...input.options, apiKey } })
-                    .pipe(
-                      Effect.flatMap((session) =>
-                        Effect.cached(session.close).pipe(
-                          Effect.map((close) => ({ ...session, close })),
-                        ),
+        DRIVER_KIND,
+        Effect.promise(() => import("./adapter.ts")).pipe(
+          Effect.flatMap(({ CursorAdapterV2Driver }) =>
+            CursorAdapterV2Driver.create({
+              instanceId,
+              displayName,
+              accentColor,
+              environment,
+              enabled,
+              config,
+            }).pipe(
+              Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+                ...sdkRunner,
+                open: (input) =>
+                  auth.requireApiKey.pipe(
+                    Effect.flatMap((apiKey) =>
+                      Effect.acquireRelease(
+                        sdkRunner
+                          .open({ ...input, options: { ...input.options, apiKey } })
+                          .pipe(
+                            Effect.flatMap((session) =>
+                              Effect.cached(session.close).pipe(
+                                Effect.map((close) => ({ ...session, close })),
+                              ),
+                            ),
+                          ),
+                        (session) => session.close.pipe(Effect.ignore),
                       ),
                     ),
-                  (session) => session.close.pipe(Effect.ignore),
-                ),
-              ),
-              auth.withAccess,
-              Effect.mapError((cause) =>
-                isSdkRunnerError(cause)
-                  ? cause
-                  : new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "open", cause }),
+                    auth.withAccess,
+                    Effect.mapError((cause) =>
+                      isSdkRunnerError(cause)
+                        ? cause
+                        : new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "open", cause }),
+                    ),
+                  ),
+              }),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: "Failed to build Cursor orchestration adapter.",
+                    cause,
+                  }),
               ),
             ),
-        }),
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Cursor orchestration adapter.",
-              cause,
-            }),
+          ),
         ),
       );
       const textGeneration = yield* makeCursorTextGeneration(

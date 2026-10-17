@@ -37,3 +37,45 @@ export function reloadOnceForChunkLoadError(
   reload();
   return true;
 }
+
+let speculativeLoads = 0;
+const speculativeFailures = new WeakSet<object>();
+
+/** Swallow speculative failures; real use must import again to retry and get a guarded reload. */
+export function preloadSpeculatively<T>(load: () => Promise<T>): Promise<T | undefined> {
+  speculativeLoads += 1;
+  return new Promise<T>((resolve) => resolve(load())).then(
+    (value) => {
+      speculativeLoads -= 1;
+      return value;
+    },
+    (error: unknown) => {
+      if (typeof error === "object" && error !== null) speculativeFailures.add(error);
+      speculativeLoads -= 1;
+      return undefined;
+    },
+  );
+}
+
+// Rejections settle after vite:preloadError, so the listener must check ownership a task later.
+export function isSpeculativeLoadPending(): boolean {
+  return speculativeLoads > 0;
+}
+
+export function isSpeculativeLoadFailure(failure: unknown): boolean {
+  return typeof failure === "object" && failure !== null && speculativeFailures.has(failure);
+}
+
+let routePreloads = 0;
+
+// Route components retain chunk failures and reload on navigation; leave those failures to them.
+export function preloadRouteSpeculatively<T>(load: () => Promise<T>): Promise<T> {
+  routePreloads += 1;
+  return new Promise<T>((resolve) => resolve(load())).finally(() => {
+    routePreloads -= 1;
+  });
+}
+
+export function isRoutePreloadPending(): boolean {
+  return routePreloads > 0;
+}

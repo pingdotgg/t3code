@@ -364,6 +364,7 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>;
   readonly readShellSnapshot: (options?: {
     readonly location?: "active" | "archive";
+    readonly compactPullRequests?: boolean;
   }) => Effect.Effect<
     Effect.Effect<OrchestrationV2ThreadShellSnapshot, Orchestrator.OrchestratorV2Error>,
     Orchestrator.OrchestratorV2Error

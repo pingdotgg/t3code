@@ -1,3 +1,4 @@
+import * as ProjectLayers from "../orchestration-v2/runtimeLayer.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
@@ -16,7 +17,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -56,7 +56,7 @@ const layerTestFor = (
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
 ) =>
-  RuntimeLayer.layerProjectService.pipe(
+  ProjectLayers.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
@@ -69,13 +69,15 @@ const layerTestFor = (
 const layerTest = layerTestFor(layerMetadata);
 
 const layerProjectServiceDependencies = Layer.mergeAll(
-  RuntimeLayer.layerEventSink,
+  ProjectLayers.layerEventSink,
   ProjectStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
-  Layer.provideMerge(LegacyV1ThreadImporter.layer.pipe(Layer.provide(RuntimeLayer.layerEventSink))),
+  Layer.provideMerge(
+    LegacyV1ThreadImporter.layer.pipe(Layer.provide(ProjectLayers.layerEventSink)),
+  ),
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(layerWorkspacePaths),
   Layer.provideMerge(layerMetadata),

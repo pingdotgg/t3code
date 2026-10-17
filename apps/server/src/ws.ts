@@ -740,6 +740,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly requestCompletionMarker?: boolean;
     readonly acceptBoundedSnapshot?: boolean;
     readonly acceptCompactTurnItems?: boolean;
+    readonly acceptCompactCheckpointItems?: boolean;
     readonly acceptThreadFieldEvents?: boolean;
   }) {
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -867,6 +868,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         ? buildBoundedThreadStreamSnapshot({
             ...snapshot,
             compactTurnItems: input.acceptCompactTurnItems === true,
+            compactCheckpointItems: input.acceptCompactCheckpointItems === true,
           })
         : {
             kind: "snapshot" as const,
@@ -970,6 +972,7 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   function* (input: {
     readonly afterSequence?: number;
     readonly requestCompletionMarker?: boolean;
+    readonly compactPullRequests?: boolean;
   }) {
     const sql = yield* SqlClient.SqlClient;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -998,14 +1001,20 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       const base = buildActiveShellSnapshot(
         yield* loadShellSnapshotParts({
           sql,
-          readThreads: threadManagement.readShellSnapshot({ location: "active" }),
+          readThreads: threadManagement.readShellSnapshot({
+            location: "active",
+            compactPullRequests: input.compactPullRequests === true,
+          }),
           listProjects: projects.listShells(),
           latestSequence: applicationEvents.latestApplicationSequence,
         }),
       );
       const enriched = yield* enrichProjectShells(base.projects);
       return {
-        snapshot: { ...base, projects: enriched.projects } as OrchestrationV2ShellSnapshot,
+        snapshot: {
+          ...base,
+          projects: enriched.projects,
+        } as OrchestrationV2ShellSnapshot,
         resolvedRepositoryIdentityRoots: enriched.resolvedRepositoryIdentityRoots,
       };
     });
@@ -1044,8 +1053,13 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
             if ("aggregateKind" in stored) {
               return yield* projectItem(stored);
             }
-            const shell = yield* threadManagement.getThreadShell(stored.event.threadId);
-            return shellStreamItemFromThreadShell({ stored, shell });
+            const shell = yield* threadManagement.getThreadShell(stored.event.threadId, {
+              compactPullRequests: input.compactPullRequests === true,
+            });
+            return shellStreamItemFromThreadShell({
+              stored,
+              shell,
+            });
           }),
         { concurrency: 8 },
       );
@@ -1689,23 +1703,42 @@ const layerWsRpc = (
           ),
         );
 
-      const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
+      const loadServerConfig = (options: {
+        readonly usageLimitsCommand: boolean;
+        readonly deferEditors?: boolean;
+        readonly deferCatalogs?: boolean;
+      }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
           const currentProviders = yield* providerRegistry.getProviders;
-          const providers = options.usageLimitsCommand
+          const completeProviders = options.usageLimitsCommand
             ? withUsageLimitsCommands(currentProviders, yield* usageLimitSources.current)
             : currentProviders;
+          const providers =
+            options.deferCatalogs === true
+              ? completeProviders.map(({ workspaceSnapshots: _workspaces, ...provider }) => ({
+                  ...provider,
+                  skills: [],
+                  slashCommands: [],
+                }))
+              : completeProviders;
           const settings = ServerSettings.redactServerSettingsForClient(
             yield* serverSettings.getSettings,
           );
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
-          const editorConfig = yield* resolveEditorConfig(
-            yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
-            resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
-          );
+          const editorConfig =
+            options.deferEditors === true
+              ? { availableEditors: [] }
+              : yield* resolveEditorConfig(
+                  yield* resolveAvailableEditorsForConfig(
+                    externalLauncher.resolveAvailableEditors(),
+                  ),
+                  resolveFileManagerRevealKindForConfig(
+                    externalLauncher.resolveFileManagerRevealKind(),
+                  ),
+                );
 
           return {
             environment,
@@ -2972,7 +3005,11 @@ const layerWsRpc = (
           Stream.unwrap(
             Effect.gen(function* () {
               const usageLimitsCommand = input.usageLimitsCommand === true;
-              const config = yield* loadServerConfig({ usageLimitsCommand });
+              const config = yield* loadServerConfig({
+                usageLimitsCommand,
+                deferEditors: input.configDeltas === true,
+                deferCatalogs: input.configDeltas === true,
+              });
               yield* ServerActivation.markClientServed;
               const keybindingsUpdates = keybindings.streamChanges.pipe(
                 Stream.map((event) => ({

@@ -2,6 +2,7 @@
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
@@ -69,7 +70,7 @@ function DialogPopup({
   variant?: "default" | "media";
 }) {
   return (
-    <DialogPortal>
+    <DialogPortal container={usePortalContainer()}>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
       <DialogBackdrop className={variant === "media" ? "z-[60]" : undefined} variant={variant} />
       <DialogViewport

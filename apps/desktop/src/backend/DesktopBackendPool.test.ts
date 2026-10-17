@@ -11,6 +11,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -85,6 +86,10 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
           currentBootstrapToken: Effect.die("unexpected bootstrap token read"),
         } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
         DesktopAppSettings.layerTest(),
+        Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
+          installIntoProcess: Effect.succeed(true),
+          secretStorageReady: Effect.void,
+        }),
         DesktopWslEnvironment.layerTest(),
         ElectronDialog.layer,
         ElectronApp.layer,

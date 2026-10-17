@@ -26,6 +26,11 @@ export interface ChatShortcutsInput {
   readonly threadFindActive: boolean;
   /** Types a printable key into the composer; false when it could not take it. */
   readonly typeIntoComposer: (key: string) => boolean;
+  /** Buffers input while a kept view is yielding to the route target. */
+  readonly interceptKey?: (
+    event: KeyboardEvent,
+    context: ShortcutMatchContext & { readonly modelPickerOpen: boolean },
+  ) => boolean;
   readonly closeThreadFind: () => void;
   readonly commands: Partial<Record<KeybindingCommand, ChatShortcutHandler>>;
   /** Handles commands not in `commands`, such as project scripts. */
@@ -59,6 +64,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) return;
       const shortcutContext = current.getShortcutContext(event.target);
+      if (current.interceptKey?.(event, shortcutContext)) return;
 
       if (
         !shortcutContext.terminalFocus &&

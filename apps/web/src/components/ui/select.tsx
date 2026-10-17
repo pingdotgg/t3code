@@ -6,6 +6,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 
 const Select = SelectPrimitive.Root;
@@ -117,7 +118,7 @@ function SelectPopup({
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
 }) {
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={usePortalContainer()}>
       <SelectPrimitive.Positioner
         align={align}
         alignItemWithTrigger={alignItemWithTrigger}

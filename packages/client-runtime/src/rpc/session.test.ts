@@ -39,6 +39,7 @@ import * as RpcSession from "./session.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
 import { applyServerConfigProjection } from "../state/serverConfigProjection.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { diffServerConfig } from "@t3tools/shared/serverConfigDelta";
 
 type SocketEventType = "open" | "message" | "close" | "error";
 type SocketEvent = {
@@ -288,6 +289,33 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it("preserves sign-out field removals for legacy delta clients", () => {
+    const provider: ServerConfigType["providers"][number] = {
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-08-27T00:00:00Z",
+      models: [],
+      skills: [],
+      slashCommands: [],
+      usageLimits: { checkedAt: "2026-08-27T00:00:00Z", windows: [] },
+    };
+    const previous = { ...SERVER_CONFIG, providers: [provider] };
+    const next = { ...previous, providers: [{ ...provider, usageLimits: undefined }] };
+    const codec = Schema.toCodecJson(ServerConfigStreamEvent);
+    const wire = Schema.decodeSync(codec)(
+      Schema.encodeSync(codec)(diffServerConfig(previous, next, "signed-out")),
+    );
+    expect(wire).toMatchObject({
+      type: "configDelta",
+      providerChanges: [{ instanceId: provider.instanceId, removed: ["usageLimits"] }],
+    });
+  });
+
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

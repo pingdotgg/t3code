@@ -12,8 +12,8 @@ import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as CodexClient from "effect-codex-app-server/client";
-import * as CodexSchema from "effect-codex-app-server/schema";
+import type * as CodexClient from "effect-codex-app-server/client";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import type {
@@ -446,6 +446,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
           }),
       ),
     );
+  const CodexClient = yield* Effect.promise(() => import("effect-codex-app-server/client"));
   const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),

@@ -451,6 +451,25 @@ export function scheduleEnvironmentReconnectWarning(showWarning: () => void): ()
   return () => globalThis.clearTimeout(timeoutId);
 }
 
+const connectedEnvironmentIds = new Set<EnvironmentId>();
+
+/** Records that this page has reached the environment at least once. */
+export function markEnvironmentConnected(environmentId: EnvironmentId): void {
+  connectedEnvironmentIds.add(environmentId);
+}
+
+/**
+ * A page that paints from its boot snapshot shows the composer while its
+ * first connection is still being made, such as a desktop backend that is
+ * still starting. That first attempt is startup, not a reconnect to warn about.
+ */
+export function isInitialEnvironmentConnect(
+  environmentId: EnvironmentId,
+  phase: string | null,
+): boolean {
+  return phase === "connecting" && !connectedEnvironmentIds.has(environmentId);
+}
+
 export function hasEnvironmentReconnectWarningGraceElapsed(
   activeEnvironmentId: EnvironmentId | null,
   elapsedEnvironmentId: EnvironmentId | null,

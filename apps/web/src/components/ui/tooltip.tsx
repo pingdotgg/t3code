@@ -1,6 +1,7 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { createContext, use, useEffect, useRef, type ComponentProps, type RefObject } from "react";
 
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 
@@ -117,7 +118,7 @@ function TooltipPopup({
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
 }) {
   return (
-    <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Portal container={usePortalContainer()}>
       <TooltipPositioner align={align} anchor={anchor} side={side} sideOffset={sideOffset}>
         <TooltipPrimitive.Popup
           className={cn(

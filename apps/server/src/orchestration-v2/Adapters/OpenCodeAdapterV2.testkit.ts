@@ -404,7 +404,7 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
               detail: "OpenCode replay does not execute commands.",
             }),
           ),
-        createOpenCodeSdkClient: () => client,
+        createOpenCodeSdkClient: () => Effect.succeed(client),
         loadOpenCodeInventory: () =>
           Effect.fail(
             new OpenCodeRuntime.OpenCodeRuntimeError({

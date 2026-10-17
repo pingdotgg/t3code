@@ -35,7 +35,6 @@ import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -166,6 +165,13 @@ const bootstrap = Effect.gen(function* () {
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+  const shutdown = yield* DesktopShutdown.DesktopShutdown;
+  // A quit during shell startup must prevent subsequent bootstrap work.
+  const awaitShellEnvironment = Effect.raceFirst(
+    shellEnvironment.installIntoProcess.pipe(Effect.as(true)),
+    shutdown.awaitRequest.pipe(Effect.as(false)),
+  );
   yield* logBootstrapInfo("bootstrap start");
 
   const settings = yield* desktopSettings.get;
@@ -184,13 +190,14 @@ const bootstrap = Effect.gen(function* () {
     yield* (yield* DesktopAppIdentity.DesktopAppIdentity).resolveUserDataPath,
   );
 
-  yield* snapShot.initialize;
-
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
     if (!(yield* Ref.get(state.quitting))) {
       yield* desktopWindow.createMainIfBackendReady;
     }
+    // Snap Shot reads the desktop session variables the login shell provides.
+    if (!(yield* awaitShellEnvironment)) return;
+    yield* snapShot.initialize;
     return;
   }
 
@@ -239,17 +246,22 @@ const bootstrap = Effect.gen(function* () {
   }
 
   if (!(yield* Ref.get(state.quitting))) {
-    if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
+    const wslOnly = settings.wslOnly === true && settings.wslBackendEnabled === true;
+    // The main window waits for the primary backend. In wsl-only mode that is
+    // the WSL backend, which can be slow to cold-boot — show a "Connecting to
+    // WSL" splash immediately so the app feels responsive instead of presenting
+    // no window until WSL is ready. (Dual mode opens fast off the Windows
+    // primary, so no splash there.)
+    if (wslOnly) {
       yield* desktopWindow.showConnectingSplash;
+      // Resolving the WSL primary's config runs wsl.exe.
+      if (!(yield* awaitShellEnvironment)) return;
     }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
-    // The renderer loads bundled assets and can connect while the backend
-    // boots. Starting first makes its endpoint and bootstrap credential
-    // available before the preload reads them. WSL-only retains its splash
-    // until the primary has a usable endpoint. A failed open is not fatal:
-    // backend readiness tries again.
-    if (!(settings.wslOnly === true && settings.wslBackendEnabled === true)) {
+    // Publish the endpoint and token before preload reads them. Backend readiness
+    // retries a failed window open; WSL keeps its splash until then.
+    if (!wslOnly) {
       yield* desktopWindow.ensureMain.pipe(
         Effect.catch((error) =>
           logBootstrapWarning("failed to open main window while the backend starts", {
@@ -258,6 +270,9 @@ const bootstrap = Effect.gen(function* () {
         ),
       );
     }
+    // Snap Shot reads the desktop session variables the login shell provides.
+    if (!(yield* awaitShellEnvironment)) return;
+    yield* snapShot.initialize;
     yield* appActivation.start.pipe(
       Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
       Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
@@ -280,44 +295,26 @@ const startup = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const previewPasskeys = yield* PreviewPasskeys.PreviewPasskeys;
+  const state = yield* DesktopState.DesktopState;
 
-  yield* shellEnvironment.installIntoProcess;
-  const hasCommandLinePasswordStore =
-    preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
-  const linuxElectronOptions =
-    environment.platform === "linux" && !hasCommandLinePasswordStore
-      ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess(
-          yield* HostProcess.HomeDirectory,
-        )
-      : preReadyElectronOptions.linux;
-  if (linuxElectronOptions !== null && !hasCommandLinePasswordStore) {
-    if (
-      linuxElectronOptions.passwordStore !== null ||
-      preReadyElectronOptions.linux?.passwordStore !== null
-    ) {
-      yield* electronApp.removeCommandLineSwitch("password-store");
-    }
-    if (linuxElectronOptions.passwordStore !== null) {
-      yield* electronApp.appendCommandLineSwitch(
-        "password-store",
-        linuxElectronOptions.passwordStore,
-      );
-    }
-  }
-  const userDataPath = yield* appIdentity.resolveUserDataPath;
-  yield* electronApp.setPath("userData", userDataPath);
-  yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
-  yield* desktopSettings.load;
-
+  // Chromium already chose secret storage from the pre-ready environment.
+  const linuxElectronOptions = preReadyElectronOptions.linux;
   if (linuxElectronOptions !== null) {
     yield* logStartupInfo("linux password store configured", {
-      passwordStore: hasCommandLinePasswordStore
-        ? "command-line"
-        : (linuxElectronOptions.passwordStore ?? "electron-default"),
+      passwordStore:
+        preReadyElectronOptions.linuxPasswordStoreCommandLine !== null
+          ? "command-line"
+          : (linuxElectronOptions.passwordStore ?? "electron-default"),
       xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
       xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
     });
   }
+  // Open the window while the shell loads; spawning work awaits the same run.
+  yield* Effect.forkScoped(shellEnvironment.installIntoProcess);
+  const userDataPath = yield* appIdentity.resolveUserDataPath;
+  yield* electronApp.setPath("userData", userDataPath);
+  yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
+  yield* desktopSettings.load;
 
   yield* appIdentity.configure;
   yield* lifecycle.register;
@@ -329,18 +326,25 @@ const startup = Effect.gen(function* () {
   );
   yield* logStartupInfo("app ready");
   if (environment.platform === "linux") {
-    const selectedBackend = yield* safeStorage.selectedStorageBackend;
-    yield* logStartupInfo("safe storage ready", {
-      backend: Option.getOrElse(selectedBackend, () => "unknown"),
-    });
+    yield* Effect.forkScoped(
+      shellEnvironment.secretStorageReady.pipe(
+        Effect.andThen(safeStorage.selectedStorageBackend),
+        Effect.flatMap((selectedBackend) =>
+          logStartupInfo("safe storage ready", {
+            backend: Option.getOrElse(selectedBackend, () => "unknown"),
+          }),
+        ),
+      ),
+    );
   }
   yield* appIdentity.configure;
   yield* previewPasskeys.configure;
   yield* applicationMenu.configure;
+  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
+  if (yield* Ref.get(state.quitting)) return;
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
   yield* linuxUrlHandler.register;
-  yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 
 const scopedProgram = Effect.scoped(

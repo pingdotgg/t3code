@@ -10,7 +10,6 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
-  ensureTailscaleServe,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
@@ -372,6 +371,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     if (isDevServerNotProxiableError(localTarget)) {
       return yield* localTarget;
     }
+    const { ensureTailscaleServe } = yield* Effect.promise(() => import("@t3tools/tailscale"));
     yield* ensureTailscaleServe({
       localPort: localTarget.localPort,
       servePort: input.servePort,

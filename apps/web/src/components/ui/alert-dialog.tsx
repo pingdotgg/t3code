@@ -2,6 +2,7 @@
 
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
 
+import { usePortalContainer } from "~/lib/portalContainer";
 import { cn } from "~/lib/utils";
 import {
   DIALOG_BACKDROP_CLASS,
@@ -46,8 +47,9 @@ function AlertDialogPopup({
   bottomStickOnMobile?: boolean;
   portalContainer?: AlertDialogPrimitive.Portal.Props["container"];
 }) {
+  const defaultPortalContainer = usePortalContainer();
   return (
-    <AlertDialogPortal container={portalContainer}>
+    <AlertDialogPortal container={portalContainer ?? defaultPortalContainer}>
       <AlertDialogBackdrop />
       <AlertDialogViewport
         className={cn(bottomStickOnMobile && "max-sm:grid-rows-[1fr_auto] max-sm:p-0 max-sm:pt-12")}

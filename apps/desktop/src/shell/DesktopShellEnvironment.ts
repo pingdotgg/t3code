@@ -64,8 +64,10 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    // Reuses the installation result; false leaves server hydration enabled.
+    /** Imports the login shell's environment into process.env once; later calls wait for that run. */
     readonly installIntoProcess: Effect.Effect<boolean>;
+    /** safeStorage's first use needs the session bus, which Linux may get from the shell. */
+    readonly secretStorageReady: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
@@ -546,7 +548,14 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return DesktopShellEnvironment.of({ installIntoProcess });
+  const secretStorageReady = Effect.suspend(() =>
+    environment.platform === "linux" &&
+    Option.isNone(trimNonEmpty(process.env.DBUS_SESSION_BUS_ADDRESS))
+      ? installIntoProcess.pipe(Effect.asVoid)
+      : Effect.void,
+  );
+
+  return DesktopShellEnvironment.of({ installIntoProcess, secretStorageReady });
 });
 
 export const layer = Layer.effect(DesktopShellEnvironment, make);

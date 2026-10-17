@@ -1,3 +1,4 @@
+import { queryShownElement } from "../../lib/shownElement";
 // Type-to-focus: printable keys and pastes that land on no editable target go to
 // the composer, so the user can start typing anywhere in the chat.
 
@@ -54,7 +55,7 @@ export function shouldRedirectInputToComposer(event: Event): boolean {
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
-  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
+  if (queryShownElement(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
   return true;
 }
 

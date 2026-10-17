@@ -2160,7 +2160,7 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
         // CommonJS resolution still falls back to $HOME/.node_modules,
         // $HOME/.node_libraries and the install prefix, so a globally installed
         // copy of a missing dependency would quietly satisfy this check.
-        ["--no-global-search-paths", entryPoint, "--version"],
+        ["--no-global-search-paths", entryPoint, "__load-bundle"],
         {
           cwd: probeApp,
           stdout: "pipe",
@@ -2169,7 +2169,7 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
         },
       ),
       {
-        label: "server sidecar self-containment check (node bin.mjs --version)",
+        label: "server sidecar self-containment check (node bin.mjs __load-bundle)",
         verbose: input.verbose,
       },
     ).pipe(
@@ -2179,7 +2179,7 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
           Effect.fail(
             new BundleNotSelfContainedError({
               exitCode: -1,
-              output: `The packaged bundle did not print its version within ${Duration.toSeconds(BUNDLE_SELF_CHECK_TIMEOUT)}s; it is hanging rather than failing to resolve.`,
+              output: `The packaged bundle did not finish loading within ${Duration.toSeconds(BUNDLE_SELF_CHECK_TIMEOUT)}s; it is hanging rather than failing to resolve.`,
             }),
           ),
         BuildCommandFailedError: (error) =>

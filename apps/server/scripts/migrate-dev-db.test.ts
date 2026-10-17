@@ -67,7 +67,7 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
       }
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions
         (provider_session_id, thread_id, provider, status, updated_at, payload_json)
-        VALUES ('session-shared', 'running-thread', 'codex', 'stopped', '2026-08-01', '{}')`;
+        VALUES ('session-shared', 'running-thread', 'codex', 'ready', '2026-08-01', '{"status":"ready"}')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_session_bindings
         (provider_session_id, thread_id)
         VALUES ('session-shared', 'running-thread'), ('session-shared', 'stopped-thread')`;

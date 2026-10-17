@@ -17,6 +17,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { ChatSurfaceSlot } from "../components/chatSurfaceSlot";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -66,7 +67,10 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import { configureClientTracing } from "../observability/clientTracing";
-import { resolveInitialServerAuthGateState } from "../environments/primary";
+import {
+  peekPairingTokenFromUrl,
+  resolveInitialServerAuthGateState,
+} from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -75,6 +79,7 @@ import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   primaryServerConfigAtom,
   primaryServerConfigEventAtom,
+  primaryServerSessionConfigAtom,
   primaryServerWelcomeAtom,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
@@ -87,6 +92,9 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+
+let desktopAuthBootstrap: Promise<void> | null = null;
+let desktopAuthPending = false;
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -107,8 +115,28 @@ export const Route = createRootRoute({
       };
     }
 
+    // The native connection owns its credentials. Let cached workspace reads and
+    // shell mounting overlap server startup; RPCs still await the native bearer.
+    const overlapDesktopAuth =
+      window.desktopBridge !== undefined &&
+      location.pathname !== "/pair" &&
+      peekPairingTokenFromUrl() === null &&
+      (desktopAuthBootstrap === null || desktopAuthPending);
     const authGate = resolveInitialServerAuthGateState();
-    const authGateState = await authGate;
+    // Start shell reads alongside auth; rendering still awaits the authoritative result.
+    if (location.pathname !== "/pair" && peekPairingTokenFromUrl() === null) {
+      startEnvironmentShells();
+    }
+    if (overlapDesktopAuth && desktopAuthBootstrap === null) {
+      desktopAuthPending = true;
+      const settle = () => {
+        desktopAuthPending = false;
+      };
+      desktopAuthBootstrap = authGate.then(settle, settle);
+    }
+    const authGateState = overlapDesktopAuth
+      ? ({ status: "authenticated" } as const)
+      : await authGate;
     // Connect and read cached shells while the route chunks still load.
     if (authGateState.status === "authenticated") startEnvironmentShells();
     if (
@@ -147,6 +175,14 @@ function RootRouteNotFoundView() {
 }
 
 function RootRouteView() {
+  const router = useRouter();
+  useEffect(() => {
+    // Re-run the authoritative gate on either success or failure. A failed
+    // bootstrap takes the normal pairing/error route, without a reload loop.
+    if (desktopAuthBootstrap !== null) {
+      void desktopAuthBootstrap.then(() => router.invalidate());
+    }
+  }, [router]);
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
@@ -220,6 +256,7 @@ function RootRouteView() {
   const appShell = (
     <CommandPalette>
       <AppSidebarLayout>
+        <ChatSurfaceSlot />
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>
@@ -507,6 +544,7 @@ function EventRouter({
   const primaryEnvironment = usePrimaryEnvironment();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
+  const serverSessionConfig = useAtomValue(primaryServerSessionConfigAtom);
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
@@ -604,6 +642,11 @@ function EventRouter({
   useEffect(() => {
     handleWelcome(serverWelcome);
   }, [serverWelcome]);
+
+  // Seed from this session before config events; boot data may predate resolved issues.
+  useEffect(() => {
+    if (serverSessionConfig) keybindingsToastController.seed(serverSessionConfig.issues);
+  }, [keybindingsToastController, serverSessionConfig]);
 
   useEffect(() => {
     if (serverConfigEvent === null || handledConfigEventRef.current === serverConfigEvent) {

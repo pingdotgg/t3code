@@ -10,7 +10,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
 import { ProviderDriverError } from "../Errors.ts";
-import { createCodexAdapterV2 } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { makeLazyAdapter } from "@t3tools/provider-core/server/lazyAdapter";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
@@ -227,18 +227,26 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
   // Launch settings resolve per session from the signed-in token. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
-  const orchestrationAdapter = yield* createCodexAdapterV2(input, {
-    onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-    resolveRuntime: runtime.resolve,
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new ProviderDriverError({
-          driver: DRIVER,
-          instanceId,
-          detail: "Failed to build Codex orchestration adapter.",
-          cause,
-        }),
+  const orchestrationAdapter = yield* makeLazyAdapter(
+    instanceId,
+    DRIVER,
+    Effect.promise(() => import("../../orchestration-v2/Adapters/CodexAdapterV2.ts")).pipe(
+      Effect.flatMap(({ createCodexAdapterV2 }) =>
+        createCodexAdapterV2(input, {
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          resolveRuntime: runtime.resolve,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER,
+                instanceId,
+                detail: "Failed to build Codex orchestration adapter.",
+                cause,
+              }),
+          ),
+        ),
+      ),
     ),
   );
   const nativeGeneration = yield* makeCodexTextGeneration(

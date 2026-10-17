@@ -333,7 +333,7 @@ export const make = Effect.gen(function* () {
           type: "thread.auto-settle",
           commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
           threadId: thread.id,
-          snapshotAt: thread.updatedAt,
+          snapshotAt: Orchestrator.autoSettleSnapshotAt(thread),
           settledAt,
         });
         return null;

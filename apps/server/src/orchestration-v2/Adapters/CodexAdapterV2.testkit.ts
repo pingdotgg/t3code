@@ -1,3 +1,4 @@
+import * as CodexFactory from "../../provider/CodexAppServerClientFactory.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -189,7 +190,7 @@ export function layer(input: {
     input.driver === undefined
       ? CodexReplay.layerReplay(input.transcript)
       : CodexReplay.layerReplayWithDriver(input.driver);
-  const layerReplayClientFactory = Layer.succeed(CodexAdapterV2.CodexAppServerClientFactory, {
+  const layerReplayClientFactory = Layer.succeed(CodexFactory.CodexAppServerClientFactory, {
     open: (openInput) =>
       Effect.gen(function* () {
         const context = yield* Layer.build(layerReplay).pipe(

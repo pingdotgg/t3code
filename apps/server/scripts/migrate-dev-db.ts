@@ -280,6 +280,14 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
 const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
   const sql = yield* SqlClient.SqlClient;
 
+  // A ready session is an idle reusable provider handle, not executing work.
+  // Old installs bind that handle to many completed threads. Stop only those
+  // idle handles in the copy before asking the runtime recovery queries which
+  // threads could resume work; active runs/provider threads still exclude them.
+  yield* sql`UPDATE orchestration_v2_projection_provider_sessions
+    SET status = 'stopped', payload_json = json_set(payload_json, '$.status', 'stopped')
+    WHERE status = 'ready'`;
+
   // Threads the server would resume or start work on by itself. Its own
   // recovery queries find most of them; usage-limit recovery also depends on
   // settings, so any thread whose latest run failed or that has a recovery

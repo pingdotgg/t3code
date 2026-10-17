@@ -36,6 +36,8 @@ import ProjectionThreadSweepIndexes from "../persistence/Migrations/063_Projecti
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { resolveAutoSettlementAt } from "./ThreadSettlementService.ts";
+import { compactThreadPullRequests } from "./ThreadReadPayload.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -2383,11 +2385,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]);
 
       const [stored] = yield* sql<{ readonly payload_json: string }>`
-        SELECT payload_json FROM orchestration_v2_projection_threads
+        SELECT payload_json FROM orchestration_v2_projection_thread_reads
         WHERE thread_id = ${laterThreadId}
       `;
       const setPayload = (payload: string) =>
-        sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload}
+        sql`UPDATE orchestration_v2_projection_thread_reads SET payload_json = ${payload}
           WHERE thread_id = ${laterThreadId}`;
       yield* setPayload("{}");
       const failure = yield* sql
@@ -5763,6 +5765,68 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(synced.pullRequests?.[0]?.snapshot, snapshot);
       assert.isDefined(synced.pullRequests?.[0]?.watch);
       assert.deepEqual(synced.updatedAt, at);
+      const stack = {
+        kind: "native" as const,
+        id: "stack:codec",
+        number: 1,
+        url: "https://github.com/pingdotgg/t3code/stack/1",
+        base: "main",
+        // The thread links 7-9; 6 and 10 are stack layers it does not link.
+        layers: [6, 7, 8, 9, 10].map((number) => ({
+          number,
+          headBranch: `branch-${number}`,
+          state: "open" as const,
+        })),
+      };
+      const rich = {
+        ...synced,
+        pullRequests: [7, 8, 9].map((number) => ({
+          ...synced.pullRequests![0]!,
+          number,
+          stack: number === 9 ? { ...stack, base: "older-base" } : stack,
+          snapshot: { ...snapshot, additions: 23, deletions: 2, checksState: "passing" as const },
+        })),
+      };
+      const compact = compactThreadPullRequests(rich);
+      // Clients show the saved stack before it refreshes, so the compact shell keeps it whole.
+      assert.deepEqual(
+        compact.pullRequests?.map((link) => link.stack),
+        rich.pullRequests.map((link) => link.stack),
+      );
+      yield* syncPullRequests("rich", rich.pullRequests);
+      assert.deepEqual((yield* store.getThreadShell(threadId))?.pullRequests, rich.pullRequests);
+      assert.deepEqual(
+        (yield* store.getThreadShell(threadId, { compactPullRequests: true }))?.pullRequests,
+        compact.pullRequests,
+      );
+      assert.deepEqual((yield* store.getThread(threadId)).pullRequests, rich.pullRequests);
+      const terminalAt = DateTime.formatIso(DateTime.add(at, { seconds: 1 }));
+      for (const state of ["merged", "closed"] as const) {
+        yield* syncPullRequests(`terminal-${state}`, [
+          {
+            ...rich.pullRequests[0]!,
+            watch: undefined,
+            snapshot: {
+              ...snapshot,
+              state,
+              ...(state === "merged" ? { mergedAt: terminalAt } : { closedAt: terminalAt }),
+            },
+          },
+        ]);
+        const candidate = (yield* store.getSettlementCandidates(threadId))[0];
+        assert.isDefined(candidate);
+        assert.deepEqual(
+          resolveAutoSettlementAt({
+            thread: candidate!,
+            pullRequest: null,
+            nowMs: DateTime.toEpochMillis(DateTime.add(at, { seconds: 2 })),
+            autoSettleAfterDays: null,
+            autoSettleOnMerge: true,
+          }),
+          candidate!.latestRunCompletedAt,
+        );
+      }
+      yield* syncPullRequests("restore", synced.pullRequests ?? []);
       assert.equal(yield* phase, "running");
       assert.equal((yield* store.getThreadsWithPullRequests()).length, 1);
 
@@ -5774,6 +5838,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         SET payload_json = json_set(payload_json, '$.pullRequests', json('[]'))
         WHERE thread_id = ${threadId}`;
       assert.deepEqual(yield* store.getThreadsWithPullRequests(), []);
+      // Its write marks the read projection stale, so shells read the payload it wrote.
+      assert.deepEqual(
+        (yield* store.getThreadShell(threadId, { compactPullRequests: true }))?.pullRequests,
+        [],
+      );
       yield* sql`UPDATE orchestration_v2_projection_threads
         SET payload_json = ${stored!.payload_json} WHERE thread_id = ${threadId}`;
       assert.equal((yield* store.getThreadsWithPullRequests()).length, 1);

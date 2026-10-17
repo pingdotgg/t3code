@@ -11,6 +11,7 @@ import {
   captureAssistantTextSelection,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
+import { usePortalContainer } from "~/lib/portalContainer";
 import {
   observeSelectionActions,
   resolveSelectionActionPosition,
@@ -27,6 +28,7 @@ export function AssistantSelectionToolbar({
   threadRef: ScopedThreadRef;
   onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
 }) {
+  const portalContainer = usePortalContainer();
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
@@ -158,6 +160,6 @@ export function AssistantSelectionToolbar({
       <QuoteIcon aria-hidden="true" className="size-3.5" />
       {tooLong ? "Shorten selection" : "Cite"}
     </Button>,
-    document.body,
+    portalContainer ?? document.body,
   );
 }

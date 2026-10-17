@@ -9,7 +9,6 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
@@ -27,6 +26,7 @@ import {
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
 import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const serverStarts: Array<string> = [];
@@ -74,7 +74,15 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
   it.effect("never starts a 1.x server for an OpenCode 2 instance", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
-      const instance = yield* create({}, noHttp);
+      const host = yield* ProviderHost.ProviderHost;
+      const instance = yield* create({}, noHttp).pipe(
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          awaitStartupProbe: Effect.never,
+        }),
+      );
+      // Keep the startup status probe gated, as it is before the server is ready.
+      // Text generation goes to the instance's 2.x server, which this test refuses to start.
       yield* Effect.flip(
         instance.textGeneration.generateThreadTitle({
           cwd: process.cwd(),
@@ -119,12 +127,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       const hang = HttpClient.make(() => Effect.never);
       const instance = yield* create({ serverUrl: "http://127.0.0.1:9" }, hang);
 
-      const capabilities = yield* instance.orchestrationAdapter
-        .getCapabilities()
-        .pipe(Effect.forkChild);
-      yield* Effect.yieldNow;
-      assert.isDefined(capabilities.pollUnsafe());
-      yield* Fiber.join(capabilities);
+      // No probe has succeeded yet, and the server never answers: the 1.x default applies.
+      // First use may load the adapter, but completes without advancing the probe's clock.
+      const capabilities = yield* instance.orchestrationAdapter.getCapabilities();
+      assert.isDefined(capabilities);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });

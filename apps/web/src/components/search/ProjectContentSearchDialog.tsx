@@ -19,6 +19,8 @@ import { HighlightedSearchLine } from "./HighlightedSearchLine";
 
 interface ProjectContentSearchDialogProps {
   readonly onOpenChange: (open: boolean) => void;
+  /** Text typed while the dialog loaded. */
+  readonly initialQuery?: string;
 }
 
 /**
@@ -103,10 +105,11 @@ function EmptyContentSearchDialog() {
 function OpenContentSearchDialog(props: {
   readonly onOpenChange: (open: boolean) => void;
   readonly target: ActiveProjectTarget;
+  readonly initialQuery?: string;
 }) {
   const { target } = props;
   const { resolvedTheme } = useTheme();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(props.initialQuery ?? "");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
   const [useRegex, setUseRegex] = useState(false);
@@ -324,6 +327,7 @@ export function ProjectContentSearchDialog(props: ProjectContentSearchDialogProp
       key={`${target.environmentId}:${target.cwd}`}
       onOpenChange={props.onOpenChange}
       target={target}
+      {...(props.initialQuery ? { initialQuery: props.initialQuery } : {})}
     />
   ) : (
     <EmptyContentSearchDialog />

@@ -13,7 +13,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeCursorAuth, type CursorAuthOptions } from "./auth.ts";
-import { InMemoryCredentialStore } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+const { InMemoryCredentialStore } = loadCursorSdk();
 
 const instanceId = ProviderInstanceId.make("cursor-personal");
 const owner = "owner-client";

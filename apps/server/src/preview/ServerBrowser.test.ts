@@ -1597,3 +1597,20 @@ it.live("a desktop page that comes back reconnects without waiting for a viewer"
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.live("a desktop page attached at startup reconnects before anything loads the browser", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const manager = yield* Manager.PreviewManager;
+      // A server tab the desktop restores after a restart.
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      desktopTabs.add(opened.tabId);
+      yield* Layer.build(ServerBrowser.layer);
+      while (desktopDetaches.listenerCount("attach") === 0) yield* Effect.yieldNow;
+      expect(desktopConnections).toHaveLength(0);
+      desktopDetaches.emit("attach", { threadId: scope.thread.threadId, tabId: opened.tabId });
+      while (desktopConnections.length === 0) yield* Effect.yieldNow;
+      expect(desktopConnections[0]?.endpoint).toBe(`ws://desktop/${opened.tabId}`);
+    }),
+  ).pipe(Effect.provide(dependencies)),
+);

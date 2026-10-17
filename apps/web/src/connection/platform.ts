@@ -37,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
@@ -339,6 +340,10 @@ const layerCapabilities = Layer.effectContext(
   }),
 );
 
+// Retain the existing desktop key when sharing its identity cache with the browser.
+const PRIMARY_TARGET_KEY = "t3code:desktop-primary-target:v1";
+const PrimaryTargetJson = Schema.fromJsonString(PrimaryConnectionTarget);
+
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (resolved: PrimaryEnvironmentTarget) {
@@ -348,7 +353,7 @@ const loadPrimaryConnectionRegistration = Effect.fn(
     Effect.provide(PrimaryEnvironmentHttpLayer.layer),
     Effect.mapError(mapRemoteEnvironmentError),
   );
-  return new PrimaryConnectionRegistration({
+  const registration = new PrimaryConnectionRegistration({
     target: new PrimaryConnectionTarget({
       environmentId: descriptor.environmentId,
       label: descriptor.label,
@@ -356,6 +361,13 @@ const loadPrimaryConnectionRegistration = Effect.fn(
       wsBaseUrl: resolved.target.wsBaseUrl,
     }),
   });
+  yield* Schema.encodeEffect(PrimaryTargetJson)(registration.target).pipe(
+    Effect.flatMap((encoded) =>
+      Effect.try(() => localStorage.setItem(PRIMARY_TARGET_KEY, encoded)),
+    ),
+    Effect.catch(() => Effect.void),
+  );
+  return registration;
 });
 
 const loadSecondaryConnectionRegistration = Effect.fn(
@@ -557,7 +569,7 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
   );
 }
 
-const layerPlatformConnectionSource = Layer.effect(
+export const layerPlatformConnectionSource = Layer.effect(
   PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
@@ -565,7 +577,31 @@ const layerPlatformConnectionSource = Layer.effect(
         registrations: Stream.empty,
       });
     }
-    const cacheRef = yield* Ref.make(new Map<string, CachedPlatformRegistration>());
+    const cachedTarget = yield* Effect.try(() => localStorage.getItem(PRIMARY_TARGET_KEY)).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(PrimaryTargetJson)),
+      Effect.option,
+    );
+    const primary = readPrimaryEnvironmentTargetResult();
+    const cachedRegistrations =
+      Option.isSome(cachedTarget) &&
+      primary._tag === "Success" &&
+      cachedTarget.value.httpBaseUrl === primary.target?.target.httpBaseUrl &&
+      cachedTarget.value.wsBaseUrl === primary.target.target.wsBaseUrl
+        ? [new PrimaryConnectionRegistration({ target: cachedTarget.value })]
+        : [];
+    const cacheRef = yield* Ref.make(
+      new Map<string, CachedPlatformRegistration>(
+        cachedRegistrations.map((registration) => [
+          PRIMARY_LOCAL_ENVIRONMENT_ID,
+          {
+            signature: `primary|${registration.target.httpBaseUrl}|${registration.target.wsBaseUrl}`,
+            registration,
+            // Cached identity is provisional: discover it on every poll until one succeeds.
+            refreshAtEpochMs: 0,
+          },
+        ]),
+      ),
+    );
     const rejectedRef = yield* Ref.make(new Map<string, RejectedSecondaryBootstrap>());
 
     const buildPlatformRegistrations = Effect.gen(function* () {
@@ -609,6 +645,10 @@ const layerPlatformConnectionSource = Layer.effect(
             const cacheEntry = { signature, registration: built.value };
             next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cacheEntry);
             registrations.push(built.value);
+          } else if (cached?.signature === signature) {
+            // Discovery failure must not remove a published environment and its drafts.
+            next.set(PRIMARY_LOCAL_ENVIRONMENT_ID, cached);
+            registrations.push(cached.registration);
           }
         }
       }
@@ -727,8 +767,13 @@ const layerPlatformConnectionSource = Layer.effect(
     }).pipe(Effect.provide(FetchHttpClient.layer));
 
     return PlatformConnectionSource.PlatformConnectionSource.of({
-      registrations: Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
-        Stream.mapEffect(() => buildPlatformRegistrations),
+      // Publish only the primary endpoint's identity early. The normal discovery
+      // stream replaces it, and the connection resolver checks its environment id.
+      registrations: Stream.concat(
+        Stream.fromIterable(cachedRegistrations.length > 0 ? [cachedRegistrations] : []),
+        Stream.tick(PLATFORM_POLL_INTERVAL).pipe(
+          Stream.mapEffect(() => buildPlatformRegistrations),
+        ),
       ),
     });
   }),

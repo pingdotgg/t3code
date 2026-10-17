@@ -1,4 +1,6 @@
 import "vite-plus/test/config";
+import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -25,6 +27,9 @@ const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version
 // a separate mode rather than a second entry in the default build.
 const packExecutable = process.env.T3CODE_PACK_EXE === "1";
 const SEA_NODE_VERSION = "26.8.2";
+const [hostPlatform, hostArch] = Effect.runSync(
+  Effect.all([HostProcess.Platform, HostProcess.Architecture]),
+);
 const SEA_TARGETS = {
   "darwin-arm64": { platform: "darwin", arch: "arm64" },
   "darwin-x64": { platform: "darwin", arch: "x64" },
@@ -73,9 +78,16 @@ export default mergeConfig(
               fileName: "t3",
               outDir: "dist-exe",
               ...(packExecutableTargets ? { targets: packExecutableTargets } : {}),
-              // Node's SEA docs: `import()` does not work when useCodeCache is
-              // true, and the server reaches several modules that way.
-              seaConfig: { useCodeCache: false },
+              // Node 26's module SEA supports dynamic builtin imports with code cache.
+              // Release archives build natively; retain uncached cross-build support.
+              seaConfig: {
+                useCodeCache:
+                  !packExecutableTarget ||
+                  (SEA_TARGETS[packExecutableTarget as keyof typeof SEA_TARGETS].platform ===
+                    (hostPlatform === "win32" ? "win" : hostPlatform) &&
+                    SEA_TARGETS[packExecutableTarget as keyof typeof SEA_TARGETS].arch ===
+                      hostArch),
+              },
             },
           }
         : {}),

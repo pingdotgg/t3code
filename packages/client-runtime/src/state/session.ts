@@ -1,7 +1,9 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
 import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
@@ -37,6 +39,28 @@ function initialConfigOption<E>(
 
 const DEFAULT_SESSION_STATE_TIMEOUT_MS = 6_000;
 
+// Retry transient startup failures before the next 30 s session revalidation.
+const SESSION_STATE_RETRIES = 5;
+const SESSION_STATE_RETRY_SCHEDULE = Schedule.exponential("500 millis").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(4))),
+  ),
+);
+
+function isTransientSessionStateError(error: { readonly _tag: string }): boolean {
+  return (
+    error._tag === "RemoteEnvironmentAuthFetchError" ||
+    error._tag === "RemoteEnvironmentAuthTimeoutError" ||
+    error._tag === "RemoteEnvironmentAuthUndeclaredStatusError" ||
+    error._tag === "EnvironmentInternalError"
+  );
+}
+
+/**
+ * Read the granted scopes of this client's session on one environment via its
+ * `/api/auth/session` endpoint, using the connection's authentication method
+ * and refreshing relay credentials when needed.
+ */
 export const fetchEnvironmentSessionState = Effect.fn(
   "clientRuntime.state.fetchEnvironmentSessionState",
 )(function* (input: {
@@ -138,7 +162,14 @@ function makeEnvironmentSessionAtoms<R, E>(
             prepared,
             signer,
             remoteAuthorization,
-          }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, client.value),
+            Effect.retry({
+              schedule: SESSION_STATE_RETRY_SCHEDULE,
+              times: SESSION_STATE_RETRIES,
+              while: isTransientSessionStateError,
+            }),
+          );
         });
       })
       .pipe(
