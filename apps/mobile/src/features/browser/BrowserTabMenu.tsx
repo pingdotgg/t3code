@@ -40,14 +40,15 @@ const VIEWPORTS = [
 export function BrowserTabMenu({
   environmentId,
   tab,
-  disabled,
+  streaming,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
-  readonly disabled: boolean;
+  readonly streaming: boolean;
 }) {
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
+  const close = useAtomCommand(previewEnvironment.close, "browser tab close");
   const target = { threadId: tab.threadId as PreviewAdjustInput["threadId"], tabId: tab.tabId };
   const colorScheme = tab.colorScheme ?? "system";
   const zoomFactor = tab.zoomFactor ?? DEFAULT_PREVIEW_ZOOM_FACTOR;
@@ -63,6 +64,12 @@ export function BrowserTabMenu({
         ? `preset:${tab.viewport.presetId}`
         : "custom";
 
+  const closeAction: MenuAction = {
+    id: "close",
+    title: "Close tab",
+    image: "xmark",
+    attributes: { destructive: true },
+  };
   const actions: MenuAction[] = [
     { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
     {
@@ -104,6 +111,7 @@ export function BrowserTabMenu({
         { id: "clear:cache", title: "Clear cache", attributes: { destructive: true } },
       ],
     },
+    closeAction,
   ];
 
   const run = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
@@ -112,6 +120,12 @@ export function BrowserTabMenu({
   };
 
   const onAction = (id: string) => {
+    if (id === "close") {
+      void close({ environmentId, input: target }).then((result) => {
+        if (result._tag === "Failure") Dialog.alert("Could not close this browser tab");
+      });
+      return;
+    }
     if (id === "hard-reload") return void run({ hardReload: true });
     if (id === "zoom:in") return void run({ zoomFactor: zoomTo(1) });
     if (id === "zoom:out") return void run({ zoomFactor: zoomTo(-1) });
@@ -134,19 +148,18 @@ export function BrowserTabMenu({
     }
   };
 
-  const pill = (
-    <ControlPill icon="ellipsis" accessibilityLabel="Browser tab options" disabled={disabled} />
-  );
-  if (disabled) return pill;
   return (
     <Menu
+      // Remount when streaming changes, so an open menu never keeps offering
+      // the other state's actions.
+      key={streaming ? "streaming" : "idle"}
       accessible
       accessibilityLabel="Browser tab options"
       accessibilityRole="button"
-      actions={actions}
+      actions={streaming ? actions : [closeAction]}
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
-      {pill}
+      <ControlPill icon="ellipsis" accessibilityLabel="Browser tab options" />
     </Menu>
   );
 }
