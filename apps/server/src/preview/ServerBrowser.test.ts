@@ -807,6 +807,7 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {},
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -851,6 +852,7 @@ it.live("a file a blank tab opened is offered to download if the tab moves on wh
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {},
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -893,6 +895,7 @@ it.live("a download from a superseded navigation leaves the newer navigation loa
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {},
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -1104,8 +1107,10 @@ it.live("a page download is saved, offered to the controller, and listed for the
       yield* Queue.clear(viewer.output);
       const saved = yield* Queue.unbounded<string>();
       const written = Promise.withResolvers<void>();
+      const released = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => released.resolve(),
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -1120,6 +1125,8 @@ it.live("a page download is saved, offered to the controller, and listed for the
       let offered = yield* Queue.take(viewer.output);
       while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
       expect(offered).toMatchObject({ _tag: "download", fileName: "report.csv", sizeBytes: 3 });
+      // Playwright keeps the original until its context closes; saving a copy must release it.
+      yield* Effect.promise(() => released.promise);
       const file = yield* browser.openDownload({
         threadId: scope.thread.threadId,
         tabId,
@@ -1144,6 +1151,33 @@ it.live("a page download is saved, offered to the controller, and listed for the
           }),
         ),
       ).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a download that fails to save still releases the browser's original", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const released = Promise.withResolvers<void>();
+      page.emit("download", {
+        failure: async () => null,
+        delete: async () => released.resolve(),
+        saveAs: async () => {
+          throw new Error("save interrupted");
+        },
+        suggestedFilename: () => "report.csv",
+        url: () => "blob:http://localhost:5173/1",
+      });
+      yield* Effect.promise(() => released.promise);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.downloads).toEqual([]);
     }),
   ).pipe(Effect.provide(layer)),
 );
