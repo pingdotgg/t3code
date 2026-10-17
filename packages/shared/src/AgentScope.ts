@@ -14,6 +14,12 @@ export interface AgentScopeShape {
      * killed server left running before it resumes their sessions.
      */
     readonly survivesRestart?: boolean | undefined;
+    /**
+     * Set for a server that several threads use, such as `opencode serve`.
+     * On systemd 253 or newer its scope runs with OOMPolicy=continue, so an
+     * OOM kill of one thread's tool does not stop the server for the others.
+     */
+    readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**

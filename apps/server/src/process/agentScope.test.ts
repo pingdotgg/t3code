@@ -181,6 +181,20 @@ describe("AgentScope service", () => {
     ),
   );
 
+  it.effect("keeps a shared server's scope running when one of its tools is OOM-killed", () =>
+    withFakeSystemd(({ scope }) =>
+      Effect.gen(function* () {
+        const server = yield* scope.wrap({ command: "agent", args: [], name: "s", shared: true });
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        // OOMPolicy=stop would end the server for every thread that uses it.
+        expect(server.args).toContain("--property=OOMPolicy=continue");
+        expect(server.args).not.toContain("--property=OOMPolicy=stop");
+        expect(server.args).toContain("--property=TimeoutStopSec=10s");
+        expect(agent.args).toContain("--property=OOMPolicy=stop");
+      }),
+    ),
+  );
+
   it.effect("leaves a quiet slice alone", () =>
     withFakeSystemd(({ scope, calls }) =>
       Effect.gen(function* () {
