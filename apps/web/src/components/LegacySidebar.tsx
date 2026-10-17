@@ -384,6 +384,7 @@ interface SidebarThreadRowProps {
   launchedCount: number;
   /** Launched threads and subagents folded away below this one. */
   launchedHiddenCount: number;
+  launchedFolded: boolean;
   launchDepth: number;
   isFirstLaunchedChild: boolean;
   isLastLaunchedChild: boolean;
@@ -445,6 +446,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const {
     launchedCount,
     launchedHiddenCount,
+    launchedFolded,
     launchDepth,
     isFirstLaunchedChild,
     isLastLaunchedChild,
@@ -727,7 +729,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     void attemptArchiveThread(threadRef);
   };
   const visibleLaunchDepth = Math.min(launchDepth, LAUNCHED_THREAD_MAX_VISIBLE_DEPTH);
-  const launchedFolded = launchedHiddenCount > 0;
   const handleLaunchFoldClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -853,9 +854,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               data-launch-fold
               aria-expanded={!launchedFolded}
               aria-label={
-                launchedFolded
+                launchedFolded && launchedHiddenCount > 0
                   ? `Show ${launchedHiddenCount} folded ${launchedHiddenCount === 1 ? "thread" : "threads"}`
-                  : `Hide ${launchedCount} child ${launchedCount === 1 ? "thread" : "threads"}`
+                  : launchedFolded
+                    ? `Unfold ${launchedCount} child ${launchedCount === 1 ? "thread" : "threads"}`
+                    : `Hide ${launchedCount} child ${launchedCount === 1 ? "thread" : "threads"}`
               }
               className="group/launch-fold relative inline-flex h-4 min-w-4 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-hidden hover:text-sidebar-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
               onPointerDown={(event) => event.stopPropagation()}
@@ -863,7 +866,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onKeyDown={(event) => event.stopPropagation()}
               onClick={handleLaunchFoldClick}
             >
-              {launchedFolded ? (
+              {launchedHiddenCount > 0 ? (
                 <span className="text-2xs tabular-nums transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-visible/launch-fold:opacity-0">
                   {launchedHiddenCount}
                 </span>
@@ -1019,7 +1022,10 @@ interface SidebarProjectThreadListProps {
   hiddenThreadStatus: ThreadStatusPill | null;
   orderedProjectThreadKeys: readonly string[];
   renderedThreads: readonly SidebarThreadSummary[];
-  launchFoldByThreadKey: ReadonlyMap<string, { childCount: number; hiddenCount: number }>;
+  launchFoldByThreadKey: ReadonlyMap<
+    string,
+    { childCount: number; hiddenCount: number; folded: boolean }
+  >;
   showEmptyThreadState: boolean;
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
@@ -1144,6 +1150,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               thread={thread}
               launchedCount={launchFold?.childCount ?? 0}
               launchedHiddenCount={launchFold?.hiddenCount ?? 0}
+              launchedFolded={launchFold?.folded ?? false}
               launchDepth={launchTree?.depth ?? 0}
               isFirstLaunchedChild={launchTree?.isFirstChild ?? true}
               isLastLaunchedChild={launchTree?.isLastChild ?? true}
@@ -1343,9 +1350,9 @@ function useFoldedProjectThreads(
     visibleProjectThreads,
     orderedProjectThreadKeys: visibleProjectThreads.map(keyOf),
     launchFoldByThreadKey: new Map(
-      foldedProjectThreads.map(({ thread, childCount, hiddenCount }) => [
+      foldedProjectThreads.map(({ thread, childCount, hiddenCount, folded }) => [
         keyOf(thread),
-        { childCount, hiddenCount },
+        { childCount, hiddenCount, folded },
       ]),
     ),
   };

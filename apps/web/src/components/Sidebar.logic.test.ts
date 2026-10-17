@@ -571,10 +571,13 @@ describe("sidebar thread lineage helpers", () => {
         (entry) => choices[entry.id],
         (entry) => "lineage" in entry,
         (entry) => entry.id === open,
-      ).map(({ thread, childCount, hiddenCount }) => `${thread.id}:${childCount}/${hiddenCount}`);
+      ).map(
+        ({ thread, childCount, hiddenCount, folded }) =>
+          `${thread.id}:${childCount}/${hiddenCount}${folded ? " folded" : ""}`,
+      );
 
     expect(summarize({})).toEqual([
-      "orchestrator:4/1",
+      "orchestrator:4/1 folded",
       "child:1/0",
       "grandchild:0/0",
       "sibling:0/0",
@@ -588,15 +591,23 @@ describe("sidebar thread lineage helpers", () => {
       "sibling:0/0",
       "solo:0/0",
     ]);
-    expect(summarize({ orchestrator: true })).toEqual(["orchestrator:4/4", "solo:0/0"]);
+    expect(summarize({ orchestrator: true })).toEqual(["orchestrator:4/4 folded", "solo:0/0"]);
     // The open thread's branch stays visible; its folded siblings stay folded.
     expect(summarize({ orchestrator: true }, "grandchild")).toEqual([
-      "orchestrator:4/2",
+      "orchestrator:4/2 folded",
       "child:1/0",
       "grandchild:0/0",
       "solo:0/0",
     ]);
-    expect(summarize({}, "helper")).toEqual(summarize({ orchestrator: false }));
+    // A pinned subagent keeps the launcher folded even though nothing below it is hidden.
+    expect(summarize({}, "helper")).toEqual([
+      "orchestrator:4/0 folded",
+      "child:1/0",
+      "grandchild:0/0",
+      "helper:0/0",
+      "sibling:0/0",
+      "solo:0/0",
+    ]);
   });
 
   it("keeps threads in a launch cycle visible", () => {

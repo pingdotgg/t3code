@@ -604,21 +604,32 @@ export function nestLaunchedSidebarThreads<
  * Drops the threads folded under their launcher. `foldState` is the user's choice per launcher:
  * true folds every child, false shows every child, and undefined (no choice yet) shows launched
  * threads but folds subagents. A child branch holding a thread for which
- * `keepVisible` holds (the open thread) always stays visible.
+ * `keepVisible` holds (the open thread) always stays visible, so `folded` reports the launcher's
+ * fold state even when nothing below it is hidden.
  */
 export function foldLaunchedSidebarThreads<T>(
   nested: ReadonlyArray<NestedSidebarThread<T>>,
   foldState: (thread: T) => boolean | undefined,
   isSubagent: (thread: T) => boolean,
   keepVisible: (thread: T) => boolean,
-): Array<NestedSidebarThread<T> & { readonly childCount: number; readonly hiddenCount: number }> {
+): Array<
+  NestedSidebarThread<T> & {
+    readonly childCount: number;
+    readonly hiddenCount: number;
+    readonly folded: boolean;
+  }
+> {
   const subtreeEnd = (index: number) => {
     let end = index + 1;
     while (end < nested.length && nested[end]!.depth > nested[index]!.depth) end++;
     return end;
   };
   const result: Array<
-    NestedSidebarThread<T> & { readonly childCount: number; readonly hiddenCount: number }
+    NestedSidebarThread<T> & {
+      readonly childCount: number;
+      readonly hiddenCount: number;
+      readonly folded: boolean;
+    }
   > = [];
   const visit = (index: number) => {
     const entry = nested[index]!;
@@ -626,14 +637,16 @@ export function foldLaunchedSidebarThreads<T>(
     const state = foldState(entry.thread);
     const visibleChildren: number[] = [];
     let hiddenCount = 0;
+    let folded = false;
     for (let child = index + 1; child < end; child = subtreeEnd(child)) {
       const childEnd = subtreeEnd(child);
       const foldable = state === true || (state === undefined && isSubagent(nested[child]!.thread));
       const pinned = nested.slice(child, childEnd).some((branch) => keepVisible(branch.thread));
+      folded ||= foldable;
       if (foldable && !pinned) hiddenCount += childEnd - child;
       else visibleChildren.push(child);
     }
-    result.push({ ...entry, childCount: end - index - 1, hiddenCount });
+    result.push({ ...entry, childCount: end - index - 1, hiddenCount, folded });
     for (const child of visibleChildren) visit(child);
   };
   for (let index = 0; index < nested.length; index = subtreeEnd(index)) visit(index);
