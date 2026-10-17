@@ -1868,6 +1868,18 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
+    const latestActiveCreatedAt = timelineEntries.reduce<string | null>((latest, entry) => {
+      if (entry.kind === "message" && entry.message.role === "user") return latest;
+      return runIdIsActiveResponse(
+        entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry),
+      )
+        ? maxIsoTimestamp(latest, entry.createdAt)
+        : latest;
+    }, null);
+    const thinkingCreatedAt = maxIsoTimestamp(
+      input.activeTurnStartedAt ?? null,
+      latestActiveCreatedAt,
+    );
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
       const groupId = workGroupId(failedGroupAnchor.id);
@@ -1875,7 +1887,7 @@ export function deriveMessagesTimelineRows(input: {
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: input.activeTurnStartedAt ?? null,
+        createdAt: thinkingCreatedAt,
         groupId,
         expanded,
       });
@@ -1892,7 +1904,7 @@ export function deriveMessagesTimelineRows(input: {
       nextRows.push({
         kind: "thinking",
         id: LIVE_ACTIVITY_ROW_ID,
-        createdAt: input.activeTurnStartedAt ?? null,
+        createdAt: thinkingCreatedAt,
       });
     }
   }

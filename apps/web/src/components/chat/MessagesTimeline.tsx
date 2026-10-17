@@ -3584,15 +3584,33 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
   const { groupId } = row;
-  if (groupId === undefined) return activity;
+  // Without a group there is nothing to focus, so keyboard users could never
+  // reveal a hover-only timestamp; that row shows it all the time.
+  const timestamp = row.createdAt ? (
+    <TimelineRowTimestamp
+      createdAt={row.createdAt}
+      timestampFormat={ctx.timestampFormat}
+      className="ms-auto"
+      alwaysVisible={groupId === undefined}
+    />
+  ) : null;
+  if (groupId === undefined) {
+    return (
+      <div className="group/timeline-row flex min-h-6 w-full min-w-0 items-center pe-0.5">
+        {activity}
+        {timestamp}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/timeline-row flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md pe-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded === true}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
+      {timestamp}
     </button>
   );
 }
@@ -3761,7 +3779,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
     <button
       type="button"
       className={cn(
-        "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        "group/timeline-row flex w-full max-w-full cursor-pointer rounded-md pe-0.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
         thoughtLine ? "flex-col items-start" : "min-h-6 items-center",
       )}
       aria-label={
@@ -3788,45 +3806,53 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
           wrapLabel
         />
       ) : null}
-      <LiveActivityRow
-        label={
-          thoughtIsStatus ? (
-            row.active ? (
-              "Thinking"
-            ) : (
-              "Thought"
-            )
-          ) : row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
-            <span className="flex min-w-0 gap-1.5">
-              <span className="min-w-0 truncate">{label}</span>
-              <span className="min-w-0 truncate text-foreground">
-                {getQuestionAnswerPreview(row.entry.questionAnswer)}
+      <span className="flex min-h-6 w-full min-w-0 items-center">
+        <LiveActivityRow
+          label={
+            thoughtIsStatus ? (
+              row.active ? (
+                "Thinking"
+              ) : (
+                "Thought"
+              )
+            ) : row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
+              <span className="flex min-w-0 gap-1.5">
+                <span className="min-w-0 truncate">{label}</span>
+                <span className="min-w-0 truncate text-foreground">
+                  {getQuestionAnswerPreview(row.entry.questionAnswer)}
+                </span>
               </span>
-            </span>
-          ) : row.entry.itemType === "reasoning" ? (
-            <ReactMarkdown
-              remarkPlugins={[
-                remarkGfm,
-                [remarkThoughtPreview, row.active ? "Thinking" : "Thought"],
-              ]}
-            >
-              {row.entry.detail ?? label}
-            </ReactMarkdown>
-          ) : threadLabel ? (
-            <ThreadReadLabel
-              label={threadLabel}
-              environmentId={ctx.activeThreadEnvironmentId}
-              linked={false}
-            />
-          ) : (
-            label
-          )
-        }
-        iconName={workEntryIconName(row.entry)}
-        toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
-        failed={failed}
-        active={row.active}
-      />
+            ) : row.entry.itemType === "reasoning" ? (
+              <ReactMarkdown
+                remarkPlugins={[
+                  remarkGfm,
+                  [remarkThoughtPreview, row.active ? "Thinking" : "Thought"],
+                ]}
+              >
+                {row.entry.detail ?? label}
+              </ReactMarkdown>
+            ) : threadLabel ? (
+              <ThreadReadLabel
+                label={threadLabel}
+                environmentId={ctx.activeThreadEnvironmentId}
+                linked={false}
+              />
+            ) : (
+              label
+            )
+          }
+          iconName={workEntryIconName(row.entry)}
+          toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
+          failed={failed}
+          active={row.active}
+        />
+        {/* The running entry's start, so a stalled tool shows when it began. */}
+        <TimelineRowTimestamp
+          createdAt={row.entry.createdAt}
+          timestampFormat={ctx.timestampFormat}
+          className="ms-auto"
+        />
+      </span>
     </button>
   );
 }
