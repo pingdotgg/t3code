@@ -434,10 +434,11 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
-                handleTermination(
-                  () =>
-                    options.terminationError ??
+                handleTermination(() =>
+                  Effect.raceFirst(
+                    options.terminationError ?? Effect.never,
                     Effect.succeed(new CodexError.CodexAppServerInputStreamEndedError({})),
+                  ),
                 ),
             }),
           ),
