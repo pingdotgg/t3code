@@ -1,12 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-  type KeyboardEvent,
-} from "react";
+import { memo, useEffect, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Image as ImageGlyph, Text as TextGlyph } from "lucide";
 import { Button } from "../ui/button";
@@ -102,9 +94,9 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       }
     : source;
 
-  const navigateImage = useCallback((direction: -1 | 1) => {
+  const navigateImage = (direction: -1 | 1) => {
     setImageOffset((current) => current + direction);
-  }, []);
+  };
 
   // The element that opened the preview gets focus back on close. Without
   // this a close button click leaves focus on the unmounted dialog, and the
