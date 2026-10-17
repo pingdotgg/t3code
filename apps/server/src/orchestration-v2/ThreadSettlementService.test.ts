@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
   type PullRequestSummary,
+  type ThreadPullRequestLink,
   type ServerSettings as ContractServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -98,6 +99,35 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     snoozedAt: null,
     pinnedAt: null,
     ...overrides,
+  };
+}
+
+function persistedLink(
+  state: "open" | "merged" | "closed" | null,
+  number = 1,
+): ThreadPullRequestLink {
+  return {
+    host: "example.test",
+    repository: "owner/repo",
+    number,
+    url: `https://example.test/owner/repo/pull/${number}`,
+    source: "manual",
+    linkedAt: DateTime.formatIso(at(-5 * DAY_MS)),
+    snapshot:
+      state === null
+        ? null
+        : {
+            state,
+            title: "Pull request",
+            headBranch: `feature-${number}`,
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: DateTime.formatIso(at(-DAY_MS)),
+            syncedAt: DateTime.formatIso(at(-1)),
+            mergedAt: state === "merged" ? DateTime.formatIso(at(-DAY_MS)) : null,
+            closedAt: state === "closed" ? DateTime.formatIso(at(-DAY_MS)) : null,
+          },
+    stack: null,
   };
 }
 
@@ -274,6 +304,140 @@ describe("resolveAutoSettlementAt", () => {
         pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
       }),
     ).toEqual(at(-4 * DAY_MS));
+  });
+
+  it("applies inactivity and retention to persisted open links", () => {
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        pullRequests: [persistedLink("open")],
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: false,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleKeepPullRequests: true,
+      }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: { ...input.thread, latestRunCompletedAt: at(-DAY_MS) },
+      }),
+    ).toBeNull();
+  });
+
+  it.each(["merged", "closed"] as const)(
+    "keeps an open link from settling through a %s link or lookup",
+    (state) => {
+      const input = {
+        thread: shell({
+          latestUserMessageAt: at(-4 * DAY_MS),
+          pullRequests: [persistedLink("open"), persistedLink(state, 2)],
+        }),
+        pullRequest: {
+          state,
+          mergedAt: DateTime.formatIso(at(-1)),
+          closedAt: DateTime.formatIso(at(-1)),
+        },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+        autoSettleKeepPullRequests: false,
+      };
+      expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: 3 }),
+      ).toEqual(at(-4 * DAY_MS));
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          autoSettleAfterDays: 3,
+          autoSettleKeepPullRequests: true,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("keeps unknown snapshots conservative, including mixed terminal links", () => {
+    for (const links of [
+      [persistedLink(null)],
+      [persistedLink("merged"), persistedLink(null, 2)],
+    ]) {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          thread: shell({ latestUserMessageAt: at(-4 * DAY_MS), pullRequests: links }),
+          pullRequest: { state: "closed", closedAt: DateTime.formatIso(at(-1)) },
+          nowMs: NOW_MS,
+          autoSettleAfterDays: 3,
+          autoSettleOnMerge: true,
+          autoSettleKeepPullRequests: false,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it("preserves terminal-link rules and ignores dismissed links for retention", () => {
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        pullRequests: [persistedLink("merged")],
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleOnMerge: false }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: { ...input.thread, pullRequests: [persistedLink("closed")] },
+        autoSettleOnMerge: false,
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: {
+          ...input.thread,
+          pullRequests: [{ ...persistedLink(null), source: "stack-dismissed" }],
+        },
+      }),
+    ).toEqual(at(-4 * DAY_MS));
+    // The latest terminal link still determines whether the merge setting applies.
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleOnMerge: false,
+        thread: {
+          ...input.thread,
+          pullRequests: [
+            persistedLink("closed"),
+            {
+              ...persistedLink("merged", 2),
+              snapshot: {
+                ...persistedLink("merged", 2).snapshot!,
+                mergedAt: DateTime.formatIso(at(-1)),
+              },
+            },
+          ],
+        },
+      }),
+    ).toBeNull();
   });
 
   it("uses the latest activity time when the inactivity window elapses", () => {

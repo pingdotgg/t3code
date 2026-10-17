@@ -47,6 +47,10 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+import * as GitManager from "../git/GitManager.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1669,6 +1673,137 @@ it.layer(layerLegacyImportTest)("OrchestrationV2 legacy import", (it) => {
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
+  it.effect.each([false, true])(
+    "settles persisted open PR links only with retention off (keep=%s)",
+    (keep) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const projectId = ProjectId.make(`persisted-open-pr-${keep}`);
+          const threadId = ThreadId.make(`persisted-open-pr-${keep}`);
+          const old = DateTime.makeUnsafe("2026-10-11T12:00:00.000Z");
+          const now = "2026-10-15T12:00:00.000Z";
+          yield* TestClock.setTime(DateTime.toEpochMillis(old));
+          yield* seedProject({
+            projectId,
+            title: "Persisted PR",
+            workspaceRoot: "/workspace/persisted-pr",
+            defaultModelSelection: null,
+            createdAt: DateTime.formatIso(old),
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`persisted-pr-create-${keep}`),
+            threadId,
+            projectId,
+            title: "Idle with open PR",
+            createdBy: "user",
+            creationSource: "web",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature",
+            worktreePath: null,
+          });
+          // Seed completed activity without starting a provider session.
+          yield* projections.apply({
+            id: EventId.make(`persisted-pr-activity-${keep}`),
+            type: "message.updated",
+            threadId,
+            occurredAt: old,
+            payload: {
+              id: MessageId.make(`persisted-pr-message-${keep}`),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role: "user",
+              text: "Finished work",
+              attachments: [],
+              streaming: false,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: old,
+              updatedAt: old,
+            },
+          });
+          const key = { host: "github.com", repository: "pingdotgg/t3code", number: 1 };
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`persisted-pr-link-${keep}`),
+            threadId,
+            ...key,
+            url: "https://github.com/pingdotgg/t3code/pull/1",
+            source: "manual",
+          });
+          yield* TestClock.setTime(Date.parse(now));
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-link.sync",
+            commandId: CommandId.make(`persisted-pr-sync-${keep}`),
+            threadId,
+            ...key,
+            snapshot: {
+              state: "open",
+              title: "Open PR",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: now,
+              syncedAt: now,
+            },
+            stack: null,
+          });
+          const [candidate] = yield* projections.getSettlementCandidates(threadId);
+          assert.isDefined(candidate);
+          assert.equal(candidate!.pullRequests?.[0]?.snapshot?.state, "open");
+          assert.isNull(candidate!.linkedPullRequest);
+          const before = yield* orchestrator.getThreadShell(threadId);
+          const read = yield* Deferred.make<void>();
+          const service = yield* ThreadSettlementService.make.pipe(
+            Effect.provideService(ProjectionStore.ProjectionStoreV2, {
+              ...projections,
+              getSettlementCandidates: () =>
+                projections
+                  .getSettlementCandidates(threadId)
+                  .pipe(Effect.tap(() => Deferred.succeed(read, undefined))),
+            }),
+            Effect.provide(
+              Layer.mergeAll(
+                ServerSettings.layerTest({
+                  sidebarAutoSettleAfterDays: 3,
+                  sidebarAutoSettleOnMerge: true,
+                  sidebarAutoSettleKeepPullRequests: keep,
+                }),
+                Layer.mock(GitManager.GitManager)({
+                  branchPullRequest: () =>
+                    Effect.die("Persisted links must not need a branch lookup"),
+                }),
+                Layer.mock(PullRequestService.PullRequestService)({
+                  summary: () => Effect.die("Persisted links must not need a summary lookup"),
+                  subscribeMerges: Effect.succeed(Stream.empty),
+                }),
+                Layer.mock(TerminalManager.TerminalManager)({ closeIdle: () => Effect.void }),
+                Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+                  runForThread: () => Effect.succeed({ status: "no-script" } as const),
+                }),
+                NodeServices.layer,
+              ),
+            ),
+          );
+          yield* service.start();
+          // Observe the initial sweep before draining; no sleeps or polling.
+          yield* Deferred.await(read);
+          yield* service.drain;
+          const persisted = yield* orchestrator.getThreadProjection(threadId);
+          const after = yield* orchestrator.getThreadShell(threadId);
+          assert.equal(persisted.thread.settledOverride, keep ? null : "settled");
+          assert.deepEqual(persisted.thread.settledAt, keep ? null : old);
+          assert.deepEqual(after?.settledAt, persisted.thread.settledAt);
+          assert.deepEqual(after?.pullRequests, before?.pullRequests);
+        }),
+      ),
+  );
+
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
