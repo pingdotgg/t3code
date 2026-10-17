@@ -13,6 +13,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { readProjectSettings } from "../sourceControl/ChangeRequestStep.ts";
 import type * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as JjProcess from "../vcs/JjProcess.ts";
 import * as JjVcsDriver from "../vcs/JjVcsDriver.ts";
@@ -92,8 +93,8 @@ export const make = Effect.gen(function* () {
     worktreesDir: config.worktreesDir,
     bookmarkTo: remotes.bookmarkTo,
   });
-  const projectSettingsFor = (input: Parameters<typeof GitManager.readProjectSettings>[0]) =>
-    GitManager.readProjectSettings(input).pipe(
+  const projectSettingsFor = (input: Parameters<typeof readProjectSettings>[0]) =>
+    readProjectSettings(input).pipe(
       Effect.provideService(ServerSettings.ServerSettingsService, serverSettingsService),
       Effect.provideService(ProjectionStore.ProjectionStoreV2, threads),
       Effect.provideService(ProjectStore.ProjectStoreV2, projects),
