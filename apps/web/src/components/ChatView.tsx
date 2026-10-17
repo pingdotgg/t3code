@@ -6055,46 +6055,13 @@ export default function ChatView(props: ChatViewProps) {
     isDesktop: isElectron,
   });
   const getShortcutContextStable = useStableCallback(getShortcutContext);
-  // Every provider status push carries a new skills array, even when nothing in
-  // it changed. Timeline markdown only reads names, so it keeps one identity
-  // until those change; otherwise each push re-renders every visible reply.
-  const nextTimelineSkills = activeProviderStatus
+  const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
-  const timelineSkillsKey = nextTimelineSkills
-    .map((skill) => `${skill.name}\u0000${skill.displayName ?? ""}`)
-    .join("\u0001");
-  const [timelineSkillsState, setTimelineSkillsState] = useState({
-    key: timelineSkillsKey,
-    skills: nextTimelineSkills,
-  });
-  if (timelineSkillsState.key !== timelineSkillsKey) {
-    setTimelineSkillsState({ key: timelineSkillsKey, skills: nextTimelineSkills });
-  }
-  const timelineSkills = timelineSkillsState.skills;
-  // Same for providers: timeline rows show their names, icons and models, and
-  // nothing else in a status push should re-render the conversation.
-  const nextTimelineProviders =
+  const timelineProviders =
     environmentById.get(
       displayedThreadRef?.environmentId ?? activeThread?.environmentId ?? environmentId,
     )?.serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const timelineProvidersKey = JSON.stringify(
-    nextTimelineProviders.map((provider) => [
-      provider.instanceId,
-      provider.driver,
-      provider.displayName,
-      provider.iconUrl,
-      provider.models.map((model) => [model.slug, model.name, model.shortName]),
-    ]),
-  );
-  const [timelineProvidersState, setTimelineProvidersState] = useState({
-    key: timelineProvidersKey,
-    providers: nextTimelineProviders,
-  });
-  if (timelineProvidersState.key !== timelineProvidersKey) {
-    setTimelineProvidersState({ key: timelineProvidersKey, providers: nextTimelineProviders });
-  }
-  const timelineProviders = timelineProvidersState.providers;
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = () => threadFindControlsRef.current?.open();
