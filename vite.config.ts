@@ -328,6 +328,7 @@ export default defineConfig({
         files: [
           "apps/web/src/components/PersistentThreadTerminals.tsx",
           "apps/web/src/components/chat/usePendingThreadRequests.ts",
+          "apps/web/src/components/chat/useQueuedRunEdit.ts",
           "apps/web/src/components/chat/useUsageLimitsPanel.ts",
           "apps/web/src/components/terminal/**",
         ],

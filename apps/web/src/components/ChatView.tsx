@@ -11,7 +11,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./chat/queuedMessageEdit";
+import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
@@ -51,7 +51,6 @@ import {
   CommandId,
   DEFAULT_MODEL,
   isProviderNativeSubagentThread,
-  type ChatAttachment as ContractChatAttachment,
   EnvironmentAuthorizationError,
   type EnvironmentId,
   type MessageId,
@@ -462,11 +461,7 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
-import {
-  QueuedRunsControl,
-  type QueuedRunsControlHandle,
-  type EditQueuedRunRequest,
-} from "./chat/QueuedRunsControl";
+import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadStatusLine } from "./chat/ThreadStatusLine";
@@ -957,11 +952,7 @@ function makeThreadErrorSetter(input: {
   };
 }
 
-/** Draft id for editing a queued run of `threadRef`. */
-function makeQueuedEditDraftTarget(threadRef: ScopedThreadRef) {
-  return (runId: RunId) => DraftId.make(`queued-edit:${scopedThreadKey(threadRef)}:${runId}`);
-}
-
+/** Why the model picker should disable a model, or null when it can be chosen. */
 function makeModelDisabledReason(
   context: Omit<
     Parameters<typeof getStartedThreadModelChangeBlockReason>[0],
@@ -1067,24 +1058,8 @@ export default function ChatView(props: ChatViewProps) {
     () => new Map(environments.map((environment) => [environment.environmentId, environment])),
     [environments],
   );
-  const [editingQueuedRun, setEditingQueuedRun] = useState<{
-    readonly threadId: ThreadId;
-    readonly runId: RunId;
-    readonly messageId: MessageId;
-    readonly originalText: string;
-    readonly existingAttachments: ReadonlyArray<ContractChatAttachment>;
-    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
-  } | null>(null);
-  const queuedEditDraftTargetFor = useMemo(
-    () => makeQueuedEditDraftTarget(routeThreadRef),
-    [routeThreadRef],
-  );
   const baseComposerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
-  const composerDraftTarget: ScopedThreadRef | DraftId =
-    editingQueuedRun === null
-      ? baseComposerDraftTarget
-      : queuedEditDraftTargetFor(editingQueuedRun.runId);
   const draftThread = useComposerDraftStore((store) =>
     routeKind === "server"
       ? store.getDraftSessionByRef(routeThreadRef)
@@ -1099,6 +1074,19 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const promptRef = useRef("");
+  const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const queuedRunEdit = useQueuedRunEdit({
+    environmentId,
+    routeThreadRef,
+    threadDraftTarget: baseComposerDraftTarget,
+    activeThreadId: serverThread !== null || draftThread !== null ? threadId : null,
+    serverProjection,
+    promptRef,
+    composerRef,
+  });
+  const composerDraftTarget = queuedRunEdit.draftTarget;
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -1223,12 +1211,9 @@ export default function ChatView(props: ChatViewProps) {
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
     (store) => store.setLogicalProjectDraftThreadId,
   );
-  const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
-  const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
   const [restingComposerControlsHost, setRestingComposerControlsHost] =
@@ -3650,112 +3635,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
   const sendAppMessageStable = useStableCallback(sendAppMessage);
-  const editQueuedRunCommand = useAtomCommand(threadEnvironment.editQueuedRun, {
-    reportFailure: false,
-  });
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
-  const queuedEditSaveInFlightRef = useRef(false);
-  const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
-  const queuedEditImageResources = useMemo(
-    () =>
-      (editingQueuedRun?.existingAttachments ?? [])
-        .filter((attachment) => attachment.type === "image")
-        .map((attachment) => ({ _tag: "attachment" as const, attachmentId: attachment.id })),
-    [editingQueuedRun],
-  );
-  const queuedEditImageUrls = useAssetUrls(environmentId, queuedEditImageResources);
-  const composerEditingQueuedAttachments = useMemo(() => {
-    if (editingQueuedRun === null) return null;
-    const urlByAttachmentId = new Map(
-      queuedEditImageResources.map((resource, index) => [
-        resource.attachmentId,
-        queuedEditImageUrls[index] ?? null,
-      ]),
-    );
-    return editingQueuedRun.existingAttachments.map((attachment) => ({
-      attachment,
-      url: urlByAttachmentId.get(attachment.id) ?? null,
-    }));
-  }, [editingQueuedRun, queuedEditImageResources, queuedEditImageUrls]);
-  const beginEditingQueuedRun = (request: EditQueuedRunRequest) => {
-    if (!activeThread) return;
-    if (editingQueuedRun !== null && editingQueuedRun.runId !== request.runId) {
-      clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
-    }
-    const target = queuedEditDraftTargetFor(request.runId);
-    clearComposerDraftContent(target);
-    setComposerDraftPrompt(target, request.text);
-    setEditingQueuedRun({
-      threadId: activeThread.id,
-      runId: request.runId,
-      messageId: request.messageId,
-      originalText: request.text,
-      existingAttachments: request.attachments,
-      context: serverProjection?.messages.find((message) => message.id === request.messageId)
-        ?.context,
-    });
-    scheduleComposerFocus();
-  };
-  const beginEditingQueuedRunStable = useStableCallback(beginEditingQueuedRun);
-  const cancelEditingQueuedRun = () => {
-    if (editingQueuedRun === null) return;
-    clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
-    setEditingQueuedRun(null);
-    scheduleComposerFocus();
-  };
-  const cancelEditingQueuedRunStable = useStableCallback(cancelEditingQueuedRun);
-  const removeEditingQueuedAttachment = (attachmentId: string) => {
-    setEditingQueuedRun((current) =>
-      current === null
-        ? current
-        : {
-            ...current,
-            existingAttachments: current.existingAttachments.filter(
-              (attachment) => attachment.id !== attachmentId,
-            ),
-          },
-    );
-  };
-  const removeEditingQueuedAttachmentStable = useStableCallback(removeEditingQueuedAttachment);
-  useEffect(() => {
-    if (editingQueuedRun === null) return;
-    if (activeThread?.id !== editingQueuedRun.threadId) {
-      setEditingQueuedRun(null);
-      return;
-    }
-    if (serverProjection === null) return;
-    const run = serverProjection.runs.find((candidate) => candidate.id === editingQueuedRun.runId);
-    if (run !== undefined && run.status === "queued") return;
-    const recovery = recoverQueuedMessageEdit({
-      editTarget: queuedEditDraftTargetFor(editingQueuedRun.runId),
-      threadTarget: baseComposerDraftTarget,
-      originalText: editingQueuedRun.originalText,
-    });
-    if (recovery === "kept") {
-      toastManager.add(
-        stackedThreadToast({
-          type: "info",
-          title: "Queued message is no longer queued",
-          description: "Your unsaved edit was kept in the composer.",
-        }),
-      );
-    } else if (recovery === "discarded") {
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Queued message is no longer queued",
-          description: "Your unsaved edit was discarded.",
-        }),
-      );
-    }
-    setEditingQueuedRun(null);
-  }, [
-    activeThread?.id,
-    baseComposerDraftTarget,
-    editingQueuedRun,
-    queuedEditDraftTargetFor,
-    serverProjection,
-  ]);
   const addTerminalContextToDraft = (selection: TerminalContextSelection) => {
     composerRef.current?.addTerminalContext(selection);
   };
@@ -7482,128 +7362,21 @@ export default function ChatView(props: ChatViewProps) {
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
       : promptRef.current;
-    if (editingQueuedRun !== null) {
-      if (queuedEditSaveInFlightRef.current) return;
-      const editText = promptForSend.trim();
-      const newEditImages = [...composerImages];
-      const newEditFiles = [...composerFiles];
-      const newEditAttachments = [...newEditImages, ...newEditFiles];
-      if (
-        editingQueuedRun.existingAttachments.length + newEditAttachments.length >
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-      ) {
-        setThreadError(
-          editingQueuedRun.threadId,
-          `A message can have at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
-        );
-        return;
-      }
-      if (
-        editText.length === 0 &&
-        editingQueuedRun.existingAttachments.length === 0 &&
-        newEditImages.length === 0 &&
-        newEditFiles.length === 0
-      ) {
-        return;
-      }
-      queuedEditSaveInFlightRef.current = true;
-      setIsSavingQueuedEdit(true);
-      try {
-        const uploads = await prepareQueuedEditAttachments({
-          existingAttachments: editingQueuedRun.existingAttachments,
-          images: newEditImages,
-          files: newEditFiles,
-          readImage: readFileAsDataUrl,
-          uploadFiles: async (files) => {
-            const validateFiles = () => {
-              const config =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
-              const reason = fileAttachmentCapabilityBlockReason({
-                files,
-                attachmentUploadsCapabilityKnown: config !== null,
-                supportsAttachmentUploads:
-                  config?.environment.capabilities.attachmentUploads === true,
-                maxFileAttachmentBytes:
-                  config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
-              });
-              if (reason !== null) throw new Error(reason);
-            };
-            validateFiles();
-            for (const file of files)
-              startAttachmentUpload({
-                environmentId,
-                image: file,
-                draftTarget: composerDraftTarget,
-              });
-            await awaitAttachmentUploads(files.map((file) => file.id));
-            validateFiles();
-            const uploaded = getUploadedAttachments({ environmentId, images: files });
-            if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
-            return uploaded;
-          },
-        });
-        const result = await editQueuedRunCommand({
-          environmentId: activeThread.environmentId,
-          input: {
-            threadId: editingQueuedRun.threadId,
-            runId: editingQueuedRun.runId,
-            text: editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
-            edit: {
-              messageId: editingQueuedRun.messageId,
-              attachments: uploads,
-              context: {
-                version: 1,
-                records: [
-                  ...new Map(
-                    [
-                      ...(editingQueuedRun.context?.records ?? []).filter(
-                        (record) =>
-                          !("attachmentId" in record) ||
-                          editingQueuedRun.existingAttachments.some(
-                            (attachment) => attachment.id === record.attachmentId,
-                          ),
-                      ),
-                      ...(buildMessageContext({
-                        terminalContexts: composerTerminalContexts.filter(
-                          (context) => context.text.trim().length > 0,
-                        ),
-                        reviewComments: composerReviewComments,
-                        previewAnnotations: composerPreviewAnnotations,
-                        threadContexts: composerThreadContexts,
-                        attachments: newEditAttachments.map((attachment, index) => ({
-                          attachment,
-                          attachmentId:
-                            uploads[editingQueuedRun.existingAttachments.length + index]?.id ??
-                            attachment.id,
-                        })),
-                      })?.records ?? []),
-                    ].map((record) => [record.contextId, record] as const),
-                  ).values(),
-                ],
-              },
-            },
-          },
-        });
-        if (result._tag === "Failure") {
-          setThreadError(editingQueuedRun.threadId, "Could not save the edited queued message.");
-          return;
-        }
-        setThreadError(editingQueuedRun.threadId, null);
-        releaseDraftAttachments(newEditAttachments);
-        promptRef.current = "";
-        clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
-        composerRef.current?.resetCursorState();
-        setEditingQueuedRun(null);
-        scheduleComposerFocus();
-      } catch (error) {
-        setThreadError(
-          editingQueuedRun.threadId,
-          error instanceof Error ? error.message : "Could not save the edited queued message.",
-        );
-      } finally {
-        queuedEditSaveInFlightRef.current = false;
-        setIsSavingQueuedEdit(false);
-      }
+    if (queuedRunEdit.isEditing) {
+      // Edit mode repurposes the composer: sending saves the queued message
+      // in place instead of dispatching a new turn.
+      await queuedRunEdit.saveEdit(
+        {
+          prompt: promptForSend,
+          images: composerImages,
+          files: composerFiles,
+          terminalContexts: composerTerminalContexts,
+          reviewComments: composerReviewComments,
+          previewAnnotations: composerPreviewAnnotations,
+          threadContexts: composerThreadContexts,
+        },
+        setThreadError,
+      );
       return;
     }
     const {
@@ -9125,16 +8898,16 @@ export default function ChatView(props: ChatViewProps) {
           environmentId={activeThread.environmentId}
           threadId={activeThread.id}
           optimisticMessages={optimisticUserMessages}
-          editingRunId={editingQueuedRun?.runId ?? null}
-          onEditQueuedRun={beginEditingQueuedRunStable}
-          onCancelEdit={cancelEditingQueuedRunStable}
+          editingRunId={queuedRunEdit.editingRunId}
+          onEditQueuedRun={queuedRunEdit.beginEdit}
+          onCancelEdit={queuedRunEdit.cancelEdit}
         />
       ) : null,
     [
       activeThread,
-      beginEditingQueuedRunStable,
-      cancelEditingQueuedRunStable,
-      editingQueuedRun?.runId,
+      queuedRunEdit.beginEdit,
+      queuedRunEdit.cancelEdit,
+      queuedRunEdit.editingRunId,
       isServerThread,
       keybindings,
       optimisticUserMessages,
@@ -9872,8 +9645,8 @@ export default function ChatView(props: ChatViewProps) {
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >
                       <ComposerSurface.Host
-                        inert={isSavingQueuedEdit}
-                        aria-busy={isSavingQueuedEdit}
+                        inert={queuedRunEdit.isSaving}
+                        aria-busy={queuedRunEdit.isSaving}
                       >
                         <div className="relative z-10">
                           {showProviderSubagentBar ? (
@@ -9937,7 +9710,7 @@ export default function ChatView(props: ChatViewProps) {
                                 (isSendBusy && !sendQueuesBehindSetup) ||
                                 (setupQueueSendThreadKey !== null &&
                                   setupQueueSendThreadKey === activeThreadKey) ||
-                                isSavingQueuedEdit ||
+                                queuedRunEdit.isSaving ||
                                 isResuming
                               }
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
@@ -10061,8 +9834,10 @@ export default function ChatView(props: ChatViewProps) {
                               setThreadError={setThreadError}
                               onExpandImage={onExpandTimelineImageStable}
                               onFileOpen={openFileAttachmentStable}
-                              editingQueuedAttachments={composerEditingQueuedAttachments}
-                              onRemoveEditingQueuedAttachment={removeEditingQueuedAttachmentStable}
+                              editingQueuedAttachments={queuedRunEdit.editingAttachments}
+                              onRemoveEditingQueuedAttachment={
+                                queuedRunEdit.removeEditingAttachment
+                              }
                             />
                           )}
                         </div>
