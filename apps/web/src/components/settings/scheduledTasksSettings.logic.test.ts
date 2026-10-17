@@ -20,6 +20,7 @@ import {
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  scheduleTimeZoneLabel,
   taskToDraft,
 } from "./scheduledTasksSettings.logic";
 
@@ -312,5 +313,17 @@ describe("scheduled task model defaults", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("scheduleTimeZoneLabel", () => {
+  it("names the server's zone, with UTC shown as UTC", () => {
+    expect(scheduleTimeZoneLabel("Etc/UTC")).toBe("UTC");
+    expect(scheduleTimeZoneLabel("UTC")).toBe("UTC");
+    expect(scheduleTimeZoneLabel("Asia/Kolkata")).toBe("Asia/Kolkata");
+  });
+
+  it("names nothing for an older server that does not report its zone", () => {
+    expect(scheduleTimeZoneLabel(undefined)).toBeNull();
   });
 });

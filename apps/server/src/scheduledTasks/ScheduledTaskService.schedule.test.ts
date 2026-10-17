@@ -53,6 +53,25 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("lists the zone fixed-time schedules run in, before any task exists", () =>
+  Effect.gen(function* () {
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      expect(yield* service.list()).toEqual({
+        tasks: [],
+        timeZone: DateTime.zoneToString(DateTime.zoneMakeLocal()),
+      });
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("preserves a due run when a save only pads the scheduled hour", () =>
   Effect.gen(function* () {
     const dueAt = DateTime.makeZonedUnsafe(

@@ -196,6 +196,8 @@ export const ScheduledTaskListResult = Schema.Struct({
   // Trigger types grow over time; a client must not lose the whole list over
   // one task it cannot decode.
   tasks: ForwardCompatibleArray(ScheduledTask),
+  /** The IANA zone fixed-time schedules run in. Absent from older servers. */
+  timeZone: Schema.optional(TrimmedNonEmptyString),
 });
 export type ScheduledTaskListResult = typeof ScheduledTaskListResult.Type;
 

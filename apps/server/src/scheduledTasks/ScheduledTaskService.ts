@@ -915,7 +915,11 @@ export const layer = Layer.effect(
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
-        Effect.map((tasks) => ({ tasks })),
+        // Fixed-time schedules run in the server's zone, which a client cannot see on its own.
+        Effect.map((tasks) => ({
+          tasks,
+          timeZone: DateTime.zoneToString(DateTime.zoneMakeLocal()),
+        })),
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
 

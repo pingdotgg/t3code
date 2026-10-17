@@ -19,6 +19,15 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
+/**
+ * The zone to name after a fixed-time schedule, from the one the server reports. Older
+ * servers report none, so their labels stay as they were.
+ */
+export function scheduleTimeZoneLabel(timeZone: string | undefined): string | null {
+  if (timeZone === undefined) return null;
+  return timeZone === "Etc/UTC" || timeZone === "UTC" ? "UTC" : timeZone;
+}
+
 export function matchesScheduledTaskScope(
   scope: ResolvedSettingsScope,
   environmentId: EnvironmentId,

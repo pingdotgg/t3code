@@ -30,6 +30,16 @@ import {
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
 } from "./threadDetailsPanelStyles";
 
+function scheduleSummary(task: ScheduledTask, timeZone: string | undefined): string {
+  const next =
+    task.enabled && task.nextRunAt !== null
+      ? ` · next ${relativeLabel(task.nextRunAt)}`
+      : task.enabled
+        ? ""
+        : " · paused";
+  return `${scheduleLabel(task.schedule, timeZone)}${next}`;
+}
+
 const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   never: "bg-muted-foreground/40",
   running: "bg-sky-500",
@@ -166,14 +176,20 @@ export function ThreadAutomationsPanel(props: {
               <span className="block truncate text-sm font-medium text-foreground/80">
                 {task.title}
               </span>
-              <p className="truncate text-2xs text-muted-foreground">
-                {scheduleLabel(task.schedule)}
-                {task.enabled && task.nextRunAt !== null
-                  ? ` · next ${relativeLabel(task.nextRunAt)}`
-                  : task.enabled
-                    ? ""
-                    : " · paused"}
-              </p>
+              {/* The card is narrow, so the line can cut off the zone; hover or focus shows all of it. */}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <p
+                      tabIndex={0}
+                      className="truncate rounded-sm text-2xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  {scheduleSummary(task, tasksQuery.data?.timeZone)}
+                </TooltipTrigger>
+                <TooltipPopup>{scheduleSummary(task, tasksQuery.data?.timeZone)}</TooltipPopup>
+              </Tooltip>
             </div>
             <Tooltip>
               <TooltipTrigger
