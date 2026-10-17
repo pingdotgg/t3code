@@ -89,6 +89,7 @@ import {
 } from "lucide-react";
 import {
   memo,
+  useDeferredValue,
   useEffect,
   Children,
   cloneElement,
@@ -2847,7 +2848,8 @@ export default function Sidebar() {
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
-  const [searchHighlight, setSearchHighlight] = useState({ orderKey: "", index: 0 });
+  const deferredThreadSearchQuery = useDeferredValue(threadSearchQuery);
+  const [searchHighlight, setSearchHighlight] = useState({ query: "", orderKey: "", index: 0 });
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
@@ -3040,13 +3042,13 @@ export default function Sidebar() {
     routeThreadKey,
   });
 
-  const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  const isSearchingThreads = deferredThreadSearchQuery.trim().length > 0;
   const threadSearchMatchByKey = new Map(
     threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const),
   );
   const threadSearchResults = searchSidebarThreads(
     searchableThreads,
-    threadSearchQuery,
+    deferredThreadSearchQuery,
     new Set(threadSearchMatchByKey.keys()),
   );
   const threadSearchResultOrderKey = threadSearchResults
@@ -3055,11 +3057,27 @@ export default function Sidebar() {
 
   // The highlight belongs to one result list; a new list starts at the top.
   const activeSearchResultIndex =
-    searchHighlight.orderKey === threadSearchResultOrderKey ? searchHighlight.index : 0;
+    searchHighlight.orderKey === threadSearchResultOrderKey
+      ? searchHighlight.index
+      : searchHighlight.query !== deferredThreadSearchQuery
+        ? Math.min(searchHighlight.index, Math.max(0, threadSearchResults.length - 1))
+        : 0;
+  if (
+    searchHighlight.orderKey !== threadSearchResultOrderKey ||
+    searchHighlight.query !== deferredThreadSearchQuery
+  ) {
+    setSearchHighlight({
+      query: deferredThreadSearchQuery,
+      orderKey: threadSearchResultOrderKey,
+      index: activeSearchResultIndex,
+    });
+  }
   const setActiveSearchResultIndex = (index: number | ((index: number) => number)) =>
     setSearchHighlight((current) => {
-      const currentIndex = current.orderKey === threadSearchResultOrderKey ? current.index : 0;
+      const currentIndex =
+        current.orderKey === threadSearchResultOrderKey ? current.index : activeSearchResultIndex;
       return {
+        query: deferredThreadSearchQuery,
         orderKey: threadSearchResultOrderKey,
         index: typeof index === "function" ? index(currentIndex) : index,
       };
@@ -3153,28 +3171,35 @@ export default function Sidebar() {
   };
   const handleThreadSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if (event.key === "Escape" && isSearchingThreads) {
+    if (event.key === "Escape" && threadSearchQuery.trim().length > 0) {
       event.preventDefault();
       event.stopPropagation();
       clearThreadSearch();
       return;
     }
-    if (threadSearchResults.length === 0) return;
+    // Keyboard navigation uses the current query while the render catches up.
+    const results =
+      threadSearchQuery === deferredThreadSearchQuery
+        ? threadSearchResults
+        : searchSidebarThreads(
+            searchableThreads,
+            threadSearchQuery,
+            new Set(threadSearchMatchByKey.keys()),
+          );
+    if (results.length === 0) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveSearchResultIndex((index) => (index + 1) % threadSearchResults.length);
+      setActiveSearchResultIndex((index) => (index + 1) % results.length);
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveSearchResultIndex(
-        (index) => (index - 1 + threadSearchResults.length) % threadSearchResults.length,
-      );
+      setActiveSearchResultIndex((index) => (index - 1 + results.length) % results.length);
       return;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      const result = threadSearchResults[activeSearchResultIndex];
+      const result = results[activeSearchResultIndex];
       if (result) selectThreadSearchResult(result);
     }
   };
@@ -4764,7 +4789,7 @@ export default function Sidebar() {
                             }),
                           ) ?? null
                         }
-                        searchQuery={threadSearchQuery}
+                        searchQuery={deferredThreadSearchQuery}
                         index={index}
                         onHighlight={setActiveSearchResultIndex}
                         onSelect={selectThreadSearchResult}

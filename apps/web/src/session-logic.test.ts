@@ -1508,6 +1508,27 @@ describe("incremental v2 timeline entries", () => {
     expect(restoredMessage.message.attachments?.[0]).not.toHaveProperty("previewUrl");
   });
 
+  it("reuses renumbered history when unrelated attachment URLs change", () => {
+    const fixture = makeStreamingTimelineFixture("Partial");
+    const input = { visibleTurnItems: fixture.visibleTurnItems, optimisticMessages: [] };
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const nextInput = {
+      ...input,
+      attachmentUrlById: new Map([["older-image", "https://server.test/older-image"]]),
+      visibleTurnItems: input.visibleTurnItems.map((row) => ({
+        ...row,
+        position: row.position + 1,
+      })),
+    };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
+    previous.entries.forEach((entry, index) => {
+      const retained = next.entries[index];
+      if (entry.kind === "message")
+        expect(retained?.kind === "message" && retained.message).toBe(entry.message);
+    });
+  });
+
   it("appends committed items in canonical order even when their timestamps go backwards", () => {
     const fixture = makeStreamingTimelineFixture("Partial");
     const input = { visibleTurnItems: fixture.visibleTurnItems, optimisticMessages: [] };

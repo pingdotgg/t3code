@@ -584,9 +584,9 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   const committedMessageIds = new Set<string>();
   const entries: TimelineEntry[] = [];
   const previousById = new Map(previous?.entries.map((entry) => [entry.id, entry]));
-  const canReuse =
+  const sameAttachmentUrls =
     previous !== null && shallow(input.attachmentUrlById, previous.input.attachmentUrlById);
-  const previousRows = new Set(previous?.input.visibleTurnItems);
+  const previousRows = new Map(previous?.input.visibleTurnItems.map((row) => [row.item, row]));
   const attemptByRootNodeId = new Map(
     (input.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -622,22 +622,42 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
-    const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
+    const previousRow = previousRows.get(item);
     const old = previousById.get(
       item.type === "user_message" || item.type === "assistant_message" ? item.messageId : item.id,
     );
     if (
-      canReuse &&
-      previousRows.has(row) &&
+      previous !== null &&
+      (sameAttachmentUrls ||
+        (item.type !== "user_message" && item.type !== "assistant_message") ||
+        (item.attachments ?? []).every(
+          (attachment) =>
+            input.attachmentUrlById?.get(attachment.id) ===
+            previous.input.attachmentUrlById?.get(attachment.id),
+        )) &&
+      previousRow?.visibility === row.visibility &&
+      previousRow.sourceThreadId === row.sourceThreadId &&
+      previousRow.sourceItemId === row.sourceItemId &&
       old !== undefined &&
       old.attempt === attempt &&
       (item.type !== "proposed_plan" || input.plans === previous?.input.plans)
     ) {
-      entries.push(old);
+      // Prepending renumbers projected rows, but their item and presentation
+      // stay the same. Update the source pointer without parsing tool output again.
+      entries.push(
+        previousRow === row
+          ? old
+          : old.kind === "work"
+            ? { ...old, entry: { ...old.entry, projectedItem: row } }
+            : old.kind === "message" || old.kind === "event"
+              ? { ...old, projectedItem: row }
+              : old,
+      );
       if (old.kind === "message") committedMessageIds.add(old.message.id);
       continue;
     }
+    const createdAt = projectedItemCreatedAt(row);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
     if (item.type === "notification") {
       entries.push({

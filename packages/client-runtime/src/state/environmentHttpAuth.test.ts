@@ -9,8 +9,8 @@ import {
   type OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadBoundedSnapshot,
+  OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadTranscript,
-  type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as Deferred from "effect/Deferred";
@@ -265,6 +265,62 @@ const LOADERS: ReadonlyArray<{
 ];
 
 describe("authenticated environment HTTP requests", () => {
+  it.live.each(["valid", "unknown", "invalid"] as const)(
+    "decodes a multi-batch history page with a %s last item",
+    (lastItem) =>
+      Effect.gen(function* () {
+        const items = Array.from({ length: 65 }, (_, position) => ({
+          position,
+          visibility: "local",
+          sourceThreadId: THREAD.projection.thread.id,
+          sourceItemId: `history-${position}`,
+          item: {
+            id: `history-${position}`,
+            threadId: THREAD.projection.thread.id,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: position,
+            status: "completed",
+            title: null,
+            startedAt: "2026-06-20T00:00:00.000Z",
+            completedAt: "2026-06-20T00:00:00.000Z",
+            updatedAt: "2026-06-20T00:00:00.000Z",
+            type: "command_execution",
+            input: "echo hello",
+          },
+        }));
+        items[0]!.item.input = "é".repeat(17_000);
+        if (lastItem === "unknown") items[64]!.item.type = "future_item";
+        if (lastItem === "invalid") items[64]!.item.startedAt = "invalid-date";
+        const response = {
+          ...THREAD_HISTORY,
+          items,
+          support: { nodes: [], checkpoints: [], runs: [], attempts: [] },
+        };
+        const harness = makeHarness(() => Response.json(response));
+        const load = fetchEnvironmentThreadHistoryPage({
+          ...harness.input,
+          threadId: THREAD.projection.thread.id,
+          cursor: "older-page",
+        }).pipe(Effect.provide(harness.httpLayer));
+        if (lastItem === "invalid") {
+          expect((yield* Effect.flip(load))._tag).toBe("RemoteEnvironmentAuthInvalidJsonError");
+        } else {
+          const page = yield* load;
+          expect(page).toEqual(
+            yield* Schema.decodeUnknownEffect(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage))(
+              response,
+            ),
+          );
+          expect(page.items).toHaveLength(lastItem === "unknown" ? 64 : 65);
+        }
+      }),
+  );
+
   it.effect.each(LOADERS)("rejects an invalid $name response", (loader) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json({}));
