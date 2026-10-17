@@ -1,6 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, type ScopedThreadRef } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import {
   readPullRequestDetailSnapshot,
@@ -13,6 +12,35 @@ import { useProject } from "../state/entities";
 import { pullRequestEnvironment } from "../state/pullRequests";
 import { useEnvironmentQuery } from "../state/query";
 import { useSupportsMultiplePullRequests } from "./useSupportsMultiplePullRequests";
+
+type PanelPullRequestSurface = Extract<
+  NonNullable<ReturnType<typeof selectActiveRightPanelSurface>>,
+  { kind: "pull-request" }
+>;
+
+// The reference keys the detail query atom, so it must keep its identity across renders.
+function usePanelPullRequestReference(
+  requestedReference: PanelPullRequestSurface | null,
+  supportsMultiplePullRequests: boolean,
+  repositoryIdentity: Parameters<typeof resolvePullRequestReferenceHost>[1],
+) {
+  "use memo";
+  if (requestedReference === null) return null;
+  const input = {
+    projectId: ProjectId.make(requestedReference.projectId),
+    repository: requestedReference.repository,
+    number: requestedReference.number,
+  };
+  return supportsMultiplePullRequests
+    ? resolvePullRequestReferenceHost(
+        {
+          ...input,
+          ...(requestedReference.host === undefined ? {} : { host: requestedReference.host }),
+        },
+        repositoryIdentity,
+      )
+    : input;
+}
 
 export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
   const surface = useRightPanelStore((state) =>
@@ -28,23 +56,11 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
       ? scopeProjectRef(environmentId, ProjectId.make(requestedReference.projectId))
       : null,
   );
-  const reference = useMemo(() => {
-    if (requestedReference === null) return null;
-    const input = {
-      projectId: ProjectId.make(requestedReference.projectId),
-      repository: requestedReference.repository,
-      number: requestedReference.number,
-    };
-    return supportsMultiplePullRequests
-      ? resolvePullRequestReferenceHost(
-          {
-            ...input,
-            ...(requestedReference.host === undefined ? {} : { host: requestedReference.host }),
-          },
-          project?.repositoryIdentity,
-        )
-      : input;
-  }, [requestedReference, supportsMultiplePullRequests, project?.repositoryIdentity]);
+  const reference = usePanelPullRequestReference(
+    requestedReference,
+    supportsMultiplePullRequests,
+    project?.repositoryIdentity,
+  );
   const detail = useEnvironmentQuery(
     reference && environmentId
       ? pullRequestEnvironment.detail({
@@ -53,17 +69,14 @@ export function useOpenPanelPullRequestUrl(threadRef: ScopedThreadRef | null) {
         })
       : null,
   ).data;
-  const cachedDetail = useMemo(
-    () =>
-      reference && environmentId
-        ? readPullRequestDetailSnapshot(
-            typeof window === "undefined" ? undefined : window.localStorage,
-            environmentId,
-            reference,
-          )
-        : null,
-    [environmentId, reference],
-  );
+  const cachedDetail =
+    reference && environmentId
+      ? readPullRequestDetailSnapshot(
+          typeof window === "undefined" ? undefined : window.localStorage,
+          environmentId,
+          reference,
+        )
+      : null;
   return reference
     ? (resolveDisplayedPullRequestDetail({ live: detail, cached: cachedDetail, reference })?.url ??
         requestedReference?.url ??
