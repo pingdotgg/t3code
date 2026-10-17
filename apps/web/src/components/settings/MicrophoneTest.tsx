@@ -70,14 +70,14 @@ export function MicrophoneTest({
     setLevel(0);
     setElapsed(0);
     setPhase("starting");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setError("Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.");
+      setPhase("idle");
+      return;
+    }
     const current: NonNullable<typeof session.current> = {};
     session.current = current;
     try {
-      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-        throw new Error(
-          "Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.",
-        );
-      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: microphoneId ? { deviceId: { exact: microphoneId } } : true,
       });

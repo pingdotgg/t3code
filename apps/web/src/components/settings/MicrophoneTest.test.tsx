@@ -151,3 +151,21 @@ it("shows permission failures and lets the user try again", async () => {
   expect(revokeObjectURL).toHaveBeenCalledWith("blob:test");
   expect(root.root.findAllByType("audio")).toHaveLength(0);
 });
+
+it("reports unavailable capture and can retry after microphone support becomes available", async () => {
+  vi.stubGlobal("MediaRecorder", undefined);
+  await act(async () => {
+    root = create(createElement(MicrophoneTest, { microphoneId: "" }));
+  });
+  await click("Test mic");
+  expect(root.root.findByProps({ role: "status" }).props["aria-label"]).toBe(
+    "Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.",
+  );
+  expect(getUserMedia).not.toHaveBeenCalled();
+  vi.stubGlobal("MediaRecorder", function () {
+    recorder = new TestRecorder();
+    return recorder;
+  });
+  await click("Record again");
+  expect(recorder.state).toBe("recording");
+});

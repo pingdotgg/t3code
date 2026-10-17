@@ -375,9 +375,8 @@ export function VoiceSettingsPanel() {
         title: "Could not list microphones",
         description: error instanceof Error ? error.message : String(error),
       });
-    } finally {
-      setLoadingMicrophones(false);
     }
+    setLoadingMicrophones(false);
   });
 
   const connectionEpoch = useRef<{ prepared: typeof prepared } | null>(null);

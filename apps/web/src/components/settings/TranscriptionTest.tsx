@@ -1,5 +1,9 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
-import { VoiceInputController, type VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import {
+  VoiceInputController,
+  type VoiceInputState,
+  type VoiceRecorder,
+} from "@t3tools/client-runtime/voice-input";
 import type { SpeechStreamText, SpeechTranscriptionOptions } from "@t3tools/contracts";
 import { MicIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -9,6 +13,17 @@ import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
 import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+
+function createTestRecorder(recorder: VoiceRecorder): VoiceRecorder {
+  return {
+    get uri() {
+      return recorder.uri;
+    },
+    prepareToRecordAsync: () => recorder.prepareToRecordAsync(),
+    record: () => recorder.record({ forDuration: 10 }),
+    stop: () => recorder.stop(),
+  };
+}
 
 export function TranscriptionTest({
   prepared,
@@ -63,14 +78,7 @@ export function TranscriptionTest({
       },
     });
     const instance = new VoiceInputController<true>({
-      recorder: {
-        get uri() {
-          return platform.recorder.uri;
-        },
-        prepareToRecordAsync: () => platform.recorder.prepareToRecordAsync(),
-        record: () => platform.recorder.record({ forDuration: 10 }),
-        stop: () => platform.recorder.stop(),
-      },
+      recorder: createTestRecorder(platform.recorder),
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => {},

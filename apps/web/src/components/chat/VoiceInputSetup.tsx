@@ -44,9 +44,8 @@ export function VoiceInputSetup(props: {
       setMicrophoneError(null);
     } catch {
       setMicrophoneError("Could not list microphones. You can still use the system default.");
-    } finally {
-      setLoadingMicrophones(false);
     }
+    setLoadingMicrophones(false);
   });
   useEffect(() => {
     if (!props.open || props.step !== 1) return;

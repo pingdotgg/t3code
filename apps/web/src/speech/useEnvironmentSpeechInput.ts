@@ -59,6 +59,19 @@ type HookInput = {
   ) => void;
 };
 
+function createSpeechController(
+  dependencies: VoiceInputControllerDependencies<true>,
+  getPostProcess: () => VoiceInputControllerDependencies<true>["postProcess"],
+) {
+  return new VoiceInputController<true>({
+    ...dependencies,
+    // Read the preferences captured when recording starts, rather than at controller creation.
+    get postProcess() {
+      return getPostProcess();
+    },
+  });
+}
+
 export function useEnvironmentSpeechInput(input: HookInput) {
   const clientSettingsHydrated = useClientSettingsHydrated();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -255,36 +268,36 @@ export function useEnvironmentSpeechInput(input: HookInput) {
             );
             return result.text;
           };
-    controller = new VoiceInputController<true>({
-      recorder: platform.recorder,
-      getTranscriber: () => platform.transcriber,
-      requestPermission: async () => ({ granted: true, canAskAgain: true }),
-      configureRecording: async () => undefined,
-      releaseRecording: async () => platform.cancelRecording(),
-      deleteRecording: platform.deleteRecording,
-      get postProcess(): VoiceInputControllerDependencies<true>["postProcess"] {
-        return recordingPreferences?.speechPostProcessingEnabled ? postProcess : undefined;
+    controller = createSpeechController(
+      {
+        recorder: platform.recorder,
+        getTranscriber: () => platform.transcriber,
+        requestPermission: async () => ({ granted: true, canAskAgain: true }),
+        configureRecording: async () => undefined,
+        releaseRecording: async () => platform.cancelRecording(),
+        deleteRecording: platform.deleteRecording,
+        onPostProcessingError: () =>
+          toastManager.add({
+            type: "warning",
+            title: "Post-processing failed",
+            description: "The original transcription was added.",
+          }),
+        readDraft,
+        commitDraft: (text, selection) => {
+          if (latestInputRef.current.disabled) return;
+          latestInputRef.current.commitDraft(text, selection);
+          if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
+        },
+        onStateChange: (value) => {
+          if (!disposed) {
+            if (value.phase === "error") pendingSubmissionRef.current = null;
+            setControllerState({ prepared, postProcessingPrepared, value });
+            if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
+          }
+        },
       },
-      onPostProcessingError: () =>
-        toastManager.add({
-          type: "warning",
-          title: "Post-processing failed",
-          description: "The original transcription was added.",
-        }),
-      readDraft,
-      commitDraft: (text, selection) => {
-        if (latestInputRef.current.disabled) return;
-        latestInputRef.current.commitDraft(text, selection);
-        if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
-      },
-      onStateChange: (value) => {
-        if (!disposed) {
-          if (value.phase === "error") pendingSubmissionRef.current = null;
-          setControllerState({ prepared, postProcessingPrepared, value });
-          if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
-        }
-      },
-    });
+      () => (recordingPreferences?.speechPostProcessingEnabled ? postProcess : undefined),
+    );
     controllerRef.current = controller;
     return () => {
       disposed = true;
@@ -430,24 +443,27 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setupCancelledRef.current = false;
     setSetupDownloading(true);
     setSetupError(null);
-    try {
-      await runtime.runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId));
-      if (setupCancelledRef.current) return;
-      const next = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
-      setStatus({ prepared, value: next });
-      if (!next.supported || next.state === "missing-model") {
-        setSetupError("The model is not ready. Try downloading it again.");
-        return;
-      }
-      setSetupStep(1);
-    } catch {
-      if (!setupCancelledRef.current)
-        setSetupError(
-          "Could not download the model. Check this environment's connection and try again.",
-        );
-    } finally {
-      setSetupDownloading(false);
-    }
+    await runtime
+      .runPromise(downloadEnvironmentSpeechModel(prepared, currentStatus.modelId))
+      .then(async () => {
+        if (setupCancelledRef.current) return;
+        const next = await runtime.runPromise(getEnvironmentSpeechStatus(prepared));
+        setStatus({ prepared, value: next });
+        if (!next.supported || next.state === "missing-model") {
+          setSetupError("The model is not ready. Try downloading it again.");
+          return;
+        }
+        setSetupStep(1);
+      })
+      .catch(() => {
+        if (!setupCancelledRef.current)
+          setSetupError(
+            "Could not download the model. Check this environment's connection and try again.",
+          );
+      })
+      .finally(() => {
+        setSetupDownloading(false);
+      });
   });
 
   const cancelSetupDownload = useStableCallback(async () => {
