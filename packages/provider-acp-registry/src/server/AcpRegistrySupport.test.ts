@@ -910,19 +910,19 @@ describe("AcpRegistrySupport", () => {
   it.effect("searches compatible agents with deterministic ranking and bounded metadata", () => {
     const exact = {
       ...makeAgent({ npx: { package: "@example/acp@1.2.3" } }),
-      id: "codex-acp",
-      name: "Codex",
-      authors: ["OpenAI", "Zed Industries"],
+      id: "kimi",
+      name: "Kimi",
+      authors: ["Moonshot AI", "Zed Industries"],
       license: "Apache-2.0",
-      website: "https://example.test/codex",
-      repository: "https://example.test/codex/source",
-      icon: "https://example.test/codex.svg",
+      website: "https://example.test/kimi",
+      repository: "https://example.test/kimi/source",
+      icon: "https://example.test/kimi.svg",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
     const descriptionMatch = {
       ...makeAgent({ npx: { package: "other-agent@1.2.3" } }),
       id: "other-agent",
       name: "Other Agent",
-      description: "An adapter for Codex workflows",
+      description: "An adapter for Kimi workflows",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
     const incompatible = {
       ...makeAgent({
@@ -931,7 +931,7 @@ describe("AcpRegistrySupport", () => {
         },
       }),
       id: "darwin-only",
-      name: "Codex Darwin",
+      name: "Kimi Darwin",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
 
     return Effect.gen(function* () {
@@ -944,11 +944,11 @@ describe("AcpRegistrySupport", () => {
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
       });
-      const result = yield* resolver.search({ query: "codex" });
+      const result = yield* resolver.search({ query: "kimi" });
 
-      expect(result.agents.map((agent) => agent.id)).toEqual(["codex-acp", "other-agent"]);
+      expect(result.agents.map((agent) => agent.id)).toEqual(["kimi", "other-agent"]);
       expect(result.agents[0]).toMatchObject({
-        authors: ["OpenAI", "Zed Industries"],
+        authors: ["Moonshot AI", "Zed Industries"],
         distribution: "npx",
         integrity: "registry",
         license: "Apache-2.0",
@@ -972,6 +972,84 @@ describe("AcpRegistrySupport", () => {
       ),
     );
   });
+
+  it.effect(
+    "hides first-party providers from registry searches without breaking existing configs",
+    () => {
+      const firstPartyAgents = (
+        [
+          ["antigravity-acp", "Google Antigravity"],
+          ["claude-acp", "Claude Agent"],
+          ["codex-acp", "Codex"],
+          ["cursor", "Cursor"],
+          ["grok-build", "Grok Build"],
+          ["opencode", "OpenCode"],
+          ["pi-acp", "pi ACP"],
+        ] as const
+      ).map(([id, name]) => ({
+        ...makeAgent({
+          binary: { "linux-x86_64": { archive: archiveUrl, cmd: "agent" } },
+        }),
+        id,
+        name,
+      }));
+      const otherAgent = {
+        ...makeAgent({
+          binary: { "linux-x86_64": { archive: archiveUrl, cmd: "agent" } },
+        }),
+        description: "Supports Codex workflows",
+      };
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-first-party-",
+        });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+
+        expect((yield* resolver.search({ query: "" })).agents.map((agent) => agent.id)).toEqual([
+          otherAgent.id,
+        ]);
+        for (const agent of firstPartyAgents) {
+          for (const query of [agent.id, agent.name]) {
+            expect(
+              (yield* resolver.search({ query })).agents.map((result) => result.id),
+            ).not.toContain(agent.id);
+          }
+        }
+        expect(
+          (yield* resolver.search({ query: "Codex" })).agents.map((agent) => agent.id),
+        ).toEqual([otherAgent.id]);
+
+        const commandPath = `${cacheDir}/existing-agent`;
+        yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+        yield* fileSystem.chmod(commandPath, 0o755);
+        const resolved = yield* resolver.resolve(
+          settings({ agentId: "codex-acp", commandPath }),
+          "/workspace",
+        );
+        expect(resolved.agent?.id).toBe("codex-acp");
+        expect(resolved.spawn.command).toBe(commandPath);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(
+                  JSON.stringify({ version: "1.0.0", agents: [...firstPartyAgents, otherAgent] }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
 
   it.effect("refreshes explicit searches and coalesces concurrent refreshes", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });

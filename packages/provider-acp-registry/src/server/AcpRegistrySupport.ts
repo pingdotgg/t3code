@@ -48,6 +48,17 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 
 const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
+// Prefer first-party integrations in discovery, while keeping existing ACP configurations usable.
+const FIRST_PARTY_AGENT_IDS = new Set([
+  "antigravity-acp",
+  "claude-acp",
+  "codex-acp",
+  "cursor",
+  "grok-build",
+  "opencode",
+  "pi-acp",
+]);
+
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
@@ -1593,6 +1604,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     Effect.gen(function* () {
       const registry = yield* refreshRegistry();
       const ranked = registry.agents.flatMap((agent) => {
+        if (FIRST_PARTY_AGENT_IDS.has(agent.id)) return [];
         const distribution = resolveAcpRegistryDistribution({
           agent,
           preference: "auto",
