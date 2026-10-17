@@ -45,6 +45,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the SDK takes a Node ChildProcess for the CLI.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -1820,12 +1821,13 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
-  // acceptEdits approves edits before the callback runs; everything else it
-  // leaves to the callback, which must ask rather than allow.
+  // Claude approves what its mode allows before the callback runs (edits in
+  // acceptEdits, classifier-approved actions in auto) and sends the rest,
+  // including user ask rules, to the callback, which must ask rather than
+  // allow. Only Full access answers it without asking.
   const installPermissionCallback =
     runtimePolicy.approvalPolicy === undefined
-      ? runtimePolicy.runtimeMode === "approval-required" ||
-        runtimePolicy.runtimeMode === "auto-accept-edits"
+      ? runtimePolicy.runtimeMode !== "full-access"
       : runtimePolicy.approvalPolicy !== "never";
 
   if (permissionMode === "plan") {
@@ -2279,6 +2281,26 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
+// Builds the approval prompt. The SDK nearly always sets `title`, so the
+// reason the ask escalated (such as a PreToolUse hook's message) is shown
+// on its own line instead of being dropped. It may carry ANSI escapes.
+function claudeApprovalPrompt(
+  options: {
+    readonly title?: string;
+    readonly description?: string;
+    readonly decisionReason?: string;
+  },
+  toolName: string,
+  input: ClaudeNativeToolInput,
+): string {
+  const base = options.title ?? options.description ?? summarizeClaudeToolRequest(toolName, input);
+  const reason =
+    options.decisionReason === undefined
+      ? ""
+      : NodeUtil.stripVTControlCharacters(options.decisionReason).trim();
+  return reason === "" || reason === base ? base : `${base}\n${reason}`;
+}
+
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -2536,6 +2558,11 @@ function toSessionPermissionUpdates(
   }));
   if (updates.length > 0) {
     return updates;
+  }
+  // A bare Bash rule would allow every later command, including the ones Auto
+  // mode or a hook escalated for a reason.
+  if (toolName === "Bash") {
+    return [];
   }
   return [
     {
@@ -7857,11 +7884,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          const prompt =
-            callbackOptions.title ??
-            callbackOptions.description ??
-            callbackOptions.decisionReason ??
-            summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const prompt = claudeApprovalPrompt(callbackOptions, toolName, nativeToolInput);
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,

@@ -51,10 +51,8 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
       <Detail
         aria-label={detailAriaLabel}
         className={cn(
-          "block max-h-20 w-full min-w-0 overflow-auto text-xs text-foreground [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 [&::-webkit-scrollbar]:h-1.5",
-          approval.requestKind === "mcp-elicitation"
-            ? "whitespace-pre-wrap font-sans wrap-break-word"
-            : "whitespace-pre font-mono",
+          "block max-h-20 w-full min-w-0 overflow-auto whitespace-pre-wrap wrap-break-word text-xs text-foreground [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 [&::-webkit-scrollbar]:h-1.5",
+          approval.requestKind === "mcp-elicitation" ? "font-sans" : "font-mono",
         )}
         data-approval-detail="complete"
         tabIndex={0}
