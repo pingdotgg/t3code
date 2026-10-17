@@ -154,17 +154,23 @@ const ANDROID_PERMISSIONS: Record<string, ReadonlyArray<string>> = {
   motion: ["android.permission.ACTIVITY_RECOGNITION"],
 };
 
-const ANDROID_GRAVITY: Record<DeviceOrientation, string> = {
-  portrait: "0:9.81:0",
-  landscape_left: "9.81:0:0",
-  portrait_upside_down: "0:-9.81:0",
-  landscape_right: "-9.81:0:0",
+// Android numbers rotations from the display's natural orientation. On a landscape-native tablet
+// ROTATION_0 is landscape and portrait is ROTATION_270, so the requested orientation is shifted by
+// a quarter turn before it becomes a rotation or a gravity vector.
+const ANDROID_ROTATION_STEPS: Record<DeviceOrientation, number> = {
+  portrait: 0,
+  landscape_left: 1,
+  portrait_upside_down: 2,
+  landscape_right: 3,
 };
-const ANDROID_ROTATION: Record<DeviceOrientation, string> = {
-  portrait: "0",
-  landscape_left: "1",
-  portrait_upside_down: "2",
-  landscape_right: "3",
+const ANDROID_GRAVITY = ["0:9.81:0", "9.81:0:0", "0:-9.81:0", "-9.81:0:0"] as const;
+
+// `wm size` prints the physical size and, when one is set, an override size, both in the natural
+// orientation. The override is what the window manager uses, and it is printed last.
+const isLandscapeNative = (wmSize: string) => {
+  const sizes = [...wmSize.matchAll(/size: (\d+)x(\d+)/g)];
+  const size = sizes.at(-1);
+  return size ? Number(size[1]) > Number(size[2]) : false;
 };
 
 export const runDeviceAction = Effect.fn("DeviceActions.run")(function* (
@@ -370,6 +376,9 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         reason: "unsupported",
       });
     case "setOrientation": {
+      const wmSize = yield* quiet(shell(["wm", "size"], "orientation"));
+      const rotation =
+        (ANDROID_ROTATION_STEPS[input.value] + (isLandscapeNative(wmSize ?? "") ? 3 : 0)) % 4;
       // `user-rotation lock` only rotates window content on recent images; the display the
       // encoder captures stays put. Tilting the emulator's accelerometer rotates it for real, so
       // that is used whenever the target is an emulator.
@@ -379,15 +388,12 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         yield* adb(
           run,
           serial,
-          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[input.value]],
+          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[rotation]!],
           "orientation",
         );
         return;
       }
-      yield* shell(
-        ["cmd", "window", "user-rotation", "lock", ANDROID_ROTATION[input.value]],
-        "orientation",
-      );
+      yield* shell(["cmd", "window", "user-rotation", "lock", String(rotation)], "orientation");
       return;
     }
     case "setLocation":

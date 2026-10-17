@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { DeviceActionInput } from "@t3tools/contracts";
+import type { DeviceActionInput, DeviceOrientation } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { readDeviceDetail, runDeviceAction, supportsAction } from "./DeviceActions.ts";
@@ -119,13 +119,48 @@ describe("runDeviceAction", () => {
           deviceId: "R5CT1234",
           value: "landscape_right",
         });
-        expect(phone.calls).toEqual([
-          {
-            command: "adb",
-            args: ["-s", "R5CT1234", "shell", "cmd", "window", "user-rotation", "lock", "3"],
-          },
-        ]);
+        expect(phone.calls.at(-1)).toEqual({
+          command: "adb",
+          args: ["-s", "R5CT1234", "shell", "cmd", "window", "user-rotation", "lock", "3"],
+        });
       }),
+  );
+
+  it.effect("shifts rotations a quarter turn on landscape-native displays", () =>
+    Effect.gen(function* () {
+      const respond = (call: Call) =>
+        call.args.join(" ").endsWith("shell wm size")
+          ? { stdout: "Physical size: 2560x1600\n" }
+          : {};
+      const orient = (deviceId: string, value: DeviceOrientation) =>
+        Effect.gen(function* () {
+          const { ready, calls } = makeReady(respond);
+          yield* runDeviceAction(ready, "android", { type: "setOrientation", deviceId, value });
+          return calls.at(-1)?.args.at(-1);
+        });
+      expect(yield* orient("emulator-5554", "portrait")).toBe("-9.81:0:0");
+      expect(yield* orient("emulator-5554", "landscape_left")).toBe("0:9.81:0");
+      expect(yield* orient("emulator-5554", "portrait_upside_down")).toBe("9.81:0:0");
+      expect(yield* orient("emulator-5554", "landscape_right")).toBe("0:-9.81:0");
+      expect(yield* orient("R5CT1234", "portrait")).toBe("3");
+      expect(yield* orient("R5CT1234", "landscape_left")).toBe("0");
+    }),
+  );
+
+  it.effect("uses the override size to find the natural orientation", () =>
+    Effect.gen(function* () {
+      const { ready, calls } = makeReady((call) =>
+        call.args.join(" ").endsWith("shell wm size")
+          ? { stdout: "Physical size: 2560x1600\nOverride size: 1080x1920\n" }
+          : {},
+      );
+      yield* runDeviceAction(ready, "android", {
+        type: "setOrientation",
+        deviceId: "R5CT1234",
+        value: "portrait",
+      });
+      expect(calls.at(-1)?.args.at(-1)).toBe("0");
+    }),
   );
 
   it.effect("runs accessibility toggles through the bundled helper via simctl spawn", () =>
