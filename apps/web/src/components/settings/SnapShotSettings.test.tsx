@@ -20,6 +20,9 @@ vi.mock("react", async (original) => {
     useEffect: (effect: () => void) => effects.push(effect),
   };
 });
+vi.mock("../../hooks/useStableCallback", () => ({
+  useStableCallback: <F,>(fn: F) => fn,
+}));
 vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return { c: reactHookHarness.useMemoCache };

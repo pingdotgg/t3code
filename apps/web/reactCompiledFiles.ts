@@ -89,4 +89,5 @@ export const REACT_COMPILED_FILES = [
   "apps/web/src/components/settings/CaptureShortcutConfig.tsx",
   "apps/web/src/components/settings/IntegrationsSettings.tsx",
   "apps/web/src/components/settings/ThemeImportDialog.tsx",
+  "apps/web/src/components/settings/SnapShotSettings.tsx",
 ] as const;
