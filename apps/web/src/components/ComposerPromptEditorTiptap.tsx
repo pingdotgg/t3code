@@ -11,6 +11,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tip
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
+import { history, undoDepth } from "@tiptap/pm/history";
 import {
   type EditorState,
   NodeSelection,
@@ -97,6 +98,7 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { registerEditableUndoHistory } from "~/lib/editableFocus";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
@@ -121,6 +123,7 @@ import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
 export interface ComposerPromptEditorHandle {
+  resetUndoHistory: () => void;
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
@@ -136,6 +139,8 @@ export interface ComposerPromptEditorHandle {
 }
 
 export interface ComposerPromptEditorProps {
+  /** Draft identity: editor undo must never cross thread or draft boundaries. */
+  historyScopeKey: string;
   value: string;
   cursor: number;
   richTextEnabled?: boolean;
@@ -743,6 +748,12 @@ const ComposerMarkersExtension = Extension.create({
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
+// Must match the StarterKit `undoRedo` options, or a reset loses the grouping.
+function resetComposerUndoHistory(editor: TiptapEditor) {
+  editor.unregisterPlugin("history");
+  editor.registerPlugin(history({ newGroupDelay: COMPOSER_UNDO_GROUP_DELAY }));
+}
+
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // Extensions are creation-time, so changing text mode remounts the editor.
   return (
@@ -881,6 +892,7 @@ const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
 function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const {
+    historyScopeKey,
     value,
     cursor,
     richTextEnabled,
@@ -976,6 +988,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
+  const historyScopeRef = useRef(historyScopeKey);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
@@ -1418,6 +1431,23 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   );
 
   useEffect(() => {
+    if (!editor) return;
+    // Any serialized draft (text, chips, rules, empty fences) keeps the
+    // shortcut. This runs on every keydown, so serialize only once history is
+    // empty and once per document (selection changes keep the same doc).
+    let checkedDoc: ProseMirrorNode | null = null;
+    let hasDraft = false;
+    return registerEditableUndoHistory(editor.view.dom, () => {
+      if (undoDepth(editor.state) > 0) return true;
+      if (editor.state.doc !== checkedDoc) {
+        checkedDoc = editor.state.doc;
+        hasDraft = serializeEditorDoc(checkedDoc).value.length > 0;
+      }
+      return hasDraft;
+    });
+  }, [editor]);
+
+  useEffect(() => {
     editor?.setEditable(!disabled);
   }, [disabled, editor]);
 
@@ -1492,12 +1522,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   useLayoutEffect(() => {
     if (!editor) return;
+    const historyScopeChanged = historyScopeRef.current !== historyScopeKey;
+    historyScopeRef.current = historyScopeKey;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
     if (
       !initialSelection &&
+      !historyScopeChanged &&
       previousSnapshot.value === value &&
       previousSnapshot.cursor === normalizedCursor
     ) {
@@ -1517,7 +1550,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     setIsEmpty(value.length === 0);
     const rootElement = editor.view.dom;
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-    if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
+    if (!initialSelection && !historyScopeChanged && previousSnapshot.value === value && !isFocused)
+      return;
 
     isApplyingControlledUpdateRef.current = true;
     const pendingCitation =
@@ -1530,6 +1564,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           emitUpdate: false,
         },
       );
+    }
+    // A different thread or controlled clear starts fresh history, after its
+    // content is applied. User deletion has already updated snapshotRef.
+    if (historyScopeChanged || (previousSnapshot.value !== value && value === "")) {
+      resetComposerUndoHistory(editor);
     }
     const map = serializeEditorDoc(editor.state.doc);
     const flat = collapsedToFlat(map, normalizedCursor);
@@ -1563,6 +1602,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     cursor,
     editor,
     expandEditorCursor,
+    historyScopeKey,
     literalText,
     richText,
     skillLabelFor,
@@ -1605,6 +1645,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   useImperativeHandle(
     editorRef,
     () => ({
+      resetUndoHistory: () => {
+        if (!editor) return;
+        resetComposerUndoHistory(editor);
+      },
       focus: () => {
         focusAt(snapshotRef.current.cursor);
       },

@@ -1279,6 +1279,17 @@ export function composerTargetKey(target: ScopedThreadRef | DraftId): string {
   return scopedThreadKey(target);
 }
 
+export function composerUndoHistoryKey(input: {
+  routeThreadRef: ScopedThreadRef;
+  routeDraftId: DraftId | null;
+  composerDraftTarget: ScopedThreadRef | DraftId;
+}): string {
+  const editsQueuedMessage =
+    typeof input.composerDraftTarget === "string" &&
+    input.composerDraftTarget !== input.routeDraftId;
+  return composerTargetKey(editsQueuedMessage ? input.composerDraftTarget : input.routeThreadRef);
+}
+
 function normalizeLegacyComposerStorageKey(
   threadKeyOrId: string,
   options?: {
