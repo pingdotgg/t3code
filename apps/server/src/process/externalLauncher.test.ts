@@ -1561,3 +1561,248 @@ it.effect("rejects unknown editors through the service API", () =>
     assert.equal(error.message, "Unknown editor: missing-editor");
   }).pipe(Effect.provide(layerTest({ platform: "linux", env: { PATH: "" } }))),
 );
+
+const writeExecutableStubs = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  directory: string,
+  names: ReadonlyArray<string>,
+) =>
+  Effect.forEach(names, (name) =>
+    Effect.gen(function* () {
+      const stub = path.join(directory, name);
+      yield* fileSystem.writeFileString(stub, "#!/bin/sh\n");
+      yield* fileSystem.chmod(stub, 0o755);
+    }),
+  );
+
+for (const { stubs, command, prefix } of [
+  // `xdg-terminal-exec` runs the user's own configured terminal, so it
+  // outranks the emulators the server knows by name.
+  { stubs: ["ghostty", "xdg-terminal-exec"], command: "xdg-terminal-exec", prefix: [] },
+  { stubs: ["xdg-terminal-exec"], command: "xdg-terminal-exec", prefix: [] },
+  { stubs: ["ghostty"], command: "ghostty", prefix: ["-e"] },
+  { stubs: ["kitty"], command: "kitty", prefix: [] },
+  { stubs: ["alacritty"], command: "alacritty", prefix: ["-e"] },
+  { stubs: ["wezterm"], command: "wezterm", prefix: ["start", "--"] },
+  { stubs: ["foot"], command: "foot", prefix: [] },
+  { stubs: ["konsole"], command: "konsole", prefix: ["-e"] },
+  { stubs: ["gnome-terminal"], command: "gnome-terminal", prefix: ["--"] },
+  { stubs: ["xterm"], command: "xterm", prefix: ["-e"] },
+] as const) {
+  it.effect.skipIf(windowsHost)(`hosts Neovim in ${command} on Linux`, () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-neovim-terminal-" });
+      const binDir = path.join(home, "bin");
+      yield* fileSystem.makeDirectory(binDir, { recursive: true });
+      yield* writeExecutableStubs(fileSystem, path, binDir, [...stubs, "nvim"]);
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "neovim");
+        yield* launcher.launchEditor({
+          editor: "neovim",
+          cwd: "/workspace with spaces/file.ts:48:5",
+        });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { HOME: home, PATH: binDir, WAYLAND_DISPLAY: "wayland-test" },
+            onSpawn: (spawn) => {
+              spawned = spawn;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.equal(spawned.command, command);
+      assert.deepEqual(spawned.args, [
+        ...prefix,
+        "nvim",
+        "+call cursor(48,5)",
+        "--",
+        "/workspace with spaces/file.ts",
+      ]);
+      assert.equal(spawned.options.detached, true);
+      assert.equal(spawned.options.shell, false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+for (const { cwd, args } of [
+  {
+    cwd: "/workspace with spaces/file.ts:48",
+    args: ["+48", "--", "/workspace with spaces/file.ts"],
+  },
+  { cwd: "/workspace with spaces/file.ts", args: ["--", "/workspace with spaces/file.ts"] },
+  // `--` keeps a target that reads like a Neovim command or option literal.
+  { cwd: "+qall!", args: ["--", "+qall!"] },
+  { cwd: "-S", args: ["--", "-S"] },
+] as const) {
+  it.effect.skipIf(windowsHost)(`opens Neovim on ${cwd}`, () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-neovim-position-" });
+      const binDir = path.join(home, "bin");
+      yield* fileSystem.makeDirectory(binDir, { recursive: true });
+      yield* writeExecutableStubs(fileSystem, path, binDir, ["nvim", "xdg-terminal-exec"]);
+
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        yield* launcher.launchEditor({ editor: "neovim", cwd });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { HOME: home, PATH: binDir, WAYLAND_DISPLAY: "wayland-test" },
+            onSpawn: (spawn) => {
+              spawned = spawn;
+            },
+          }),
+        ),
+      );
+
+      assert.ok(spawned);
+      assert.deepEqual(spawned.args, ["nvim", ...args]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect.skipIf(windowsHost)("hides Neovim when no terminal emulator can host it", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-neovim-no-terminal-" });
+    const binDir = path.join(home, "bin");
+    yield* fileSystem.makeDirectory(binDir, { recursive: true });
+    yield* writeExecutableStubs(fileSystem, path, binDir, ["nvim"]);
+
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.isFalse((yield* launcher.resolveAvailableEditors()).includes("neovim"));
+      const error = yield* launcher
+        .launchEditor({ editor: "neovim", cwd: "/workspace" })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnsupportedEditorError);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { HOME: home, PATH: binDir, WAYLAND_DISPLAY: "wayland-test" },
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("hides Neovim on a headless Linux session", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-neovim-headless-" });
+    const binDir = path.join(home, "bin");
+    yield* fileSystem.makeDirectory(binDir, { recursive: true });
+    yield* writeExecutableStubs(fileSystem, path, binDir, ["nvim", "xdg-terminal-exec"]);
+
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.isFalse((yield* launcher.resolveAvailableEditors()).includes("neovim"));
+      const error = yield* launcher
+        .launchEditor({ editor: "neovim", cwd: "/workspace" })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ExternalLauncher.ExternalLauncherUnsupportedEditorError);
+    }).pipe(Effect.provide(layerTest({ platform: "linux", env: { HOME: home, PATH: binDir } })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("falls back to Terminal.app for Neovim on macOS", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-neovim-macos-" });
+    const binDir = path.join(home, "bin");
+    yield* fileSystem.makeDirectory(binDir, { recursive: true });
+    // Ghostty cannot host a command from its CLI on macOS, so its presence
+    // must not displace the Terminal.app fallback.
+    yield* writeExecutableStubs(fileSystem, path, binDir, ["nvim", "ghostty", "osascript"]);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "neovim");
+      yield* launcher.launchEditor({
+        editor: "neovim",
+        cwd: "/workspace with spaces/file.ts:12:4",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { HOME: home, PATH: binDir },
+          onSpawn: (spawn) => {
+            spawned = spawn;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "osascript");
+    assert.deepEqual(spawned.args, [
+      "-e",
+      `tell application "Terminal" to do script "'nvim' '+call cursor(12,4)' '--' '/workspace with spaces/file.ts'"`,
+      "-e",
+      'tell application "Terminal" to activate',
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  ["a plain path", "C:\\workspace\\file.ts:48", ["+48", "--", "C:\\workspace\\file.ts"]],
+  // `wt` reads its command line back and splits subcommands on `;`, so a path
+  // carrying one has to arrive escaped.
+  [
+    "a path with a semicolon",
+    "C:\\work;space\\file.ts:48",
+    ["+48", "--", "C:\\work\\;space\\file.ts"],
+  ],
+] as const)("hosts Neovim in Windows Terminal on %s", ([, cwd, args]) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-neovim-wt-" });
+    const binDir = path.join(home, "bin");
+    yield* fileSystem.makeDirectory(binDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(binDir, "nvim.exe"), "");
+    yield* fileSystem.writeFileString(path.join(binDir, "wt.exe"), "");
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      assert.include(yield* launcher.resolveAvailableEditors(), "neovim");
+      yield* launcher.launchEditor({ editor: "neovim", cwd });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { HOME: home, PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          onSpawn: (spawn) => {
+            spawned = spawn;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "wt");
+    assert.deepEqual(spawned.args, ["nvim", ...args]);
+    assert.equal(spawned.options.shell, false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

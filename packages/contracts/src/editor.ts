@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals([
+  "direct-path",
+  "goto",
+  "line-column",
+  "plus-line",
+]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
@@ -12,6 +17,8 @@ type EditorDefinition = {
   readonly launchStyle: EditorLaunchStyle;
   readonly remoteScheme?: string;
   readonly jetbrainsProductCode?: string;
+  /** A terminal app (e.g. Neovim) that only runs inside a terminal emulator. */
+  readonly terminal?: true;
 };
 
 export const EDITORS = [
@@ -53,6 +60,13 @@ export const EDITORS = [
     commands: ["zed", "zeditor"],
     launchStyle: "direct-path",
     remoteScheme: "zed",
+  },
+  {
+    id: "neovim",
+    label: "Neovim",
+    commands: ["nvim"],
+    launchStyle: "plus-line",
+    terminal: true,
   },
   {
     id: "antigravity",

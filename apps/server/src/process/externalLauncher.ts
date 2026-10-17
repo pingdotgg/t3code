@@ -169,8 +169,144 @@ function resolveCommandEditorArgs(
           path,
         ],
       });
+    case "plus-line":
+      // Neovim parses `file:3` as a filename, so the position travels as a
+      // `+` command ahead of the path: `+3` or `+call cursor(3,1)`. `--` ends
+      // option parsing so a target that starts with `+` or `-` stays a path.
+      return Option.match(parsedTarget, {
+        onNone: () => ["--", target],
+        onSome: ({ path, line, column }) => [
+          Option.match(column, {
+            onNone: () => `+${line}`,
+            onSome: (value) => `+call cursor(${line},${value})`,
+          }),
+          "--",
+          path,
+        ],
+      });
   }
 }
+
+/**
+ * Terminal emulators that can host a terminal editor, probed in order; the
+ * first installed one wins.
+ *
+ * `xdg-terminal-exec` leads on Linux because it defers to the user's own
+ * configured terminal instead of this list. Tilix is left out on purpose: its
+ * `-e` treats everything after it as a single shell command line, which cannot
+ * carry an arbitrary workspace path safely.
+ */
+interface TerminalEmulatorDefinition {
+  readonly command: string;
+  /**
+   * Arguments placed before the editor command. Emulators that take the
+   * command line directly after their own options use none.
+   */
+  readonly args?: ReadonlyArray<string>;
+  readonly platforms: ReadonlyArray<NodeJS.Platform>;
+}
+
+const TERMINAL_EMULATORS: ReadonlyArray<TerminalEmulatorDefinition> = [
+  { command: "xdg-terminal-exec", platforms: ["linux"] },
+  // macOS is left out on purpose: Ghostty's own help says launching the
+  // emulator from the CLI is unsupported there (actions only).
+  { command: "ghostty", args: ["-e"], platforms: ["linux"] },
+  { command: "kitty", platforms: ["linux", "darwin"] },
+  { command: "alacritty", args: ["-e"], platforms: ["linux", "darwin"] },
+  { command: "wezterm", args: ["start", "--"], platforms: ["linux", "darwin"] },
+  { command: "foot", platforms: ["linux"] },
+  { command: "konsole", args: ["-e"], platforms: ["linux"] },
+  { command: "gnome-terminal", args: ["--"], platforms: ["linux"] },
+  { command: "xterm", args: ["-e"], platforms: ["linux"] },
+  { command: "wt", platforms: ["win32"] },
+];
+
+interface TerminalLaunch {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
+// A GUI terminal emulator needs a display server; on a headless Linux host (a
+// server reached over SSH, a container) the launch could only fail.
+const hasGraphicalSession = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): boolean =>
+  platform !== "linux" || Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
+
+const probeTerminalEmulator = Effect.fn("externalLauncher.probeTerminalEmulator")(function* (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<
+  TerminalEmulatorDefinition | undefined,
+  never,
+  FileSystem.FileSystem | Path.Path
+> {
+  if (!hasGraphicalSession(platform, env)) {
+    return undefined;
+  }
+
+  for (const emulator of TERMINAL_EMULATORS) {
+    if (!emulator.platforms.includes(platform)) {
+      continue;
+    }
+
+    if (yield* isCommandAvailable(emulator.command, { env })) {
+      return emulator;
+    }
+  }
+
+  return undefined;
+});
+
+// macOS ships Terminal.app, which runs a command line through the user's login
+// shell rather than accepting an argument vector.
+function terminalAppLaunch(editorCommand: ReadonlyArray<string>): TerminalLaunch {
+  const commandLine = editorCommand
+    .map((argument) => `'${argument.replaceAll("'", "'\\''")}'`)
+    .join(" ");
+  const script = commandLine.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+
+  return {
+    command: "osascript",
+    args: [
+      "-e",
+      `tell application "Terminal" to do script "${script}"`,
+      "-e",
+      'tell application "Terminal" to activate',
+    ],
+  };
+}
+
+const hasTerminalHost = Effect.fn("externalLauncher.hasTerminalHost")(function* (
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+  return (
+    (yield* probeTerminalEmulator(platform, env)) !== undefined ||
+    (platform === "darwin" && (yield* isCommandAvailable("osascript", { env })))
+  );
+});
+
+const resolveTerminalLaunch = Effect.fn("externalLauncher.resolveTerminalLaunch")(function* (
+  editorCommand: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<TerminalLaunch | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const emulator = yield* probeTerminalEmulator(platform, env);
+  if (emulator !== undefined) {
+    // `wt` reads its whole command line back and treats `;` as a subcommand
+    // separator; `\;` is its escape for a literal semicolon.
+    const hostedArgs =
+      emulator.command === "wt"
+        ? editorCommand.map((argument) => argument.replaceAll(";", "\\;"))
+        : editorCommand;
+    return { command: emulator.command, args: [...(emulator.args ?? []), ...hostedArgs] };
+  }
+
+  if (platform === "darwin" && (yield* isCommandAvailable("osascript", { env }))) {
+    return terminalAppLaunch(editorCommand);
+  }
+
+  return undefined;
+});
 
 function encodeUtf16LeBase64(input: string): string {
   const bytes = new Uint8Array(input.length * 2);
@@ -439,9 +575,16 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
     }
 
     const command = yield* resolveEditorCommand(editor, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
+    if (Option.isNone(command)) {
+      continue;
     }
+
+    // A terminal editor without a terminal host would be a dead end.
+    if ("terminal" in editor && !(yield* hasTerminalHost(platform, env))) {
+      continue;
+    }
+
+    available.push(editor.id);
   }
 
   return available;
@@ -525,11 +668,30 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
         baseArgs: "baseArgs" in editorDef ? editorDef.baseArgs : [],
       }),
     );
+    const editorCommand = [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)];
+
+    if ("terminal" in editorDef) {
+      const terminalLaunch = yield* resolveTerminalLaunch(
+        [command, ...editorCommand],
+        platform,
+        env,
+      );
+      if (terminalLaunch === undefined) {
+        return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+      }
+      return {
+        editor: editorDef.id,
+        target: input.cwd,
+        command: terminalLaunch.command,
+        args: terminalLaunch.args,
+      };
+    }
+
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: editorCommand,
     };
   }
 

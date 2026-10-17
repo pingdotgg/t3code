@@ -38,6 +38,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  Neovim,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -116,6 +117,11 @@ export const resolveOpenInOptions = (
     {
       Icon: Zed,
       value: "zed",
+      kind: "brand",
+    },
+    {
+      Icon: Neovim,
+      value: "neovim",
       kind: "brand",
     },
     {

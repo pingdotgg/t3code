@@ -1,5 +1,5 @@
 import { FolderClosedIcon } from "lucide-react";
-import { FileExplorerIcon, FinderIcon } from "../Icons";
+import { FileExplorerIcon, FinderIcon, Neovim } from "../Icons";
 import { resolveOpenInOptions } from "./OpenInPicker";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -83,5 +83,12 @@ describe("resolveOpenInOptions", () => {
       expect.objectContaining({ value: "vscode" }),
     ]);
     expect(resolveOpenInOptions("MacIntel", [])).toEqual([]);
+  });
+
+  it("includes Neovim after Zed when the server reports it available", () => {
+    expect(resolveOpenInOptions("Linux x86_64", ["zed", "neovim"])).toEqual([
+      expect.objectContaining({ value: "zed", label: "Zed" }),
+      expect.objectContaining({ value: "neovim", label: "Neovim", Icon: Neovim }),
+    ]);
   });
 });
