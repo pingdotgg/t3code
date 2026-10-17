@@ -362,6 +362,12 @@ export default defineConfig({
         rules: { "t3code/no-hermes-unsupported-apis": "error" },
       },
       {
+        // Mobile is ratcheting toward full React Compiler coverage
+        // (apps/mobile/src/reactCompilerCoverage.test.ts). Directives would hide bailouts from it.
+        files: ["apps/mobile/src/**/*.{ts,tsx}"],
+        rules: { "t3code/no-memo-directives": "error" },
+      },
+      {
         files: [
           "apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx",
           "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
