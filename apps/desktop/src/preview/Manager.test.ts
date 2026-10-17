@@ -2854,35 +2854,49 @@ describe("PreviewManager", () => {
     ),
   );
 
+  /** A natively rendered server tab, and the type of each event its server hears next. */
+  const renderServerTab = Effect.gen(function* () {
+    const host = yield* DesktopBrowserHost.DesktopBrowserHost;
+    const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+    const lines = yield* Queue.unbounded<string>();
+    yield* host.events.pipe(
+      Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
+      Effect.forkScoped,
+    );
+    const nextType = Queue.take(lines).pipe(Effect.map((line) => /"type":"(\w+)"/.exec(line)?.[1]));
+    const capturePage = vi.fn(async () => ({
+      toPNG: () => Buffer.from("png"),
+      toJPEG: () => Buffer.from("jpeg"),
+      getSize: () => ({ width: 100, height: 80 }),
+    }));
+    fromId.mockReturnValue(
+      Object.assign(makeTestPreviewWebContents(capturePage, 42), {
+        isDevToolsOpened: () => false,
+        getUserAgent: () => "Electron",
+        loadURL: vi.fn(async () => undefined),
+      }),
+    );
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.createTab("tab_1", { serverTab });
+    yield* manager.registerWebview("tab_1", 42);
+    expect(yield* nextType).toBe("attached");
+    return { manager, nextType };
+  });
+
   effectIt.effect("tells the server when a tab it renders natively closes", () =>
     Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.DesktopBrowserHost;
-      const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
-      const lines = yield* Queue.unbounded<string>();
-      yield* host.events.pipe(
-        Stream.runForEach((line) => Queue.offer(lines, new TextDecoder().decode(line))),
-        Effect.forkScoped,
-      );
-      const nextType = Queue.take(lines).pipe(
-        Effect.map((line) => /"type":"(\w+)"/.exec(line)?.[1]),
-      );
-      const capturePage = vi.fn(async () => ({
-        toPNG: () => Buffer.from("png"),
-        toJPEG: () => Buffer.from("jpeg"),
-        getSize: () => ({ width: 100, height: 80 }),
-      }));
-      fromId.mockReturnValue(
-        Object.assign(makeTestPreviewWebContents(capturePage, 42), {
-          isDevToolsOpened: () => false,
-          getUserAgent: () => "Electron",
-        }),
-      );
-      const manager = yield* PreviewManager.PreviewManager;
-      yield* manager.createTab("tab_1", { serverTab });
-      yield* manager.registerWebview("tab_1", 42);
-      expect(yield* nextType).toBe("attached");
+      const { manager, nextType } = yield* renderServerTab;
       yield* manager.closeTab("tab_1");
       expect(yield* nextType).toBe("detached");
+    }).pipe(Effect.provide(managerLayer()), Effect.scoped),
+  );
+
+  effectIt.effect("still reports a server tab's visibility after it navigates", () =>
+    Effect.gen(function* () {
+      const { manager, nextType } = yield* renderServerTab;
+      yield* manager.navigate("tab_1", "https://example.com");
+      yield* manager.setVisible("tab_1", true);
+      expect(yield* nextType).toBe("visibility");
     }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 

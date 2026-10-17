@@ -62,6 +62,30 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("tells the server whether a panel shows the tab, including when it shows first", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      // The panel can show the tab before its guest attaches.
+      host.setVisible(key, true);
+      host.attach(key, makeDebuggee().tab);
+      expect(yield* takeEvents(host, 2)).toEqual([
+        { type: "attached", ...key },
+        { type: "visibility", ...key, visible: true },
+      ]);
+      // A new subscription hears the announcement again, then only real changes.
+      const reader = yield* takeEvents(host, 4).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      host.setVisible(key, false);
+      host.setVisible(key, false);
+      host.setVisible(key, true);
+      const [, , hidden, shown] = yield* Fiber.join(reader);
+      expect([hidden, shown]).toEqual([
+        { type: "visibility", ...key, visible: false },
+        { type: "visibility", ...key, visible: true },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("drops replies from a relay the server released", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
