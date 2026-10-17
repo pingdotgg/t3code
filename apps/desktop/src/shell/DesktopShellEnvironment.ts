@@ -11,6 +11,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { installStaleAppImageMountScrub } from "./appImageStaleMounts.ts";
 
 type EnvironmentPatch = Record<string, string>;
 
@@ -430,6 +431,9 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     if (Option.isSome(mergedPath)) {
       config.env.PATH = mergedPath.value;
     }
+    // The server, relaunch and updater all inherit process.env, so scrubbing
+    // here keeps earlier AppImage launches' mounts out of every one of them.
+    installStaleAppImageMountScrub(config.env);
     if (!config.env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
       config.env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
     }
