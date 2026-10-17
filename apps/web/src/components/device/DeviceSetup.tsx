@@ -107,12 +107,9 @@ export function DeviceSetup(props: {
   ) => {
     if (!readEnvironmentScope(props.environmentId, AuthSettingsWriteScope)) return;
     setPending(kind);
-    try {
-      const result = await configure({ environmentId: props.environmentId, input });
-      if (kind === "complete" && result._tag === "Success") props.onComplete?.();
-    } finally {
-      setPending(null);
-    }
+    const result = await configure({ environmentId: props.environmentId, input });
+    setPending(null);
+    if (kind === "complete" && result._tag === "Success") props.onComplete?.();
   };
 
   return (
