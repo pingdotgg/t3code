@@ -4242,7 +4242,9 @@ export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {
   );
 }
 
-function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDraftModelState {
+export function useComposerDraftModelState(
+  threadRef: ComposerThreadTarget,
+): ComposerDraftModelState {
   return useComposerDraftStore(
     useShallow((state) => {
       const draft = getComposerDraftState(state, threadRef);
@@ -4254,29 +4256,6 @@ function useComposerDraftModelState(threadRef: ComposerThreadTarget): ComposerDr
         : EMPTY_COMPOSER_DRAFT_MODEL_STATE;
     }),
   );
-}
-
-export function useEffectiveComposerModelState(input: {
-  threadRef?: ComposerThreadTarget;
-  draftId?: DraftId;
-  providers: ReadonlyArray<ServerProvider>;
-  selectedProvider: ProviderDriverKind;
-  selectedInstanceId?: ProviderInstanceId | null | undefined;
-  threadModelSelection: ModelSelection | null | undefined;
-  projectModelSelection: ModelSelection | null | undefined;
-  settings: UnifiedSettings;
-}): EffectiveComposerModelState {
-  const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
-
-  return deriveEffectiveComposerModelState({
-    draft,
-    providers: input.providers,
-    selectedProvider: input.selectedProvider,
-    selectedInstanceId: input.selectedInstanceId,
-    threadModelSelection: input.threadModelSelection,
-    projectModelSelection: input.projectModelSelection,
-    settings: input.settings,
-  });
 }
 
 export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
