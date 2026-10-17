@@ -2074,6 +2074,21 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* Expanded cells wrap, so in a timeline row wide enough for wrapped columns
+   (the chat-lane container in MessagesTimeline) the table fits the lane: each
+   column can narrow to its longest word, and only a table whose words still do
+   not fit scrolls. Phone-width lanes keep the natural column widths and scroll,
+   since fitting there leaves prose columns a word or two wide. */
+@container chat-lane (min-width: 36rem) {
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] table {
+    min-width: 0;
+  }
+
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
+    overflow-wrap: break-word;
+  }
+}
+
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);
