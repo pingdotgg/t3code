@@ -147,6 +147,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("bitbucket");
   });
 
+  it("detects GitHub Enterprise Cloud data residency hosts on ghe.com", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://acme.ghe.com/owner/repo.git")).toEqual(
+      {
+        kind: "github",
+        name: "GitHub Self-Hosted",
+        baseUrl: "https://acme.ghe.com",
+      },
+    );
+    expect(detectSourceControlProviderFromRemoteUrl("git@acme.ghe.com:owner/repo.git")?.kind).toBe(
+      "github",
+    );
+    expect(detectSourceControlProviderFromRemoteUrl("https://ghe.com/owner/repo.git")?.kind).toBe(
+      "unknown",
+    );
+  });
+
   it("does not match provider names embedded in unrelated DNS labels", () => {
     expect(
       detectSourceControlProviderFromRemoteUrl("https://notgithub.example.com/owner/repo.git")
