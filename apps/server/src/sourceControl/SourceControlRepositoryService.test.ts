@@ -633,6 +633,63 @@ it.effect("publishes to the remote name returned by ensureRemote", () => {
   );
 });
 
+function failingPush(reason?: GitCommandError["reason"]) {
+  return {
+    pushCurrentBranch: (cwd: string) =>
+      Effect.fail(
+        new GitCommandError({
+          operation: "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
+          command: "git",
+          cwd,
+          ...(reason === undefined ? {} : { reason }),
+          detail: "Git command exited with a non-zero status.",
+        }),
+      ),
+  } satisfies Partial<GitVcsDriver.GitVcsDriver["Service"]>;
+}
+
+it.effect("explains a rejected SSH push after creating the repository", () =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.publishRepository({
+        cwd: "/workspace",
+        provider: SourceControlProviderKind.make("github"),
+        repository: "octocat/t3code",
+        visibility: "private",
+        protocol: "ssh",
+      }),
+    );
+
+    assert.strictEqual(error.operation, "publishRepository");
+    assert.strictEqual(
+      error.detail,
+      'Created octocat/t3code and added it as remote "origin", but the push failed because SSH authentication was rejected. Add an SSH key to your account, or switch the remote to HTTPS with "git remote set-url origin https://github.com/octocat/t3code", then push again.',
+    );
+    assert.instanceOf(error.cause, GitCommandError);
+  }).pipe(Effect.provide(layer({ git: failingPush("authentication_failed") }))),
+);
+
+it.effect("says the repository exists when an unclassified publish push fails", () =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const error = yield* Effect.flip(
+      service.publishRepository({
+        cwd: "/workspace",
+        provider: SourceControlProviderKind.make("github"),
+        repository: "octocat/t3code",
+        visibility: "private",
+        protocol: "https",
+      }),
+    );
+
+    assert.strictEqual(
+      error.detail,
+      'Created octocat/t3code and added it as remote "origin", but the push failed. Fix the problem, then push again.',
+    );
+  }).pipe(Effect.provide(layer({ git: failingPush() }))),
+);
+
 it.effect("publish succeeds with status remote_added when the local repo has no commits", () => {
   let pushCalls = 0;
   return Effect.gen(function* () {
