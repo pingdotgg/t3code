@@ -60,7 +60,6 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
-import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import {
   AndroidWorkspaceNavigation,
   ANDROID_WORKSPACE_RAIL_WIDTH,
@@ -241,8 +240,10 @@ function AdaptiveWorkspaceLayoutContent(
   const windowDimensions = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
-  const { scale: androidControlScale } = useAndroidControlSizing();
   const pathname = props.pathname;
+  // Android's Settings tab is a full workspace page: the rail stays, the sidebar and
+  // auxiliary panes hide.
+  const workspacePage = Platform.OS === "android" && pathname.startsWith("/settings");
   const navigation = useNavigation();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
@@ -266,11 +267,12 @@ function AdaptiveWorkspaceLayoutContent(
     nativeWorkspace,
     usesSplitView: baseLayout.usesSplitView,
   });
-  const showPrimarySidebar = primarySidebarPinned || primarySidebarPreferredVisible;
+  const showPrimarySidebar =
+    !workspacePage && (primarySidebarPinned || primarySidebarPreferredVisible);
   const shouldRenderNavigationRail = Platform.OS === "android" && baseLayout.usesSplitView;
   const navigationRailWidth =
-    shouldRenderNavigationRail && showPrimarySidebar
-      ? ANDROID_WORKSPACE_RAIL_WIDTH * Math.max(1, androidControlScale)
+    shouldRenderNavigationRail && (showPrimarySidebar || workspacePage)
+      ? ANDROID_WORKSPACE_RAIL_WIDTH
       : 0;
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
@@ -292,7 +294,7 @@ function AdaptiveWorkspaceLayoutContent(
     [baseLayout, hinge, viewportWidth, navigationRailWidth],
   );
   const width = viewportWidth - navigationRailWidth;
-  const shouldRenderPrimarySidebar = layout.usesSplitView;
+  const shouldRenderPrimarySidebar = layout.usesSplitView && !workspacePage;
   const fileInspector = useMemo(
     () =>
       deriveFileInspectorPaneLayout({
@@ -309,9 +311,10 @@ function AdaptiveWorkspaceLayoutContent(
   const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
     focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
   const auxiliaryPanePreferredVisible =
-    auxiliaryPaneRole === "inspector"
+    !workspacePage &&
+    (auxiliaryPaneRole === "inspector"
       ? fileInspectorPreferredVisible
-      : supplementaryPanePreferredVisible;
+      : supplementaryPanePreferredVisible);
   const auxiliaryPanePreferredWidth =
     auxiliaryPaneRole === "inspector"
       ? fileInspectorPreferredWidth

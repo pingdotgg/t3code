@@ -10,6 +10,8 @@ export function NativeAppBar(props: {
   readonly title: ReactElement;
   readonly navigationIcon?: ReactElement;
   readonly actions?: ReactElement;
+  /** Use the shared list toolbar height instead of Material's 64dp minimum. */
+  readonly listToolbar?: boolean;
 }) {
   const { colors } = useControlTheme();
   const layout = useToolbarLayout();
@@ -17,7 +19,10 @@ export function NativeAppBar(props: {
     <NativeThemeHost matchContents={{ vertical: true }} style={{ width: "100%" }}>
       <TopAppBar
         applyWindowInsets={false}
-        modifiers={[fillMaxWidth(), height(Math.max(64, layout.height))]}
+        modifiers={[
+          fillMaxWidth(),
+          height(props.listToolbar ? layout.height : Math.max(64, layout.height)),
+        ]}
         colors={{
           containerColor: colors["--color-header"],
           titleContentColor: colors["--color-header-foreground"],

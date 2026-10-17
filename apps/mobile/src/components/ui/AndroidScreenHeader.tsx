@@ -43,6 +43,11 @@ export function AndroidScreenHeader(props: {
   readonly onBack?: () => void;
   readonly embedded?: boolean;
   readonly hideBottomBorder?: boolean;
+  /**
+   * Matches the thread list toolbar's height, so switching between list tabs keeps the
+   * header and the content below it in place.
+   */
+  readonly listToolbar?: boolean;
 }) {
   const { colors } = useControlTheme();
   const titleTypography = useScaledTextRole("title");
@@ -65,6 +70,7 @@ export function AndroidScreenHeader(props: {
       }}
     >
       <NativeAppBar
+        listToolbar={props.listToolbar}
         navigationIcon={
           props.onBack || props.leading ? (
             <View collapsable={false} className="flex-row items-center">
