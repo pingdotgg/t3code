@@ -1,4 +1,3 @@
-import type * as NodeWorkerThreads from "node:worker_threads";
 import {
   FileRenderer,
   getSharedHighlighter,
@@ -15,14 +14,15 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactElement,
   type Ref,
 } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
-  workers: [] as NodeWorkerThreads.Worker[],
-  terminations: [] as Promise<number>[],
+  workers: [] as Worker[],
+  terminations: 0,
   requests: [] as WorkerRequest[],
   pools: new Map<WorkerPoolManager, Promise<void>>(),
   renderPools: [] as (WorkerPoolManager | undefined)[],
@@ -32,43 +32,32 @@ const testState = vi.hoisted(() => ({
   onInitializationHeld: undefined as (() => void) | undefined,
 }));
 
-vi.mock("../../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock(import("../../hooks/useTheme"), async (original) => ({
+  ...(await original()),
+  useTheme: (() => ({ resolvedTheme: "dark" })) as never,
+}));
 
-vi.mock("@pierre/diffs/worker/worker.js?worker", async () => {
-  const { Worker } = await import("node:worker_threads");
-  const moduleUrl = import.meta.resolve("@pierre/diffs/worker/worker.js");
-
+// Wraps Pierre's real worker so the suite can count workers, read requests and hold startup.
+// Vite's `?worker` export is a factory that returns a plain Worker, so this patches the instance.
+vi.mock("@pierre/diffs/worker/worker.js?worker", async (original) => {
+  const actual = await original<{ default: new () => Worker }>();
   return {
-    default: class {
-      worker: NodeWorkerThreads.Worker;
-
-      constructor() {
-        if (testState.failWorkers) throw new Error("Worker creation failed");
-        this.worker = new Worker(
-          `const { parentPort, workerData } = require("node:worker_threads");
-           globalThis.self = {
-             addEventListener(type, listener) {
-               if (type === "message") parentPort.on("message", data => listener({ data }));
-               if (type === "error") process.on("uncaughtException", listener);
-             }
-           };
-           globalThis.postMessage = data => parentPort.postMessage(data);
-           import(workerData.moduleUrl);`,
-          { eval: true, workerData: { moduleUrl }, execArgv: [] },
-        );
-        testState.workers.push(this.worker);
-      }
-
-      addEventListener(
-        type: "message" | "error",
-        listener: (event: { data: WorkerResponse } | Error) => void,
-      ) {
-        if (type === "error") {
-          this.worker.on("error", listener);
+    ...actual,
+    default: function TestDiffsWorker() {
+      if (testState.failWorkers) throw new Error("Worker creation failed");
+      const worker = new actual.default();
+      testState.workers.push(worker);
+      const addEventListener = worker.addEventListener.bind(worker);
+      const postMessage = worker.postMessage.bind(worker);
+      const terminate = worker.terminate.bind(worker);
+      worker.addEventListener = (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type !== "message" || typeof listener !== "function") {
+          addEventListener(type, listener);
           return;
         }
-        this.worker.on("message", (data: WorkerResponse) => {
-          const deliver = () => listener({ data });
+        addEventListener("message", (event) => {
+          const data = (event as MessageEvent<WorkerResponse>).data;
+          const deliver = () => listener(event);
           if (
             testState.holdInitialization &&
             data.type === "success" &&
@@ -80,27 +69,28 @@ vi.mock("@pierre/diffs/worker/worker.js?worker", async () => {
             deliver();
           }
         });
-      }
-
-      postMessage(message: WorkerRequest) {
+      };
+      worker.postMessage = (message: WorkerRequest) => {
         testState.requests.push(message);
-        this.worker.postMessage(message, []);
-      }
-
-      terminate() {
-        testState.terminations.push(this.worker.terminate());
-      }
+        postMessage(message);
+      };
+      worker.terminate = () => {
+        testState.terminations += 1;
+        terminate();
+      };
+      return worker;
     },
   };
 });
 
-vi.mock("@pierre/diffs/react", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@pierre/diffs/react")>()),
-  CodeView: (props: CodeViewProps<undefined, undefined>) => {
-    return props.items?.map((item) =>
+// Pierre's real viewer virtualizes into a shadow root; this stand-in renders each file through
+// the same worker pool and keeps the highlighted HTML readable.
+vi.mock(import("@pierre/diffs/react"), async (original) => ({
+  ...(await original()),
+  CodeView: ((props: CodeViewProps<undefined, undefined>) =>
+    props.items?.map((item) =>
       item.type === "file" ? <FileOutput key={item.id} file={item.file} /> : null,
-    );
-  },
+    )) as never,
 }));
 
 import { StyledDiffCodeView } from "./StyledDiffCodeView";
@@ -152,12 +142,33 @@ function renderViews(count: number) {
   );
 }
 
-describe("code-view worker lifecycle", () => {
-  let renderer: ReactTestRenderer | undefined;
+const roots: Root[] = [];
 
+function mount(element: ReactElement) {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  return {
+    root,
+    render: (next: ReactElement) => act(async () => root.render(next)),
+    initial: act(async () => root.render(element)),
+  };
+}
+
+async function unmountAll() {
+  for (const root of roots.splice(0)) await act(async () => root.unmount());
+  document.body.replaceChildren();
+}
+
+const codeFile = (name: string) =>
+  document.querySelector(`[data-code-file="${name}"]`)?.textContent ?? "";
+const loadingViews = () => document.querySelectorAll('[role="status"]').length;
+
+describe("code-view worker lifecycle", () => {
   beforeEach(() => {
     testState.workers = [];
-    testState.terminations = [];
+    testState.terminations = 0;
     testState.requests = [];
     testState.pools.clear();
     testState.renderPools = [];
@@ -165,14 +176,10 @@ describe("code-view worker lifecycle", () => {
     testState.holdInitialization = false;
     testState.heldResponses = [];
     testState.onInitializationHeld = undefined;
-    vi.stubGlobal("window", {});
-    vi.stubGlobal("navigator", { hardwareConcurrency: 2 });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    // Pins the pool at two workers whatever machine runs the suite.
+    Object.defineProperty(navigator, "hardwareConcurrency", { configurable: true, value: 2 });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
-      setImmediate(() => callback(0)),
-    );
-    vi.stubGlobal("cancelAnimationFrame", clearImmediate);
     const initialize = WorkerPoolManager.prototype.initialize;
     vi.spyOn(WorkerPoolManager.prototype, "initialize").mockImplementation(function (
       this: WorkerPoolManager,
@@ -185,85 +192,71 @@ describe("code-view worker lifecycle", () => {
   });
 
   afterEach(async () => {
-    await act(async () => renderer?.unmount());
-    renderer = undefined;
+    await unmountAll();
     await vi.runOnlyPendingTimersAsync();
-    await Promise.all(testState.terminations);
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    delete (navigator as { hardwareConcurrency?: number }).hardwareConcurrency;
   });
 
   it("starts on demand, keeps quick reopens warm, and expires the last closed pool", async () => {
-    await act(async () => {
-      renderer = create(renderViews(0));
-    });
-    const mounted = renderer!;
-    const button = mounted.root.findByType("button");
+    const view = mount(renderViews(0));
+    await view.initial;
+    const button = document.querySelector("button")!;
     expect(testState.workers).toHaveLength(0);
     expect(testState.pools.size).toBe(0);
-    await act(async () => {
-      (button.props as { onClick(): void }).onClick();
-      mounted.update(renderViews(1));
-    });
+    await act(async () => button.click());
+    await view.render(renderViews(1));
     const pool = [...testState.pools.keys()][0]!;
     await act(async () => testState.pools.get(pool));
     expect(pool.isInitialized()).toBe(true);
     expect(testState.workers).toHaveLength(2);
-    expect(mounted.root.findByProps({ "data-code-file": "notes.txt" }).children.join("")).toContain(
-      "Plain text is ready.",
-    );
+    await vi.waitFor(() => expect(codeFile("notes.txt")).toContain("Plain text is ready."));
     expect(testState.requests.filter((request) => request.type === "file")).toHaveLength(0);
 
-    await act(async () => mounted.update(renderViews(2)));
+    await view.render(renderViews(2));
     await act(async () => pool.primeFileHighlightCache(files[1]!));
     expect(testState.pools.size).toBe(1);
     expect(testState.workers).toHaveLength(2);
     expect(new Set(testState.renderPools)).toEqual(new Set([pool]));
     expect(pool.getFileResultCache(files[1]!)).toBeDefined();
-    expect(mounted.root.findByProps({ "data-code-file": "answer.ts" }).children.join("")).toContain(
-      "answer",
-    );
+    await vi.waitFor(() => expect(codeFile("answer.ts")).toContain("answer"));
 
-    await act(async () => mounted.update(renderViews(1)));
+    await view.render(renderViews(1));
     expect(pool.getStats().totalWorkers).toBe(2);
-    expect(testState.terminations).toHaveLength(0);
-    await act(async () => mounted.update(renderViews(0)));
+    expect(testState.terminations).toBe(0);
+    await view.render(renderViews(0));
     await vi.advanceTimersByTimeAsync(29_999);
     expect(pool.getStats().totalWorkers).toBe(2);
-    expect(testState.terminations).toHaveLength(0);
+    expect(testState.terminations).toBe(0);
 
-    await act(async () => mounted.update(renderViews(1)));
+    await view.render(renderViews(1));
     expect(testState.pools.size).toBe(1);
     expect(testState.workers).toHaveLength(2);
-    expect(mounted.root.findAllByProps({ role: "status" })).toHaveLength(0);
+    expect(loadingViews()).toBe(0);
     expect(pool.getFileResultCache(files[1]!)).toBeDefined();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(pool.getStats().totalWorkers).toBe(2);
 
-    await act(async () => mounted.update(renderViews(0)));
+    await view.render(renderViews(0));
     await vi.advanceTimersByTimeAsync(30_000);
-    await Promise.all(testState.terminations);
     expect(pool.getStats().totalWorkers).toBe(0);
-    expect(testState.terminations).toHaveLength(2);
+    expect(testState.terminations).toBe(2);
 
-    await act(async () => mounted.update(renderViews(1)));
+    await view.render(renderViews(1));
     const reopenedPool = [...testState.pools.keys()][1]!;
     await act(async () => testState.pools.get(reopenedPool));
     expect(reopenedPool.isInitialized()).toBe(true);
     expect(testState.workers).toHaveLength(4);
-    expect(mounted.root.findByType("button")).toBe(button);
-    expect(button.children).toEqual(["Edited draft"]);
-    expect(mounted.root.findByProps({ "data-code-file": "notes.txt" }).children.join("")).toContain(
-      "Plain text is ready.",
-    );
+    expect(document.querySelector("button")).toBe(button);
+    expect(button.textContent).toBe("Edited draft");
+    await vi.waitFor(() => expect(codeFile("notes.txt")).toContain("Plain text is ready."));
   });
 
   it("renders through Pierre's main-thread fallback when worker creation fails", async () => {
     testState.failWorkers = true;
-    await act(async () => {
-      renderer = create(renderViews(1));
-    });
+    await mount(renderViews(1)).initial;
     const pool = [...testState.pools.keys()][0]!;
     await act(async () => {
       await expect(testState.pools.get(pool)).rejects.toMatchObject({ _tag: "DiffWorkerError" });
@@ -275,9 +268,7 @@ describe("code-view worker lifecycle", () => {
     });
     expect(pool.isWorkingPool()).toBe(false);
     expect(testState.workers).toHaveLength(0);
-    expect(
-      renderer!.root.findByProps({ "data-code-file": "notes.txt" }).children.join(""),
-    ).toContain("Plain text is ready.");
+    await vi.waitFor(() => expect(codeFile("notes.txt")).toContain("Plain text is ready."));
   });
 
   it("keeps an initializing pool until its last view closes and ignores late responses", async () => {
@@ -285,34 +276,32 @@ describe("code-view worker lifecycle", () => {
     const held = new Promise<void>((resolve) => {
       testState.onInitializationHeld = resolve;
     });
-    await act(async () => {
-      renderer = create(renderViews(2));
-    });
+    const view = mount(renderViews(2));
+    await view.initial;
     const pool = [...testState.pools.keys()][0]!;
     const pending = testState.pools.get(pool)!;
     await held;
     expect(pool.isInitialized()).toBe(false);
     expect(testState.pools.size).toBe(1);
-    expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(2);
+    expect(loadingViews()).toBe(2);
     expect(testState.renderPools).toHaveLength(0);
 
-    await act(async () => renderer!.update(renderViews(1)));
+    await view.render(renderViews(1));
     expect(pool.getStats().totalWorkers).toBe(2);
-    expect(testState.terminations).toHaveLength(0);
-    await act(async () => renderer!.update(renderViews(0)));
+    expect(testState.terminations).toBe(0);
+    await view.render(renderViews(0));
     // Pierre gives up on a held startup after 10 seconds; the idle timer then tears the pool down.
     const timedOut = expect(pending).rejects.toThrow("worker initialization timed out");
     await vi.advanceTimersByTimeAsync(30_000);
     await timedOut;
-    await Promise.all(testState.terminations);
     await act(async () => {
       for (const deliver of testState.heldResponses) deliver();
     });
     expect(pool.getStats().totalWorkers).toBe(0);
     expect(testState.workers).toHaveLength(2);
-    expect(testState.terminations).toHaveLength(2);
+    expect(testState.terminations).toBe(2);
     expect(testState.renderPools).toHaveLength(0);
-    expect(renderer!.root.findAllByType("pre")).toHaveLength(0);
+    expect(document.querySelectorAll("pre")).toHaveLength(0);
   });
 });
 
@@ -418,7 +407,8 @@ function RevealViews({
 }
 
 describe("code-view file reveals", () => {
-  let renderer: ReactTestRenderer | undefined;
+  let view: ReturnType<typeof mount>;
+  const reveal = () => act(async () => document.querySelector("button")!.click());
 
   beforeEach(() => {
     revealCalls.length = 0;
@@ -426,64 +416,48 @@ describe("code-view file reveals", () => {
   });
 
   afterEach(async () => {
-    await act(async () => renderer?.unmount());
-    renderer = undefined;
+    await unmountAll();
     vi.unstubAllGlobals();
   });
 
   it("does not replay a handled tree click or scroll an old handle when a selected file remounts the view", async () => {
-    await act(async () => {
-      renderer = create(<RevealViews scope="first" visible selectedFile="external-a" />);
-    });
-    await act(async () => {
-      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
-    });
+    view = mount(<RevealViews scope="first" visible selectedFile="external-a" />);
+    await view.initial;
+    await reveal();
     expect(revealCalls.at(-1)?.fileKey).toBe("tree-file");
     revealCalls.length = 0;
 
-    await act(async () => {
-      renderer!.update(
-        <RevealViews scope="second" visible selectedFile="external-b" requestId={1} />,
-      );
-    });
+    await view.render(
+      <RevealViews scope="second" visible selectedFile="external-b" requestId={1} />,
+    );
     expect(revealCalls).toEqual([
       { scope: "second", fileKey: "external-b", mounted: true, collapsed: false },
     ]);
   });
 
   it("waits for a live viewer and applies each pending tree click only once", async () => {
-    await act(async () => {
-      renderer = create(<RevealViews scope="diff" visible={false} selectedFile="external" />);
-    });
-    await act(async () => {
-      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
-    });
+    view = mount(<RevealViews scope="diff" visible={false} selectedFile="external" />);
+    await view.initial;
+    await reveal();
     expect(revealCalls).toEqual([]);
 
-    await act(async () => {
-      renderer!.update(<RevealViews scope="diff" visible selectedFile="external" />);
-    });
+    await view.render(<RevealViews scope="diff" visible selectedFile="external" />);
     expect(revealCalls.map((call) => call.fileKey)).toEqual(["external", "tree-file"]);
     revealCalls.length = 0;
-    await act(async () => {
-      renderer!.update(<RevealViews scope="diff" visible={false} selectedFile="external" />);
-    });
-    await act(async () => {
-      renderer!.update(<RevealViews scope="diff" visible selectedFile="external" />);
-    });
+    await view.render(<RevealViews scope="diff" visible={false} selectedFile="external" />);
+    await view.render(<RevealViews scope="diff" visible selectedFile="external" />);
     expect(revealCalls).toEqual([
       { scope: "diff", fileKey: "external", mounted: true, collapsed: false },
     ]);
 
     revealCalls.length = 0;
+    // A click that lands in the same update that hides the viewer waits for it to return.
     await act(async () => {
-      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
-      renderer!.update(<RevealViews scope="diff" visible={false} selectedFile="external" />);
+      document.querySelector("button")!.click();
+      view.root.render(<RevealViews scope="diff" visible={false} selectedFile="external" />);
     });
     expect(revealCalls).toEqual([]);
-    await act(async () => {
-      renderer!.update(<RevealViews scope="diff" visible selectedFile="external" />);
-    });
+    await view.render(<RevealViews scope="diff" visible selectedFile="external" />);
     expect(revealCalls).toEqual([
       { scope: "diff", fileKey: "external", mounted: true, collapsed: false },
       { scope: "diff", fileKey: "tree-file", mounted: true, collapsed: false },
@@ -491,36 +465,27 @@ describe("code-view file reveals", () => {
   });
 
   it("cancels pending tree clicks when an external selection or diff scope changes", async () => {
-    await act(async () => {
-      renderer = create(<RevealViews scope="first" visible={false} selectedFile="external-a" />);
-    });
-    await act(async () => {
-      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
-    });
-    await act(async () => {
-      renderer!.update(
-        <RevealViews scope="first" visible selectedFile="external-b" requestId={1} />,
-      );
-    });
+    view = mount(<RevealViews scope="first" visible={false} selectedFile="external-a" />);
+    await view.initial;
+    await reveal();
+    await view.render(
+      <RevealViews scope="first" visible selectedFile="external-b" requestId={1} />,
+    );
     expect(revealCalls.map((call) => call.fileKey)).toEqual(["external-b"]);
     revealCalls.length = 0;
 
-    await act(async () => renderer!.update(<RevealViews scope="first" visible={false} />));
-    await act(async () => {
-      (renderer!.root.findByType("button").props as { onClick(): void }).onClick();
-    });
-    await act(async () => renderer!.update(<RevealViews scope="second" visible={false} />));
-    await act(async () => renderer!.update(<RevealViews scope="first" visible />));
+    await view.render(<RevealViews scope="first" visible={false} />);
+    await reveal();
+    await view.render(<RevealViews scope="second" visible={false} />);
+    await view.render(<RevealViews scope="first" visible />);
     expect(revealCalls).toEqual([]);
   });
 
   it("reveals after a collapsed file expands and honors another click on the same file", async () => {
-    await act(async () => {
-      renderer = create(<RevealViews scope="diff" visible />);
-    });
-    const reveal = renderer!.root.findByType("button").props as { onClick(): void };
-    await act(async () => reveal.onClick());
-    await act(async () => reveal.onClick());
+    view = mount(<RevealViews scope="diff" visible />);
+    await view.initial;
+    await reveal();
+    await reveal();
     expect(revealCalls).toEqual([
       { scope: "diff", fileKey: "tree-file", mounted: true, collapsed: false },
       { scope: "diff", fileKey: "tree-file", mounted: true, collapsed: false },
