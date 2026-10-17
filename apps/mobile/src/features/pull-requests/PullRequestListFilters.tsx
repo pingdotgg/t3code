@@ -1,6 +1,6 @@
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { useMemo } from "react";
-import { ScrollView } from "react-native";
+import { Platform, ScrollView } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
 import { useProjects, useThreadShells } from "../../state/entities";
@@ -24,6 +24,12 @@ const SORTS = {
   created: "Newest created",
   oldest: "Oldest updated",
 } as const;
+// On Android the row sits under ScreenContent's 28dp corner. A 12dp inset keeps the
+// 16dp chip radius concentric with it (28 - 12 = 16).
+const ROW_STYLE =
+  Platform.OS === "android"
+    ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
+    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({
@@ -222,11 +228,7 @@ export function PullRequestListFilters(props: {
     ...new Set([...(author && author !== "me" ? [author] : []), ...props.authors]),
   ].slice(0, 60);
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 }}
-    >
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={ROW_STYLE}>
       <ListFilterMenu
         label={count ? String(count) : "Filters"}
         icon
