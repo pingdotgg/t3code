@@ -413,7 +413,26 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
 function poolWindows(accounts: readonly LimitAccount[], now: number): readonly LimitPoolWindow[] {
   const byKey = new Map<string, LimitPoolMember[]>();
   for (const account of accounts) {
-    for (const window of account.limits.windows) {
+    const spentWeekly = account.limits.windows.find(
+      (window) =>
+        window.usedPercent >= 100 &&
+        (account.driver === "claudeAgent"
+          ? window.id === "seven_day"
+          : account.driver === "codex" && window.kind === "weekly"),
+    );
+    for (const reported of account.limits.windows) {
+      // These allowances cannot be used until the account's weekly limit resets.
+      const window =
+        spentWeekly &&
+        (reported.kind === "session" ||
+          (account.driver === "claudeAgent" && reported.id.startsWith("seven_day_")))
+          ? {
+              ...reported,
+              usedPercent: 100,
+              resetsAt: spentWeekly.resetsAt,
+              windowDurationMins: spentWeekly.windowDurationMins,
+            }
+          : reported;
       const pooled = poolKey(account.driver, window);
       const key = byKey.get(pooled)?.some((member) => member.account === account)
         ? `${window.kind}:${window.id}`

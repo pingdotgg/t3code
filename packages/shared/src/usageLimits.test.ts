@@ -851,6 +851,68 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  it("counts an exhausted weekly as empty in session and model rows with the same reset", () => {
+    const accounts = (
+      [
+        [90, 0, 96],
+        [100, 1, 70],
+        [100, 1, 70],
+        [90, 50, 88],
+      ] as const
+    ).map(([session, week, model], index) =>
+      account(String(index), [
+        { ...window, usedPercent: 100 - session },
+        { ...weekly, usedPercent: 100 - week, resetsAt: "2026-09-06T12:00:00.000Z" },
+        { ...weekly, id: "seven_day_fable", usedPercent: 100 - model },
+      ]),
+    );
+    const rows = collectLimitPools(accounts, now)[0]!.windows;
+    expect(rows.map((row) => row.remainingPercent)).toEqual([73, 13, 57]);
+    for (const row of rows) {
+      expect(row.columns[0]?.window).toMatchObject({
+        usedPercent: 100,
+        resetsAt: "2026-09-06T12:00:00.000Z",
+        windowDurationMins: weekly.windowDurationMins,
+      });
+      expect(row.resets.find((reset) => reset.member.account.key === "0")).toMatchObject({
+        at: Date.parse("2026-09-06T12:00:00.000Z"),
+        restoresPercent: 25,
+      });
+    }
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(10);
+    const refreshed = accounts.map((a) => ({
+      ...a,
+      limits: { ...a.limits, windows: a.limits.windows.map((w) => ({ ...w, usedPercent: 0 })) },
+    }));
+    expect(collectLimitPools(refreshed, now)[0]?.windows[0]?.remainingPercent).toBe(100);
+  });
+
+  it.each([
+    ["codex", "secondary", 100, 0],
+    ["claudeAgent", "seven_day", 99, 60],
+    ["claudeAgent", "seven_day_fable", 100, 60],
+    ["cursor", "seven_day", 100, 60],
+  ])("uses only the exhausted covering weekly for %s (%s, %i used)", (driver, id, used, left) => {
+    const a = account("a", [window, { ...weekly, id, usedPercent: used }]);
+    const [session] = collectLimitPools(
+      [{ ...a, driver: ProviderDriverKind.make(driver) }],
+      now,
+    )[0]!.windows;
+    expect(session?.remainingPercent).toBe(left);
+  });
+
+  it.each([undefined, "invalid"])(
+    "does not invent a reset when the weekly reports %s",
+    (resetsAt) => {
+      const [session] = collectLimitPools(
+        [account("a", [window, { ...weekly, usedPercent: 100, resetsAt }])],
+        now,
+      )[0]!.windows;
+      expect(session?.remainingPercent).toBe(0);
+      expect(session?.resets).toEqual([]);
+    },
+  );
+
   it("keeps session columns across rows with opposite reset and usage orders", () => {
     const accounts = [
       account("a", [
