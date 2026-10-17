@@ -786,11 +786,6 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
   return previewUrls;
 }
 
-export interface PullRequestDialogState {
-  initialReference: string | null;
-  key: number;
-}
-
 export { readFileAsDataUrl } from "../lib/imageCompression";
 
 export function resolveSendEnvMode(input: {

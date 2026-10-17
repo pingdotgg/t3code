@@ -2,6 +2,7 @@ import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
@@ -34,6 +35,7 @@ import {
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -133,6 +135,47 @@ function usageLoading(
   };
 }
 
+/**
+ * The model whose detail dialog is open. It lives outside UsagePage so opening
+ * or closing the dialog renders only its host, not the whole usage page.
+ */
+const selectedUsageModelKeyAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("usage:selected-model-key"),
+);
+
+function selectUsageModel(key: string | null): void {
+  appAtomRegistry.set(selectedUsageModelKeyAtom, key);
+}
+
+function UsageModelDialogHost({
+  models,
+  onSetPrice,
+  ...dialogProps
+}: Omit<Parameters<typeof UsageModelDialog>[0], "model" | "onSetPrice" | "onClose"> & {
+  readonly models: MergedUsage["models"];
+  readonly onSetPrice: (model: string) => void;
+}) {
+  const selectedKey = useAtomValue(selectedUsageModelKeyAtom);
+  useEffect(() => () => selectUsageModel(null), []);
+  const model =
+    selectedKey === null
+      ? undefined
+      : models.find((candidate) => `${candidate.provider}:${candidate.model}` === selectedKey);
+  if (model === undefined) return null;
+  return (
+    <UsageModelDialog
+      {...dialogProps}
+      model={model}
+      onSetPrice={() => {
+        selectUsageModel(null);
+        onSetPrice(model.model);
+      }}
+      onClose={() => selectUsageModel(null)}
+    />
+  );
+}
+
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   useEscapeToGoBack();
@@ -159,7 +202,6 @@ export function UsagePage() {
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
-  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
@@ -303,11 +345,6 @@ export function UsagePage() {
     shownWindow.sinceTime === undefined || shownWindow.untilTime === undefined
       ? []
       : enumerateHourStarts(shownWindow.sinceTime, shownWindow.untilTime);
-  const selectedModel =
-    selectedModelKey === null
-      ? undefined
-      : merged.models.find((model) => `${model.provider}:${model.model}` === selectedModelKey);
-
   const showChatGptSharing =
     !hiddenProviders.has("codex") &&
     [...presentations].some(
@@ -521,15 +558,15 @@ export function UsagePage() {
                   void refresh();
                   void refreshLimits(false, true);
                 }}
-                onSelectModel={setSelectedModelKey}
+                onSelectModel={selectUsageModel}
               />
             )}
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
-      {selectedModel !== undefined && !showingLimits ? (
-        <UsageModelDialog
-          model={selectedModel}
+      {showingLimits ? null : (
+        <UsageModelDialogHost
+          models={merged.models}
           environments={selectedEnvironments}
           metric={metric === "tokens" ? "tokens" : "cost"}
           chartWindow={{
@@ -539,13 +576,9 @@ export function UsagePage() {
             timeZone: shownWindow.timeZone,
             referenceTime: shownWindow.untilTime,
           }}
-          onSetPrice={() => {
-            setSelectedModelKey(null);
-            setPriceDialog({ model: selectedModel.model });
-          }}
-          onClose={() => setSelectedModelKey(null)}
+          onSetPrice={(model) => setPriceDialog({ model })}
         />
-      ) : null}
+      )}
       {priceDialog ? (
         <UsagePriceOverrides
           usage={environments}
