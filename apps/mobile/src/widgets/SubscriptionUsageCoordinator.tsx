@@ -12,7 +12,7 @@ import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 // Isolate quota changes from the much busier thread/config presentation stream.
 const snapshotAtom = Atom.make((get) =>
   buildSubscriptionUsageSnapshot(
-    get(environmentPresentations.presentationsAtom),
+    get(environmentPresentations.presentationsWithProvidersAtom),
     Linking.createURL("settings/usage", { queryParams: { tab: "limits" } }),
     Platform.OS === "android" ? Infinity : 6,
   ),

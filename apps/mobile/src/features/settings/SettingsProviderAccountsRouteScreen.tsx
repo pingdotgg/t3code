@@ -5,12 +5,14 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type { ProviderAuthResponse, ServerProvider } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
+import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -25,6 +27,7 @@ import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-en
 
 export function SettingsProviderAccountsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
     <>
@@ -41,7 +44,7 @@ export function SettingsProviderAccountsRouteScreen() {
           ) : (
             selectedTargets.map((environment) => (
               <SettingsSection key={environment.environmentId} title={environment.label}>
-                {environment.serverConfig.providers
+                {(providersByEnvironment.get(environment.environmentId) ?? [])
                   .filter(
                     (provider) =>
                       provider.setup?.canAuthenticate ||
@@ -54,7 +57,7 @@ export function SettingsProviderAccountsRouteScreen() {
                       provider={provider}
                     />
                   ))}
-                {!environment.serverConfig.providers.some(
+                {!(providersByEnvironment.get(environment.environmentId) ?? []).some(
                   (provider) =>
                     provider.setup?.canAuthenticate ||
                     (provider.driver === "acpRegistry" && provider.installed),

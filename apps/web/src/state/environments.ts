@@ -55,6 +55,11 @@ export function useEnvironments() {
   };
 }
 
+/** Provider statuses change on every push, so they live apart from the presentations. */
+export function useEnvironmentProviders() {
+  return useAtomValue(environmentPresentations.providersByEnvironmentAtom);
+}
+
 export function usePrimaryEnvironmentId(): EnvironmentId | null {
   return useAtomValue(primaryEnvironmentIdAtom);
 }

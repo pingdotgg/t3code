@@ -14,7 +14,7 @@ import {
   parseThreadKey,
   threadKey,
 } from "@t3tools/client-runtime/state/entities";
-import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
+import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
@@ -26,6 +26,7 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
+import { environmentPresentations } from "./presentation";
 import { environmentServerConfigsAtom } from "./server";
 import {
   allEnvironmentProjectSnapshotsReadyAtom,
@@ -96,8 +97,9 @@ export function useProjects(): ReadonlyArray<EnvironmentProject> {
   return useAtomValue(environmentProjects.projectsAtom);
 }
 
-export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
-  return useAtomValue(environmentServerConfigsAtom);
+/** Providers are left out; read them with `useEnvironmentProviders()`. */
+export function useServerConfigs() {
+  return useAtomValue(environmentPresentations.serverConfigsAtom);
 }
 
 export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {

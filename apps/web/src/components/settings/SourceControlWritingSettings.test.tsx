@@ -37,6 +37,7 @@ vi.mock("./useScopedModelAvailability", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
+vi.mock("../../state/environments", () => ({ useEnvironmentProviders: () => new Map() }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: (id: string) => ({ id, title: id }) }));
 vi.mock("./settingsLayout", () => ({

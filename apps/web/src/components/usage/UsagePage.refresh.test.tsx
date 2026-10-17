@@ -12,14 +12,27 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
-    atom === "keybindings" ? DEFAULT_RESOLVED_KEYBINDINGS : state.presentations,
+    atom === "keybindings"
+      ? DEFAULT_RESOLVED_KEYBINDINGS
+      : atom === "providers"
+        ? new Map(
+            [...state.presentations].map(([id, presentation]) => [
+              id,
+              presentation.serverConfig.providers,
+            ]),
+          )
+        : state.presentations,
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
   useCanGoBack: () => false,
 }));
 vi.mock("../../state/presentation", () => ({
-  environmentPresentations: { presentationsAtom: null },
+  environmentPresentations: {
+    presentationsAtom: null,
+    presentationsWithProvidersAtom: null,
+    providersByEnvironmentAtom: "providers",
+  },
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { refreshProviders: null },

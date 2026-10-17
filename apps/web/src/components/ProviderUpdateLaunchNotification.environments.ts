@@ -1,7 +1,10 @@
 import type { ConnectionCatalogEntry } from "@t3tools/client-runtime/connection";
-import type { ServerConfig } from "@t3tools/contracts";
 
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import {
   buildLocalEnvironmentUpdateGroups,
@@ -37,6 +40,7 @@ export function useLocalEnvironmentUpdateGroups(): {
   readonly isAnySettling: boolean;
 } {
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
 
   const inputs: LocalEnvironmentProvidersInput[] = [];
@@ -47,7 +51,7 @@ export function useLocalEnvironmentUpdateGroups(): {
     }
 
     const isPrimary = environment.environmentId === primaryEnvironmentId;
-    const serverConfig: ServerConfig | null = environment.serverConfig;
+    const serverConfig = environment.serverConfig;
 
     inputs.push({
       environmentId: environment.environmentId,
@@ -61,7 +65,7 @@ export function useLocalEnvironmentUpdateGroups(): {
         : environment.label,
       isPrimary,
       connectionState: isPrimary ? "ready" : normalizeConnectionState(environment.connection.phase),
-      providers: serverConfig?.providers ?? [],
+      providers: providersByEnvironment.get(environment.environmentId) ?? [],
     });
   }
 

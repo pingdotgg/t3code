@@ -129,7 +129,11 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import {
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -818,11 +822,12 @@ function OpenCommandPaletteDialog(props: {
   const environmentThemes = useEnvironmentThemeDefinitions();
   const themeCards = useThemeCards(customThemes, environmentThemes);
   const providers = useAtomValue(primaryServerProvidersAtom);
+  const providersByEnvironment = useEnvironmentProviders();
   const providerEntryByEnvironmentAndInstanceId = new Map<string, ProviderInstanceEntry>(
     environments.flatMap((environment) => {
       const serverConfig = environment.serverConfig;
       const derived = deriveProviderInstanceEntries(
-        serverConfig?.providers ??
+        providersByEnvironment.get(environment.environmentId) ??
           (environment.environmentId === primaryEnvironmentId ? providers : []),
       );
       const entries = serverConfig
@@ -1680,9 +1685,9 @@ function OpenCommandPaletteDialog(props: {
               project.id === promptLinkProjectRef.projectId,
           ),
           providers:
-            environments.find(
-              (environment) => environment.environmentId === promptLinkProjectRef?.environmentId,
-            )?.serverConfig?.providers ?? [],
+            (promptLinkProjectRef
+              ? providersByEnvironment.get(promptLinkProjectRef.environmentId)
+              : undefined) ?? [],
           threadModelSelection: activeThread?.modelSelection ?? null,
         };
   const plainPromptLink = promptLinkInput

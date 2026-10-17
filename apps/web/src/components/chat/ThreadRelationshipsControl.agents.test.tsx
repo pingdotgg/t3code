@@ -30,7 +30,12 @@ vi.mock("../../state/entities", () => ({
       .filter((shell) => shell.environmentId === ref.environmentId)
       .map((shell) => shell.source),
   useProjects: () => state.projects,
-  useServerConfigs: () => state.configs,
+}));
+vi.mock("../../state/environments", () => ({
+  useEnvironmentProviders: () =>
+    new Map(
+      [...state.configs].map(([id, config]) => [id, (config as { providers: unknown }).providers]),
+    ),
 }));
 vi.mock("../../lib/archivedThreadsState", () => ({
   useArchivedThreadSnapshots: () => ({ snapshots: [] }),

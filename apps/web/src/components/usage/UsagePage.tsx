@@ -221,6 +221,7 @@ export function UsagePage() {
   const refreshingUsage = isRefreshing && !showingLimits;
   const showingKept = shown !== null && shown.window !== window;
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
     : cursorKeychainAccessEnvironments(selectedEnvironments);
@@ -347,10 +348,10 @@ export function UsagePage() {
       : enumerateHourStarts(shownWindow.sinceTime, shownWindow.untilTime);
   const showChatGptSharing =
     !hiddenProviders.has("codex") &&
-    [...presentations].some(
-      ([id, presentation]) =>
+    [...providersByEnvironment].some(
+      ([id, providers]) =>
         (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
-        presentation.serverConfig?.providers.some(usesChatGptSharing),
+        providers.some(usesChatGptSharing),
     );
 
   const windowLabel =

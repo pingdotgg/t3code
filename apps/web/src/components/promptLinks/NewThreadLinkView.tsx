@@ -25,7 +25,9 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { newProjectId } from "~/lib/utils";
 import { useProjects, useThreadShells, waitForProject } from "~/state/entities";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import { environmentPresentations } from "~/state/presentation";
 import { allReachableShellsLiveAtom } from "~/state/shell";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -104,8 +106,9 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     const notes: Array<string> = [];
     if (link.kind === "new" && link.provider !== null) {
       const providers =
-        environments.find((environment) => environment.environmentId === project.environmentId)
-          ?.serverConfig?.providers ?? [];
+        appAtomRegistry
+          .get(environmentPresentations.providersByEnvironmentAtom)
+          .get(project.environmentId) ?? [];
       const resolved = resolvePromptLinkModelSelection(providers, {
         provider: link.provider,
         model: link.model,

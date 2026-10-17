@@ -21,7 +21,7 @@ import {
 } from "../ui/menu";
 
 export function resolveEnvironmentIconPickerLock(input: {
-  readonly serverConfig: ServerConfig | null;
+  readonly serverConfig: Pick<ServerConfig, "environment"> | null;
   readonly operateAccess: "granted" | "denied" | "pending";
 }): string | null {
   if (input.serverConfig === null) {
@@ -41,7 +41,7 @@ export function EnvironmentIconMenu({
   serverConfig,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly serverConfig: ServerConfig | null;
+  readonly serverConfig: Pick<ServerConfig, "environment"> | null;
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
