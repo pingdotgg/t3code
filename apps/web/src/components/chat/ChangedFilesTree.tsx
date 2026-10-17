@@ -122,14 +122,6 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   );
 });
 
-// Building the tree walks every file, and the compiler would redo it each render
-// because the expansion state hook runs after it.
-function useTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>) {
-  "use memo";
-  const treeNodes = buildTurnDiffTree(files);
-  return { treeNodes, directoryPathsKey: collectDirectoryPaths(treeNodes).join("\u0000") };
-}
-
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
   runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
@@ -140,16 +132,17 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
 }) {
   const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, runId, onFileContextMenu } =
     props;
-  const { treeNodes, directoryPathsKey } = useTurnDiffTree(files);
+  // Overrides apply only while their key matches the current one, so starting from no key is
+  // the same as starting with no overrides. That lets this hook run before the tree is built,
+  // and the compiler caches the tree on `files`.
+  const [directoryExpansionState, setDirectoryExpansionState] = useState<{
+    key: string | null;
+    overrides: Record<string, boolean>;
+  }>({ key: null, overrides: {} });
+  const treeNodes = buildTurnDiffTree(files);
+  const directoryPathsKey = collectDirectoryPaths(treeNodes).join("\u0000");
   const hasDirectoryNodes = directoryPathsKey.length > 0;
   const expansionStateKey = `${allDirectoriesExpanded ? "expanded" : "collapsed"}\u0000${directoryPathsKey}`;
-  const [directoryExpansionState, setDirectoryExpansionState] = useState<{
-    key: string;
-    overrides: Record<string, boolean>;
-  }>(() => ({
-    key: expansionStateKey,
-    overrides: {},
-  }));
   const expandedDirectories =
     directoryExpansionState.key === expansionStateKey
       ? directoryExpansionState.overrides
