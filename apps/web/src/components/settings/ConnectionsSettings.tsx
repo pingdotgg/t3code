@@ -90,6 +90,8 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
+import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -2001,6 +2003,7 @@ export function ConnectionsSettings() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  const peerLinkHosts = usePeerLinkHosts();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
@@ -3935,6 +3938,14 @@ export function ConnectionsSettings() {
           }}
         />
       ) : null}
+      {peerLinkHosts.map((environment, index) => (
+        <LinkedEnvironmentsSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
+          isSearchTarget={index === 0}
+        />
+      ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>

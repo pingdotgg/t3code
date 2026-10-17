@@ -11,6 +11,7 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
+import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
 
 export function ConnectionsRouteScreen() {
   const {
@@ -69,6 +70,13 @@ export function ConnectionsRouteScreen() {
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={onUpdateEnvironment}
         />
+        {connectedEnvironments.map((environment) => (
+          <LinkedEnvironmentsSection
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={environment.environmentLabel}
+          />
+        ))}
         <GitHubRoutingSettings />
       </ScrollView>
     </View>

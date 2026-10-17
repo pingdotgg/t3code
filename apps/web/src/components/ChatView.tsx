@@ -8013,6 +8013,7 @@ export default function ChatView(props: ChatViewProps) {
             activeThreadId={activeThread.id}
             isServerThread={isServerThread}
             activeThreadTitle={activeThread.title}
+            activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
             activeProject={activeProject ?? null}
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThreadStable}
