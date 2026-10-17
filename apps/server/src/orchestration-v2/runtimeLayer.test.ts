@@ -4263,6 +4263,152 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("starts a message queued behind a run that started ahead of a held queue", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queue-behind-later-run");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queue behind a later run",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (key: string, type: "start_immediately" | "queue_after_active") =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type },
+        });
+      const runFor = (key: string) =>
+        orchestrator
+          .getThreadProjection(threadId)
+          .pipe(
+            Effect.map((projection) =>
+              projection.runs.find((run) => run.userMessageId === `${threadId}:${key}`)!,
+            ),
+          );
+      yield* send("active", "start_immediately");
+      yield* send("held", "queue_after_active");
+      yield* recovery.reconcile("startup");
+      assert.isTrue((yield* runFor("held")).queueHeld);
+
+      // The idle thread starts a new message ahead of the held queue, and a
+      // message queued behind that run waits for it, not for the held queue.
+      yield* send("later", "start_immediately");
+      const later = yield* runFor("later");
+      assert.equal(later.status, "starting");
+      yield* send("follow-up", "queue_after_active");
+      assert.notEqual((yield* runFor("follow-up")).queueHeld, true);
+
+      const now = yield* DateTime.now;
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make(`${threadId}:complete-later`),
+        threadId,
+        commandType: "provider-runtime.reconcile",
+        acceptedAt: now,
+        events: [
+          {
+            id: EventId.make(`${threadId}:complete-later`),
+            type: "run.updated",
+            threadId,
+            runId: later.id,
+            occurredAt: now,
+            payload: { ...later, status: "completed", completedAt: now },
+          },
+        ],
+        effects: [],
+      });
+      yield* orchestrator.resumeQueuedRuns;
+      assert.equal((yield* runFor("follow-up")).status, "starting");
+      const held = yield* runFor("held");
+      assert.equal(held.status, "queued");
+      assert.isTrue(held.queueHeld);
+    }),
+  );
+
+  it.effect("holds a message queued behind the run its held queue waits for", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queue-behind-held-run");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queue behind a held run",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [index, key] of ["active", "held", "follow-up"].entries()) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+        });
+        if (key !== "held") continue;
+        // The queue is held while the active run is still ending, as on Stop.
+        const held = (yield* orchestrator.getThreadProjection(threadId)).runs[1]!;
+        const now = yield* DateTime.now;
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`${threadId}:hold`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: [
+            {
+              id: EventId.make(`${threadId}:hold`),
+              type: "run.updated",
+              threadId,
+              runId: held.id,
+              occurredAt: now,
+              payload: { ...held, queueHeld: true },
+            },
+          ],
+          effects: [],
+        });
+      }
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        projection.runs.map((run) => [run.status, run.queueHeld === true]),
+        [
+          ["starting", false],
+          ["queued", true],
+          ["queued", true],
+        ],
+      );
+    }),
+  );
+
   it.effect("edits and removes queued runs", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
