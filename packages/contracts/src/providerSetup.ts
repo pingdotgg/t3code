@@ -130,6 +130,9 @@ export const ProviderAuthState = Schema.Struct({
   authorizationUrl: Schema.NullOr(Schema.String),
   expiresAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(Schema.String),
+  // Why the last pasted redirect URL was rejected. The flow is still waiting,
+  // so this is not a failure and clears once a paste is accepted.
+  inputError: Schema.optionalKey(Schema.NullOr(Schema.String)),
   // Newer servers may add method types, interactions, or owners; older
   // clients drop what they cannot decode instead of rejecting the state.
   methods: Schema.optionalKey(

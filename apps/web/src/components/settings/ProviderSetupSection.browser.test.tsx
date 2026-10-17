@@ -227,6 +227,18 @@ describe("Antigravity setup", () => {
     expect(occurrences("Signed in.")).toBe(1);
   });
 
+  it("shows why a pasted redirect URL was refused while the flow keeps waiting", async () => {
+    const refused = "This redirect URL does not belong to the current sign-in.";
+    setup.auth = authState({ message: "Open the Google sign-in link.", inputError: refused });
+    await renderSetup();
+    expect(occurrences(refused)).toBe(1);
+    expect(occurrences("Open the Google sign-in link.")).toBe(0);
+
+    setup.auth = authState({ message: "Open the Google sign-in link.", inputError: null });
+    await publish();
+    expect(occurrences(refused)).toBe(0);
+  });
+
   it("offers sign-in again when credentials expire after a completed auth flow", async () => {
     setup.auth = authState({
       phase: "succeeded",

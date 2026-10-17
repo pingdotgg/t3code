@@ -96,8 +96,40 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
     authorizationUrl: null,
     interaction: null,
     expiresAt: null,
-    ...(busy ? { message: "Sign-in is in progress in another client." } : {}),
+    inputError: null,
+    ...(busy
+      ? { message: "Sign-in is in progress in another client." }
+      : snapshot.state.phase === "failed"
+        ? { message: "Sign-in failed in another client." }
+        : {}),
   };
+}
+
+const MAX_PROVIDER_REASON_LENGTH = 300;
+
+/**
+ * Antigravity rejections such as "account not eligible" carry an actionable,
+ * human-readable reason. Show it, but only when it is short and cannot leak a
+ * URL, email, token, or path into the UI.
+ */
+function providerReason(message: string): string | undefined {
+  const text = message
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length === 0 || text.length > MAX_PROVIDER_REASON_LENGTH) return undefined;
+  if (!/\p{L}/u.test(text)) return undefined;
+  // Allowlist plain prose. This excludes URLs (encoded or not), paths, emails,
+  // and key=value fragments without enumerating each leak shape.
+  if (!/^[\p{L}\p{N} .,:;'"()!?-]+$/u.test(text)) return undefined;
+  // Scheme-like ("https:example.com") and hostname-like ("support.google.com")
+  // runs pass the character allowlist but still name a location. Prose puts
+  // a space after "." and ":".
+  if (/[\p{L}\p{N}][.:][\p{L}\p{N}]/u.test(text)) return undefined;
+  // Credential-shaped runs: a long unbroken token, or a long digit run, even
+  // when hyphens split it ("sk-1234...").
+  if (/\S{20,}/u.test(text) || /\p{N}{8,}/u.test(text)) return undefined;
+  return text;
 }
 
 function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): string {
@@ -118,6 +150,10 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
       }
       if (!usesBrowser && error.value.code === -32602) {
         return "Antigravity rejected the configured credentials. Check the provider settings.";
+      }
+      if (error.value.method === "authenticate") {
+        const reason = providerReason(error.value.errorMessage);
+        if (reason) return reason;
       }
     }
   }
@@ -226,6 +262,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           phase: Exit.isSuccess(result) ? "succeeded" : "failed",
           authorizationUrl: null,
           expiresAt: null,
+          inputError: null,
           message: Exit.isSuccess(result)
             ? usesBrowser
               ? "Signed in with Google."
@@ -276,6 +313,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             ...flow.state,
             phase: "verifying",
             authorizationUrl: null,
+            inputError: null,
             message: "Checking Antigravity access and models.",
           });
         }),
@@ -306,6 +344,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               phase,
               authorizationUrl: null,
               expiresAt: null,
+              inputError: null,
               message,
             });
             return true;
@@ -398,12 +437,19 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             options.instanceId,
             flow.pending,
             input.callbackUrl,
+          ).pipe(
+            // The flow keeps waiting for a correct paste, so show why this one
+            // was refused without ending it. The detail is a fixed message.
+            Effect.tapError((error) =>
+              publishFlow(flow, { ...flow.state, inputError: error.detail }),
+            ),
           );
           flow.callbackSent = true;
           yield* publishFlow(flow, {
             ...flow.state,
             phase: "verifying",
             authorizationUrl: null,
+            inputError: null,
             message: "Waiting for Google to finish sign-in.",
           });
           const forwarding = yield* (
@@ -452,6 +498,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                   phase: "cancelled",
                   authorizationUrl: null,
                   expiresAt: null,
+                  inputError: null,
                   message: "Google sign-in was cancelled by sign-out.",
                 });
               }

@@ -251,6 +251,73 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       }),
   );
 
+  it.effect("shows Antigravity's onboarding rejection instead of the generic failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      const reason =
+        "Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. Try signing in with another personal Google account.";
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: reason,
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, reason);
+      const other = yield* phase(harness.auth, "failed", otherOwner);
+      assert.equal(other.message, "Sign-in failed in another client.");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("keeps the generic failure when an authenticate error could leak a URL", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: `Onboarding failed ${callbackUrl}`,
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect.each([
+    ["a percent-encoded callback", "callback=http%3A%2F%2F127.0.0.1%3A51234%2F%3Fcode%3Dtest-code"],
+    ["an email address", "Account alice@example.com is not eligible"],
+    ["a key=value fragment", "reason=invalid"],
+    ["only digits and punctuation", "555-123-4567"],
+    ["a scheme without slashes", "Onboarding failed: See https:example.com for help."],
+    ["a bare hostname", "Onboarding failed. Visit support.google.com for help."],
+    ["a hyphenated credential", "Invalid token sk-123456789012345678901234567890"],
+  ] as const)(
+    "keeps the generic failure when an authenticate error contains %s",
+    ([, errorMessage]) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.auth.controller.start(owner);
+        yield* phase(harness.auth, "waiting");
+        yield* Deferred.fail(
+          harness.authenticated,
+          new AcpErrors.AcpRequestError({ code: -32603, errorMessage, method: "authenticate" }),
+        );
+        const failed = yield* phase(harness.auth, "failed");
+        assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
+        yield* Deferred.await(harness.closed);
+      }),
+  );
+
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -297,9 +364,16 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
           .complete(owner, { flowId: state.flowId!, callbackUrl: invalidUrl })
           .pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(result));
+        assert.equal(
+          (yield* phase(harness.auth, "waiting")).inputError,
+          "This redirect URL does not belong to the current sign-in.",
+        );
+        assert.isNull((yield* phase(harness.auth, "waiting", otherOwner)).inputError);
       }
       assert.equal(harness.forwarded(), 0);
       assert.equal((yield* phase(harness.auth, "waiting")).authorizationUrl, authorizationUrl);
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      assert.isNull((yield* phase(harness.auth, "verifying")).inputError);
       yield* harness.auth.controller.cancel(owner, state.flowId!);
     }),
   );
