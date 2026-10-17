@@ -1670,7 +1670,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveBaseBranchForNoUpstream = Effect.fn("resolveBaseBranchForNoUpstream")(function* (
     cwd: string,
     refName: string,
-    options?: { readonly allowRemoteOfCurrent?: boolean },
+    options?: {
+      readonly allowRemoteOfCurrent?: boolean;
+      /** Null can mean a failed lookup, so only a successful value skips the retry. */
+      readonly knownOriginDefaultBranch?: string | null;
+    },
   ) {
     const configuredBaseBranch = yield* runGitStdout(
       "GitVcsDriver.resolveBaseBranchForNoUpstream.config",
@@ -1682,15 +1686,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
       Effect.orElseSucceed(() => null),
     );
-    const defaultBranch =
-      primaryRemoteName === null ? null : yield* resolveDefaultBranchName(cwd, primaryRemoteName);
     const candidates = [
-      configuredBaseBranch.length > 0 ? configuredBaseBranch : null,
-      defaultBranch,
-      ...DEFAULT_BASE_BRANCH_CANDIDATES,
+      Effect.succeed(configuredBaseBranch.length > 0 ? configuredBaseBranch : null),
+      primaryRemoteName === null
+        ? Effect.succeed(null)
+        : primaryRemoteName === "origin" && options?.knownOriginDefaultBranch != null
+          ? Effect.succeed(options.knownOriginDefaultBranch)
+          : resolveDefaultBranchName(cwd, primaryRemoteName),
+      ...DEFAULT_BASE_BRANCH_CANDIDATES.map(Effect.succeed),
     ];
 
-    for (const candidate of candidates) {
+    for (const readCandidate of candidates) {
+      // Resolve the remote default only if the configured base could not be used.
+      const candidate = yield* readCandidate;
       if (!candidate) {
         continue;
       }
@@ -1742,8 +1750,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const computeAheadCountAgainstBase = Effect.fn("computeAheadCountAgainstBase")(function* (
     cwd: string,
     refName: string,
+    options?: { readonly knownOriginDefaultBranch: string | null },
   ) {
-    const baseRef = yield* resolveBaseBranchForNoUpstream(cwd, refName);
+    const baseRef = yield* resolveBaseBranchForNoUpstream(cwd, refName, options);
     if (!baseRef) {
       return 0;
     }
@@ -1841,7 +1850,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       branch && !isDefaultBranch
         ? upstreamRef === null
           ? aheadCount
-          : yield* computeAheadCountAgainstBase(cwd, branch).pipe(Effect.orElseSucceed(() => 0))
+          : yield* computeAheadCountAgainstBase(cwd, branch, {
+              knownOriginDefaultBranch: defaultBranch,
+            }).pipe(Effect.orElseSucceed(() => 0))
         : 0;
 
     return {
