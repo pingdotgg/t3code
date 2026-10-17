@@ -183,7 +183,11 @@ export function ComposerContextSheet(props: {
       : undefined;
   const terminal = record?.kind === "terminal" && !("payload" in record) ? record : null;
   return (
-    <Sheet title={terminal?.terminalLabel ?? props.label} onClose={props.onClose}>
+    <Sheet
+      prefersHorizontalBars
+      title={terminal?.terminalLabel ?? props.label}
+      onClose={props.onClose}
+    >
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}

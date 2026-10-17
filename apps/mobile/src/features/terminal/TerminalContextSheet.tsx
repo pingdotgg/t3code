@@ -56,7 +56,7 @@ export function TerminalContextSheet(props: {
     props.onAttach();
   };
   return (
-    <Sheet title="Terminal output" onClose={props.onClose}>
+    <Sheet prefersHorizontalBars title="Terminal output" onClose={props.onClose}>
       <ScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}

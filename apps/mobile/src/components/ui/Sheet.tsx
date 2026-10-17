@@ -4,6 +4,7 @@ import { FormSheet, Screen, ScreenStack, ScreenStackHeaderConfig } from "react-n
 import { useResolveClassNames, withUniwind } from "uniwind";
 
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
+import { formSheetDetents } from "../../native/sheet-surface";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 const NativeScreen = withUniwind(Screen);
@@ -25,8 +26,9 @@ export function Sheet(props: SheetProps) {
   return (
     <FormSheet
       isOpen={isOpen}
-      detents={[0.5, 0.9]}
+      detents={formSheetDetents(0.5, 0.9)}
       prefersGrabberVisible
+      prefersHorizontalBars={props.prefersHorizontalBars}
       nativeContainerStyle={containerStyle}
       onDismiss={props.onClose}
       onNativeDismiss={props.onClose}
