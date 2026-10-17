@@ -375,7 +375,9 @@ const make = Effect.gen(function* () {
                       scriptName: result.scriptName,
                       terminalId: result.terminalId,
                     }
-                  : { status: "no-script" },
+                  : result.status === "skipped-for-link"
+                    ? { status: "skipped" }
+                    : { status: "no-script" },
               ),
               reportFailed("worktree handoff setup script failed"),
             );

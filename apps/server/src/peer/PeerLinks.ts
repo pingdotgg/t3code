@@ -4,6 +4,8 @@ import {
   AuthMcpTokenError,
   EnvironmentHttpApi,
   EnvironmentId,
+  type ExecutionEnvironmentCapabilities,
+  MCP_PEER_LINK_SOFTWARE_ID,
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
@@ -84,6 +86,7 @@ interface PeerLinkRow {
   readonly expires_at: string;
   readonly last_reached_at: string | null;
   readonly last_error: string | null;
+  readonly fenced: number;
 }
 
 const decodeUrls = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
@@ -134,6 +137,10 @@ const peerOrigin = (url: string) => {
   }
   return Effect.succeed(parsed.origin);
 };
+
+/** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
+const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
+  peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -195,7 +202,13 @@ const make = Effect.gen(function* () {
       // Only the peer's own refusals are rejections. A dropped connection or
       // an answer this version cannot read is classified below.
       const registered = yield* client.mcpOAuth
-        .register({ payload: { client_name: clientName, redirect_uris: [LINK_REDIRECT_URI] } })
+        .register({
+          payload: {
+            client_name: clientName,
+            redirect_uris: [LINK_REDIRECT_URI],
+            software_id: MCP_PEER_LINK_SOFTWARE_ID,
+          },
+        })
         .pipe(
           // A plain Schema.Error has no tag to catch by.
           Effect.catchIf(Schema.is(AuthMcpRegistrationError), (error) =>
@@ -318,7 +331,7 @@ const make = Effect.gen(function* () {
           message: "That address is this environment.",
         });
       }
-      if (peer.capabilities.mcpModeLimitHeader !== true) {
+      if (!linkLimitsHold(peer)) {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
@@ -347,14 +360,15 @@ const make = Effect.gen(function* () {
       yield* sql`
         INSERT INTO peer_environment_links (
           environment_id, secret_name, label, urls_json, access, linked_at, expires_at,
-          last_reached_at, last_error
+          last_reached_at, last_error, fenced
         ) VALUES (
           ${linked.environmentId}, ${secretName}, ${linked.label}, ${urlsJson}, ${linked.access},
           ${DateTime.formatIso(linked.linkedAt)}, ${DateTime.formatIso(linked.expiresAt)},
-          ${DateTime.formatIso(now)}, NULL
+          ${DateTime.formatIso(now)}, NULL, 1
         )
         ON CONFLICT (environment_id) DO UPDATE SET
           secret_name = excluded.secret_name,
+          fenced = excluded.fenced,
           label = excluded.label,
           urls_json = excluded.urls_json,
           access = excluded.access,
@@ -434,6 +448,14 @@ const make = Effect.gen(function* () {
           message: `The link to ${link.label} expired. Link it again with a new pairing code from ${link.label}.`,
         });
       }
+      // Its token was issued before links were marked as links, so the peer
+      // never fences the work it carries, whatever version it runs now.
+      if (row.value.fenced !== 1) {
+        return yield* new PeerLinkError({
+          reason: "incompatible",
+          message: `The link to ${link.label} was made by an older T3 Code. Link it again with a new pairing code from ${link.label}.`,
+        });
+      }
       const stored = yield* secrets.get(row.value.secret_name).pipe(Effect.catch(failStorage));
       if (Option.isNone(stored)) {
         return yield* new PeerLinkError({
@@ -443,17 +465,28 @@ const make = Effect.gen(function* () {
       }
       // The token goes only to an address that proves it is this peer, so a
       // reused LAN address or a moved hostname never receives it.
+      let fenced = true;
       const url = yield* Effect.findFirst(link.urls, (candidate) =>
         describe(candidate).pipe(
-          Effect.map(
-            (found) => Option.isSome(found) && found.value.environmentId === environmentId,
-          ),
+          Effect.map((found) => {
+            if (Option.isNone(found) || found.value.environmentId !== environmentId) return false;
+            fenced = linkLimitsHold(found.value);
+            return true;
+          }),
         ),
       );
       if (Option.isNone(url)) {
         return yield* new PeerLinkError({
           reason: "unreachable",
           message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
+        });
+      }
+      // A link made before the peer had to fence linked work, or a peer moved
+      // back to such a version, would carry work past those limits.
+      if (!fenced) {
+        return yield* new PeerLinkError({
+          reason: "incompatible",
+          message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
       return { link, url: url.value, token: new TextDecoder().decode(stored.value) };

@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type * as Tool from "effect/ai/Tool";
 
+import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -83,10 +84,13 @@ const make = Effect.gen(function* () {
   /**
    * The caller's own limits here, which travel with every call it forwards.
    * The peer sees only the link's credential, so a credential that may not
-   * control threads here is refused here.
+   * control threads here is refused here. Work a link started here never uses
+   * this environment's own links: the peer would see this environment's
+   * session, not the link the work came from, so its fence could not hold.
    */
   const callerLimits = (scope: Scope) =>
     readCaller().pipe(
+      Effect.tap((caller) => assertNotLinked(caller, "use this environment's links")),
       Effect.map((caller) => caller.limits),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
       Effect.provideService(ThreadManagement.ThreadManagementService, threads),
