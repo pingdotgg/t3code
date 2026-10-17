@@ -3095,14 +3095,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         yield* attempt({ operation: "recording.cursor", tabId, webContentsId: wc.id }, () =>
           wc.send(RECORDING_CURSOR_CHANNEL, true, options, tab?.controller),
         );
-        yield* attemptPromise(
-          {
-            operation: "recording.warmSource",
-            tabId,
-            webContentsId: wc.id,
-          },
-          () => wc.capturePage().then(() => undefined),
-        ).pipe(Effect.retry({ times: 1 }), Effect.ignore);
+        const warmupContext = { operation: "recording.warmSource", tabId, webContentsId: wc.id };
+        yield* Effect.tryPromise({
+          // Electron cannot cancel capturePage, but a stalled warmup must release the tab lock.
+          try: (_signal) => wc.capturePage(),
+          catch: (cause) => new PreviewOperationError({ ...warmupContext, cause }),
+        }).pipe(
+          Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+          Effect.catchTags({
+            TimeoutError: (cause) =>
+              Effect.fail(new PreviewOperationError({ ...warmupContext, cause })),
+          }),
+          Effect.retry({ times: 1 }),
+          Effect.ignore,
+        );
         const currentWebContents = yield* requireWebContents(tabId);
         if (currentWebContents !== wc || wc.isDestroyed()) {
           return yield* new PreviewWebContentsNotFoundError({

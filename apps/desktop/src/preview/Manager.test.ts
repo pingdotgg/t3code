@@ -3322,6 +3322,85 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "releases queued STOP after stalled recording warmups and ignores late completion",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const warmupStarted = Promise.withResolvers<void>();
+          const firstWarmup = Promise.withResolvers<TestCapturedPreviewImage>();
+          const lateWarmup = Promise.withResolvers<TestCapturedPreviewImage>();
+          const capturePage = vi
+            .fn<() => Promise<TestCapturedPreviewImage>>()
+            .mockImplementationOnce(() => {
+              warmupStarted.resolve();
+              return firstWarmup.promise;
+            })
+            .mockImplementation(() => lateWarmup.promise);
+          const host = makeTestHostWebContents();
+          const webContents = makeTestPreviewWebContents(capturePage, 42, host);
+          const windowThrottling = vi.fn();
+          fromId.mockReturnValue(webContents);
+          yield* manager.createTab("tab_recording_stalled_warmup");
+          yield* manager.registerWebview("tab_recording_stalled_warmup", 42);
+          yield* manager.setMainWindow({
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: { setBackgroundThrottling: windowThrottling },
+          } as never);
+
+          const image = {
+            toJPEG: () => Buffer.from("late-recording-frame"),
+            getSize: () => ({ width: 1280, height: 720 }),
+          };
+          try {
+            const start = yield* manager
+              .startRecording("tab_recording_stalled_warmup")
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Effect.promise(() => warmupStarted.promise);
+            let stopped = false;
+            const stop = yield* manager.stopRecording("tab_recording_stalled_warmup").pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  stopped = true;
+                }),
+              ),
+              Effect.forkChild({ startImmediately: true }),
+            );
+            expect(webContents.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+            expect(windowThrottling.mock.calls).toEqual([[false]]);
+            yield* TestClock.adjust(1_000);
+            expect(stopped).toBe(false);
+            expect(host.executeJavaScript).not.toHaveBeenCalled();
+            yield* TestClock.adjust(1_000);
+            expect(stopped).toBe(true);
+            yield* Fiber.join(start);
+            yield* Fiber.join(stop);
+            expect(capturePage).toHaveBeenCalledTimes(2);
+            expect(host.executeJavaScript).toHaveBeenCalledOnce();
+            expect(webContents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+            expect(windowThrottling.mock.calls).toEqual([[false], [true]]);
+            expect(webviewSend).toHaveBeenLastCalledWith("preview:recording-cursor", false);
+
+            lateWarmup.resolve(image);
+            yield* TestClock.adjust(0);
+            const streams: Array<{ video?: unknown }> = [];
+            host.displayMediaHandler()?.({ frame: host.mainFrame }, (value) => streams.push(value));
+            expect(streams).toEqual([{}]);
+            expect(capturePage).toHaveBeenCalledTimes(2);
+            expect(host.executeJavaScript).toHaveBeenCalledOnce();
+            expect(webContents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+            expect(windowThrottling.mock.calls).toEqual([[false], [true]]);
+            expect(webviewSend).toHaveBeenLastCalledWith("preview:recording-cursor", false);
+          } finally {
+            // Release stalled native calls after a failing assertion against unchanged base.
+            firstWarmup.resolve(image);
+            lateWarmup.resolve(image);
+          }
+        }),
+      ),
+  );
+
   effectIt.effect("continues native recording when the source warmup fails", () =>
     withManager((manager) =>
       Effect.gen(function* () {
