@@ -3,9 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
+vi.mock("../ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <p>{text}</p>,
 }));
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
