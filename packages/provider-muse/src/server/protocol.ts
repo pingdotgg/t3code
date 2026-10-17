@@ -152,9 +152,39 @@ export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,
   terminal: NonEmptyString,
   reason: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.Struct({ message: Schema.String })),
+  error: Schema.optional(
+    Schema.Struct({
+      message: Schema.String,
+      // Present when Muse recognized the stop as a used-up quota.
+      quota: Schema.optional(Schema.Struct({ resetsAtMs: Schema.Finite })),
+    }),
+  ),
   usage: Schema.optional(MuseUsage),
 });
+/** The latest instant a JavaScript Date holds; formatting a later one throws. */
+export const LATEST_DATE_MS = 8.64e15;
+const DateMillis = Schema.Finite.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(LATEST_DATE_MS),
+);
+/**
+ * `usage/changed` params: the Meta subscription windows the latest model
+ * response reported. Percentages are Meta's, verbatim, and may exceed 100.
+ */
+export const MuseSubscriptionUsage = Schema.Struct({
+  observedAtMs: DateMillis,
+  tier: Schema.String,
+  window: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    windowDurationMins: Schema.Finite.check(Schema.isGreaterThan(0)),
+    resetsAtMs: DateMillis,
+  }),
+  weekly: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    resetsAtMs: DateMillis,
+  }),
+});
+export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
 export const MuseTurnRetryScheduled = Schema.Struct({
   turnId: NonEmptyString,
   nextAttempt: Schema.Int.check(Schema.isGreaterThan(0)),
