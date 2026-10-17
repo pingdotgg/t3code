@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import { type ReactNode, useCallback, useMemo, useSyncExternalStore } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";
 import { serverEnvironment } from "~/state/server";
@@ -24,31 +24,24 @@ import {
 
 function useNow(intervalMs: number | null): number {
   const step = intervalMs ?? 60_000;
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      if (intervalMs === null) return () => {};
-      const timer = setInterval(onChange, intervalMs);
-      return () => clearInterval(timer);
-    },
-    [intervalMs],
-  );
+  const subscribe = (onChange: () => void) => {
+    if (intervalMs === null) return () => {};
+    const timer = setInterval(onChange, intervalMs);
+    return () => clearInterval(timer);
+  };
   return useSyncExternalStore(subscribe, () => Math.floor(Date.now() / step) * step);
 }
 
 function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<UpdateRunMachineView> {
-  const viewsAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        run.machines.map((machine) => ({
-          machine,
-          status: resolveUpdateRunMachineStatus(
-            machine,
-            run.phase,
-            get(serverEnvironment.updateStateAtom(machine.environmentId)),
-          ),
-        })),
+  const viewsAtom = Atom.make((get) =>
+    run.machines.map((machine) => ({
+      machine,
+      status: resolveUpdateRunMachineStatus(
+        machine,
+        run.phase,
+        get(serverEnvironment.updateStateAtom(machine.environmentId)),
       ),
-    [run],
+    })),
   );
   return useAtomValue(viewsAtom);
 }
