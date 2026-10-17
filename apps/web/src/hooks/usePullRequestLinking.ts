@@ -24,7 +24,11 @@ import {
   parseChangeRequestUrl,
   type ChangeRequestLink,
 } from "~/lib/openPullRequestLink";
-import { useProjects, useServerConfigs } from "~/state/entities";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useProjects } from "~/state/entities";
+import { environmentServerConfigsAtom } from "~/state/server";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -38,12 +42,21 @@ export function canLinkChangeRequest(
   return findProjectForChangeRequest(projects, parsed) !== undefined;
 }
 
+// A string, so provider status pushes and snapshots that keep the mode don't
+// re-render every link renderer.
+const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) =>
+    threadPullRequestLinkMode(
+      environmentId === null
+        ? undefined
+        : get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities,
+    ),
+  ).pipe(Atom.withLabel("pull-request-link-mode")),
+);
+
 export function usePullRequestLinking(environmentId: EnvironmentId | null | undefined) {
-  const configs = useServerConfigs();
   const projects = useProjects();
-  const capabilities =
-    environmentId == null ? undefined : configs.get(environmentId)?.environment.capabilities;
-  const mode = threadPullRequestLinkMode(capabilities);
+  const mode = useAtomValue(linkModeAtom(environmentId ?? null));
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata, { reportFailure: false });
@@ -79,7 +92,8 @@ export function usePullRequestLinking(environmentId: EnvironmentId | null | unde
       throw new Error("The pull request is not available in this environment.");
     const legacyProject = findProjectForChangeRequest(environmentProjects, parsed);
     const mutation = planThreadPullRequestMutation({
-      capabilities,
+      capabilities: appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)
+        ?.environment.capabilities,
       threadId: threadRef.threadId,
       reference: { ...parsed, url },
       legacyProjectId: legacyProject?.id ?? null,

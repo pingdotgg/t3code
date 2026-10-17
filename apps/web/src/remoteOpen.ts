@@ -7,12 +7,14 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { Atom } from "effect/reactivity";
+import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
-import { useEnvironmentPresentation } from "~/state/presentation";
+import { environmentPresentations } from "~/state/presentation";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -80,29 +82,48 @@ export function resolveRemoteOpenState(input: {
   return REMOTE_UNAVAILABLE;
 }
 
-export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
-  const { presentation } = useEnvironmentPresentation(environmentId);
-  // The presentation changes with every server config push. Read only the pieces
-  // used here so the compiler keys the result on them and callers keep a stable
-  // result across provider updates.
-  const entry = presentation?.entry ?? null;
-  const remoteOpenTargets = presentation?.serverConfig?.remoteOpenTargets;
+function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState): boolean {
+  if (previous.mode !== next.mode) return false;
+  if (previous.mode !== "remote-links" || next.mode !== "remote-links") return true;
+  return previous.host.kind === next.host.kind && previous.host.host === next.host.host;
+}
 
-  if (entry === null) {
-    return UNRESOLVED_REMOTE_OPEN;
-  }
-  const profile = Option.getOrNull(entry.profile);
-  const sshAlias =
-    profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null;
-  return {
-    state: resolveRemoteOpenState({
-      target: entry.target,
-      sshAlias,
-      remoteOpenTargets,
-      isDesktopRenderer: window.desktopBridge !== undefined,
-    }),
-    isResolved: true,
-  };
+// The presentation changes with every server config push and reconnect. This
+// keeps the previous resolution while it is equal, so subscribers re-render only
+// when where files open actually changes.
+const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): RemoteOpenResolution => {
+    const presentation = get(environmentPresentations.presentationAtom(environmentId));
+    const entry = presentation?.entry ?? null;
+    if (entry === null) {
+      return UNRESOLVED_REMOTE_OPEN;
+    }
+    const profile = Option.getOrNull(entry.profile);
+    const next: RemoteOpenResolution = {
+      state: resolveRemoteOpenState({
+        target: entry.target,
+        sshAlias:
+          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null,
+        remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
+        isDesktopRenderer: window.desktopBridge !== undefined,
+      }),
+      isResolved: true,
+    };
+    const previous = Option.getOrNull(get.self<RemoteOpenResolution>());
+    return previous !== null &&
+      previous.isResolved &&
+      remoteOpenStatesEqual(previous.state, next.state)
+      ? previous
+      : next;
+  }).pipe(Atom.withLabel(`remote-open-resolution:${environmentId}`)),
+);
+
+const UNRESOLVED_REMOTE_OPEN_ATOM = Atom.make(UNRESOLVED_REMOTE_OPEN);
+
+export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
+  return useAtomValue(
+    environmentId === null ? UNRESOLVED_REMOTE_OPEN_ATOM : remoteOpenResolutionAtom(environmentId),
+  );
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
