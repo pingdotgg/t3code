@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  countViewedFiles,
   isFileViewed,
   isStaleViewedState,
   revertFileViewedOverlay,
@@ -44,14 +43,6 @@ describe("isFileViewed", () => {
   it("answers a file the host has said nothing about, before its answer arrives", () => {
     expect(isFileViewed("z.ts", null, NO_OVERLAY)).toBe(false);
     expect(isFileViewed("z.ts", null, new Map([["z.ts", true]]))).toBe(true);
-  });
-});
-
-describe("countViewedFiles", () => {
-  it("counts only the files on screen, presses included", () => {
-    expect(countViewedFiles(["a.ts", "b.ts", "c.ts"], states, NO_OVERLAY)).toBe(1);
-    expect(countViewedFiles(["a.ts", "b.ts", "c.ts"], states, new Map([["b.ts", true]]))).toBe(2);
-    expect(countViewedFiles(["b.ts"], states, NO_OVERLAY)).toBe(0);
   });
 });
 

@@ -9,7 +9,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { toastManager } from "../ui/toast";
 import {
-  countViewedFiles,
   isFileViewed,
   isStaleViewedState,
   revertFileViewedOverlay,
@@ -29,7 +28,6 @@ export interface PullRequestFilesViewedView {
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setViewed: (path: string, viewed: boolean) => void;
-  readonly viewedCount: number;
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;
@@ -39,9 +37,8 @@ export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
-  readonly paths: ReadonlyArray<string>;
 }): PullRequestFilesViewedView {
-  const { environmentId, reference, enabled, paths } = options;
+  const { environmentId, reference, enabled } = options;
   const query = useEnvironmentQuery(
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
   );
@@ -154,7 +151,6 @@ export function usePullRequestFilesViewed(options: {
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
     setViewed,
-    viewedCount: countViewedFiles(paths, states, overlay),
     truncated,
     error,
     refresh,

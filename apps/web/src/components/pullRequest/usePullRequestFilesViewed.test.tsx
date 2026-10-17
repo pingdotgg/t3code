@@ -41,7 +41,6 @@ const reference: PullRequestRef = {
   repository: "acme/web",
   number: 42,
 };
-const paths = ["a.ts"];
 
 function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesViewedResult {
   return { files: [{ path: "a.ts", state }], truncated: false };
@@ -54,7 +53,7 @@ function Probe(_props: { readonly view: PullRequestFilesViewedView }) {
 }
 
 function Surface() {
-  const view = usePullRequestFilesViewed({ environmentId, reference, enabled: true, paths });
+  const view = usePullRequestFilesViewed({ environmentId, reference, enabled: true });
   return <Probe view={view} />;
 }
 
@@ -110,7 +109,6 @@ describe("a mark whose file was pushed to before the read that followed it", () 
 
     expect(view().isViewed("a.ts")).toBe(false);
     expect(view().isStale("a.ts")).toBe(true);
-    expect(view().viewedCount).toBe(0);
   });
 
   it("stays given way to on every later read, having nothing left to recover", async () => {

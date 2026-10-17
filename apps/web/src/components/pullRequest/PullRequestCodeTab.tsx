@@ -1,9 +1,4 @@
-import type {
-  CodeViewItem,
-  DiffLineAnnotation,
-  FileDiffMetadata,
-  SelectedLineRange,
-} from "@pierre/diffs";
+import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import type { CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -243,47 +238,6 @@ export interface PullRequestAgentSelectionInput {
   readonly request: string;
 }
 
-// Kept as a "use memo" hook: each item's version needs the viewed state that
-// `usePullRequestFilesViewed` returns, so items are built after that hook from `annotatedFiles`. Those
-// alias `files`, which already went through plain functions before the hook, and the hook itself has
-// to receive `filePaths`. Built inline, that straddle leaves `files` and everything derived from it
-// uncached. The viewer re-renders each item on its version.
-function useDiffItems(
-  annotatedFiles: ReadonlyArray<{
-    readonly fileKey: string;
-    readonly path: string;
-    readonly fileDiff: FileDiffMetadata;
-    readonly annotations: ReviewAnnotation[];
-    readonly annotationsVersion: number;
-  }>,
-  foldOverride: Exclude<DiffFoldOverride, null>,
-  toggledFiles: ReadonlySet<string>,
-  viewedFiles: {
-    readonly enabled: boolean;
-    readonly isViewed: (path: string) => boolean;
-    readonly isStale: (path: string) => boolean;
-  },
-) {
-  "use memo";
-  const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
-    ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
-      const viewedMark = viewedFiles.enabled
-        ? `e${viewedFiles.isViewed(path) ? "v" : ""}${viewedFiles.isStale(path) ? "s" : ""}`
-        : "";
-      return {
-        id: fileKey,
-        type: "diff" as const,
-        fileDiff,
-        annotations,
-        collapsed,
-        version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
-      };
-    },
-  );
-  return items;
-}
-
 function PullRequestCodeTab({
   scrollerRef,
   environmentId,
@@ -451,13 +405,41 @@ function PullRequestCodeTab({
     reportFailure: false,
   });
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
+
+  const viewedFilesStore = detail.capabilities.viewedFiles;
+  const filesViewed = usePullRequestFilesViewed({
+    environmentId,
+    reference,
+    enabled: viewedFilesStore !== undefined,
+  });
+  const {
+    setViewed,
+    refresh: refreshFilesViewed,
+    enabled: filesViewedEnabled,
+    isViewed: isFileViewed,
+    isStale: isFileViewedStale,
+  } = filesViewed;
+  const appliedRefreshToken = useRef(refreshToken);
+  useEffect(() => {
+    if (appliedRefreshToken.current === refreshToken) return;
+    appliedRefreshToken.current = refreshToken;
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    refreshFirstDiffPage();
+    refreshFilesViewed();
+  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+
+  // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
+  // an effect reading a ref could run before that node exists and would never arm the observer.
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
+  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
+  const answeredReveal = useRef<number | null>(null);
+
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
     reference,
     commit,
     cacheKey: `pull-request:${referenceKey}:${detail.updatedAt}:${commit ?? "all"}`,
   });
-
   const hostReview = detail.capabilities.review;
   const review = {
     inlineComment: hostReview.inlineComment && detail.viewerPermissions.comment,
@@ -632,30 +614,23 @@ function PullRequestCodeTab({
         ))}
       </div>
     );
-  const viewedFilesStore = detail.capabilities.viewedFiles;
-  const filesViewed = usePullRequestFilesViewed({
-    environmentId,
-    reference,
-    enabled: viewedFilesStore !== undefined,
-    paths: filePaths,
-  });
-  const {
-    setViewed,
-    refresh: refreshFilesViewed,
-    enabled: filesViewedEnabled,
-    isViewed: isFileViewed,
-    isStale: isFileViewedStale,
-  } = filesViewed;
-  const appliedRefreshToken = useRef(refreshToken);
-  useEffect(() => {
-    if (appliedRefreshToken.current === refreshToken) return;
-    appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    refreshFirstDiffPage();
-    refreshFilesViewed();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
 
-  const items = useDiffItems(annotatedFiles, effectiveFoldOverride, toggledFiles, filesViewed);
+  const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
+    ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
+      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+      const viewedMark = filesViewedEnabled
+        ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
+        : "";
+      return {
+        id: fileKey,
+        type: "diff" as const,
+        fileDiff,
+        annotations,
+        collapsed,
+        version: fnv1a32(`${collapsed ? "1" : "0"}:${viewedMark}:${annotationsVersion}`),
+      };
+    },
+  );
   const fileKeys = items.map((item) => item.id);
   const collapsedFileKeys = new Set(
     items.filter((item) => item.collapsed === true).map((item) => item.id),
@@ -673,21 +648,6 @@ function PullRequestCodeTab({
     if (nextCursor === null) return;
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
-
-  // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
-  // an effect reading a ref could run before that node exists and would never arm the observer.
-  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (sentinel === null || !canLoadNextSlice) return;
-    const observer = new IntersectionObserver(
-      (observed) => {
-        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
-      },
-      { rootMargin: "240px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [canLoadNextSlice, loadNextSlice, sentinel]);
 
   const toggleFile = (fileKey: string) =>
     setToggledFiles((current) => {
@@ -710,28 +670,12 @@ function PullRequestCodeTab({
     setFileViewed,
   };
 
-  const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     if (item.collapsed === true) toggleFile(item.id);
     requestTreeReveal(item.id);
   };
-  const answeredReveal = useRef<number | null>(null);
-  const answerReveal = useEffectEvent(() => {
-    if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
-    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
-      if (canLoadNextSlice) loadNextSlice();
-      return;
-    }
-    answeredReveal.current = revealRequest.nonce;
-    revealFile(revealRequest.path);
-  });
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
-    answerReveal();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
-  }, [canLoadNextSlice, items, revealRequest]);
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
@@ -1014,11 +958,6 @@ function PullRequestCodeTab({
   // to the whole diff and it is not drawn without commits to list, so a scope that outlived them
   // would leave the tab reading one obsolete commit with nothing to press.
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
-  useEffect(() => {
-    if (commit !== null && selectedCommit === undefined) {
-      onSelectedCommitChange(null);
-    }
-  }, [commit, onSelectedCommitChange, selectedCommit]);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
@@ -1083,7 +1022,7 @@ function PullRequestCodeTab({
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filesViewed.viewedCount} / {files.length}
+                {filePaths.filter(isFileViewed).length} / {files.length}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
@@ -1316,6 +1255,38 @@ function PullRequestCodeTab({
       </div>
     </div>
   );
+  // The effects sit after every derivation: a hook between the diff's derivations and their
+  // later readers (the viewer options, the reveal handler) would leave them uncached.
+  useEffect(() => {
+    if (sentinel === null || !canLoadNextSlice) return;
+    const observer = new IntersectionObserver(
+      (observed) => {
+        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadNextSlice, loadNextSlice, sentinel]);
+  const answerReveal = useEffectEvent(() => {
+    if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
+    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
+      if (canLoadNextSlice) loadNextSlice();
+      return;
+    }
+    answeredReveal.current = revealRequest.nonce;
+    revealFile(revealRequest.path);
+  });
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
+    answerReveal();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
+  }, [canLoadNextSlice, items, revealRequest]);
+  useEffect(() => {
+    if (commit !== null && selectedCommit === undefined) {
+      onSelectedCommitChange(null);
+    }
+  }, [commit, onSelectedCommitChange, selectedCommit]);
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}

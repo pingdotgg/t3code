@@ -28,17 +28,6 @@ export function isFileViewed(
   return pressed ?? isViewedState(states?.get(path));
 }
 
-export function countViewedFiles(
-  paths: ReadonlyArray<string>,
-  states: FileViewedStates | null,
-  overlay: FileViewedOverlay,
-): number {
-  return paths.reduce(
-    (total, path) => (isFileViewed(path, states, overlay) ? total + 1 : total),
-    0,
-  );
-}
-
 /**
  * A press is held until a read that could have seen it comes back, rather than cleared when the
  * write succeeds: that read is a separate round trip, and dropping the press in between flashes
