@@ -27,6 +27,7 @@ import {
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  isOrchestrationV2WorkActive,
   NodeId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
@@ -179,7 +180,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 ): Agent | undefined {
   const liveStatus =
     childThread?.activityRunStatus ?? (childThread?.status === "queued" ? "queued" : null);
-  if (!agent || !childThread) return agent;
+  if (!agent || !childThread || isOrchestrationV2WorkActive(agent.status)) return agent;
   const newerRun =
     childThread.latestRunRequestedAt &&
     DateTime.toEpochMillis(childThread.latestRunRequestedAt) >

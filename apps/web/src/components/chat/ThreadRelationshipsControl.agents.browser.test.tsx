@@ -726,6 +726,69 @@ it("shows the matching child agent details and refreshes them when the agent set
   expect(text()).toContain("Lineage · 1 running");
 });
 
+it("keeps a running task active after its child's first turn ends", async () => {
+  state.showTooltips = true;
+  // A supervisor ends its first turn while its own worker keeps running, so its
+  // task stays running. The child's first run was requested just after the task.
+  state.shells = [
+    {
+      environmentId: "test",
+      source: {
+        id: "child-1",
+        title: "Supervisor",
+        status: "completed",
+        activityRunStatus: null,
+        latestRunId: "run-child-1",
+        latestRunRequestedAt: DateTime.makeUnsafe("2026-09-16T12:00:00.003Z"),
+        latestRunStartedAt: DateTime.makeUnsafe("2026-09-16T12:00:01Z"),
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-16T12:02:09Z"),
+        lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+      },
+    },
+  ];
+  state.projection = {
+    thread: {
+      id: "parent",
+      lineage: { relationshipToParent: null },
+      activeProviderThreadId: null,
+    },
+    runs: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [
+      {
+        id: "agent-1",
+        origin: "app_owned",
+        driver: "claudeAgent",
+        providerInstanceId: "claudeAgent",
+        childThreadId: "child-1",
+        title: "Supervisor",
+        prompt: "Coordinate the worker",
+        model: "claude-opus-5-5",
+        status: "running",
+        progress: null,
+        result: null,
+        startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+      },
+    ],
+  };
+  await render(
+    <ThreadRelationshipsPanel
+      environmentId={EnvironmentId.make("test")}
+      threadId={ThreadId.make("parent")}
+    />,
+  );
+  const text = textNodes(" ").replace(/\s+/g, " ");
+
+  expect(text).toContain("Lineage · 1 running");
+  expect(text).toContain("Supervisor");
+  expect(text).not.toContain("Previous agents");
+  expect(text).not.toMatch(/completed/i);
+});
+
 it("shows readable models and only differing workspace details in agent tooltips", async () => {
   state.showTooltips = true;
   const parent = {
