@@ -41,6 +41,8 @@ export function BranchPicker({
   isFetchingNextPage,
   onLoadNext,
   statusText,
+  notice,
+  extraData,
   originControl,
   popupProps,
   renderItem,
@@ -60,6 +62,9 @@ export function BranchPicker({
   isFetchingNextPage: boolean;
   onLoadNext: () => void;
   statusText: string | null;
+  notice?: string | null | undefined;
+  /** Rows re-render only when their item or this value changes. */
+  extraData?: unknown;
   originControl?: { checked: boolean; onCheckedChange: (checked: boolean) => void } | undefined;
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
@@ -198,6 +203,7 @@ export function BranchPicker({
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
+                extraData={extraData}
                 estimatedItemSize={28}
                 drawDistance={336}
                 onLayout={() => {
@@ -247,6 +253,7 @@ export function BranchPicker({
               </TooltipPopup>
             </Tooltip>
           ) : null}
+          {notice ? <ComboboxStatus>{notice}</ComboboxStatus> : null}
           {statusText ? <ComboboxStatus>{statusText}</ComboboxStatus> : null}
         </div>
       </ComboboxPopup>
