@@ -49,7 +49,7 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
 );
 
 describe("OrchestratorMcpService", () => {
-  it.effect("retries terminal acknowledgement with a fresh command id", () =>
+  it.effect("defers acknowledgement until publication and retries with a fresh command id", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-ack-parent");
       const childThreadId = ThreadId.make("thread:mcp-ack-child");
@@ -94,24 +94,26 @@ describe("OrchestratorMcpService", () => {
         ],
         contextTransfers: [],
         messages: [],
+        turnItems: [],
         subagents: [],
         providerThreads: [],
         runtimeRequests: [],
       } as unknown as OrchestrationV2ThreadProjection;
       let hasNestedWork = true;
+      let resultPublished = true;
       const layerDependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
-                ? hasNestedWork
+                ? hasNestedWork || !resultPublished
                   ? {
                       ...parentProjection,
                       subagents: parentProjection.subagents.map((task) => ({
                         ...task,
                         result: null,
-                        status: "running" as const,
+                        status: hasNestedWork ? ("running" as const) : ("completed" as const),
                       })),
                     }
                   : parentProjection
@@ -124,6 +126,7 @@ describe("OrchestratorMcpService", () => {
                     }
                   : childProjection,
             ),
+          delegatedTaskResultPending: () => Effect.succeed(false),
           dispatch: (command) =>
             Ref.update(acknowledgementCommandIds, (commandIds) => [
               ...commandIds,
@@ -131,7 +134,7 @@ describe("OrchestratorMcpService", () => {
             ]).pipe(
               Effect.andThen(Ref.updateAndGet(acknowledgementAttempts, (count) => count + 1)),
               Effect.flatMap((attempt) =>
-                attempt === 1
+                attempt === 1 && resultPublished
                   ? Effect.fail(new Error("simulated acknowledgement failure") as never)
                   : Effect.succeed({} as never),
               ),
@@ -167,6 +170,13 @@ describe("OrchestratorMcpService", () => {
         assert.isNull(pending.summary);
         assert.equal(yield* Ref.get(acknowledgementAttempts), 0);
         hasNestedWork = false;
+        resultPublished = false;
+        const unpublished = yield* service.taskStatus(scope, taskId);
+        assert.equal(unpublished.status, "completed");
+        assert.equal(unpublished.workState, "result_available");
+        assert.isNull(unpublished.resultContextTransferId);
+        assert.equal(yield* Ref.get(acknowledgementAttempts), 0);
+        resultPublished = true;
         const error = yield* service.taskStatus(scope, taskId).pipe(Effect.flip);
         assert.equal(error.code, "orchestration_error");
 
@@ -190,7 +200,7 @@ describe("OrchestratorMcpService", () => {
       const dispatched = yield* Ref.make(0);
       let awaitsRestart = true;
       let readFails = true;
-      const parentProjection = {
+      let parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
         contextTransfers: [],
@@ -273,6 +283,18 @@ describe("OrchestratorMcpService", () => {
         awaitsRestart = false;
         const settled = yield* service.taskStatus(scope, taskId);
         assert.equal(settled.status, "cancelled");
+        assert.equal(yield* Ref.get(dispatched), 0);
+        parentProjection = {
+          ...parentProjection,
+          subagents: parentProjection.subagents.map((task) => ({
+            ...task,
+            status: "cancelled" as const,
+            result: "Child cancelled after restart.",
+          })),
+        };
+        const published = yield* service.taskStatus(scope, taskId);
+        assert.equal(published.status, "cancelled");
+        assert.equal(published.summary, "Child cancelled after restart.");
         assert.equal(yield* Ref.get(dispatched), 1);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),

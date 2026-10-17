@@ -1460,6 +1460,7 @@ const make = Effect.gen(function* () {
       if (
         acknowledgeTerminal &&
         isTerminalTaskStatus(status) &&
+        task.result !== null &&
         task.completionDelivery?.state !== "acknowledged" &&
         task.completionDelivery?.state !== "disposed"
       ) {
