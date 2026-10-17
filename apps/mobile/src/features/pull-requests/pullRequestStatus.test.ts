@@ -1,6 +1,10 @@
 import type { PullRequestActivity, PullRequestCheck, PullRequestComment } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { pullRequestChecksSummary, pullRequestReviewSummary } from "./pullRequestStatus";
+import {
+  pullRequestChecksSummary,
+  pullRequestConflict,
+  pullRequestReviewSummary,
+} from "./pullRequestStatus";
 
 const author = { login: "julius", name: null, avatarUrl: null };
 function review(state: string, at: string): PullRequestComment {
@@ -105,5 +109,32 @@ describe("mobile overview check status", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
+  });
+});
+
+describe("mobile pull request conflict", () => {
+  it("names the base branch of an open pull request with conflicts", () => {
+    expect(
+      pullRequestConflict({
+        state: "open",
+        isDraft: false,
+        mergeability: "conflicting",
+        baseBranch: "main",
+      })?.label,
+    ).toBe("Conflicts with main");
+    expect(
+      pullRequestConflict({ state: "open", isDraft: false, mergeability: "conflicting" })?.label,
+    ).toBe("Has conflicts");
+  });
+
+  it.each([
+    { state: "open" as const, isDraft: true, mergeability: "conflicting" as const },
+    { state: "merged" as const, isDraft: false, mergeability: "conflicting" as const },
+    { state: "closed" as const, isDraft: false, mergeability: "conflicting" as const },
+    { state: "open" as const, isDraft: false, mergeability: "mergeable" as const },
+    { state: "open" as const, isDraft: false, mergeability: "unknown" as const },
+    { state: "open" as const, isDraft: false },
+  ])("stays quiet when it cannot conflict or has not been reported: %j", (pr) => {
+    expect(pullRequestConflict(pr)).toBeNull();
   });
 });
