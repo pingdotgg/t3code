@@ -66,6 +66,21 @@ describe("Cursor skills", () => {
           "oversized",
           "x".repeat(1_000_001),
         );
+        yield* writeSkill(
+          path.join(userHome, ".cursor", "skills-cursor"),
+          "loop",
+          "---\ndescription: builtin loop\n---\n",
+        );
+        yield* writeSkill(
+          path.join(userHome, ".cursor", "skills-cursor"),
+          "review",
+          "---\ndescription: builtin review\n---\n",
+        );
+        yield* writeSkill(
+          path.join(userHome, ".cursor", "skills-cursor"),
+          "ide-only",
+          "---\nmetadata:\n  surfaces:\n    - ide\n---\n",
+        );
         yield* fileSystem.makeDirectory(path.join(userHome, ".codex"), { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(userHome, ".codex", "skills"),
@@ -80,6 +95,13 @@ describe("Cursor skills", () => {
             scope: "project",
             enabled: true,
             userInvocable: false,
+          },
+          {
+            name: "loop",
+            description: "builtin loop",
+            path: path.join(userHome, ".cursor", "skills-cursor", "loop", "SKILL.md"),
+            scope: "system",
+            enabled: true,
           },
           {
             name: "oversized",
