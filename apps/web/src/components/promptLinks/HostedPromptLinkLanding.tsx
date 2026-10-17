@@ -7,7 +7,7 @@ import {
 } from "@t3tools/shared/promptLinks";
 import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "~/branding";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -65,13 +65,10 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
   const { environments, isReady } = useEnvironments();
   const [opener, setOpener] = useLocalStorage(OPENER_STORAGE_KEY, null, Opener);
   const [continuedHref, setContinuedHref] = useState<string | null>(null);
-  const appPath = useMemo(
-    () =>
-      enabled && isHostedStaticApp()
-        ? promptLinkAppPath(new URL(href, window.location.origin).href, window.location.origin)
-        : null,
-    [enabled, href],
-  );
+  const appPath =
+    enabled && isHostedStaticApp()
+      ? promptLinkAppPath(new URL(href, window.location.origin).href, window.location.origin)
+      : null;
   if (appPath === null || continuedHref === href) return null;
   const canContinue = isReady && environments.length > 0;
   if (opener === "browser") {
@@ -102,7 +99,7 @@ function HostedPromptLinkLanding({
   readonly openInAppRemembered: boolean;
   readonly onChoose: (choice: "app" | "browser", remember: boolean) => void;
 }) {
-  const summary = useMemo(() => summarize(appPath), [appPath]);
+  const summary = summarize(appPath);
   const [remember, setRemember] = useState(false);
   const deepLink = promptLinkDeepLink(appPath);
   const onPhone = /android|iphone|ipad/i.test(navigator.userAgent);
