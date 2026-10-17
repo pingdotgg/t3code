@@ -81,6 +81,7 @@ type PageScrollEnv = {
   cancelAnimationFrame: (handle: number) => void;
   setTimeout: (callback: () => void, delay: number) => number;
   clearTimeout: (handle: number) => void;
+  prefersReducedMotion: () => boolean;
 };
 
 function getDefaultEnv(): PageScrollEnv {
@@ -90,6 +91,7 @@ function getDefaultEnv(): PageScrollEnv {
     cancelAnimationFrame: (handle) => window.cancelAnimationFrame(handle),
     setTimeout: (callback, delay) => window.setTimeout(callback, delay),
     clearTimeout: (handle) => window.clearTimeout(handle),
+    prefersReducedMotion: () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   };
 }
 
@@ -208,6 +210,12 @@ export function createPageScrollController({
 
   const smoothScrollBy = (container: PageScrollContainer, deltaY: number) => {
     cancelDiscreteAnimation();
+
+    // Read per press so a preference change applies without a reload.
+    if (env.prefersReducedMotion()) {
+      container.scrollTop += deltaY;
+      return;
+    }
 
     const startScrollTop = container.scrollTop;
     const startTime = env.now();

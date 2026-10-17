@@ -16,6 +16,7 @@ class TestClock {
   private nextHandle = 1;
   private animationFrames = new Map<number, FrameRequestCallback>();
   private timeouts = new Map<number, { at: number; callback: () => void }>();
+  reducedMotion = false;
 
   readonly env = {
     now: () => this.currentTime,
@@ -37,6 +38,7 @@ class TestClock {
     clearTimeout: (handle: number) => {
       this.timeouts.delete(handle);
     },
+    prefersReducedMotion: () => this.reducedMotion,
   };
 
   advanceBy(ms: number, frameMs = 16) {
@@ -201,7 +203,36 @@ describe("createPageScrollController", () => {
     );
   });
 
-  test("continues scrolling on hold without repeated keydown events and stops on keyup", () => {
+  test("moves a full page without animation frames when motion is reduced", () => {
+    const clock = new TestClock();
+    clock.reducedMotion = true;
+    const container = {
+      clientHeight: 600,
+      scrollHeight: 1_800,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ height: 600 }),
+    };
+    const controller = createPageScrollController({
+      getContainer: () => container,
+      getScrollPaddingBottomPx: () => 24,
+      env: clock.env,
+    });
+    const pageDistance = getPageScrollDistancePx({
+      containerHeightPx: 600,
+      scrollPaddingBottomPx: 24,
+    });
+
+    controller.handleKeyDown("PageDown");
+
+    expect(container.scrollTop).toBe(pageDistance);
+
+    controller.handleKeyUp("PageDown");
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+
+    expect(container.scrollTop).toBe(pageDistance);
+  });
+
+  test("reads the motion preference on each press", () => {
     const clock = new TestClock();
     const container = {
       clientHeight: 600,
@@ -214,20 +245,57 @@ describe("createPageScrollController", () => {
       getScrollPaddingBottomPx: () => 24,
       env: clock.env,
     });
+    const pageDistance = getPageScrollDistancePx({
+      containerHeightPx: 600,
+      scrollPaddingBottomPx: 24,
+    });
+
     controller.handleKeyDown("PageDown");
-    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + 50);
-
-    const afterHoldStarts = container.scrollTop;
-    clock.advanceBy(200);
-
-    expect(container.scrollTop).toBeGreaterThan(afterHoldStarts);
-
-    const stoppedAt = container.scrollTop;
     controller.handleKeyUp("PageDown");
-    clock.advanceBy(250);
+    clock.advanceBy(16);
 
-    expect(container.scrollTop).toBe(stoppedAt);
+    expect(container.scrollTop).toBeGreaterThan(0);
+    expect(container.scrollTop).toBeLessThan(pageDistance);
+
+    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS);
+    clock.reducedMotion = true;
+    controller.handleKeyDown("PageDown");
+
+    expect(container.scrollTop).toBeCloseTo(pageDistance * 2, 5);
   });
+
+  // Holding the key is the user moving the page, so it stays continuous under reduced motion.
+  test.each([false, true])(
+    "continues scrolling on hold without repeated keydown events and stops on keyup (reduced motion: %s)",
+    (reducedMotion) => {
+      const clock = new TestClock();
+      clock.reducedMotion = reducedMotion;
+      const container = {
+        clientHeight: 600,
+        scrollHeight: 4_000,
+        scrollTop: 0,
+        getBoundingClientRect: () => ({ height: 600 }),
+      };
+      const controller = createPageScrollController({
+        getContainer: () => container,
+        getScrollPaddingBottomPx: () => 24,
+        env: clock.env,
+      });
+      controller.handleKeyDown("PageDown");
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + 50);
+
+      const afterHoldStarts = container.scrollTop;
+      clock.advanceBy(200);
+
+      expect(container.scrollTop).toBeGreaterThan(afterHoldStarts);
+
+      const stoppedAt = container.scrollTop;
+      controller.handleKeyUp("PageDown");
+      clock.advanceBy(250);
+
+      expect(container.scrollTop).toBe(stoppedAt);
+    },
+  );
 
   test("notifies once when a page scroll starts", () => {
     const clock = new TestClock();
