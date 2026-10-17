@@ -6,7 +6,7 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
@@ -203,6 +203,13 @@ function getOpenInIconClass(kind: OpenInOption["kind"]) {
   return cn(kind === "brand" ? "text-foreground opacity-100" : "text-muted-foreground");
 }
 
+// Resolving filters and labels every known editor; the compiler would redo
+// it every render because the open command hooks follow it.
+function useOpenInOptions(editors: ReadonlyArray<EditorId>) {
+  "use memo";
+  return resolveOpenInOptions(navigator.platform, editors);
+}
+
 export const OpenInPicker = memo(function OpenInPicker({
   environmentId,
   keybindings,
@@ -238,59 +245,45 @@ export const OpenInPicker = memo(function OpenInPicker({
   // the viewing machine, which only the desktop app can probe.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
-  const options = useMemo(
-    () => resolveOpenInOptions(navigator.platform, effectiveEditors),
-    [effectiveEditors],
-  );
+  const options = useOpenInOptions(effectiveEditors);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
-  const openInEditor = useCallback(
-    (editorId: EditorId | null) => {
-      if (!openInCwd) return;
-      const editor = editorId ?? preferredEditor;
-      if (!editor) return;
-      if (remote.mode === "remote-unavailable") return;
-      if (remote.mode === "remote-links") {
-        const url = buildRemoteOpenUrl({
-          editor,
-          host: remote.host.host,
-          absolutePath: openInCwd,
-        });
-        if (url === undefined) return;
-        // Only record hint-seen/preferred when the shell actually accepted
-        // the URL (an older desktop build can refuse the editor scheme).
-        void openRemoteEditorUrl(url).then((opened) => {
-          if (!opened) return;
-          markRemoteHintSeen();
-          setPreferredEditor(editor);
-        });
-        return;
-      }
-      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-      const result = openInEditorMutation({
-        environmentId,
-        input: {
-          cwd: openInCwd,
-          editor,
-        },
+  const openInEditor = (editorId: EditorId | null) => {
+    if (!openInCwd) return;
+    const editor = editorId ?? preferredEditor;
+    if (!editor) return;
+    if (remote.mode === "remote-unavailable") return;
+    if (remote.mode === "remote-links") {
+      const url = buildRemoteOpenUrl({
+        editor,
+        host: remote.host.host,
+        absolutePath: openInCwd,
       });
-      setPreferredEditor(editor);
-      return result;
-    },
-    [
+      if (url === undefined) return;
+      // Only record hint-seen/preferred when the shell actually accepted
+      // the URL (an older desktop build can refuse the editor scheme).
+      void openRemoteEditorUrl(url).then((opened) => {
+        if (!opened) return;
+        markRemoteHintSeen();
+        setPreferredEditor(editor);
+      });
+      return;
+    }
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    const result = openInEditorMutation({
       environmentId,
-      markRemoteHintSeen,
-      openInCwd,
-      openInEditorMutation,
-      preferredEditor,
-      remote,
-      setPreferredEditor,
-    ],
-  );
+      input: {
+        cwd: openInCwd,
+        editor,
+      },
+    });
+    setPreferredEditor(editor);
+    return result;
+  };
 
-  const openFavoriteEditorShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
-    [keybindings],
+  const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(
+    keybindings,
+    "editor.openFavorite",
   );
 
   useEffect(() => {
