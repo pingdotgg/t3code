@@ -261,6 +261,112 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
+  it("recognizes QUIC stalls without matching other transport errors", () => {
+    expect(
+      ManagedEndpointRuntime.isQuicStallRelayClientOutput(
+        '2026-10-16T20:29:43Z ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=1 event=0 ip=198.41.192.67',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isQuicStallRelayClientOutput(
+        '2026-10-16T20:29:41Z ERR Connection terminated error="datagram manager error: timeout: no recent network activity" connIndex=1',
+      ),
+    ).toBe(true);
+    expect(
+      ManagedEndpointRuntime.isQuicStallRelayClientOutput(
+        '2026-10-16T20:30:00Z ERR Register tunnel error from server side error="context deadline exceeded" connIndex=0',
+      ),
+    ).toBe(false);
+  });
+
+  const makeStallingSpawner = Effect.gen(function* () {
+    const spawned: Array<ChildProcess.StandardCommand> = [];
+    const killed: Array<number> = [];
+    const output = yield* Queue.unbounded<Uint8Array>();
+    const checkpoints = yield* Queue.unbounded<void>();
+    const secondSpawned = yield* Deferred.make<void>();
+    const observedOutput = Stream.fromQueue(output).pipe(
+      Stream.tap((chunk) =>
+        new TextDecoder().decode(chunk) === "checkpoint\n"
+          ? Queue.offer(checkpoints, undefined)
+          : Effect.void,
+      ),
+    );
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (!ChildProcess.isStandardCommand(command)) {
+          throw new Error("Expected standard command.");
+        }
+        const pid = 800 + spawned.length;
+        spawned.push(command);
+        if (spawned.length === 2) yield* Deferred.succeed(secondSpawned, undefined);
+        const handle = makeHandle({
+          pid,
+          onKill: () => {
+            killed.push(pid);
+          },
+          output: pid === 800 ? observedOutput : Stream.empty,
+        });
+        yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+        return handle;
+      }),
+    );
+    const stall = (count: number) =>
+      Effect.gen(function* () {
+        const encoder = new TextEncoder();
+        yield* Queue.offer(
+          output,
+          encoder.encode(
+            '2026-10-16T20:29:43Z ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=1\n'.repeat(
+              count,
+            ),
+          ),
+        );
+        yield* Queue.offer(output, encoder.encode("checkpoint\n"));
+        yield* Queue.take(checkpoints);
+      });
+    return { spawner, spawned, killed, secondSpawned, stall };
+  });
+
+  it.effect("moves a connector whose QUIC connections keep stalling to HTTP/2", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, killed, secondSpawned, stall } = yield* makeStallingSpawner;
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+
+      yield* stall(30);
+      yield* Deferred.await(secondSpawned);
+
+      expect(spawned[0]!.args).not.toContain("--protocol");
+      expect(spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+      expect(killed).toEqual([800]);
+    }),
+  );
+
+  it.effect("keeps QUIC when stalls are spread beyond the window", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, secondSpawned, stall } = yield* makeStallingSpawner;
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      yield* runtime.applyConfig({
+        providerKind: "cloudflare_tunnel",
+        connectorToken: "token",
+        tunnelId: "tunnel-1",
+      });
+
+      for (let round = 0; round < 6; round += 1) {
+        yield* stall(10);
+        yield* TestClock.adjust(Duration.minutes(3));
+      }
+
+      expect(yield* Deferred.isDone(secondSpawned)).toBe(false);
+      expect(spawned).toHaveLength(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("recovers a rejected tunnel without waiting for the connector to exit", () =>
     Effect.gen(function* () {
       const output = yield* Queue.unbounded<Uint8Array>();
