@@ -26,24 +26,8 @@ function ComposerProbe() {
 }
 
 beforeEach(async () => {
-  // The probe has no DOM output, but ReactDOM needs an event target.
-  const document = {
-    nodeType: 9,
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  const container = {
-    nodeType: 1,
-    tagName: "DIV",
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    ownerDocument: document,
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  root = createRoot(container as unknown as HTMLElement);
+  root = createRoot(document.createElement("div"));
   await act(() => root.render(<ComposerProbe />));
 });
 

@@ -1,6 +1,6 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { act, useState, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, useState } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -8,16 +8,10 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
 
-vi.mock("../ui/collapsible", () => {
-  const Children = ({ children }: { children: ReactNode }) => <>{children}</>;
-  return {
-    Collapsible: Children,
-    CollapsiblePanel: Children,
-    CollapsibleTrigger: Children,
-  };
-});
-
-vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }));
+vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
+}));
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
@@ -72,51 +66,44 @@ function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
   );
 }
 
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", {
-    setTimeout: globalThis.setTimeout,
-    clearTimeout: globalThis.clearTimeout,
-  });
-  vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
+function buttonWithText(text: string) {
+  const button = [...document.querySelectorAll("button")].find((element) =>
+    element.textContent?.includes(text),
+  );
+  expect(button, `button ${text}`).toBeDefined();
+  return button!;
+}
+
 async function chooseOption() {
-  await act(async () => {
-    renderer!.root
-      .findAllByType("button")
-      .find((button) =>
-        button.findAllByType("span").some((span) => span.children.includes("Incremental")),
-      )!
-      .props.onClick();
-  });
+  await act(async () => buttonWithText("Incremental").click());
 }
 
 async function navigate(label: string) {
-  await act(async () => {
-    renderer!.root
-      .findAllByType("button")
-      .find((button) => button.children.includes(label))!
-      .props.onClick();
-  });
+  await act(async () => buttonWithText(label).click());
 }
 
 function activeIndex() {
-  return renderer!.root.findByType("output").children.join("");
+  return container.querySelector("output")!.textContent;
 }
 
 it("does not skip the next unanswered question after manual advance", async () => {
-  await act(async () => {
-    renderer = create(<Questions />);
-  });
+  await act(async () => root.render(<Questions />));
   await chooseOption();
   await navigate("Next");
   expect(activeIndex()).toBe("1");
@@ -129,9 +116,7 @@ it("does not skip the next unanswered question after manual advance", async () =
 });
 
 it("does not undo previous-question navigation with a stale timer", async () => {
-  await act(async () => {
-    renderer = create(<Questions initialIndex={1} />);
-  });
+  await act(async () => root.render(<Questions initialIndex={1} />));
   await chooseOption();
   await navigate("Previous");
   await act(async () => vi.advanceTimersByTime(200));
@@ -139,9 +124,7 @@ it("does not undo previous-question navigation with a stale timer", async () => 
 });
 
 it("still auto-advances once after the answer draft rerenders the same question", async () => {
-  await act(async () => {
-    renderer = create(<Questions />);
-  });
+  await act(async () => root.render(<Questions />));
   await chooseOption();
   await act(async () => vi.advanceTimersByTime(200));
   expect(activeIndex()).toBe("1");

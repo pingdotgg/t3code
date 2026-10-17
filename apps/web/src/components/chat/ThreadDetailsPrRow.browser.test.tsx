@@ -1,7 +1,7 @@
 import { EnvironmentId, type PullRequestCheck } from "@t3tools/contracts";
-import { act, cloneElement, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
@@ -9,11 +9,13 @@ const state = vi.hoisted(() => ({
   perform: vi.fn(),
 }));
 
-vi.mock("~/state/entities", () => ({ useServerConfigs: () => new Map() }));
-vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: {} }));
-vi.mock("~/hooks/useLiveRefresh", () => ({ useLiveRefresh: () => {} }));
-vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({
+vi.mock(import("~/state/entities"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useServerConfigs: (() => new Map()) as never,
+}));
+vi.mock(import("~/state/query"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentQuery: (() => ({
     data: {
       number: 1,
       title: "Test PR",
@@ -38,47 +40,33 @@ vi.mock("~/state/query", () => ({
     dataUpdatedAt: 1,
     isPending: false,
     refresh: vi.fn(),
-  }),
+  })) as never,
 }));
-vi.mock("../pullRequest/usePullRequestActions", () => ({
+vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
+  ...(await importOriginal()),
   usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
-  usePullRequestHandoffs: () => ({ handoff: null, startHandoff: vi.fn() }),
-}));
-vi.mock("../ui/popover", () => ({
-  Popover: ({ children }: { children: ReactNode }) => children,
-  PopoverTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
-    cloneElement(render, undefined, children),
-  PopoverPopup: () => null,
-}));
-vi.mock("../ui/tooltip", () => ({
-  Tooltip: ({ children }: { children: ReactNode }) => children,
-  TooltipTrigger: ({ render, children }: { render: ReactElement; children: ReactNode }) =>
-    cloneElement(render, undefined, children),
-  TooltipPopup: () => null,
-}));
-vi.mock("../ui/alert-dialog", () => ({
-  AlertDialog: ({ open, children }: { open: boolean; children: ReactNode }) =>
-    open ? <div role="alertdialog">{children}</div> : null,
-  AlertDialogPopup: ({ children }: { children: ReactNode }) => children,
-  AlertDialogHeader: ({ children }: { children: ReactNode }) => children,
-  AlertDialogTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-  AlertDialogDescription: ({ children }: { children: ReactNode }) => children,
-  AlertDialogFooter: ({ children }: { children: ReactNode }) => children,
-  AlertDialogClose: () => null,
+  usePullRequestHandoffs: () => ({ handoff: null, startAsk: vi.fn(), startHandoff: vi.fn() }),
 }));
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 
-let renderer: ReactTestRenderer;
+let root: Root;
+let container: HTMLDivElement;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
 afterEach(() => {
-  act(() => renderer?.unmount());
+  act(() => root.unmount());
+  document.body.replaceChildren();
   vi.unstubAllGlobals();
   state.status = "success";
   state.extraStatus = null;
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const render = () => (
     <ThreadDetailsPrRow
       environmentId={EnvironmentId.make("environment")}
@@ -93,26 +81,23 @@ it("requires a new merge click after passing checks become pending and pass agai
   );
   const clickMerge = () =>
     act(() => {
-      renderer.root
-        .findAllByType("button")
-        .find((button) => button.children.includes("Merge"))!
-        .props.onClick();
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Merge")!
+        .click();
     });
-  const dialogs = () => renderer.root.findAllByProps({ role: "alertdialog" });
+  const dialogs = () => [...document.querySelectorAll('[role="alertdialog"]')];
 
-  act(() => {
-    renderer = create(render());
-  });
+  act(() => root.render(render()));
   clickMerge();
   expect(dialogs()).toHaveLength(1);
   act(() => {
     state.status = "pending";
-    renderer.update(render());
+    root.render(render());
   });
   expect(dialogs()).toHaveLength(0);
   act(() => {
     state.status = "success";
-    renderer.update(render());
+    root.render(render());
   });
   expect(dialogs()).toHaveLength(0);
   clickMerge();
@@ -127,11 +112,10 @@ it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
   ["success", "pending", "1/2"],
   ["failure", "pending", "1/2"],
 ])("shows a count only while checks run (%s, %s)", (status, extraStatus, count) => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.status = status;
   state.extraStatus = extraStatus;
   act(() => {
-    renderer = create(
+    root.render(
       <ThreadDetailsPrRow
         environmentId={EnvironmentId.make("environment")}
         pr={null}
@@ -144,8 +128,8 @@ it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
       />,
     );
   });
-  const text = renderer.root
-    .findAllByType("span")
-    .map((span) => span.children.filter((child) => typeof child === "string").join(""));
-  expect(text.filter((value) => /^\d+\/\d+$/.test(value))).toEqual(count ? [count] : []);
+  const counts = [...container.querySelectorAll("*")]
+    .map((element) => element.textContent?.trim() ?? "")
+    .filter((value) => /^\d+\/\d+$/.test(value));
+  expect(new Set(counts)).toEqual(new Set(count ? [count] : []));
 });

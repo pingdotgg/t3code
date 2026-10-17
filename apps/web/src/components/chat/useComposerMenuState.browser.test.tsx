@@ -30,25 +30,10 @@ async function renderMenu(hidden: boolean) {
 }
 
 beforeEach(() => {
-  const document = {
-    nodeType: 9,
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  const container = {
-    nodeType: 1,
-    tagName: "DIV",
-    namespaceURI: "http://www.w3.org/1999/xhtml",
-    ownerDocument: document,
-    addEventListener() {},
-    removeEventListener() {},
-  };
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   committedOpen = [];
   closePopup = vi.fn();
-  root = createRoot(container as unknown as HTMLElement);
+  root = createRoot(document.createElement("div"));
 });
 
 afterEach(async () => {

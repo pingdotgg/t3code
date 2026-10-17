@@ -1,31 +1,32 @@
 import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const watchCommand = vi.hoisted(() => vi.fn());
 
-vi.mock("./ThreadDetailsPrRow", () => ({
+// The row queries its own pull request; this test covers only which rows the list shows.
+vi.mock(import("./ThreadDetailsPrRow"), async (importOriginal) => ({
+  ...(await importOriginal()),
   ThreadDetailsPrRow: ({
     number,
     onStopWatching,
   }: {
     number: number;
-    onStopWatching?: () => void;
+    onStopWatching?: (() => void) | undefined;
   }) => (
-    <span
-      data-row={String(number)}
-      data-watched={onStopWatching ? "" : undefined}
-      onClick={onStopWatching}
-    />
+    <div data-row={String(number)}>
+      {onStopWatching ? <button onClick={onStopWatching}>Stop watching #{number}</button> : null}
+    </div>
   ),
 }));
-vi.mock("~/state/entities", () => ({ useProjects: () => [] }));
-vi.mock("~/state/threads", () => ({ threadEnvironment: {} }));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => watchCommand }));
-vi.mock("~/lib/openPullRequestLink", () => ({
-  parseChangeRequestUrl: () => null,
-  findProjectOnChangeRequestHost: () => undefined,
+vi.mock(import("~/state/entities"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useProjects: () => [],
+}));
+vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomCommand: (() => watchCommand) as never,
 }));
 
 import { ThreadDetailsPrRows } from "./ThreadDetailsPrRows";
@@ -60,16 +61,23 @@ const bottom = link(1, "layer-one", "main", "2026-01-01T00:00:10.000Z");
 const top = link(2, "layer-two", "layer-one", "2026-01-01T00:00:20.000Z");
 const other = link(3, "unrelated", "main", "2026-01-01T00:00:05.000Z");
 
-let renderer: ReactTestRenderer;
+let root: Root;
+let container: HTMLDivElement;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
 afterEach(() => {
-  act(() => renderer?.unmount());
+  act(() => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
 function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPullRequestLink) {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   act(() => {
-    renderer = create(
+    root.render(
       <ThreadDetailsPrRows
         threadRef={{
           environmentId: EnvironmentId.make("environment"),
@@ -92,18 +100,16 @@ function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPull
   });
 }
 
-const rows = () => renderer.root.findAllByType("span").map((node) => node.props["data-row"]);
-const toggleLabel = () =>
-  renderer.root
-    .findAllByType("button")
-    .at(-1)
-    ?.children.filter((child) => typeof child === "string")
-    .join("");
+const rows = () =>
+  [...container.querySelectorAll("[data-row]")].map((node) => node.getAttribute("data-row"));
+const toggleButton = () =>
+  [...container.querySelectorAll("button")].find((button) =>
+    /^(Show \d+ more|Show less)$/.test(button.textContent?.trim() ?? ""),
+  );
+const toggleLabel = () => toggleButton()?.textContent?.trim();
 
 function toggle() {
-  act(() => {
-    (renderer.root.findAllByType("button").at(-1)!.props as { onClick: () => void }).onClick();
-  });
+  act(() => toggleButton()!.click());
 }
 
 it("shows only the current pull request until the rest are asked for", () => {
@@ -143,14 +149,12 @@ it("lets only watched pull requests stop their watch", () => {
   };
   render([other, watched, top], top);
   toggle();
-  const spans = renderer.root.findAllByType("span");
-  expect(
-    spans
-      .filter((node) => node.props["data-watched"] !== undefined)
-      .map((node) => node.props["data-row"]),
-  ).toEqual(["1"]);
+  const stopButtons = [...container.querySelectorAll("button")].filter((button) =>
+    button.textContent?.startsWith("Stop watching"),
+  );
+  expect(stopButtons.map((button) => button.textContent)).toEqual(["Stop watching #1"]);
 
-  act(() => spans.find((node) => node.props["data-row"] === "1")!.props.onClick());
+  act(() => stopButtons[0]!.click());
   expect(watchCommand).toHaveBeenCalledWith({
     environmentId: EnvironmentId.make("environment"),
     input: {

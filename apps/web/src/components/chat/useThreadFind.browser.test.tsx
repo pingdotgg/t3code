@@ -1,5 +1,5 @@
-import { act, useLayoutEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, useLayoutEffect, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -39,7 +39,14 @@ vi.mock("~/state/query", () => ({
 
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
-let renderer: ReactTestRenderer | undefined;
+type Rendered = { update: (node: ReactNode) => void; unmount: () => void };
+function render(node: ReactNode): Rendered {
+  const root = createRoot(document.createElement("div"));
+  root.render(node);
+  return { update: (next) => root.render(next), unmount: () => root.unmount() };
+}
+
+let renderer: Rendered | undefined;
 let find: ReturnType<typeof useThreadFind>;
 const a = EnvironmentId.make("environment:a");
 const b = EnvironmentId.make("environment:b");
@@ -68,7 +75,6 @@ function Probe({
   return null;
 }
 beforeEach(() => {
-  vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 });
 afterEach(async () => {
@@ -93,7 +99,7 @@ describe("V2 find state", () => {
 
   it("reveals an early match and updates its count without requesting another jump", async () => {
     await act(async () => {
-      renderer = create(<Probe environmentId={a} progressive />);
+      renderer = render(<Probe environmentId={a} progressive />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("needle"));
@@ -136,7 +142,7 @@ describe("V2 find state", () => {
     vi.useFakeTimers();
     queries.pending = true;
     await act(async () => {
-      renderer = create(<Probe environmentId={a} progressive />);
+      renderer = render(<Probe environmentId={a} progressive />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("needle"));
@@ -170,7 +176,7 @@ describe("V2 find state", () => {
   it("requests a fresh jump when the same search wraps to the same match from a new position", async () => {
     queries.results.set(a, messageResult(0));
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     find.timelineProps.findPositionReaderRef.current = () => ({
@@ -219,7 +225,7 @@ describe("V2 find state", () => {
     };
     queries.results.set(a, initial);
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -253,7 +259,7 @@ describe("V2 find state", () => {
     };
     queries.results.set(a, initial);
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -285,7 +291,7 @@ describe("V2 find state", () => {
     };
     queries.results.set(a, initial);
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -328,7 +334,7 @@ describe("V2 find state", () => {
     };
     queries.results.set(a, initial);
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -368,7 +374,7 @@ describe("V2 find state", () => {
     };
     queries.results.set(a, initial);
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -391,7 +397,7 @@ describe("V2 find state", () => {
   it("starts from the viewport and steps from the server-selected match", async () => {
     queries.results.set(a, messageResult(4));
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     find.timelineProps.findPositionReaderRef.current = () => ({
@@ -440,7 +446,7 @@ describe("V2 find state", () => {
   it("accumulates rapid navigation against the same match until the response arrives", async () => {
     queries.results.set(a, messageResult(4));
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -470,7 +476,7 @@ describe("V2 find state", () => {
     vi.useFakeTimers();
     queries.results.set(a, messageResult(4));
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -514,7 +520,7 @@ describe("V2 find state", () => {
     vi.useFakeTimers();
     queries.results.set(a, messageResult(4));
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -547,7 +553,7 @@ describe("V2 find state", () => {
   it("does not navigate the previous result while a new match is loading", async () => {
     queries.results.set(a, messageResult(0));
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -569,7 +575,7 @@ describe("V2 find state", () => {
   it("keeps the reading-position start when Enter is pressed before results arrive", async () => {
     queries.pending = true;
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     find.timelineProps.findPositionReaderRef.current = () => ({
@@ -592,7 +598,7 @@ describe("V2 find state", () => {
   it("shows Searching only when the query has no result yet", async () => {
     queries.pending = true;
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("COD4"));
@@ -615,7 +621,7 @@ describe("V2 find state", () => {
 
   it("keeps search unavailable when the server does not support it", async () => {
     await act(async () => {
-      renderer = create(<Probe environmentId={a} enabled={false} />);
+      renderer = render(<Probe environmentId={a} enabled={false} />);
     });
     await act(async () => {
       find.open();
@@ -628,7 +634,7 @@ describe("V2 find state", () => {
 
   it("closes search when support disappears without restoring stale queries", async () => {
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => find.open());
     await act(async () => find.barProps.onQueryChange("needle"));
@@ -657,7 +663,7 @@ describe("V2 find state", () => {
       match: { entryId: "plan-item", runId, occurrence: 0 },
     });
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => {
       find.open();
@@ -691,7 +697,7 @@ describe("V2 find state", () => {
       match: null,
     });
     await act(async () => {
-      renderer = create(<Probe environmentId={a} />);
+      renderer = render(<Probe environmentId={a} />);
     });
     await act(async () => {
       find.open();

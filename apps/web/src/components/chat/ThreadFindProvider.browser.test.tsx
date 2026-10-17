@@ -1,5 +1,5 @@
-import { act, createRef, useContext, useState } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, createRef, useContext, useState, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -51,7 +51,14 @@ vi.mock("~/state/query", async () => {
 });
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 
-let renderer: ReactTestRenderer | undefined;
+type Rendered = { update: (node: ReactNode) => void; unmount: () => void };
+function render(node: ReactNode): Rendered {
+  const root = createRoot(document.createElement("div"));
+  root.render(node);
+  return { update: (next) => root.render(next), unmount: () => root.unmount() };
+}
+
+let renderer: Rendered | undefined;
 afterEach(async () => {
   if (renderer) await act(async () => renderer?.unmount());
   renderer = undefined;
@@ -60,7 +67,6 @@ afterEach(async () => {
 });
 
 it("keeps navigation and pending responses out of the surrounding chat and unrelated children", async () => {
-  vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const controls = createRef<ThreadFindControls>();
   const parentRender = vi.fn();
@@ -99,7 +105,7 @@ it("keeps navigation and pending responses out of the surrounding chat and unrel
   });
   query.value = { ...query.value, data: response(0), isPending: false };
   await act(async () => {
-    renderer = create(<Chat />);
+    renderer = render(<Chat />);
   });
   await act(async () => controls.current?.open());
   await act(async () => bar.onQueryChange("COD4"));

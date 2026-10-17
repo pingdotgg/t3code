@@ -1,18 +1,12 @@
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-vi.mock("../ui/collapsible", () => {
-  const Children = ({ children }: { children: ReactNode }) => <>{children}</>;
-  return {
-    Collapsible: Children,
-    CollapsiblePanel: Children,
-    CollapsibleTrigger: Children,
-  };
-});
-
-vi.mock("../ChatMarkdown", () => ({ default: ({ text }: { text: string }) => <p>{text}</p> }));
+vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
+}));
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
@@ -21,11 +15,6 @@ const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId
 it("cancels an answer's pending auto-submit on revocation and resumes after a new grant", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", {
-    setTimeout: globalThis.setTimeout,
-    clearTimeout: globalThis.clearTimeout,
-  });
-  vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   const onToggleOption = vi.fn();
   const onAdvance = vi.fn();
   const onDismiss = vi.fn();
@@ -58,25 +47,21 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
       onDismiss={onDismiss}
     />
   );
-  let renderer: ReactTestRenderer | undefined;
-  const chooseOption = () => {
-    const option = renderer!.root
-      .findAllByType("button")
-      .find((button) =>
-        button.findAllByType("span").some((span) => span.children.includes("Incremental")),
-      );
-    expect(option).toBeDefined();
-    option!.props.onClick();
-  };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  // A disabled button swallows the click, as it would for a user.
+  const chooseOption = () =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("Incremental"))!
+      .click();
   try {
-    await act(async () => {
-      renderer = create(panel(false));
-    });
+    await act(async () => root.render(panel(false)));
     await act(async () => chooseOption());
     expect(onToggleOption).toHaveBeenCalledWith("approach", "Incremental");
     expect(onAdvance).not.toHaveBeenCalled();
 
-    await act(async () => renderer!.update(panel(true)));
+    await act(async () => root.render(panel(true)));
     await act(async () => {
       chooseOption();
       vi.runAllTimers();
@@ -84,7 +69,7 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
     expect(onToggleOption).toHaveBeenCalledTimes(1);
     expect(onAdvance).not.toHaveBeenCalled();
 
-    await act(async () => renderer!.update(panel(false)));
+    await act(async () => root.render(panel(false)));
     await act(async () => {
       chooseOption();
       vi.runAllTimers();
@@ -92,7 +77,8 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
     expect(onToggleOption).toHaveBeenCalledTimes(2);
     expect(onAdvance).toHaveBeenCalledTimes(1);
   } finally {
-    await act(async () => renderer?.unmount());
+    await act(async () => root.unmount());
+    container.remove();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   }

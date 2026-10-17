@@ -1,8 +1,8 @@
 import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { AsyncResult } from "effect/reactivity";
-import { cloneElement, useState, type ReactElement, type ReactNode } from "react";
-import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { RemoteOpenState } from "../../remoteOpen";
@@ -15,94 +15,54 @@ const state = vi.hoisted(() => ({
   openUrl: vi.fn(),
   setPreferred: vi.fn(),
   markHintSeen: vi.fn(),
-  keydown: null as ((event: KeyboardEvent) => void) | null,
   listeners: new Set<() => void>(),
 }));
 
-vi.mock("../../state/session", async () => {
+vi.mock(import("../../state/session"), async (importOriginal) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.allowed.has(environmentId);
   return {
-    readEnvironmentScope,
-    useEnvironmentScope: (environmentId: string, scope: string) =>
+    ...(await importOriginal()),
+    readEnvironmentScope: readEnvironmentScope as never,
+    useEnvironmentScope: ((environmentId: string, scope: string) =>
       useSyncExternalStore(
         (listener) => {
           state.listeners.add(listener);
           return () => state.listeners.delete(listener);
         },
         () => readEnvironmentScope(environmentId, scope),
-      ),
+      )) as never,
   };
 });
-vi.mock("../../state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.run }));
-vi.mock("../../state/environments", () => ({ useEnvironment: () => ({ label: "Test host" }) }));
-vi.mock("../../editorPreferences", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../editorPreferences")>();
+vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomCommand: (() => state.run) as never,
+}));
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: (() => ({ label: "Test host" })) as never,
+}));
+vi.mock(import("../../editorPreferences"), async (importOriginal) => {
+  const actual = await importOriginal();
   return {
     ...actual,
     usePreferredEditor: (available: readonly EditorId[]) => {
       const [preferred, setPreferred] = actual.usePreferredEditor(available);
-      return [
-        preferred,
-        (editor: EditorId) => {
-          state.setPreferred(editor);
-          setPreferred(editor);
-        },
-      ] as const;
+      const recordPreferred: typeof setPreferred = (editor) => {
+        state.setPreferred(editor);
+        setPreferred(editor);
+      };
+      return [preferred, recordPreferred] as const;
     },
   };
 });
-vi.mock("../../remoteOpen", () => ({
+vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
+  ...(await importOriginal()),
   useRemoteOpenState: () => state.remote,
   useRemoteCapableEditors: () => state.clientEditors,
-  useRemoteOpenHint: () => [false, state.markHintSeen],
+  useRemoteOpenHint: () => [false, state.markHintSeen] as const,
   openRemoteEditorUrl: state.openUrl,
-}));
-vi.mock("../../keybindings", () => ({
-  isOpenFavoriteEditorShortcut: () => true,
-  shortcutLabelForCommand: () => "Ctrl+O",
-}));
-vi.mock("../ui/button", () => ({ Button: "button" }));
-vi.mock("../ui/group", () => ({ Group: "div", GroupSeparator: "span" }));
-vi.mock("../ui/menu", () => ({
-  Menu: ({
-    open,
-    onOpenChange,
-    children,
-  }: {
-    open?: boolean;
-    onOpenChange?: (open: boolean) => void;
-    children: ReactNode;
-  }) => {
-    const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
-    const visible = open ?? uncontrolledOpen;
-    return (
-      <div
-        data-menu-open={visible}
-        onDoubleClick={() => {
-          setUncontrolledOpen(!visible);
-          onOpenChange?.(!visible);
-        }}
-      >
-        {children}
-      </div>
-    );
-  },
-  MenuTrigger: ({
-    render,
-    children,
-    disabled,
-  }: {
-    render: ReactElement<{ disabled?: boolean }>;
-    children: ReactNode;
-    disabled?: boolean;
-  }) => cloneElement(render, disabled === undefined ? {} : { disabled }, children),
-  MenuPopup: "section",
-  MenuItem: "button",
-  MenuItemLabel: "span",
-  MenuShortcut: "span",
 }));
 
 import { OpenInPicker } from "./OpenInPicker";
@@ -110,7 +70,8 @@ import { OpenInPicker } from "./OpenInPicker";
 const primary = EnvironmentId.make("primary");
 const selected = EnvironmentId.make("selected");
 const editors: readonly EditorId[] = ["vscode"];
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
 beforeEach(() => {
   state.allowed.clear();
@@ -120,33 +81,20 @@ beforeEach(() => {
   state.openUrl.mockReset().mockResolvedValue(true);
   state.setPreferred.mockReset();
   state.markHintSeen.mockReset();
-  state.keydown = null;
   state.listeners.clear();
+  window.localStorage.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("navigator", { platform: "Linux" });
-  const events = new EventTarget();
-  const storage = new Map<string, string>();
-  vi.stubGlobal("window", {
-    localStorage: {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
-      removeItem: (key: string) => storage.delete(key),
-    },
-    dispatchEvent: (event: Event) => events.dispatchEvent(event),
-    addEventListener: (type: string, callback: EventListener) => {
-      events.addEventListener(type, callback);
-      if (type === "keydown") state.keydown = callback;
-    },
-    removeEventListener: (type: string, callback: EventListener) => {
-      events.removeEventListener(type, callback);
-      if (state.keydown === callback) state.keydown = null;
-    },
-  });
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux");
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+  await act(async () => root.unmount());
+  document.body.replaceChildren();
+  window.localStorage.clear();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -163,17 +111,32 @@ async function renderPicker(availableEditors: readonly EditorId[] = editors, pan
         compact={!panel}
       />
     );
-    if (renderer) renderer.update(node);
-    else renderer = create(node);
+    root.render(node);
   });
 }
 
-function primaryButton() {
-  return renderer!.root.findByProps({ "aria-label": "Open file in preferred editor" });
+function byLabel(label: string) {
+  const element = document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+  expect(element, label).not.toBeNull();
+  return element!;
 }
 
-function keyboardEvent() {
-  return { preventDefault: vi.fn() } as unknown as KeyboardEvent;
+const primaryButton = () => byLabel("Open file in preferred editor");
+const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+
+async function click(element: HTMLElement) {
+  await act(async () => element.click());
+}
+
+async function pressOpenFavorite() {
+  const event = new KeyboardEvent("keydown", {
+    key: "o",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(async () => window.dispatchEvent(event));
+  return event;
 }
 
 it.each(["local-exec", "remote-links"] as const)(
@@ -184,16 +147,15 @@ it.each(["local-exec", "remote-links"] as const)(
     state.remote =
       mode === "local-exec" ? { mode } : { mode, host: { kind: "ssh-alias", host: "test-host" } };
     await renderPicker(["cursor", "vscode"], true);
-    expect(renderer!.root.findByProps({ "aria-label": "Open in Cursor" })).toBeDefined();
-    await act(async () => {
-      renderer!.root.findByProps({ children: "VS Code" }).parent!.props.onClick();
-    });
+    byLabel("Open in Cursor");
+    await click(byLabel("Choose editor"));
+    await click(menuItems().find((item) => item.textContent?.includes("VS Code"))!);
     expect(window.localStorage.getItem("t3code:last-editor")).toBe('"vscode"');
-    const openButton = renderer!.root.findByProps({ "aria-label": "Open in VS Code" });
+    const openButton = byLabel("Open in VS Code");
     expect(state.run).not.toHaveBeenCalled();
     expect(state.openUrl).not.toHaveBeenCalled();
 
-    await act(async () => openButton.props.onClick());
+    await click(openButton);
     if (mode === "local-exec") {
       expect(state.run).toHaveBeenCalledExactlyOnceWith({
         environmentId: selected,
@@ -211,39 +173,33 @@ describe("host editor access", () => {
   it("uses the selected grant for both the button and a retained shortcut", async () => {
     state.allowed.add(selected);
     await renderPicker();
-    const open = primaryButton().props.onClick;
-    const keydown = state.keydown!;
+    // Revoke without rerendering: the mounted button and shortcut must re-check the grant.
     state.allowed.delete(selected);
     state.allowed.add(primary);
-    const event = keyboardEvent();
-    await act(async () => {
-      open();
-      keydown(event);
-    });
+    await click(primaryButton());
+    const event = await pressOpenFavorite();
     expect(state.run).not.toHaveBeenCalled();
     expect(state.setPreferred).not.toHaveBeenCalled();
-    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
 
     await renderPicker();
-    expect(primaryButton().props.disabled).toBe(true);
-    expect(renderer!.root.findByProps({ "aria-label": "Choose editor" }).props.disabled).toBe(true);
-    expect(state.keydown).toBeNull();
+    expect(primaryButton().disabled).toBe(true);
+    expect(byLabel("Choose editor").disabled).toBe(true);
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
 
   it("closes an open picker on revocation and launches only after a fresh grant", async () => {
     state.allowed.add(selected);
     await renderPicker();
-    await act(async () => {
-      renderer!.root.findByProps({ "data-menu-open": false }).props.onDoubleClick();
-    });
-    expect(renderer!.root.findByProps({ "data-menu-open": true })).toBeDefined();
+    await click(byLabel("Choose editor"));
+    expect(menuItems().length).toBeGreaterThan(0);
     state.allowed.delete(selected);
     await renderPicker();
-    expect(renderer!.root.findByProps({ "data-menu-open": false })).toBeDefined();
+    expect(menuItems()).toHaveLength(0);
     state.allowed.add(selected);
     await renderPicker();
-    expect(renderer!.root.findByProps({ "data-menu-open": false })).toBeDefined();
-    await act(async () => primaryButton().props.onClick());
+    expect(menuItems()).toHaveLength(0);
+    await click(primaryButton());
     expect(state.run).toHaveBeenCalledExactlyOnceWith({
       environmentId: selected,
       input: { cwd: "/work/project", editor: "vscode" },
@@ -255,8 +211,8 @@ describe("client editor links", () => {
   it("opens an SSH editor URL without host operate permission", async () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
     await renderPicker();
-    expect(primaryButton().props.disabled).toBe(false);
-    await act(async () => primaryButton().props.onClick());
+    expect(primaryButton().disabled).toBe(false);
+    await click(primaryButton());
     expect(state.openUrl).toHaveBeenCalledExactlyOnceWith(
       "vscode://vscode-remote/ssh-remote+test-host/work/project",
     );
@@ -269,10 +225,9 @@ describe("client editor links", () => {
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "test-host" } };
     state.openUrl.mockResolvedValue(false);
     await renderPicker();
-    const event = keyboardEvent();
-    await act(async () => state.keydown!(event));
+    const event = await pressOpenFavorite();
     expect(state.openUrl).toHaveBeenCalledOnce();
-    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
     expect(state.run).not.toHaveBeenCalled();
     expect(state.setPreferred).not.toHaveBeenCalled();
     expect(state.markHintSeen).not.toHaveBeenCalled();
