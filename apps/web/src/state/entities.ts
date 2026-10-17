@@ -11,6 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
@@ -46,6 +47,9 @@ const EMPTY_THREAD_STATUS_ATOM = Atom.make<EnvironmentThreadStatus>("empty").pip
 const EMPTY_VISIBLE_TURN_ITEMS_ATOM = Atom.make(EMPTY_VISIBLE_TURN_ITEMS).pipe(
   Atom.withLabel("web-thread-visible-turn-items:empty"),
 );
+const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>(
+  Object.freeze([]),
+).pipe(Atom.withLabel("web-thread-checkpoint-summaries:empty"));
 const EMPTY_THREAD_HISTORY_ATOM = Atom.make<ThreadHistoryMeta>(EMPTY_THREAD_HISTORY_META).pipe(
   Atom.withLabel("web-thread-history:empty"),
 );
@@ -156,6 +160,16 @@ export function useThreadVisibleTurnItems(
     ref === null
       ? EMPTY_VISIBLE_TURN_ITEMS_ATOM
       : environmentThreadDetails.visibleTurnItemsAtom(ref),
+  );
+}
+
+export function useThreadCheckpointSummaries(
+  ref: ScopedThreadRef | null,
+): ReadonlyArray<ThreadCheckpointSummary> {
+  return useAtomValue(
+    ref === null
+      ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
+      : environmentThreadDetails.checkpointSummariesAtom(ref),
   );
 }
 

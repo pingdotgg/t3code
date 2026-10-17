@@ -1011,16 +1011,6 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   };
 }
 
-export function inferCheckpointTurnCountByRunId(
-  summaries: ReadonlyArray<ThreadCheckpointSummary>,
-): Record<string, number> {
-  return Object.fromEntries(
-    summaries.flatMap((summary) =>
-      summary.runId === null ? [] : [[summary.runId, summary.checkpointTurnCount] as const],
-    ),
-  );
-}
-
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
