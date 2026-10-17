@@ -214,6 +214,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
+  timelineEntryTurnFoldRunId,
   timelineTurnFoldRunIdsByEntryId,
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -641,6 +642,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
+  const getCitedTurnFoldRunId = (entryId: string) =>
+    timelineEntryTurnFoldRunId(
+      { timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive },
+      entryId,
+    );
   const expandCitedRun = (runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   };
@@ -992,6 +998,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
     loadEarlier,
+    getTurnFoldRunId: getCitedTurnFoldRunId,
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
