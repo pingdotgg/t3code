@@ -1,6 +1,6 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import type { RunId } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import type { TimelineEntry } from "../../session-logic";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { AssistantCitationRequest, AssistantCitationTarget } from "./AssistantCitationSource";
@@ -36,12 +36,20 @@ export function useAssistantCitationTarget({
   const [ready, setReady] = useState<AssistantCitationTarget | null>(null);
   const [finishedKey, setFinishedKey] = useState<string | null>(null);
   const [listLoaded, setListLoaded] = useState(false);
-  const onListLoad = useCallback(() => setListLoaded(true), []);
+  const onListLoad = () => setListLoaded(true);
   const navigationRef = useRef<{
     target: AssistantCitationTarget;
     requestedPages: Set<string>;
     done: boolean;
   } | null>(null);
+
+  // A target belongs to one request, so returning to an earlier key never reuses it.
+  if (ready !== null && ready.key !== request?.key) {
+    setReady(null);
+  }
+  if (!request && finishedKey !== null) {
+    setFinishedKey(null);
+  }
 
   useEffect(() => {
     if (navigationRef.current && navigationRef.current.target.key !== request?.key) {
@@ -50,8 +58,6 @@ export function useAssistantCitationTarget({
     }
     if (!request) {
       navigationRef.current = null;
-      setReady(null);
-      setFinishedKey(null);
       return;
     }
     if (navigationRef.current?.target.key !== request.key) {
@@ -71,7 +77,6 @@ export function useAssistantCitationTarget({
         requestedPages: new Set(),
         done: false,
       };
-      setReady(null);
       onManualNavigation();
     }
     if (!viewport || historyLoading) return;
