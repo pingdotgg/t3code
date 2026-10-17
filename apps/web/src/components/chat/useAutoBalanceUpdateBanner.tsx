@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { Atom } from "effect/reactivity";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import type { EnvironmentPresentation } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
@@ -29,15 +29,11 @@ import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 export function useAutoBalanceUpdateBanner(
   environments: readonly EnvironmentPresentation[],
 ): ComposerBannerStackItem | null {
-  const statesAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        environments.map((environment) => ({
-          environment,
-          state: get(serverEnvironment.updateStateAtom(environment.environmentId)),
-        })),
-      ),
-    [environments],
+  const statesAtom = Atom.make((get) =>
+    environments.map((environment) => ({
+      environment,
+      state: get(serverEnvironment.updateStateAtom(environment.environmentId)),
+    })),
   );
   const states = useAtomValue(statesAtom);
   const [dismissedNotices, setDismissedNotices] = useState<ReadonlySet<string | ServerUpdateState>>(
