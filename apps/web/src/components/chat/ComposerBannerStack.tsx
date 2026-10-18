@@ -181,7 +181,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
             <div className="min-h-0 overflow-hidden">
               <div
                 className={cn(
-                  "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform]",
+                  "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-transform",
                   stackExpanded
                     ? "pointer-events-auto visible translate-y-0 opacity-100"
                     : "pointer-events-none invisible translate-y-1 opacity-0",
