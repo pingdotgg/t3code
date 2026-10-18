@@ -549,18 +549,32 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "package-tool",
         ]);
 
-        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
-          packageToolUpdate,
-          {
+        const updateCommand = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+          resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
             binaryPath: link,
             env: { PATH: "" },
-          },
-        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+          }).pipe(
+            Effect.map((capabilities) => capabilities.update),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          );
+        const pnpmVersion = (version: string) =>
+          stdoutSpawner((command, args) => {
+            expect([command, ...args].join(" ")).toMatch(/pnpm(\.cmd)?"? --version$/);
+            return `${version}
+`;
+          });
 
-        expect(capabilities.update).toMatchObject({
-          command: "pnpm add -g @example/package-tool@latest",
+        expect(yield* updateCommand(pnpmVersion("11.1.3"))).toMatchObject({
+          command: "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
           lockKey: "pnpm-global",
         });
+        // Older pnpm rejects the unknown flag, and runs install scripts before 10.
+        expect((yield* updateCommand(pnpmVersion("10.3.0")))?.command).toBe(
+          "pnpm add -g @example/package-tool@latest",
+        );
+        expect((yield* updateCommand(noSpawn))?.command).toBe(
+          "pnpm add -g @example/package-tool@latest",
+        );
       }),
   );
 
