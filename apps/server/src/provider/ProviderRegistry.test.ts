@@ -849,6 +849,7 @@ it.layer(
           },
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
         ],
+        nativeSessions: { canList: false, canLoad: false, canResume: false },
         slashCommands: [],
         skills: [],
       } as const satisfies ServerProvider;
@@ -861,6 +862,37 @@ it.layer(
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
         [...refreshedProvider.models],
+      );
+    });
+
+    it("drops stale ACP Registry models when an agent without sign-in completes discovery", () => {
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("acpRegistry_kimi"),
+        driver: ProviderDriverKind.make("acpRegistry"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "unknown", canLogout: false },
+        checkedAt: "2026-08-13T00:00:00.000Z",
+        version: "1.2.0",
+        models: [
+          { slug: "kimi-old", name: "Kimi Old", isCustom: false, capabilities: null },
+          { slug: "default", name: "Default", isCustom: false, capabilities: null },
+        ],
+        nativeSessions: { canList: true, canLoad: true, canResume: false },
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      // Agents that advertise no auth methods stay "unknown" after every probe.
+      const probedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-08-13T00:01:00.000Z",
+        models: [{ slug: "kimi-new", name: "Kimi New", isCustom: false, capabilities: null }],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, probedProvider).models,
+        [...probedProvider.models],
       );
     });
 
@@ -882,15 +914,30 @@ it.layer(
         ...previousProvider,
         checkedAt: "2026-08-13T00:01:00.000Z",
         auth: { status: "unknown" },
+        message: "Checking ACP authentication, models, and commands in the background...",
         models: [{ slug: "default", name: "Default", isCustom: false, capabilities: null }],
+      } satisfies ServerProvider;
+      // A saved sign-in confirmation marks the readiness snapshot authenticated
+      // before discovery has run.
+      const confirmedCheckingProvider = {
+        ...checkingProvider,
+        auth: { status: "authenticated" },
       } satisfies ServerProvider;
       const failedProbeProvider = {
         ...checkingProvider,
         status: "warning",
+        message: "ACP discovery failed.",
       } satisfies ServerProvider;
 
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, checkingProvider).models,
+        [
+          { slug: "default", name: "Default", isCustom: false, capabilities: null },
+          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+        ],
+      );
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, confirmedCheckingProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
           { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
