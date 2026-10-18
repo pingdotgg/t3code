@@ -580,6 +580,59 @@ it.effect(
   },
 );
 
+it.effect("reads Forgejo pull request commits without their file lists", () => {
+  const paths: string[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const activity = yield* provider.getChangeRequestActivity({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      number: 30,
+    });
+    assert.deepStrictEqual(
+      activity.commits.map((commit) => commit.oid),
+      ["abc"],
+    );
+    const commitReads = paths.filter((path) =>
+      path.startsWith("repos/maria/project/pulls/30/commits"),
+    );
+    assert.isNotEmpty(commitReads);
+    for (const path of commitReads) {
+      const query = new URLSearchParams(path.split("?")[1]);
+      assert.strictEqual(query.get("files"), "false");
+      assert.strictEqual(query.get("verification"), "false");
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          const [path, query] = input.path.split("?");
+          const page = Number(new URLSearchParams(query).get("page") ?? "1");
+          const body =
+            path === "user"
+              ? { login: "maria" }
+              : path === "repos/maria/project/pulls/30/commits" && page === 1
+                ? [
+                    {
+                      sha: "abc",
+                      author: null,
+                      commit: {
+                        message: "Reorganize folders",
+                        committer: { date: "2026-10-11T00:00:00Z" },
+                      },
+                      parents: [],
+                    },
+                  ]
+                : [];
+          return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("discovers Forgejo accounts and retains the server port", () =>
   Effect.gen(function* () {
     const auth = ForgejoSourceControlProvider.discovery.parseAuth(

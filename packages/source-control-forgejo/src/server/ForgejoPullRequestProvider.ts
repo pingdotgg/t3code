@@ -305,7 +305,11 @@ export const make = Effect.gen(function* () {
               })),
             ),
             page({ ...input, path: `${pullPath(input)}/reviews` }, ForgejoReview),
-            page({ ...input, path: `${pullPath(input)}/commits` }, ForgejoCommit),
+            // Without these, each commit lists its files and a big merge outgrows the output limit.
+            page(
+              { ...input, path: `${pullPath(input)}/commits?files=false&verification=false` },
+              ForgejoCommit,
+            ),
             page({ ...input, path: `${issuePath(input)}/reactions` }, ForgejoReaction),
             getViewer(input),
           ],
@@ -403,7 +407,7 @@ export const make = Effect.gen(function* () {
           ? yield* read(
               {
                 ...input,
-                path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}`,
+                path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}?files=false&verification=false`,
               },
               ForgejoCommit,
             )
