@@ -3,6 +3,21 @@ import { describe, expect, it } from "vite-plus/test";
 import { detectComposerTrigger, serializeComposerFileLink } from "./composerTrigger.ts";
 
 describe("detectComposerTrigger", () => {
+  it.each([
+    ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
+    ["/etc/hosts", "/etc/hosts".length],
+    ["Use /etc/hosts now", "Use /et".length],
+  ])("keeps the path in %j out of the slash menu", (text, cursor) => {
+    expect(detectComposerTrigger(text, cursor)).toBeNull();
+  });
+
+  it("keeps a slash in the line-leading model picker query", () => {
+    expect(detectComposerTrigger("/model openai/gpt", 17)).toMatchObject({
+      kind: "slash-model",
+      query: "openai/gpt",
+    });
+  });
+
   it.each(["Use ", "Use\t", "Use\n  "])("detects inline slash skills after %j", (prefix) => {
     const text = `${prefix}/skill:review later`;
     const cursor = `${prefix}/skill:review`.length;
