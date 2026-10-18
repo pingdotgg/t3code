@@ -517,6 +517,96 @@ describe("environment query lifecycle", () => {
       ),
   );
 
+  it.effect("keeps a query pending when it loses its session before the atom sees the change", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstStarted = Latch.makeUnsafe();
+        const failFirst = Latch.makeUnsafe();
+        const firstSettled = Latch.makeUnsafe();
+        let executions = 0;
+        const execute = Effect.suspend(() => {
+          executions += 1;
+          if (executions > 1) {
+            return Effect.succeed("recovered");
+          }
+          firstStarted.openUnsafe();
+          return failFirst.await.pipe(
+            Effect.andThen(
+              Effect.fail(
+                new EnvironmentRpcUnavailableError({
+                  environmentId: QUERY_ENVIRONMENT.environmentId,
+                  message: "Query environment is not connected.",
+                }),
+              ),
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                firstSettled.openUnsafe();
+              }),
+            ),
+          );
+        });
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        const registry = AtomRegistry.make();
+        const observed: Array<AsyncResult.AsyncResult<string, unknown>> = [];
+        const unsubscribe = registry.subscribe(
+          harness.atom,
+          (result) => {
+            observed.push(result);
+          },
+          { immediate: true },
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            unsubscribe();
+            registry.dispose();
+          }),
+        );
+
+        yield* firstStarted.await;
+        // No yield before the failure: the request finds its session gone
+        // before the atom has processed the session change.
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.none());
+        failFirst.openUnsafe();
+        yield* firstSettled.await;
+        yield* Effect.yieldNow;
+
+        expect(observed.some(AsyncResult.isFailure)).toBe(false);
+
+        yield* SubscriptionRef.set(harness.supervisorSession, Option.some(QUERY_RPC_SESSION));
+        yield* SubscriptionRef.set(
+          harness.supervisorState,
+          queryConnectionState({ generation: 2 }),
+        );
+        expect(
+          yield* AtomRegistry.getResult(registry, harness.atom, {
+            suspendOnWaiting: true,
+          }),
+        ).toBe("recovered");
+        expect(observed.some(AsyncResult.isFailure)).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("fails a query that reports unavailable while its session is still live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const unavailable = new EnvironmentRpcUnavailableError({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          message: "The environment did not respond to the request.",
+        });
+        const harness = yield* makeEnvironmentQueryHarness(Effect.fail(unavailable));
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+
+        const exit = yield* AtomRegistry.getResult(registry, harness.atom, {
+          suspendOnWaiting: true,
+        }).pipe(Effect.exit);
+
+        expect(exit).toStrictEqual(Exit.fail(unavailable));
+      }),
+    ),
+  );
+
   it.effect.each([
     {
       condition: "after a manual disconnect",

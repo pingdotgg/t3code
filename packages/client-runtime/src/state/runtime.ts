@@ -12,6 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -33,6 +34,30 @@ import {
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import type * as RpcSession from "../rpc/session.ts";
+
+const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
+
+/**
+ * Holds back the unavailable failure of a query whose session went away. The
+ * query atom reruns when it sees that session change, so settling first would
+ * show a failure for a query that is about to retry. While `session` is still
+ * current no rerun is coming, and the failure stands.
+ */
+const pendingOnceSessionReplaced =
+  (session: RpcSession.RpcSession) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      // The query's error type is generic, so its tags are unknown to `catchTags`.
+      Effect.catchIf(isEnvironmentRpcUnavailable, (error) =>
+        EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+          Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.session)),
+          Effect.flatMap((current) =>
+            Option.isSome(current) && current.value === session ? Effect.fail(error) : Effect.never,
+          ),
+        ),
+      ),
+    );
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -601,7 +626,12 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           switch (connectionState.phase) {
             case "connected":
               return Option.isSome(session)
-                ? runInEnvironment(target.environmentId, options.execute(target.input, emit))
+                ? runInEnvironment(
+                    target.environmentId,
+                    options
+                      .execute(target.input, emit)
+                      .pipe(pendingOnceSessionReplaced(session.value)),
+                  )
                 : Effect.never;
             case "connecting":
             case "backoff":
