@@ -36,7 +36,34 @@ export class CursorAgentSdkRunnerError extends Schema.TaggedError<CursorAgentSdk
   }
 }
 
-const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
+/** The failure text a user sees: the SDK's own reason, which the error's message leaves out. */
+export function cursorSdkFailureMessage(error: CursorAgentSdkRunnerError): string {
+  const reason = sdkErrorReason(error.cause);
+  return reason === undefined
+    ? error.message
+    : `Cursor Agent SDK ${error.method} failed: ${reason}`;
+}
+
+/** Codes Cursor sends when it has no specific one. */
+const GENERIC_SDK_ERROR_CODES = new Set(["", "error", "unknown"]);
+
+/** The SDK's own message, with the code and HTTP status its errors carry. */
+function sdkErrorReason(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return undefined;
+  const message = cause.message.trim();
+  if (message.length === 0) return undefined;
+  const code = Reflect.get(cause, "code");
+  const status = Reflect.get(cause, "status");
+  const details = [
+    ...(typeof code === "string" && !GENERIC_SDK_ERROR_CODES.has(code) && !message.includes(code)
+      ? [code]
+      : []),
+    ...(typeof status === "number" ? [`HTTP ${status}`] : []),
+  ];
+  return details.length === 0 ? message : `${message} (${details.join(", ")})`;
+}
+
+export const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
 
 export interface CursorAgentSdkOpenInput {
   readonly operation: "create" | "resume";
