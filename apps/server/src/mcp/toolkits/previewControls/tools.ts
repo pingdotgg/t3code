@@ -1,7 +1,7 @@
 import {
   NonNegativeInt,
   OrchestratorMcpFailure,
-  PreviewAutomationUnavailableError,
+  PreviewAutomationError,
   PreviewListResult,
   PreviewTabId,
 } from "@t3tools/contracts";
@@ -13,7 +13,7 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
-  failure: Schema.Union([OrchestratorMcpFailure, PreviewAutomationUnavailableError]),
+  failure: Schema.Union([PreviewAutomationError, OrchestratorMcpFailure]),
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
