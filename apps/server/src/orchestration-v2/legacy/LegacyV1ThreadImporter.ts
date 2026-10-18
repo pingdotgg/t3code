@@ -708,9 +708,11 @@ const make = Effect.gen(function* () {
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         const messages = yield* listMessages(threadId);
+        // The thread's V1 events are still in the table here. Without the hint
+        // SQLite walks them through the stream index and reads past each payload.
         const existingRows = yield* sql<{ readonly event_id: string }>`
           SELECT event_id
-          FROM orchestration_events
+          FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
           WHERE application_event_version = 2
             AND aggregate_kind = 'thread'
             AND stream_id = ${threadId}
