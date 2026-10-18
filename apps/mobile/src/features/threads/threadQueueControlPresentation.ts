@@ -1,4 +1,5 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message";
 
@@ -34,7 +35,8 @@ export function resolveThreadQueueRowControls(input: {
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
     canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
-    displayText: input.text,
+    // Edit and Steer keep the original text so quoted citations stay linked.
+    displayText: assistantCitationsToPlainText(input.text),
     isEditing,
   };
 }
