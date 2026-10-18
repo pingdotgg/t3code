@@ -284,8 +284,9 @@ export function wrapCommandForLinuxCgroup(
         // trap, so a missing agent binary reported "killed by the wrapper"
         // instead of "never launched". The caller always hands us an absolute
         // target, so test it as an executable file rather than asking the
-        // shell to resolve it.
-        '[ -f "$1" ] && [ -x "$1" ] || exit 125',
+        // shell to resolve it. Name the target before exiting: exit 125 alone
+        // does not say which path was rejected.
+        '[ -f "$1" ] && [ -x "$1" ] || { printf "%s: %s: not an executable file\\n" "$0" "$1" >&2; exit 125; }',
         'exec "$@"',
       ].join("\n"),
       "t3-acp-cgroup-wrapper",
