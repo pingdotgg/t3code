@@ -193,7 +193,9 @@ import {
   stickyComposerModelSelectionAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
+import { resolveThreadComposerModelSelection } from "./thread-composer-model";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
 const DRAFT: ComposerDraft = {
@@ -2201,6 +2203,51 @@ describe("mobile composer drafts", () => {
         clearWorkspaceSelection: true,
       }),
     ).toEqual({});
+  });
+
+  it("persists the shared model a phone selection overrides across send and reload", () => {
+    const draftKey = "environment-1:thread-1";
+    const original = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const phone = { ...original, model: "gpt-5.6-sol" };
+    appAtomRegistry.set(composerDraftsAtom, { [draftKey]: DRAFT });
+    updateComposerDraftSettings(draftKey, {
+      modelSelection: phone,
+      modelSelectionBase: original,
+    });
+
+    const cleared = clearComposerDraftContentState(
+      appAtomRegistry.get(composerDraftsAtom),
+      draftKey,
+    );
+    const reloaded = decodePersistedComposerState({ schemaVersion: 1, drafts: cleared }).drafts;
+    expect(reloaded[draftKey]?.modelSelectionBase).toEqual(original);
+    expect(resolveThreadComposerModelSelection(reloaded[draftKey], original)).toEqual(phone);
+    const pc = { ...original, model: "gpt-5.6-astra" };
+    expect(resolveThreadComposerModelSelection(reloaded[draftKey], pc)).toEqual(pc);
+  });
+
+  it("releases the model override without losing unsent content", () => {
+    const draftKey = "environment-1:thread-1";
+    const original = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    appAtomRegistry.set(composerDraftsAtom, {
+      [draftKey]: { ...DRAFT, modelSelection: original, modelSelectionBase: original },
+    });
+    updateComposerDraftSettings(draftKey, { modelSelection: undefined });
+    expect(getComposerDraftSnapshot(draftKey)).toEqual(DRAFT);
+  });
+
+  it("does not apply an old model baseline to a recovered message", () => {
+    const draftKey = "environment-1:thread-1";
+    const original = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const recovered = { ...original, model: "gpt-5.6-sol" };
+    appAtomRegistry.set(composerDraftsAtom, {
+      [draftKey]: { ...DRAFT, modelSelection: original, modelSelectionBase: original },
+    });
+    updateComposerDraftSettings(draftKey, { modelSelection: recovered });
+    expect(getComposerDraftSnapshot(draftKey).modelSelectionBase).toBeUndefined();
+    expect(
+      resolveThreadComposerModelSelection(getComposerDraftSnapshot(draftKey), original),
+    ).toEqual(recovered);
   });
 
   it("reads the latest selector state synchronously for send", () => {
