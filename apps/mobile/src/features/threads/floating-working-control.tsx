@@ -58,6 +58,13 @@ const UniwindGlassContainer = withUniwind(GlassContainer, {
 });
 const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
+// The segment widths feed labelWidth, and labelWidth moves the segments. Pixel
+// rounding then flips a segment's width by one physical pixel per layout, which
+// re-ellipsizes a truncated label every frame. Sub-point changes are ignored.
+function settleWidth(next: number) {
+  return (current: number) => (Math.abs(current - next) < 1 ? current : next);
+}
+
 const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
 export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
 
@@ -182,7 +189,7 @@ export function FloatingWorkingControl(props: {
       {hasPreview ? (
         <View
           className="h-11 flex-row items-center"
-          onLayout={(event) => setPreviewWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => setPreviewWidth(settleWidth(event.nativeEvent.layout.width))}
         >
           {hasStatus ? <View className="h-4 w-px bg-border" /> : null}
           {props.devicePreview !== null ? (
@@ -199,7 +206,7 @@ export function FloatingWorkingControl(props: {
           accessibilityLabel={`Open agents, ${agents.accessibilityLabel}`}
           accessibilityHint="Opens this turn's subagents"
           onPress={props.onOpenAgents}
-          onLayout={(event) => setAgentsWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
           {hasStatus || hasPreview ? <View className="mr-1 h-4 w-px bg-border" /> : null}
@@ -215,7 +222,7 @@ export function FloatingWorkingControl(props: {
           accessibilityLabel={`Open queue, ${props.queuedCount} messages`}
           accessibilityHint="Opens queued messages for reordering, steering, or removal"
           onPress={props.onOpenQueue}
-          onLayout={(event) => setQueueWidth(event.nativeEvent.layout.width)}
+          onLayout={(event) => setQueueWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
