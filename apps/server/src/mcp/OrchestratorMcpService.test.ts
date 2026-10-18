@@ -798,10 +798,11 @@ describe("OrchestratorMcpService provider resolution", () => {
     instanceId: input.instanceId,
     driver: input.driver,
     enabled: input.enabled ?? true,
-    installed: true,
-    version: "test",
-    status: "ready",
-    auth: { status: "authenticated" },
+    installed: input.enabled !== false,
+    version: input.enabled === false ? null : "test",
+    status: input.enabled === false ? "disabled" : "ready",
+    auth: { status: input.enabled === false ? "unknown" : "authenticated" },
+    ...(input.enabled === false ? { message: "Provider is disabled in T3 Code settings." } : {}),
     checkedAt: "2026-09-13T00:00:00.000Z",
     models:
       input.model === undefined
@@ -882,6 +883,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     () =>
       Effect.gen(function* () {
         const disabledAntigravityInstanceId = ProviderInstanceId.make("antigravity-alt");
+        const disabledWithoutAdapterInstanceId = ProviderInstanceId.make("codex-without-adapter");
         const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");
         const forkShadow = yield* buildUnavailableProviderSnapshot({
           driverKind: "forkOnly",
@@ -919,6 +921,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             instanceId: disabledAntigravityInstanceId,
             driver: ProviderDriverKind.make("antigravity"),
             model: "ant-model",
+            enabled: false,
+          }),
+          providerSnapshot({
+            instanceId: disabledWithoutAdapterInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
             enabled: false,
           }),
           forkShadow,
@@ -1000,18 +1008,27 @@ describe("OrchestratorMcpService provider resolution", () => {
           const disabled = byId.get(disabledAntigravityInstanceId);
           assert.isDefined(disabled);
           assert.isFalse(disabled!.canRunChildTask);
+          assert.isFalse(disabled!.canRunCrossProviderChildTask);
           assert.deepEqual(disabled!.constraints, ["Provider instance is disabled."]);
+
+          const disabledWithoutAdapter = byId.get(disabledWithoutAdapterInstanceId);
+          assert.isDefined(disabledWithoutAdapter);
+          assert.isFalse(disabledWithoutAdapter!.canRunChildTask);
+          assert.isFalse(disabledWithoutAdapter!.canRunCrossProviderChildTask);
+          assert.deepEqual(disabledWithoutAdapter!.constraints, [
+            "No V2 provider adapter is registered.",
+            "Provider instance is disabled.",
+          ]);
 
           const fork = byId.get(forkOnlyInstanceId);
           assert.isDefined(fork);
           assert.isFalse(fork!.canRunChildTask);
-          assert.isTrue(
-            fork!.constraints.includes("No V2 provider adapter is registered."),
-            `expected missing-adapter constraint, got ${fork!.constraints.join(" | ")}`,
-          );
-          assert.isTrue(
-            fork!.constraints.includes("Driver 'forkOnly' is not registered in this build."),
-          );
+          assert.isFalse(fork!.canRunCrossProviderChildTask);
+          assert.deepEqual(fork!.constraints, [
+            "No V2 provider adapter is registered.",
+            "Driver 'forkOnly' is not registered in this build.",
+            "Provider instance is disabled.",
+          ]);
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
   );
@@ -1056,6 +1073,85 @@ describe("OrchestratorMcpService provider resolution", () => {
           capabilities.providers[0]?.models.map((model) => model.id),
           ["gpt-5.4", "my-model"],
         );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "installation",
+      snapshot: { installed: false, version: null, status: "warning", auth: { status: "unknown" } },
+      constraints: ["Provider executable is not installed."],
+    },
+    {
+      name: "health",
+      snapshot: { status: "error", message: "Provider health check failed." },
+      constraints: ["Provider health check failed."],
+    },
+    {
+      name: "authentication",
+      snapshot: { auth: { status: "unauthenticated" } },
+      constraints: ["Provider is not authenticated."],
+    },
+    {
+      name: "combined installation and health",
+      snapshot: {
+        installed: false,
+        version: null,
+        status: "error",
+        message: "Provider executable could not be found.",
+        auth: { status: "unknown" },
+      },
+      constraints: [
+        "Provider executable is not installed.",
+        "Provider executable could not be found.",
+      ],
+    },
+    {
+      name: "disabled with stale probe failures",
+      snapshot: {
+        enabled: false,
+        installed: false,
+        version: null,
+        status: "error",
+        message: "Stale provider health failure.",
+        auth: { status: "unauthenticated" },
+      },
+      constraints: ["Provider instance is disabled."],
+    },
+  ] as const)("reports $name provider constraints", (testCase) =>
+    Effect.gen(function* () {
+      const provider: ServerProvider = {
+        ...providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "gpt-5.4",
+        }),
+        ...testCase.snapshot,
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(parentProjection([])),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([provider]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(scope);
+        const entry = capabilities.providers.find(
+          (candidate) => candidate.providerInstanceId === codexInstanceId,
+        );
+        assert.isDefined(entry);
+        assert.isFalse(entry!.canRunChildTask);
+        assert.isFalse(entry!.canRunCrossProviderChildTask);
+        assert.deepEqual(entry!.constraints, testCase.constraints);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
@@ -1759,6 +1855,22 @@ describe("OrchestratorMcpService provider resolution", () => {
             candidateDriver: driver,
           },
           {
+            name: "inherited-unavailable",
+            inheritedEnabled: false,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: null,
+            candidateDriver: driver,
+          },
+          {
+            name: "explicit-disabled-without-adapter",
+            inheritedEnabled: false,
+            peerEnabled: true,
+            explicit: true,
+            selectedInstanceId: null,
+            candidateDriver: driver,
+          },
+          {
             name: "explicit-healthy",
             inheritedEnabled: true,
             peerEnabled: true,
@@ -1817,7 +1929,11 @@ describe("OrchestratorMcpService provider resolution", () => {
                 enabled: testCase.peerEnabled,
               }),
             ]),
-            adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
+            adapterRegistryLayer(
+              testCase.name === "explicit-disabled-without-adapter"
+                ? [codexAltInstanceId]
+                : [codexInstanceId, codexAltInstanceId],
+            ),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -1825,14 +1941,17 @@ describe("OrchestratorMcpService provider resolution", () => {
 
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-            const target = testCase.explicit
-              ? ({
-                  providerInstanceId:
-                    testCase.selectedInstanceId === null
-                      ? codexInstanceId
-                      : testCase.selectedInstanceId,
-                } as const)
-              : ({ driverKind: testCase.candidateDriver } as const);
+            const target =
+              testCase.name === "inherited-unavailable"
+                ? undefined
+                : testCase.explicit
+                  ? ({
+                      providerInstanceId:
+                        testCase.selectedInstanceId === null
+                          ? codexInstanceId
+                          : testCase.selectedInstanceId,
+                    } as const)
+                  : ({ driverKind: testCase.candidateDriver } as const);
             if (testCase.selectedInstanceId === null) {
               const error = yield* service
                 .delegateTask(scope, {
@@ -1843,6 +1962,27 @@ describe("OrchestratorMcpService provider resolution", () => {
                 })
                 .pipe(Effect.flip);
               assert.equal(error.code, "provider_unavailable", testCase.name);
+              if (
+                testCase.name === "explicit-unavailable" ||
+                testCase.name === "inherited-unavailable" ||
+                testCase.name === "explicit-disabled-without-adapter"
+              ) {
+                const expectedMessage =
+                  `Provider ${codexInstanceId} cannot run a child task: ` +
+                  (testCase.name === "explicit-disabled-without-adapter"
+                    ? "No V2 provider adapter is registered. "
+                    : "") +
+                  "Provider instance is disabled.";
+                assert.equal(error.message, expectedMessage);
+                const threadError = yield* service
+                  .createThreads(scope, {
+                    threads: [{ prompt: "Summarize the diff.", target }],
+                    clientRequestId: `disabled-threads-${testCase.name}`,
+                  })
+                  .pipe(Effect.flip);
+                assert.equal(threadError.code, "provider_unavailable");
+                assert.equal(threadError.message, expectedMessage);
+              }
               if (testCase.name === "cross-driver-no-available-candidate") {
                 assert.isTrue(error.message.includes("driver claudeAgent"), testCase.name);
                 const threadError = yield* service
