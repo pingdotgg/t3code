@@ -1,8 +1,7 @@
-// @vitest-environment jsdom
-
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 const families = vi.hoisted(() => {
   const families = [
@@ -32,23 +31,6 @@ let container: HTMLDivElement;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    },
-  );
-  // jsdom has no layout; give LegendList a 30px viewport and 30px rows so it
-  // renders a window of rows the way it does in a browser.
-  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(
-    DOMRect.fromRect({ width: 288, height: 30 }),
-  );
-  Object.defineProperty(Element.prototype, "getAnimations", {
-    configurable: true,
-    value: () => [],
-  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -68,14 +50,6 @@ function highlightedOptions(): string[] {
   );
 }
 
-async function typeQuery(input: HTMLInputElement, value: string) {
-  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-  await act(async () => {
-    setValue.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
 describe("FontFamilyPicker", () => {
   it("highlights, moves through, and selects matches after filtering", async () => {
     const onSelect = vi.fn();
@@ -93,14 +67,11 @@ describe("FontFamilyPicker", () => {
 
     const input = document.querySelector<HTMLInputElement>('input[placeholder="Search fonts…"]');
     expect(input).not.toBeNull();
-    const press = (key: string) =>
-      act(async () => {
-        input!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-      });
+    const press = (key: string) => act(() => userEvent.keyboard(`{${key}}`));
 
     // Both matches were already rendered further down the unfiltered list.
-    await typeQuery(input!, "co");
-    expect(highlightedOptions()).toEqual(["Courier New"]);
+    await act(() => userEvent.type(input!, "co"));
+    await expect.poll(highlightedOptions).toEqual(["Courier New"]);
 
     await press("ArrowDown");
     expect(highlightedOptions()).toEqual(["Fira Code"]);

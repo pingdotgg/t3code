@@ -1,8 +1,7 @@
-// @vitest-environment jsdom
-
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 
@@ -11,14 +10,6 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -28,7 +19,6 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 describe("disabled candidate picker", () => {
@@ -69,27 +59,20 @@ describe("disabled candidate picker", () => {
         'button[aria-label="Request reviewers"]',
       )!;
       if (input === "keyboard") {
-        await act(async () => {
-          document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
-          trigger.focus();
-        });
+        await act(() => userEvent.tab());
         expect(document.activeElement).toBe(trigger);
       } else {
-        vi.useFakeTimers();
-        await act(async () => {
-          trigger.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-          trigger.dispatchEvent(new MouseEvent("mouseenter"));
-          trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
-          await vi.advanceTimersByTimeAsync(1000);
-        });
+        await act(() => userEvent.hover(trigger));
       }
-      expect(
-        document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent,
-      ).toContain("Only collaborators can request reviewers.");
+      await expect
+        .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
+        .toContain("Only collaborators can request reviewers.");
       await act(async () => {
-        trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-        trigger.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
-        trigger.click();
+        trigger.focus();
+        await userEvent.keyboard("{Enter}");
+        await userEvent.keyboard(" ");
+        // Playwright skips aria-disabled targets; the click must still land to prove it is inert.
+        await userEvent.click(trigger, { force: true });
       });
       expect(onOpenChange).not.toHaveBeenCalled();
       expect(onSelect).not.toHaveBeenCalled();

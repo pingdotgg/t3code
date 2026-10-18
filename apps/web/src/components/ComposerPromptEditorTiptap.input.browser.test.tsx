@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import type { Editor } from "@tiptap/core";
 import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -43,7 +41,6 @@ async function mountEditor(value: string, richTextEnabled = true) {
   );
   const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
   if (!element) throw new Error("Composer did not mount");
-  element.editor.view.setProps({ handleScrollToSelection: () => true });
   return element.editor;
 }
 

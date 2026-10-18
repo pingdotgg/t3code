@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -10,6 +8,10 @@ import type { LimitPresentations } from "@t3tools/shared/usageLimits";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+// Real pointer clicks need the dialog's stacking styles to land above Base UI's modal overlay.
+import "~/index.css";
 
 const consume = vi.hoisted(() => vi.fn());
 vi.mock("../../state/session", () => ({
@@ -71,14 +73,6 @@ let container: HTMLDivElement;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-    },
-  );
   consume.mockReset();
   container = document.createElement("div");
   document.body.append(container);
@@ -97,7 +91,7 @@ async function click(label: string) {
     (node) => node.textContent === label || node.getAttribute("aria-label")?.startsWith(label),
   );
   expect(button).toBeDefined();
-  await act(() => button!.click());
+  await act(() => userEvent.click(button!));
 }
 
 it.each([
@@ -123,8 +117,9 @@ it.each([
   await click("Use reset");
   await click("Use credit");
   expect(consume).toHaveBeenCalledOnce();
-  expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-  expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
+  // Both popups unmount once their exit animations finish.
+  await expect.poll(() => document.querySelector('[role="alertdialog"]')).toBeNull();
+  await expect.poll(() => document.querySelector('[data-slot="popover-popup"]')).toBeNull();
   const status = document.querySelector('[role="status"]');
   expect(status?.textContent).toBe("Alpha Using reset credit…");
   await click("Alpha:");

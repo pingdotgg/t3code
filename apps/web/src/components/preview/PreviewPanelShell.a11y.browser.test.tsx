@@ -1,9 +1,8 @@
-// @vitest-environment jsdom
-
 import { Dialog } from "@base-ui/react/dialog";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { PanelLayoutControls } from "../chat/PanelLayoutControls";
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -13,15 +12,6 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
-  vi.stubGlobal(
-    "ResizeObserver",
-    class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    },
-  );
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -31,7 +21,6 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 async function renderPanel(
@@ -76,17 +65,20 @@ async function renderPanel(
       </Dialog.Root>,
     );
   });
-  await act(async () => vi.advanceTimersToNextFrame());
+  await act(nextFrame);
 }
 
+function nextFrame() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+// Tabbing past the popup's last control wraps through Base UI's focus guard
+// to the first tabbable descendant, which skips anything inert.
 async function enterFocusScope() {
-  // Base UI's focus guard models Tab wrapping into the scope. Its production
-  // focus manager chooses the first tabbable descendant, including inert rules
-  // that jsdom's native focus() does not implement.
-  const guards = document.querySelectorAll<HTMLElement>("[data-base-ui-focus-guard]");
-  expect(guards.length).toBe(2);
-  await act(async () => guards[1]!.focus());
-  await act(async () => vi.advanceTimersToNextFrame());
+  const toggle = document.querySelector<HTMLElement>('[aria-label="Toggle right panel"]')!;
+  await act(async () => toggle.focus());
+  await act(() => userEvent.tab());
+  await act(nextFrame);
 }
 
 describe("right panel keyboard access", () => {
