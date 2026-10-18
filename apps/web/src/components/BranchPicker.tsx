@@ -190,8 +190,8 @@ export function BranchPicker({
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>No refs found.</ComboboxEmpty>
-          <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
-            <ComboboxListVirtualized className="size-full min-w-0">
+          <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
+            <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
                 ref={branchListRef}
                 data={filteredItems}
@@ -210,7 +210,7 @@ export function BranchPicker({
                   maybeFetchNextBranchPage();
                 }}
                 className={cn(
-                  "max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 pt-2 pb-1",
+                  "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 py-2",
                   getVirtualizedScrollFadeClassName({
                     top: showTopBranchScrollFade,
                     bottom: showBottomBranchScrollFade,
