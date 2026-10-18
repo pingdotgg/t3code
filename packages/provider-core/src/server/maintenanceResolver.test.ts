@@ -30,6 +30,7 @@ import {
   resolveLatestProviderVersion,
   resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
+  type PackageManagedProviderMaintenanceDefinition,
   type ProviderMaintenanceCapabilities,
 } from "./maintenanceResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -335,6 +336,134 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         executable: visiblePath,
         args: ["update"],
         lockKey: "codex-native",
+      });
+    }),
+  );
+
+  const claudeUpdate = {
+    provider: driver("claudeAgent"),
+    npmPackageName: "@anthropic-ai/claude-code",
+    nativeUpdate: {
+      args: ["update"],
+      isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
+    },
+  };
+  const otherProviderUpdate = {
+    provider: driver("nativePackageTool"),
+    npmPackageName: "@example/native-package-tool",
+    nativeUpdate: {
+      args: ["update"],
+      isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
+    },
+  };
+  const resolveInstall = (input: {
+    readonly definition: PackageManagedProviderMaintenanceDefinition;
+    readonly resolved: string;
+    readonly real: string;
+    readonly platform?: NodeJS.Platform;
+  }) =>
+    resolvePackageManagedProviderMaintenance(input.definition, {
+      binaryPath: "claude",
+      resolvedCommandPath: input.resolved,
+      realCommandPath: input.real,
+      env: {},
+      platform: input.platform ?? "win32",
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, input.platform ?? "win32"),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+    );
+  const userWinGetLink = "C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe";
+  const userWinGetPackage =
+    "C:\\Users\\me\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
+  const machineWinGetLink = "C:\\Program Files\\WinGet\\Links\\claude.exe";
+  const machineWinGetPackage =
+    "C:\\Program Files\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
+  const nativeClaude = "C:\\Users\\me\\.local\\bin\\claude.exe";
+
+  it.effect.each([
+    { name: "a user-scope link", resolved: userWinGetLink, real: userWinGetPackage },
+    { name: "a user-scope package", resolved: userWinGetPackage, real: userWinGetPackage },
+    { name: "a machine-scope package", resolved: machineWinGetPackage, real: machineWinGetPackage },
+    { name: "a machine-scope link alone", resolved: machineWinGetLink, real: machineWinGetLink },
+    {
+      name: "a mixed-case link",
+      resolved: "c:\\USERS\\me\\appdata\\local\\MICROSOFT\\winget\\links\\Claude.EXE",
+      real: userWinGetPackage.toUpperCase(),
+    },
+    { name: "a native-looking alias", resolved: nativeClaude, real: userWinGetPackage },
+  ] as const)("keeps a WinGet Claude install manual-only through $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
+
+      expect(capabilities.update).toBeNull();
+    }),
+  );
+
+  it.effect("hides update actions for a WinGet Claude install", () =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall({
+        definition: claudeUpdate,
+        resolved: userWinGetLink,
+        real: userWinGetPackage,
+      });
+
+      expect(
+        createProviderVersionAdvisory({
+          driver: driver("claudeAgent"),
+          currentVersion: "2.1.0",
+          latestVersion: "2.2.0",
+          maintenanceCapabilities: capabilities,
+        }),
+      ).toMatchObject({ canUpdate: false, canInstallVersion: false, updateCommand: null });
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "a native install",
+      definition: claudeUpdate,
+      resolved: nativeClaude,
+      real: nativeClaude,
+    },
+    {
+      name: "a WinGet-shaped path off Windows",
+      definition: claudeUpdate,
+      resolved: "/home/me/winget/links/claude.exe",
+      real: "/home/me/winget/links/claude.exe",
+      platform: "linux",
+    },
+    {
+      name: "a WinGet-named folder outside the WinGet roots",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\WinGet\\Links\\claude.exe",
+      real: "C:\\Work\\WinGet\\Links\\claude.exe",
+    },
+    {
+      name: "a WinGet-named folder inside another directory",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
+      real: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
+    },
+    {
+      name: "another provider in WinGet",
+      definition: otherProviderUpdate,
+      resolved: userWinGetLink,
+      real: userWinGetPackage,
+    },
+    {
+      name: "another WinGet package",
+      definition: claudeUpdate,
+      resolved: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
+      real: userWinGetPackage.replace("ClaudeCode_", "ClaudeCodeOther_"),
+    },
+  ] as const)("keeps the native updater for $name", (fixture) =>
+    Effect.gen(function* () {
+      const capabilities = yield* resolveInstall(fixture);
+
+      expect(capabilities.update).toMatchObject({
+        executable: fixture.resolved,
+        args: ["update"],
+        lockKey: `${fixture.definition.provider}-native`,
       });
     }),
   );
