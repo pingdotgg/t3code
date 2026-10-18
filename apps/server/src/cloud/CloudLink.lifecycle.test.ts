@@ -1213,10 +1213,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   it.effect.each([
-    { status: 401, rejection: "unauthorized" },
-    { status: 403, rejection: "forbidden" },
-    { status: 409, rejection: "rejected" },
-  ])("preserves a permanent $status relay recovery failure", ({ status, rejection }) => {
+    { status: 401, body: {}, rejection: "unauthorized" },
+    {
+      status: 401,
+      body: {
+        _tag: "RelayAuthInvalidError",
+        code: "auth_invalid",
+        reason: "invalid_bearer",
+        traceId: "trace-revoked",
+      },
+      rejection: "unauthorized",
+    },
+    { status: 403, body: {}, rejection: "forbidden" },
+    { status: 409, body: {}, rejection: "rejected" },
+  ])("preserves a permanent $status relay recovery failure", ({ status, body, rejection }) => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
       [RELAY_URL_SECRET, "https://relay.example.test"],
@@ -1239,7 +1249,44 @@ describe("releaseManagedTunnelOnShutdown", () => {
         store,
         applyConfigCalls,
         requests,
-        respond: () => Response.json({}, { status }),
+        respond: () => Response.json(body, { status }),
+      }),
+    );
+  });
+
+  // A proof signed with a skewed boot clock is rejected as expired. The next
+  // attempt mints a new proof, so startup reconcile must keep retrying it.
+  it.effect("retries a relay link proof rejected as expired", () => {
+    const { store } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const error = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
+
+      expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
+      expect(error.message).toContain("Trace ID: trace-expired");
+      expect(CloudLink.shouldRetryCloudLink(error)).toBe(true);
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respond: () =>
+          Response.json(
+            {
+              _tag: "RelayEnvironmentLinkProofExpiredError",
+              code: "environment_link_proof_expired",
+              traceId: "trace-expired",
+            },
+            { status: 401 },
+          ),
       }),
     );
   });

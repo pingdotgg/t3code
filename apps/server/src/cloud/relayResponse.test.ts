@@ -76,6 +76,34 @@ it.effect("makes revoked authorization actionable and non-retryable", () =>
   }),
 );
 
+it.effect("retries an expired link proof but not a revoked bearer, both 401", () =>
+  Effect.gen(function* () {
+    const expired = yield* filterRelayResponse(
+      response(401, {
+        _tag: "RelayEnvironmentLinkProofExpiredError",
+        code: "environment_link_proof_expired",
+        traceId: "trace-expired",
+      }),
+    ).pipe(Effect.mapError(relayRequestError), Effect.flip);
+    const revoked = yield* filterRelayResponse(
+      response(401, {
+        _tag: "RelayAuthInvalidError",
+        code: "auth_invalid",
+        reason: "invalid_bearer",
+        traceId: "trace-auth",
+      }),
+    ).pipe(Effect.mapError(relayRequestError), Effect.flip);
+
+    expect(expired).toMatchObject({ _tag: "RelayRequestError", rejection: "unavailable" });
+    expect(expired.message).toContain("Relay environment link proof expired");
+    expect(expired.message).toContain("date and time");
+    expect(expired.message).toContain("Trace ID: trace-expired");
+    expect(shouldRetryRelayRequest(expired)).toBe(true);
+    expect(revoked).toMatchObject({ rejection: "unauthorized" });
+    expect(shouldRetryRelayRequest(revoked)).toBe(false);
+  }),
+);
+
 it.effect("reports an unrecognized access denial without printing its response body", () =>
   Effect.gen(function* () {
     const error = yield* filterRelayResponse(
