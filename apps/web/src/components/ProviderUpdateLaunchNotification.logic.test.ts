@@ -498,6 +498,68 @@ describe("provider update launch notification logic", () => {
     });
   });
 
+  it("shows the active sidebar pill for an update on a non-default instance", () => {
+    const view = getProviderUpdateSidebarPillView([
+      provider({ driver: driver("claudeAgent") }),
+      provider({
+        driver: driver("claudeAgent"),
+        instanceId: instanceId("claude_work"),
+        updateState: {
+          status: "running",
+          startedAt: checkedAt,
+          finishedAt: null,
+          message: "Updating provider.",
+          output: null,
+        },
+      }),
+    ]);
+
+    expect(view).toMatchObject({
+      key: "loading:claudeAgent:running",
+      tone: "loading",
+      title: "Updating Claude",
+      description: "Claude update in progress.",
+    });
+  });
+
+  it("shows the latest terminal sidebar pill across instances of a driver", () => {
+    const view = getProviderUpdateSidebarPillView(
+      [
+        provider({
+          driver: driver("claudeAgent"),
+          updateState: {
+            status: "failed",
+            startedAt: checkedAt,
+            finishedAt: checkedAt,
+            message: "Update command exited with code 1.",
+            output: null,
+          },
+        }),
+        provider({
+          driver: driver("claudeAgent"),
+          instanceId: instanceId("claude_work"),
+          version: "1.1.0",
+          latestVersion: "1.1.0",
+          advisoryStatus: "current",
+          updateState: {
+            status: "succeeded",
+            startedAt: laterCheckedAt,
+            finishedAt: laterCheckedAt,
+            message: "Provider updated.",
+            output: null,
+          },
+        }),
+      ],
+      { visibleAfterIso: sessionStartedAt },
+    );
+
+    expect(view).toMatchObject({
+      key: "succeeded:claudeAgent:2026-04-23T10:01:00.000Z:Provider updated.",
+      tone: "success",
+      title: "Claude updated: v1.1.0",
+    });
+  });
+
   it("uses the provider name for single failed sidebar pill updates", () => {
     const view = getProviderUpdateSidebarPillView(
       [
