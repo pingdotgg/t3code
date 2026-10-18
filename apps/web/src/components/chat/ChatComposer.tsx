@@ -1,5 +1,6 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
+import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -5538,16 +5539,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Question answers carry attachments beside the answer, never as chips. Falling back to
     // the thread prompt here would hide the file behind a reference the question never shows.
     if (questionAttachmentTarget) return false;
-    if (selection) {
-      const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
-      return applyPromptReplacement(edit.start, edit.end, edit.text);
-    }
-    const text = references.map(formatInlineContextReference).join(" ");
-    const inserted = insertComposerText(`${text} `, "cursor", { ensureLeadingBoundary: true });
-    if (!inserted) {
-      setPrompt(ensureInlineContextReferences(promptRef.current, references));
-    }
-    return true;
+    return insertAttachmentReferencesForDraft({
+      target: composerDraftTarget,
+      liveAttachmentTargetKey: attachmentTargetKeyRef.current,
+      references,
+      insertReferences: () => {
+        if (selection) {
+          const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
+          return applyPromptReplacement(edit.start, edit.end, edit.text);
+        }
+        const text = references.map(formatInlineContextReference).join(" ");
+        const inserted = insertComposerText(`${text} `, "cursor", { ensureLeadingBoundary: true });
+        if (!inserted) {
+          setPrompt(ensureInlineContextReferences(promptRef.current, references));
+        }
+        return true;
+      },
+    });
   };
 
   const removeComposerImage = (imageId: string) => {
