@@ -802,7 +802,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           ),
           right: undefined,
         }
-      : { width: undefined, right: controlInsets.right },
+      : { width: "auto", right: controlInsets.right },
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
