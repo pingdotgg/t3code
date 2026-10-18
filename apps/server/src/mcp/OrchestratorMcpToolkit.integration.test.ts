@@ -198,6 +198,9 @@ function makeDeterministicAdapter(input: {
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
+  readonly steerReceived?: (
+    steer: ProviderAdapter.ProviderAdapterV2SteerInput,
+  ) => Deferred.Deferred<void> | undefined;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -365,7 +368,12 @@ function makeDeterministicAdapter(input: {
                 },
               ]);
             }),
-          steerTurn: () => Effect.void,
+          steerTurn: (steer) => {
+            const received = input.steerReceived?.(steer);
+            return received === undefined
+              ? Effect.void
+              : Deferred.succeed(received, undefined).pipe(Effect.asVoid);
+          },
           interruptTurn: ({ providerThread, providerTurnId }) =>
             Effect.gen(function* () {
               const turnInput = turnInputs.get(providerTurnId);
@@ -529,6 +537,7 @@ describe("orchestrator MCP toolkit", () => {
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const steerReceivedGates = new Map<string, Deferred.Deferred<void>>();
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
@@ -564,6 +573,7 @@ describe("orchestrator MCP toolkit", () => {
                 turn.message.text === delegatedPrompt
                   ? delegatedResult
                   : `Claude completed: ${turn.message.text}`,
+              steerReceived: (steer) => steerReceivedGates.get(steer.message.text),
             }),
           ]);
           const continuationOffers = yield* Ref.make<
@@ -1900,6 +1910,134 @@ describe("orchestrator MCP toolkit", () => {
             yield* expectOffersToStay(2);
             yield* invoke("task_status", { taskId: childFollowup.taskId });
             yield* invoke("task_status", { taskId: activeChildFollowup.taskId });
+            yield* Ref.set(continuationOffers, []);
+
+            // A send into a child run the server started has no task to join.
+            // It gets its own task only when it starts a new attempt; a steer
+            // into the running attempt leaves no run that could settle one.
+            const childSteerText = "Include the parent's latest guidance before finishing.";
+            const steerIntoUntaskedChildRun = (
+              target: { readonly providerInstanceId: ProviderInstanceId; readonly model: string },
+              name: string,
+            ) =>
+              Effect.gen(function* () {
+                const delegateCall = yield* invoke("delegate_task", {
+                  task: "Inspect the steering boundary and return the result.",
+                  target,
+                  mode: "wait",
+                  timeoutMs: 10_000,
+                  clientRequestId: `${name}-delegate`,
+                });
+                const child = yield* decodeDelegateTaskResult(delegateCall.structuredContent).pipe(
+                  Effect.orDie,
+                );
+                expect(child.status).toBe("completed");
+                const messageId = MessageId.make(`message:mcp-child:${name}`);
+                yield* orchestrator.dispatch({
+                  type: "message.dispatch",
+                  createdBy: "agent",
+                  creationSource: "server",
+                  commandId: CommandId.make(`command:mcp-child:${name}`),
+                  threadId: child.childThreadId,
+                  messageId,
+                  text: cancellationPrompt,
+                  attachments: [],
+                  modelSelection: { instanceId: target.providerInstanceId, model: target.model },
+                  dispatchMode: { type: "start_immediately" },
+                });
+                const running = yield* waitForProjection(
+                  orchestrator,
+                  child.childThreadId,
+                  (projection) => {
+                    const run = projection.runs.find((row) => row.userMessageId === messageId);
+                    return (
+                      run?.status === "running" &&
+                      projection.providerTurns.some(
+                        (turn) => turn.nodeId === run.rootNodeId && turn.status === "running",
+                      )
+                    );
+                  },
+                );
+                const run = running.runs.find((row) => row.userMessageId === messageId)!;
+                expect(run.delegatedTaskId).toBeUndefined();
+                const sendCall = yield* invoke("t3_thread_send", {
+                  threadId: child.childThreadId,
+                  message: childSteerText,
+                  mode: "steer",
+                  clientRequestId: `${name}-steer`,
+                });
+                const sent = yield* decodeThreadSendResult(sendCall.structuredContent).pipe(
+                  Effect.orDie,
+                );
+                expect(sent).toMatchObject({ runId: run.id, delivery: "steered" });
+                return { child, sent };
+              });
+            const waitForChildRun = (
+              childThreadId: ThreadId,
+              runId: string,
+              status: "completed" | "interrupted",
+            ) =>
+              waitForProjection(orchestrator, childThreadId, (projection) =>
+                projection.runs.some((run) => run.id === runId && run.status === status),
+              );
+
+            // Claude steers into the running turn, which then ends.
+            const steerReceived = yield* Deferred.make<void>();
+            steerReceivedGates.set(childSteerText, steerReceived);
+            const steeredSend = yield* steerIntoUntaskedChildRun(
+              { providerInstanceId: claudeInstanceId, model: claudeModel },
+              "steer-untasked-run",
+            );
+            // A steer that misses the turn is sent again as its own run, so
+            // end the turn only once the steer reached it.
+            yield* Deferred.await(steerReceived);
+            steerReceivedGates.delete(childSteerText);
+            yield* invoke("t3_thread_interrupt", {
+              threadId: steeredSend.child.childThreadId,
+              runId: steeredSend.sent.runId,
+              clientRequestId: "steer-untasked-run-interrupt",
+            });
+            yield* waitForChildRun(
+              steeredSend.child.childThreadId,
+              steeredSend.sent.runId,
+              "interrupted",
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.filter(
+                (task) =>
+                  task.origin === "app_owned" &&
+                  task.childThreadId === steeredSend.child.childThreadId &&
+                  task.status === "running",
+              ),
+            ).toEqual([]);
+            expect(steeredSend.sent.taskId).toBeUndefined();
+
+            // This Codex session has active steering off, so the send restarts the
+            // turn as a new attempt that owns the follow-up task and settles it.
+            const restarted = yield* steerIntoUntaskedChildRun(
+              { providerInstanceId: codexInstanceId, model: codexModel },
+              "restart-untasked-run",
+            );
+            const restartedTaskId = restarted.sent.taskId;
+            expect(restartedTaskId).toBeDefined();
+            yield* waitForChildRun(
+              restarted.child.childThreadId,
+              restarted.sent.runId,
+              "completed",
+            );
+            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
+              projection.subagents.some(
+                (task) => task.id === restartedTaskId && task.status === "completed",
+              ),
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(restarted.child.childThreadId)).runs.find(
+                (run) => run.id === restarted.sent.runId,
+              )?.delegatedTaskId,
+            ).toBe(restartedTaskId);
+            yield* invoke("task_status", { taskId: steeredSend.child.taskId });
+            yield* invoke("task_status", { taskId: restarted.child.taskId });
+            yield* invoke("task_status", { taskId: restartedTaskId });
             yield* Ref.set(continuationOffers, []);
 
             const repeatedDelegatedCall = yield* invoke("delegate_task", {

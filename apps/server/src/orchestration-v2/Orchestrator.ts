@@ -6838,6 +6838,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
       .at(-1);
     if (message?.runId == null) return;
+    // Only a message that starts a run or a new attempt can own a task. A
+    // steer joins the running attempt, which finalizes its run from the
+    // snapshot taken when it started, so a task bound to it would never settle.
+    const startsAttempt = pending.some(
+      (event) =>
+        (event.type === "run.created" && event.payload.id === message.runId) ||
+        (event.type === "run-attempt.created" && event.payload.runId === message.runId),
+    );
+    if (!startsAttempt) return;
     const child = yield* projectionStore.getThread(command.threadId);
     const parentThreadId = child.lineage.parentThreadId;
     if (
