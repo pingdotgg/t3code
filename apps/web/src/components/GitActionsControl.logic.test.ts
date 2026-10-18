@@ -8,6 +8,7 @@ import {
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
+  resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
@@ -1022,6 +1023,21 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
         'This action will commit, push, and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
       continueLabel: "Commit, push & create PR",
     });
+  });
+});
+
+describe("resolveFeatureBranchUnavailableReason", () => {
+  it("blocks the feature branch when there is nothing to commit", () => {
+    assert.equal(
+      resolveFeatureBranchUnavailableReason({ branchName: "main", hasWorkingTreeChanges: false }),
+      "There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on main.",
+    );
+  });
+
+  it("allows the feature branch when there are changes to commit", () => {
+    assert.isNull(
+      resolveFeatureBranchUnavailableReason({ branchName: "main", hasWorkingTreeChanges: true }),
+    );
   });
 });
 

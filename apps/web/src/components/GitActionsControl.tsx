@@ -52,6 +52,7 @@ import {
   type DefaultBranchConfirmableAction,
   requiresDefaultBranchConfirmation,
   resolveDefaultBranchActionDialogCopy,
+  resolveFeatureBranchUnavailableReason,
   resolveGitActionProgressPresentation,
   resolveGitActionResultToastTiming,
   resolveLiveThreadBranchUpdate,
@@ -1155,6 +1156,15 @@ export default function GitActionsControl({
         terminology: changeRequestTerminology,
       })
     : null;
+  // Follows the live status so the button tracks the tree while the dialog is open. Until the
+  // status loads, keep the option enabled: the server stays the authority and rejects a stale
+  // request with its own error.
+  const featureBranchUnavailableReason = pendingDefaultBranchAction
+    ? resolveFeatureBranchUnavailableReason({
+        branchName: pendingDefaultBranchAction.branchName,
+        hasWorkingTreeChanges: gitStatus?.hasWorkingTreeChanges ?? true,
+      })
+    : null;
 
   useEffect(() => {
     if (gitCwd === null) {
@@ -2039,6 +2049,9 @@ export default function GitActionsControl({
               {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
+            {featureBranchUnavailableReason && (
+              <p className="text-xs text-muted-foreground">{featureBranchUnavailableReason}</p>
+            )}
           </DialogHeader>
           <DialogFooter variant="bare" className="sm:flex-wrap sm:items-center">
             <Button
@@ -2062,7 +2075,7 @@ export default function GitActionsControl({
               className="w-full max-w-full sm:w-auto"
               size="sm-multiline"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
-              disabled={!canChangeThreadBranch}
+              disabled={!canChangeThreadBranch || featureBranchUnavailableReason !== null}
             >
               Check out feature branch & continue
             </Button>
