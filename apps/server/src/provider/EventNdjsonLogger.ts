@@ -223,6 +223,9 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
     }
 
     const nativeType = Reflect.get(nativeEvent, "type");
+    if (nativeType === "system" && Reflect.get(nativeEvent, "subtype") === "thinking_tokens") {
+      return false;
+    }
     if (nativeType === "message.part.delta") return false;
     if (nativeType === "stream_event") {
       const streamEvent = Reflect.get(nativeEvent, "event");
