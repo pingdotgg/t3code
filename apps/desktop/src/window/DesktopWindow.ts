@@ -756,9 +756,11 @@ export const make = Effect.gen(function* () {
       const recoverable =
         details.reason === "crashed" ||
         details.reason === "oom" ||
+        details.reason === "killed" ||
         details.reason === "abnormal-exit";
       // Recovery attempts are bounded so a renderer that dies immediately on
       // boot cannot reload-loop forever.
+
       runFork(
         Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis;
