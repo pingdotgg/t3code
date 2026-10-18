@@ -323,9 +323,9 @@ describe("tailscale", () => {
       assert.equal(error.executable, "tailscale");
       assert.equal(error.subcommand, "status");
       assert.equal(error.argumentCount, 2);
-      assert.equal(error.timeoutMs, 1_500);
+      assert.equal(error.timeoutMs, 3_500);
       assert.isTrue(Cause.isTimeoutError(error.cause));
-      assert.equal(error.message, "tailscale status timed out after 1500ms.");
+      assert.equal(error.message, "tailscale status timed out after 3500ms.");
     }).pipe(Effect.provide(layer));
   });
 
