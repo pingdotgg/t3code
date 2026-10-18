@@ -1,3 +1,5 @@
+import { AsyncResult } from "effect/reactivity";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation, useNavigationState, useRoute } from "@react-navigation/native";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
@@ -83,7 +85,7 @@ export function usePullRequestThreads(
     if (!pr || !canAsk || pending.current) return;
     pending.current = true;
     setBusy(true);
-    try {
+    const result = await settlePromise(async () => {
       if (connected && !thread && !canCheckout)
         throw new Error("Starting work from this PR requires source control write access.");
       await waitForComposerDraftsLoaded();
@@ -148,11 +150,12 @@ export function usePullRequestThreads(
           screen: "NewTaskDraft",
           params: { draftId: draftKey, title: `Ask about #${pr.number}` },
         });
-    } catch (cause) {
+    });
+    pending.current = false;
+    setBusy(false);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
-    } finally {
-      pending.current = false;
-      setBusy(false);
     }
   };
   return {

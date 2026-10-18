@@ -1,3 +1,4 @@
+import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -27,23 +28,22 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     if (pending.current || !available(action)) return;
     pending.current = true;
     setBusy(true);
-    try {
-      const response = await run({
-        ...target,
-        input: { ...target.input, action, ...(updateMethod ? { updateMethod } : {}) },
-      });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      refreshDetail();
-      refreshActivity();
-    } catch (cause) {
+    const response = await run({
+      ...target,
+      input: { ...target.input, action, ...(updateMethod ? { updateMethod } : {}) },
+    });
+    pending.current = false;
+    setBusy(false);
+    if (AsyncResult.isFailure(response)) {
+      const cause = squashAtomCommandFailure(response);
       Dialog.alert(
         "Couldn't update this pull request",
         cause instanceof Error ? cause.message : "Try again.",
       );
-    } finally {
-      pending.current = false;
-      setBusy(false);
+      return;
     }
+    refreshDetail();
+    refreshActivity();
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
     Dialog.alert(title, message, [

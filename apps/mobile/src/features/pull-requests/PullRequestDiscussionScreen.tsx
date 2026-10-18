@@ -2,7 +2,11 @@ import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import type { PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { Platform, ScrollView, View } from "react-native";
@@ -59,57 +63,58 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(64);
-  const operation = async (run: () => Promise<void>) => {
+  const operation = async (run: () => Promise<AtomCommandResult<unknown, unknown> | undefined>) => {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
-    try {
-      await run();
-    } catch (cause) {
+    const result = await run();
+    pending.current = false;
+    setBusy(false);
+    if (result && AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error ? cause.message : "The provider could not complete this action.",
       );
-    } finally {
-      pending.current = false;
-      setBusy(false);
     }
   };
   const post = () =>
     operation(async () => {
-      if (!permissions.canReply || !body.trim() || !thread) return;
+      if (!permissions.canReply || !body.trim() || !thread) return undefined;
       const submitted = body;
       const response = await reply({
         ...target,
         input: { ...target.input, threadId: thread.id, body: submitted },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (AsyncResult.isFailure(response)) return response;
       setBody((current) => (current === submitted ? "" : current));
       setNotice("Reply posted.");
       refresh();
+      return response;
     });
   const toggleResolved = () =>
     operation(async () => {
-      if (!thread || !permissions.canResolve) return;
+      if (!thread || !permissions.canResolve) return undefined;
       const response = await resolve({
         ...target,
         input: { ...target.input, threadId: thread.id, resolved: !thread.isResolved },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      refresh();
+      if (AsyncResult.isSuccess(response)) refresh();
+      return response;
     });
   const nextCursor = cursor === undefined ? thread?.nextCommentsCursor : cursor;
   const more = () =>
     operation(async () => {
-      if (!thread || !nextCursor) return;
+      if (!thread || !nextCursor) return undefined;
       const response = await loadMore({
         ...target,
         input: { ...target.input, threadId: thread.id, cursor: nextCursor },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (AsyncResult.isFailure(response)) return response;
       setExtra((comments) => [...comments, ...response.value.comments]);
       setCursor(response.value.nextCursor);
+      return response;
     });
   const comments = [
     ...new Map(

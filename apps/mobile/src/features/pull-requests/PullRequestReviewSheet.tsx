@@ -1,9 +1,10 @@
+import { AsyncResult } from "effect/reactivity";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { Platform, Pressable, View } from "react-native";
 import { clearSubmittedReview } from "./pullRequestReviewDrafts";
@@ -31,20 +32,21 @@ function useActionSubmission(params: PullRequestParams) {
     pending.current = true;
     setBusy(true);
     setError(null);
-    try {
+    const result = await settlePromise(async () => {
       await operation();
       refreshDetail();
       refreshActivity();
       navigation.goBack();
-    } catch (cause) {
+    });
+    pending.current = false;
+    setBusy(false);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error
           ? cause.message
           : "The provider could not complete this action. Try again.",
       );
-    } finally {
-      pending.current = false;
-      setBusy(false);
     }
   };
   return { busy, error, submit };
@@ -66,7 +68,7 @@ export function PullRequestReviewSheet({
   const target = pullRequestTarget(params);
   const result = useEnvironmentQuery(composerPullRequests.detail(target));
   const { refresh: refreshDetail } = result;
-  useFocusEffect(useCallback(() => refreshDetail(), [refreshDetail]));
+  useFocusEffect(() => refreshDetail());
   const permissions = usePullRequestPermissions(params, result.data);
   const submission = useActionSubmission(params);
   const review = useAtomCommand(composerPullRequests.submitReview, { reportFailure: false });

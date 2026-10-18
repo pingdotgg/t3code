@@ -2,7 +2,7 @@ import { Toolbar } from "../../../components/ui/Toolbar";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { AndroidScreenHeader } from "../../../components/ui/AndroidScreenHeader";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -102,19 +102,8 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   const position = Math.max(0, Math.min(route.params.position, (guide?.stops.length ?? 1) - 1));
   const stop = guide?.stops[Math.max(0, position)];
   const diff = usePullRequestDiff(route.params);
-  const excerptFiles = useMemo(() => {
-    const files = new Map<string, FileDiffMetadata>();
-    try {
-      for (const patch of parsePatchFiles(diff.patch)) {
-        for (const file of patch.files) {
-          files.set(file.name, file);
-          if (file.prevName) files.set(file.prevName, file);
-        }
-      }
-    } catch {}
-    return files;
-  }, [diff.patch]);
-  const wanted = useMemo(() => (stop ? stopFilePaths(stop) : []), [stop]);
+  const excerptFiles = diffFilesByPath(diff.patch);
+  const wanted = stop ? stopFilePaths(stop) : [];
   const loadedPaths = new Set(
     diff.parsed.kind === "files" ? diff.parsed.files.map((file) => file.path) : [],
   );
@@ -331,4 +320,17 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
       </PullRequestMarkdownRepository>
     </View>
   );
+}
+
+function diffFilesByPath(patchText: string): Map<string, FileDiffMetadata> {
+  const files = new Map<string, FileDiffMetadata>();
+  try {
+    for (const patch of parsePatchFiles(patchText)) {
+      for (const file of patch.files) {
+        files.set(file.name, file);
+        if (file.prevName) files.set(file.prevName, file);
+      }
+    }
+  } catch {}
+  return files;
 }

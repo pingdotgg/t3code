@@ -1,3 +1,4 @@
+import { AsyncResult } from "effect/reactivity";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { usePullRequestConnected } from "./usePullRequestConnected";
@@ -5,7 +6,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -79,7 +80,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
-  const candidates = useMemo(() => {
+  const candidates = (() => {
     const needle = query.trim().toLowerCase();
     return [...(result.data?.candidates ?? [])]
       .filter((candidate) =>
@@ -88,7 +89,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
       .sort(
         (a, b) => Number(b.isRequested) - Number(a.isRequested) || a.login.localeCompare(b.login),
       );
-  }, [result.data, query]);
+  })();
   useEffect(() => {
     if (candidates.length === 0) return;
     listRef.current?.scrollToOffset({
@@ -103,27 +104,26 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     inFlight.current = true;
     setPending(`${candidate.kind}:${candidate.id}`);
     setError(null);
-    try {
-      const response = await request({
-        ...target,
-        input: {
-          ...target.input,
-          reviewers: [{ id: candidate.id, kind: candidate.kind }],
-          requested: !candidate.isRequested,
-        },
-      });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      if (!pr?.capabilities.reviewers.listCandidates) {
-        setQuery("");
-        detail.refresh();
-      }
-    } catch (cause) {
+    const response = await request({
+      ...target,
+      input: {
+        ...target.input,
+        reviewers: [{ id: candidate.id, kind: candidate.kind }],
+        requested: !candidate.isRequested,
+      },
+    });
+    inFlight.current = false;
+    setPending(null);
+    if (AsyncResult.isFailure(response)) {
+      const cause = squashAtomCommandFailure(response);
       setError(
         cause instanceof Error ? cause.message : "Couldn't update this review request. Try again.",
       );
-    } finally {
-      inFlight.current = false;
-      setPending(null);
+      return;
+    }
+    if (!pr?.capabilities.reviewers.listCandidates) {
+      setQuery("");
+      detail.refresh();
     }
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
