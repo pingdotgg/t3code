@@ -469,6 +469,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var pendingIconUris = Set<String>()
   private var tokensNeedRebuild = false
   private var chipsNeedMeasuredWidth = false
+  private var hasDeferredForcedRebuild = false
 
   let onComposerChange = EventDispatcher()
   let onComposerSelectionChange = EventDispatcher()
@@ -839,11 +840,21 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func applyControlledDocument(force: Bool = false) {
-    let currentSource = textView.serializedText()
-    guard force || currentSource != value || !documentMatchesExpectedTokens() else {
+    // Rebuilding the attributed string tears down an active IME composition.
+    // Skip while marked text exists; committing the composition sends a new
+    // value from JS, and that update rebuilds, keeping any skipped force.
+    if textView.markedTextRange != nil {
+      hasDeferredForcedRebuild = hasDeferredForcedRebuild || force
       updatePlaceholderVisibility()
       return
     }
+    let shouldForce = force || hasDeferredForcedRebuild
+    let currentSource = textView.serializedText()
+    guard shouldForce || currentSource != value || !documentMatchesExpectedTokens() else {
+      updatePlaceholderVisibility()
+      return
+    }
+    hasDeferredForcedRebuild = false
 
     let previousSelection = sourceSelection()
     isApplyingControlledValue = true
