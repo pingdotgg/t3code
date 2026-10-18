@@ -15,6 +15,7 @@ import {
   increment,
   metricAttributes,
   orchestrationEffectClaimsTotal,
+  orchestrationEffectOverdueTotal,
   orchestrationEffectQueueWait,
 } from "../observability/Metrics.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
@@ -861,6 +862,7 @@ export const layerWithOptions = (
             effectId: effect.id,
             effectType: effect.request.type,
           });
+          yield* increment(orchestrationEffectOverdueTotal, { effect_type: effect.request.type });
           yield* Fiber.join(settlement).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Overdue orchestration effect failed to settle", {
