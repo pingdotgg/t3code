@@ -73,7 +73,20 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
   }
 }
 
-export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
+/** Chrome will not start its sandbox as root (crbug.com/638180), which no host setup fixes. */
+export class PreviewBrowserRootError extends Schema.TaggedError<PreviewBrowserRootError>()(
+  "PreviewBrowserRootError",
+  {},
+) {
+  override get message(): string {
+    return "Chrome will not start its sandbox as root, so T3's browser cannot run while the T3 server runs as root. Run the server as a nonroot user (for example `User=` in its systemd service), or set `T3CODE_SERVER_BROWSER_SANDBOX=0` to run the browser unsandboxed as root.";
+  }
+}
+
+export type PreviewBrowserHostError =
+  | PreviewBrowserSandboxError
+  | PreviewBrowserLibrariesError
+  | PreviewBrowserRootError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
 const LOADER_ERROR = /error while loading shared libraries: ([^:\s]+)/;
@@ -86,7 +99,10 @@ export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunc
   }) {
     const { setupCommand } = input;
     if (input.output.includes(NO_SANDBOX_SIGNATURE)) {
-      return new PreviewBrowserSandboxError({ setupCommand });
+      // Playwright reports Chrome's refusal to sandbox as root as a sandbox failure too.
+      return (yield* HostProcess.UserId) === 0
+        ? new PreviewBrowserRootError()
+        : new PreviewBrowserSandboxError({ setupCommand });
     }
     if ((yield* HostProcess.Platform) !== "linux") return undefined;
     const libraries = yield* missingLibraries(input.executable);
