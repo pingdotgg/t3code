@@ -1434,6 +1434,16 @@ function makeProviderThread(input: {
   };
 }
 
+const decodeClaudeTranscriptLine = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ type: Schema.String })),
+);
+
+const isClaudeConversationLine = (line: string): boolean =>
+  Option.match(decodeClaudeTranscriptLine(line), {
+    onNone: () => false,
+    onSome: (entry) => entry.type === "user" || entry.type === "assistant",
+  });
+
 const getNativeThreadId = Effect.fnUntraced(function* (
   providerThread: OrchestrationV2ProviderThread,
 ) {
@@ -9113,6 +9123,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         yield* Effect.addFinalizer(() => closeSession());
 
+        // A CLI stopped before it saved the first prompt can leave a transcript
+        // with only metadata lines. Claude can neither resume that id nor
+        // create it again, so resumeThread fails and the caller binds a fresh
+        // native session with a context handoff.
+        const hasEmptyClaudeTranscript = Effect.fn("ClaudeAdapterV2.hasEmptyClaudeTranscript")(
+          function* (nativeThreadId: string) {
+            const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+            const projectsDir = path.join(
+              configuredDir.length > 0
+                ? path.resolve(session.cwd, configuredDir)
+                : path.join(yield* HostProcess.HomeDirectory, ".claude"),
+              "projects",
+            );
+            // Empty only when every copy of the id is empty; any message means
+            // the CLI may still resume it.
+            let found = false;
+            for (const project of yield* fileSystem.readDirectory(projectsDir)) {
+              const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
+              // Stray files beside the project dirs fail with ENOTDIR.
+              if (
+                !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
+              ) {
+                continue;
+              }
+              const conversationLine = yield* fileSystem
+                .stream(transcriptPath)
+                .pipe(
+                  Stream.decodeText,
+                  Stream.splitLines,
+                  Stream.filter(isClaudeConversationLine),
+                  Stream.runHead,
+                );
+              if (Option.isSome(conversationLine)) {
+                return false;
+              }
+              found = true;
+            }
+            return found;
+          },
+        );
+
         const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: adapterOptions.instanceId,
           driver: CLAUDE_PROVIDER,
@@ -9188,6 +9239,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
             function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+              const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              if (
+                nativeThreadId !== undefined &&
+                nativeThreadId !== null &&
+                // A live process holds the conversation even before saving it.
+                (yield* Ref.get(queryContext))?.nativeThreadId !== nativeThreadId &&
+                // An unreadable transcript leaves the resume to the CLI, as before.
+                (yield* hasEmptyClaudeTranscript(nativeThreadId).pipe(
+                  Effect.orElseSucceed(() => false),
+                ))
+              ) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude session ${nativeThreadId} has no conversation to resume.`,
+                });
+              }
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,
