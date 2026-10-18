@@ -69,8 +69,21 @@ export function threadPullRequestKeysEqual(
   return threadPullRequestKeyOf(left) === threadPullRequestKeyOf(right);
 }
 
+// Clients re-derive chains for every link on each render, and normalizing parses the
+// link's URL. Links are immutable and keep their identity until they change.
+const normalizedKeys = new WeakMap<ThreadPullRequestKeySource, ThreadPullRequestKey>();
+
+function normalizedKeyOf(key: ThreadPullRequestKeySource): ThreadPullRequestKey {
+  let normalized = normalizedKeys.get(key);
+  if (normalized === undefined) {
+    normalized = normalizeThreadPullRequestKey(key);
+    normalizedKeys.set(key, normalized);
+  }
+  return normalized;
+}
+
 export function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string {
-  const normalized = normalizeThreadPullRequestKey(key);
+  const normalized = normalizedKeyOf(key);
   return `${normalized.host}/${normalized.repository}#${normalized.number}`;
 }
 
@@ -210,7 +223,7 @@ export function resolveThreadPullRequestChains(
   const nativeStacks = new Map<string, Array<ThreadPullRequestLink>>();
   for (const link of visible) {
     if (link.stack === null) continue;
-    const key = normalizeThreadPullRequestKey(link);
+    const key = normalizedKeyOf(link);
     const stackKey = `${key.host}/${key.repository}#stack:${link.stack.id}`;
     const members = nativeStacks.get(stackKey) ?? [];
     members.push(link);
@@ -225,7 +238,7 @@ export function resolveThreadPullRequestChains(
 
   const remaining = visible.filter((link) => !placed.has(threadPullRequestKeyOf(link)));
   const branchKey = (link: ThreadPullRequestLink, branch: string) => {
-    const key = normalizeThreadPullRequestKey(link);
+    const key = normalizedKeyOf(link);
     return `${key.host}/${key.repository}:${branch}`;
   };
   const byHead = new Map<string, ThreadPullRequestLink | null>();
