@@ -498,6 +498,7 @@ const layerTest = (
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
             platform,
+            displayName: "T3 Code (Dev)",
             stateDir: "/state",
             linuxDesktopEntryName: "com.t3tools.T3Code.desktop",
             appRoot: "/repo",
@@ -3961,6 +3962,10 @@ it.effect.each([false, true])(
         if (fails) {
           const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
           assert.equal(error.reason, "setup-failed");
+          assert.equal(
+            error.message,
+            'Could not capture a test snapshot. Capturing the window failed. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "T3 Code (Dev)" is allowed for both.',
+          );
         } else yield* service.setup("test-mac-capture");
         assert.equal(macCaptureMock.mock.calls.length, 1);
         assert.equal(macCaptureMock.mock.calls[0]?.[0], active);
@@ -3985,12 +3990,88 @@ it.effect.each([false, true])(
   },
 );
 
+const macTestCaptureLayer = layerTest("darwin", {
+  makeTempDirectoryScoped: () => Effect.succeed("/tmp/setup-test"),
+  readDirectory: () => Effect.succeed([]),
+});
+const macTestCaptureWindow = {
+  platform: "macos",
+  id: 42,
+  title: "Setup",
+  owner: { name: "T3 Code", processId: 123, path: "/Applications/T3 Code.app" },
+  bounds: { x: 0, y: 0, width: 800, height: 600 },
+};
+
+it.effect("names the failed macOS window lookup without repeating what it printed", () => {
+  const script = 'ObjC.import("CoreGraphics"); function run() { return ""; }';
+  const stderr = "execution error: Error: Not authorized to send Apple events. (-1743)";
+  activeWindowMock
+    .mockReset()
+    .mockRejectedValue(
+      Object.assign(
+        new Error(`Command failed: /usr/bin/osascript -l JavaScript -e ${script}\n${stderr}`),
+        { cmd: `/usr/bin/osascript -l JavaScript -e ${script}`, code: 1, killed: false },
+      ),
+    );
+  macCaptureMock.mockReset();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(
+        error.message,
+        'Could not capture a test snapshot. Finding the front window failed: osascript exited with code 1. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "T3 Code (Dev)" is allowed for both.',
+      );
+      assert.include(String(error.cause), stderr);
+      assert.equal(macCaptureMock.mock.calls.length, 0);
+    }),
+  ).pipe(Effect.provide(macTestCaptureLayer));
+});
+
+it.effect("says when macOS has no window to test capture", () => {
+  activeWindowMock.mockReset().mockResolvedValue(undefined);
+  macCaptureMock.mockReset();
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(
+        error.message,
+        "Could not capture a test snapshot. No window is available to capture.",
+      );
+      assert.equal(macCaptureMock.mock.calls.length, 0);
+    }),
+  ).pipe(Effect.provide(macTestCaptureLayer));
+});
+
+it.effect("says when the macOS test capture command timed out", () => {
+  activeWindowMock.mockReset().mockResolvedValue(macTestCaptureWindow);
+  macCaptureMock.mockReset().mockRejectedValue(
+    Object.assign(new Error("Command failed: /usr/sbin/screencapture -l 42 -o -x"), {
+      code: null,
+      killed: true,
+      signal: "SIGTERM",
+    }),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const service = yield* DesktopSnapShot.make;
+      const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
+      assert.equal(
+        error.message,
+        'Could not capture a test snapshot. Capturing the window timed out. macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "T3 Code (Dev)" is allowed for both.',
+      );
+    }),
+  ).pipe(Effect.provide(macTestCaptureLayer));
+});
+
 it.effect("rejects macOS test capture on other platforms", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const service = yield* DesktopSnapShot.make;
       const error = yield* service.setup("test-mac-capture").pipe(Effect.flip);
       assert.equal(error.reason, "unsupported-session");
+      assert.equal(error.message, "Test capture requires macOS.");
     }),
   ).pipe(Effect.provide(layerTest("win32"))),
 );
