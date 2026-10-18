@@ -122,10 +122,15 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
   return catalog.models.flatMap((model): ServerProviderModel[] => {
     if (model.providerId !== "meta" || seen.has(model.modelId)) return [];
     seen.add(model.modelId);
+    const label = model.displayLabel.trim() || model.modelId;
+    const name =
+      label === model.modelId && label.startsWith("muse-")
+        ? label.replaceAll("-", " ").replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+        : label;
     return [
       {
         slug: model.modelId,
-        name: model.displayLabel.trim() || model.modelId,
+        name,
         isCustom: false,
         isDefault: model.isDefault,
         capabilities: museModelCapabilities(model),
