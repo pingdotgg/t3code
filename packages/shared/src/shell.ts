@@ -679,10 +679,64 @@ export function preferGitForWindowsBinary(
   return executable;
 }
 
+// What npm's cmd-shim writes for a package whose bin is a native executable.
+const NPM_EXECUTABLE_SHIM_PREFIX = [
+  "@ECHO off",
+  "GOTO start",
+  ":find_dp0",
+  "SET dp0=%~dp0",
+  "EXIT /b",
+  ":start",
+  "SETLOCAL",
+  "CALL :find_dp0",
+];
+const NPM_EXECUTABLE_SHIM_RUN = /^"%dp0%\\([^"%]+\.exe)" +%\*$/;
+
+function readFileSyncOrUndefined(filePath: string): string | undefined {
+  try {
+    return NodeFS.readFileSync(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The executable an npm cmd-shim runs, when the shim does nothing else.
+ * Started through the shim, the executable is a child of `cmd.exe` and so
+ * escapes the kill-on-close job libuv puts every child in: it keeps running
+ * after this process is killed. Started directly it is in the job.
+ */
+export function npmShimExecutable(
+  shimPath: string,
+  readFile: (filePath: string) => string | undefined = readFileSyncOrUndefined,
+  isFile: (filePath: string) => boolean = isFileSync,
+): string | undefined {
+  const path = NodePath.win32;
+  if (path.extname(shimPath).toLowerCase() !== ".cmd") return undefined;
+  // Compared exactly: whitespace CMD keeps, such as after `SET dp0=`, would
+  // make it run a different file than the one found here.
+  const lines = readFile(shimPath)
+    ?.split(/\r?\n/)
+    .filter((line) => line.length > 0);
+  if (lines?.length !== NPM_EXECUTABLE_SHIM_PREFIX.length + 1) return undefined;
+  if (NPM_EXECUTABLE_SHIM_PREFIX.some((expected, index) => lines[index] !== expected)) {
+    return undefined;
+  }
+  const target = NPM_EXECUTABLE_SHIM_RUN.exec(lines.at(-1)!)?.[1];
+  if (target === undefined) return undefined;
+  const executable = path.join(path.dirname(shimPath), target);
+  return isFile(executable) ? executable : undefined;
+}
+
+export interface SpawnCommandOptions extends CommandAvailabilityOptions {
+  /** Run the executable behind an npm cmd-shim directly (see `npmShimExecutable`). */
+  readonly bypassNpmShim?: boolean;
+}
+
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
-  options: CommandAvailabilityOptions = {},
+  options: SpawnCommandOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
   if (platform !== "win32") {
@@ -728,6 +782,10 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
+  }
+  const shimExecutable = options.bypassNpmShim ? npmShimExecutable(resolvedCommand) : undefined;
+  if (shimExecutable !== undefined) {
+    return { command: shimExecutable, args: [...args], shell: false };
   }
 
   // Node runs a shell spawn as `cmd.exe /d /s /c "<command> <args...>"`, but

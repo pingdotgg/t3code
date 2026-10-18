@@ -598,8 +598,11 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
   const agentScope = yield* AgentScope;
+  // npm installs OpenCode as `opencode.CMD`, which `cmd.exe` runs. The
+  // `opencode.exe` it starts escapes libuv's kill-on-close job and outlives a
+  // server that is killed, so the shim's executable runs directly instead.
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
-    resolveSpawnCommand(command, args, env ? { env } : {});
+    resolveSpawnCommand(command, args, { ...(env ? { env } : {}), bypassNpmShim: true });
 
   const runOpenCodeCommand: OpenCodeRuntime["Service"]["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
