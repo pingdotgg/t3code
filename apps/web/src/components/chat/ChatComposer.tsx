@@ -5779,8 +5779,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
-  const attachDroppedThreadFile = useEffectEvent((file: File) => addComposerAttachments([file]));
-  const importDroppedThread = useEffectEvent(
+  // Stable callbacks, not useEffectEvent: ChatComposer is memoized, and React
+  // 19.2 never refreshes an effect event's impl on memo fibers — stale closures
+  // here would import the dropped thread into the first mounted thread's draft.
+  const attachDroppedThreadFile = useStableCallback((file: File) => addComposerAttachments([file]));
+  const importDroppedThread = useStableCallback(
     async (ref: ScopedThreadRef, isActive: () => boolean) => {
       const targetKey = attachmentTargetKey;
       pendingDraftWork.begin(targetKey);
