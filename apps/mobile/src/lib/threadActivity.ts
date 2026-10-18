@@ -62,6 +62,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { truncate } from "@t3tools/shared/String";
 import type { HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { McpAppReference } from "@t3tools/shared/mcpApp";
 import {
@@ -249,8 +250,15 @@ export interface AgentSpawnSummary {
   }>;
 }
 
+/**
+ * Work-log headers render one line, but Android still lays out and hit-tests
+ * the whole string, so a multi-kilobyte heredoc stalls touch dispatch until
+ * the app ANRs. Expanded bodies and copy keep the full text.
+ */
+const WORK_LOG_LABEL_MAX_LENGTH = 200;
+
 function compactWorkEntryText(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
+  return truncate(value.replace(/\s+/gu, " "), WORK_LOG_LABEL_MAX_LENGTH);
 }
 
 export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = false): string {
@@ -289,7 +297,7 @@ export function workEntryRowLabel(entry: WorkLogPresentationEntry, expanded = fa
         ? entry.changedFiles[0]!
         : `${entry.changedFiles[0]!} +${entry.changedFiles.length - 1} more`
       : null);
-  if (expanded) return preview?.trim() || entry.label;
+  if (expanded) return preview?.trim() ? truncate(preview, WORK_LOG_LABEL_MAX_LENGTH) : entry.label;
   return preview ? compactWorkEntryText(preview) || entry.label : entry.label;
 }
 
@@ -862,7 +870,7 @@ function singleToolCallLabel(activity: ThreadFeedActivity, expanded: boolean): s
   const presentation = resolveWorkEntryToolPresentation(activity.workEntry, "completed");
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
-  return command || activity.summary;
+  return command ? truncate(command, WORK_LOG_LABEL_MAX_LENGTH) : activity.summary;
 }
 
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
