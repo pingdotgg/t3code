@@ -188,6 +188,11 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
+  // Android browsers can omit the physical code for keys such as Backspace.
+  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+}
+
 export interface GhosttyKeyboardLayoutMap {
   get(code: string): string | undefined;
 }
