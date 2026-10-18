@@ -1004,6 +1004,25 @@ describe("shouldBlinkTerminalCursor", () => {
 });
 
 describe("terminalLinkAtPositionWithRange", () => {
+  it("activates a wrapped quoted Windows path from its spaces and position suffix", () => {
+    const row = (text: string, isWrapContinuation: boolean): GhosttyRow => ({
+      cells: Array.from(text, (character) => cell(character)),
+      text,
+      isWrapContinuation,
+      wrapsToNext: false,
+    });
+    const first = String.raw`"C:\Users\Jane `;
+    const second = String.raw`Doe\index.ts":12:7`;
+    const rows = [row(first, false), row(second, true)];
+    const expected = {
+      text: String.raw`C:\Users\Jane Doe\index.ts:12:7`,
+      range: { start: { x: 1, y: 0 }, end: { x: second.length - 1, y: 1 } },
+    };
+    expect(terminalLinkAtPositionWithRange(rows, 0, first.length - 1)).toEqual(expected);
+    expect(terminalLinkAtPositionWithRange(rows, 1, second.length - 1)).toEqual(expected);
+    expect(terminalLinkAtPositionWithRange(rows, 0, 0)).toBeNull();
+  });
+
   it("maps terminal cells to UTF-16 offsets after a wide emoji", () => {
     const cells = [
       cell("🙂"),

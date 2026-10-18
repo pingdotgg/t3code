@@ -42,6 +42,32 @@ describe("splitFilePathPosition", () => {
 });
 
 describe("resolvePathLinkTarget", () => {
+  it.each([
+    [
+      String.raw`src\index.ts:12:7`,
+      String.raw`C:\Users\Jane Doe\project`,
+      String.raw`C:\Users\Jane Doe\project\src\index.ts:12:7`,
+    ],
+    [
+      "src/index.ts:12:7",
+      "C:/Users/Jane Doe/project",
+      String.raw`C:/Users/Jane Doe/project\src\index.ts:12:7`,
+    ],
+    [
+      String.raw`.\src\index.ts:12`,
+      String.raw`\\server\share\project`,
+      String.raw`\\server\share\project\.\src\index.ts:12`,
+    ],
+    [
+      String.raw`~\index.ts:12`,
+      String.raw`C:\Users\Jane Doe\project`,
+      String.raw`C:\Users\Jane Doe\index.ts:12`,
+    ],
+    ["src/index.ts:12", "/home/jane/project", "/home/jane/project/src/index.ts:12"],
+  ])("resolves %s using the connected environment cwd %s", (path, cwd, expected) => {
+    expect(resolvePathLinkTarget(path, cwd)).toBe(expected);
+  });
+
   it("resolves relative paths against cwd", () => {
     expect(
       resolvePathLinkTarget(
