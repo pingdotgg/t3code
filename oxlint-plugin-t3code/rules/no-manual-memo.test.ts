@@ -28,4 +28,26 @@ describe("t3code/no-manual-memo", () => {
     "reports React.useMemo",
     `const total = React.useMemo(() => items.length, [items]);`,
   );
+
+  rule.invalid('reports "use no memo"', `function Panel() { "use no memo"; return null; }`);
+
+  rule.invalid('reports a module-level "use no forget"', `"use no forget";\nexport const a = 1;`);
+
+  rule.valid("allows the same text as a string value", `const label = "use no memo";`);
+});
+
+const ratchet = createOxlintRuleHarness("t3code/no-manual-memo", {
+  filename: "fixture.tsx",
+  ruleOptions: [{ allowMemoHooks: true }],
+});
+
+describe("t3code/no-manual-memo with allowMemoHooks", () => {
+  ratchet.valid("allows useMemo", `const total = useMemo(() => items.length, [items]);`);
+
+  ratchet.valid("allows useCallback", `const onClick = useCallback(() => save(), []);`);
+
+  ratchet.invalid(
+    'still reports "use no memo"',
+    `function Panel() { "use no memo"; return null; }`,
+  );
 });

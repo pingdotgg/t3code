@@ -669,7 +669,9 @@ function NotFoundScreen() {
 
 const RootStackConfig = createWorkspaceStackNavigator({
   initialRouteName: "Home",
-  layout: RootStackLayout,
+  // React Navigation calls layouts as plain functions inside its own render. Passing a
+  // compiled component directly would put its memo cache among the navigator's hooks.
+  layout: (props) => <RootStackLayout {...props} />,
   screenOptions: {
     headerShown: false,
   },
@@ -1012,7 +1014,7 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
 
   return (
     <Navigator
-      screenLayout={GuardedScreenLayout}
+      screenLayout={(props) => <GuardedScreenLayout {...props} />}
       screenOptions={({ route }) => {
         if (route.name !== "SettingsSheet" && route.name !== "NewTaskSheet") {
           return {};

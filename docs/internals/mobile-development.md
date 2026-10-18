@@ -34,3 +34,17 @@ copies those into its virtual store instead of linking them. Metro bundles the c
 so an edit to a module's TypeScript is invisible to a running dev client until
 `vp i` re-syncs it, while Gradle and CocoaPods compile the worktree directory
 directly. A JavaScript change that "has no effect" on device is usually this.
+
+## React Compiler
+
+Metro runs the compiler only because `experiments.reactCompiler` is set in `app.config.ts`. Expo
+then passes `supportsReactCompiler` to `babel-preset-expo`, which owns the plugin options; there is
+no `babel.config.js` entry to look for. Release bundles use `panicThreshold: "NONE"`, so a function
+the compiler can't prove safe ships unmemoized with no build error.
+[`reactCompilerCoverage.test.ts`](../../apps/mobile/src/reactCompilerCoverage.test.ts) runs the
+same preset over every source file. It fails on a new bailout, and on a file in `KNOWN_BAILOUTS`
+that now compiles, so the list only shrinks. When you fix a listed file, delete its entry and its
+manual `useMemo`/`useCallback`/`memo` in the same change. Most mobile bailouts are `try` without
+`catch` or with `finally`, and refs read during render; see [Web UI](web-ui.md#react-compiler)
+for the usual rewrites. Mobile runs `t3code/no-manual-memo` with `allowMemoHooks`, so memo
+directives are errors but the hooks stay legal until `KNOWN_BAILOUTS` is empty.

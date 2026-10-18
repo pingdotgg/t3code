@@ -140,6 +140,7 @@
     "uniwind": "1.12.1"
   },
   "devDependencies": {
+    "@babel/core": "^7.29.7",
     "@effect/vitest": "catalog:",
     "@pierre/trees": "1.0.0-beta.6",
     "@types/mdast": "^4.0.4",
