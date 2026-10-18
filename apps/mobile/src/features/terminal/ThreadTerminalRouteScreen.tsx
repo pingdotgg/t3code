@@ -292,8 +292,16 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
+  // The native view treats any new positive value as a capture, including the first value a
+  // freshly created view receives after a reconnect or remount. Only pass a value while a
+  // capture is pending, and keep the sequence increasing so the next request always differs.
+  const captureSequenceRef = useRef(0);
   const [captureRequest, setCaptureRequest] = useState(0);
   const [capturedOutput, setCapturedOutput] = useState<string | null>(null);
+  const requestCapture = () => {
+    captureSequenceRef.current += 1;
+    setCaptureRequest(captureSequenceRef.current);
+  };
   const {
     isReady: hasResolvedFontPreference,
     appearance,
@@ -1271,6 +1279,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   keyboardFocusRequest={keyboardFocusRequest}
                   captureRequest={captureRequest}
                   onCapture={(text) => {
+                    setCaptureRequest(0);
                     if (text.trim()) setCapturedOutput(text);
                     else
                       Dialog.alert("No terminal output", "There is no visible output to attach.");
@@ -1286,11 +1295,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               {Platform.OS === "android" && !keyboardState.isVisible ? (
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
                   {selectedThread && hasNativeTerminalSurface() ? (
-                    <Button
-                      label="Attach output"
-                      tone="text"
-                      onPress={() => setCaptureRequest((value) => value + 1)}
-                    />
+                    <Button label="Attach output" tone="text" onPress={requestCapture} />
                   ) : null}
                   <View className="flex-1" />
                   <IconButton
@@ -1305,7 +1310,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   accessibilityRole="button"
                   onPress={() => {
                     KeyboardController.dismiss();
-                    setCaptureRequest((value) => value + 1);
+                    requestCapture();
                   }}
                   className="px-4 py-2"
                 >
