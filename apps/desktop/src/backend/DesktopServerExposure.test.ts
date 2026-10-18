@@ -40,12 +40,13 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson = "{}") {
+function layerMockSpawner(statusJson = "{}", onSpawn?: () => void) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
-      Effect.succeed(
-        ChildProcessSpawner.makeHandle({
+      Effect.sync(() => {
+        onSpawn?.();
+        return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
           isRunning: Effect.succeed(false),
@@ -57,8 +58,8 @@ function layerMockSpawner(statusJson = "{}") {
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
-        }),
-      ),
+        });
+      }),
     ),
   );
 }
@@ -146,6 +147,34 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopServerExposure", () => {
+  it.effect("uses cached Tailscale identity to exclude another VPN's pairing address", () => {
+    let statusReads = 0;
+    return withHarness(
+      {
+        ...lanNetworkInterfaces,
+        pvpnksintrf1: [{ address: "100.85.0.1", family: "IPv4", internal: false }],
+        vpn0: [{ address: "100.74.126.34", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.74.126.34:4173/"],
+        );
+        assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+        assert.equal(statusReads, 1);
+      }),
+      {},
+      layerMockSpawner(`{"Self":{"TailscaleIPs":["100.74.126.34"]}}`, () => {
+        statusReads += 1;
+      }),
+    );
+  });
+
   it.effect("falls back to local-only without losing the requested network preference", () =>
     withHarness(
       emptyNetworkInterfaces,
