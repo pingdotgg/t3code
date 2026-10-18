@@ -2837,21 +2837,29 @@ it.effect.each(
       { failSetup: false, failResolve: false },
       { failSetup: true, failResolve: false },
       { failSetup: false, failResolve: true },
+      // Only a parent with its own checkout can hold a commit the project lacks.
+      ...(driver === "codex" ? [] : [{ failSetup: false, failResolve: false, foreignBase: true }]),
       { failSetup: false, failResolve: false, cancelSetup: true },
       { failSetup: false, failResolve: false, cancelSetup: true, cancelAsync: true },
-    ].map((failures) => ({ driver, cancelSetup: false, cancelAsync: false, ...failures })),
+    ].map((failures) => ({
+      driver,
+      cancelSetup: false,
+      cancelAsync: false,
+      foreignBase: false,
+      ...failures,
+    })),
   ),
 )(
-  "prepares $driver delegated worktrees before execution, setup failure=$failSetup, commit failure=$failResolve, cancellation=$cancelSetup, async=$cancelAsync",
-  ({ driver, failSetup, failResolve, cancelSetup, cancelAsync }) =>
+  "prepares $driver delegated worktrees before execution, setup failure=$failSetup, commit failure=$failResolve, base outside project=$foreignBase, cancellation=$cancelSetup, async=$cancelAsync",
+  ({ driver, failSetup, failResolve, foreignBase, cancelSetup, cancelAsync }) =>
     Effect.gen(function* () {
       const setupEntered = yield* Deferred.make<void>();
       const allowSetup = yield* Deferred.make<void>();
       const terminalClosed = yield* Deferred.make<void>();
       const childInstanceId = ProviderInstanceId.make(`child-${driver}`);
       const parentWorktree = driver === "codex" ? null : "/parent-worktree";
-      const resolveCommit = vi.fn(() =>
-        failResolve
+      const resolveCommit = vi.fn((input: { readonly cwd: string; readonly revision: string }) =>
+        failResolve || (foreignBase && input.cwd === "/repo")
           ? Effect.fail(
               new GitCommandError({
                 operation: "resolveCommit",
@@ -2982,6 +2990,15 @@ it.effect.each(
           assert.equal(harness.createWorktree.mock.calls.length, 0);
           return;
         }
+        if (foreignBase) {
+          const error = yield* service.delegateTask(scope, input).pipe(Effect.flip);
+          assert.equal(error.code, "invalid_request");
+          assert.include(error.message, 'Isolation "worktree" creates the child checkout');
+          assert.notInclude(error.message, "private Git failure details");
+          assert.isEmpty((yield* threads.getThreadProjection(parentThreadId)).subagents);
+          assert.equal(harness.createWorktree.mock.calls.length, 0);
+          return;
+        }
         const delegated = yield* service.delegateTask(scope, input);
         yield* Deferred.await(setupEntered);
         const child = yield* threads.getThreadProjection(delegated.childThreadId);
@@ -2992,11 +3009,12 @@ it.effect.each(
         assert.equal(child.thread.modelSelection.model, "child-model");
         assert.deepEqual(resolveCommit.mock.calls, [
           [{ cwd: parentWorktree ?? "/repo", revision: "HEAD" }],
+          ...(parentWorktree === null ? [] : [[{ cwd: "/repo", revision: "parent-local-commit" }]]),
         ]);
         assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, "parent-local-commit");
         assert.equal((yield* service.delegateTask(scope, input)).taskId, delegated.taskId);
         assert.equal(harness.createWorktree.mock.calls.length, 1);
-        assert.equal(resolveCommit.mock.calls.length, 1);
+        assert.equal(resolveCommit.mock.calls.length, parentWorktree === null ? 1 : 2);
         if (!cancelAsync) assert.isEmpty(child.checkpointScopes);
         const parent = yield* threads.getThreadProjection(parentThreadId);
         assert.equal(parent.thread.worktreePath, parentWorktree);
