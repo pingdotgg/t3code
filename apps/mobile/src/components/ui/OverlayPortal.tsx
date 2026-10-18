@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { View } from "react-native";
 
 // AndroidAnchoredMenu projects its dropdown here instead of into an RN Modal: a Modal is a
@@ -8,6 +8,10 @@ type Entries = ReadonlyMap<number, ReactNode>;
 type Listener = (entries: Entries) => void;
 
 let nextKey = 0;
+
+function allocateKey() {
+  return nextKey++;
+}
 const entries = new Map<number, ReactNode>();
 const listeners = new Set<Listener>();
 
@@ -19,9 +23,7 @@ function emit() {
 }
 
 export function OverlayPortal(props: { readonly children: ReactNode }) {
-  const keyRef = useRef<number | null>(null);
-  keyRef.current ??= nextKey++;
-  const key = keyRef.current;
+  const [key] = useState(allocateKey);
 
   // No dependency array: re-project after every render so the host always
   // shows the current content (menus re-render while open — drill-in, theme).

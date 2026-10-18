@@ -15,9 +15,8 @@ import {
 import {
   createContext,
   use,
-  useCallback,
   useEffect,
-  useMemo,
+  useEffectEvent,
   useRef,
   useState,
   type ReactNode,
@@ -126,9 +125,7 @@ export function useAdaptiveWorkspaceLayout(): AdaptiveWorkspaceContextValue {
 export function useAdaptiveWorkspacePaneRole(role: WorkspaceAuxiliaryPaneRole) {
   const { activateAuxiliaryPaneRole } = useAdaptiveWorkspaceLayout();
 
-  useFocusEffect(
-    useCallback(() => activateAuxiliaryPaneRole(role), [activateAuxiliaryPaneRole, role]),
-  );
+  useFocusEffect(() => activateAuxiliaryPaneRole(role));
 }
 
 /**
@@ -146,7 +143,7 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
 
-  const wrappedRender = useMemo(() => {
+  const wrappedRender = (() => {
     if (render === undefined) {
       return undefined;
     }
@@ -155,37 +152,35 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
         <NavigationRouteContext.Provider value={route}>{render()}</NavigationRouteContext.Provider>
       </NavigationContext.Provider>
     );
-  }, [navigation, render, route]);
+  })();
 
-  const wrappedRenderRef = useRef(wrappedRender);
-  wrappedRenderRef.current = wrappedRender;
   const focusedRef = useRef(false);
   const deactivateRef = useRef<(() => void) | null>(null);
 
-  const syncRegistration = useCallback(() => {
-    if (!focusedRef.current || wrappedRenderRef.current === undefined) {
+  // An effect event reads this render's pane without making the focus
+  // subscription re-run (and deactivate) every time the pane closure changes.
+  const syncRegistration = useEffectEvent(() => {
+    if (!focusedRef.current || wrappedRender === undefined) {
       deactivateRef.current?.();
       return;
     }
-    deactivateRef.current = registerWorkspaceInspector(wrappedRenderRef.current);
-  }, [registerWorkspaceInspector]);
+    deactivateRef.current = registerWorkspaceInspector(wrappedRender);
+  });
 
-  useFocusEffect(
-    useCallback(() => {
-      focusedRef.current = true;
+  useFocusEffect(() => {
+    focusedRef.current = true;
+    syncRegistration();
+    return () => {
+      focusedRef.current = false;
       syncRegistration();
-      return () => {
-        focusedRef.current = false;
-        syncRegistration();
-      };
-    }, [syncRegistration]),
-  );
+    };
+  });
 
   useEffect(() => {
     if (focusedRef.current) {
       syncRegistration();
     }
-  }, [syncRegistration, wrappedRender]);
+  }, [wrappedRender]);
 
   useEffect(
     () => () => {
@@ -252,10 +247,7 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarSearchQuery, setPrimarySidebarSearchQuery] = useState("");
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
-  const baseLayout = useMemo(
-    () => deriveLayout({ width: viewportWidth, height, nativeMetrics }),
-    [height, viewportWidth, nativeMetrics],
-  );
+  const baseLayout = deriveLayout({ width: viewportWidth, height, nativeMetrics });
   const primarySidebarPinned = isPrimarySidebarPinned({
     pathname,
     nativeWorkspace,
@@ -264,37 +256,21 @@ function AdaptiveWorkspaceLayoutContent(
   const showPrimarySidebar = primarySidebarPinned || primarySidebarPreferredVisible;
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
-  const handleHingeChange = useCallback(
-    (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
-      setHinge(next);
-      setWindowHinge(nextWindow);
-    },
-    [],
-  );
-  const layout = useMemo(
-    () => alignListPaneToHinge({ layout: baseLayout, hinge, viewportWidth }),
-    [baseLayout, hinge, viewportWidth],
-  );
+  const handleHingeChange = (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
+    setHinge(next);
+    setWindowHinge(nextWindow);
+  };
+  const layout = alignListPaneToHinge({ layout: baseLayout, hinge, viewportWidth });
   const shouldRenderPrimarySidebar = layout.usesSplitView;
-  const fileInspector = useMemo(
-    () =>
-      deriveFileInspectorPaneLayout({
-        layout,
-        viewportWidth,
-        preferredWidth: fileInspectorPreferredWidth ?? undefined,
-        reservedLeadingWidth:
-          shouldRenderPrimarySidebar && showPrimarySidebar
-            ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
-            : 0,
-      }),
-    [
-      fileInspectorPreferredWidth,
-      layout,
-      showPrimarySidebar,
-      shouldRenderPrimarySidebar,
-      viewportWidth,
-    ],
-  );
+  const fileInspector = deriveFileInspectorPaneLayout({
+    layout,
+    viewportWidth,
+    preferredWidth: fileInspectorPreferredWidth ?? undefined,
+    reservedLeadingWidth:
+      shouldRenderPrimarySidebar && showPrimarySidebar
+        ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+        : 0,
+  });
   const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
     focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
   const auxiliaryPanePreferredVisible =
@@ -305,29 +281,18 @@ function AdaptiveWorkspaceLayoutContent(
     auxiliaryPaneRole === "inspector"
       ? fileInspectorPreferredWidth
       : supplementaryPanePreferredWidth;
-  const panes = useMemo(
-    () =>
-      deriveWorkspacePaneLayout({
-        layout,
-        viewportWidth,
-        primarySidebarPreferredVisible: showPrimarySidebar,
-        auxiliaryPanePreferredVisible,
-        auxiliaryPaneRole,
-        auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
-      }),
-    [
-      auxiliaryPanePreferredVisible,
-      auxiliaryPaneRole,
-      auxiliaryPanePreferredWidth,
-      layout,
-      showPrimarySidebar,
-      viewportWidth,
-    ],
-  );
+  const panes = deriveWorkspacePaneLayout({
+    layout,
+    viewportWidth,
+    primarySidebarPreferredVisible: showPrimarySidebar,
+    auxiliaryPanePreferredVisible,
+    auxiliaryPaneRole,
+    auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
+  });
   const activeThread = parseActiveThreadPath(pathname);
   const environmentId = activeThread?.environmentId ?? null;
   const threadId = activeThread?.threadId ?? null;
-  const selectedThreadKey = useMemo(() => {
+  const selectedThreadKey = (() => {
     if (environmentId === null || threadId === null) {
       return null;
     }
@@ -336,13 +301,13 @@ function AdaptiveWorkspaceLayoutContent(
     } catch {
       return null;
     }
-  }, [environmentId, threadId]);
+  })();
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly render: () => ReactNode;
     readonly active: boolean;
   } | null>(null);
   const workspaceInspectorOwner = useRef<symbol | null>(null);
-  const registerWorkspaceInspector = useCallback((render: () => ReactNode) => {
+  const registerWorkspaceInspector = (render: () => ReactNode) => {
     const owner = Symbol("workspace-inspector");
     workspaceInspectorOwner.current = owner;
     setWorkspaceInspector({ render, active: true });
@@ -355,11 +320,11 @@ function AdaptiveWorkspaceLayoutContent(
       }
       setWorkspaceInspector((current) => (current === null ? null : { ...current, active: false }));
     };
-  }, []);
-  const handleWorkspaceInspectorClosed = useCallback(() => {
+  };
+  const handleWorkspaceInspectorClosed = () => {
     setWorkspaceInspector((current) => (current !== null && !current.active ? null : current));
-  }, []);
-  const activateAuxiliaryPaneRole = useCallback((role: WorkspaceAuxiliaryPaneRole) => {
+  };
+  const activateAuxiliaryPaneRole = (role: WorkspaceAuxiliaryPaneRole) => {
     const owner = Symbol(role);
     activeRoleOwner.current = owner;
     setFocusedAuxiliaryPaneRole(role);
@@ -371,8 +336,8 @@ function AdaptiveWorkspaceLayoutContent(
       activeRoleOwner.current = null;
       setFocusedAuxiliaryPaneRole(null);
     };
-  }, []);
-  const togglePrimarySidebar = useCallback(() => {
+  };
+  const togglePrimarySidebar = () => {
     if (primarySidebarPinned) {
       return;
     }
@@ -382,27 +347,20 @@ function AdaptiveWorkspaceLayoutContent(
       return;
     }
     setPrimarySidebarPreferredVisible((current) => !current);
-  }, [
-    panes.primarySidebarSuppressedByAuxiliary,
-    panes.primarySidebarVisible,
-    primarySidebarPinned,
-  ]);
-  const revealPrimarySidebar = useCallback(() => {
+  };
+  const revealPrimarySidebar = () => {
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
     setPrimarySidebarPreferredVisible(true);
-  }, [panes.primarySidebarSuppressedByAuxiliary]);
-  const handleToggleSidebarCommand = useCallback(() => {
+  };
+  const handleToggleSidebarCommand = () => {
     togglePrimarySidebar();
     return true;
-  }, [togglePrimarySidebar]);
-  const sidebarCommands = useMemo(
-    () => (primarySidebarPinned ? [] : (["toggleSidebar"] as const)),
-    [primarySidebarPinned],
-  );
+  };
+  const sidebarCommands = primarySidebarPinned ? [] : (["toggleSidebar"] as const);
   useHardwareKeyboardCommand(sidebarCommands, handleToggleSidebarCommand);
-  const showAuxiliaryPane = useCallback((role: WorkspaceAuxiliaryPaneRole) => {
+  const showAuxiliaryPane = (role: WorkspaceAuxiliaryPaneRole) => {
     if (role === "inspector") {
       setFocusedAuxiliaryPaneRole("inspector");
       setFileInspectorPreferredVisible(true);
@@ -410,8 +368,8 @@ function AdaptiveWorkspaceLayoutContent(
     }
     setFocusedAuxiliaryPaneRole("supplementary");
     setSupplementaryPanePreferredVisible(true);
-  }, []);
-  const handleOpenFilesCommand = useCallback(() => {
+  };
+  const handleOpenFilesCommand = () => {
     const activeThread = parseActiveThreadPath(pathname);
     if (!layout.usesSplitView || !fileInspector.supported || activeThread === null) {
       return false;
@@ -422,75 +380,66 @@ function AdaptiveWorkspaceLayoutContent(
     }
     navigation.navigate("ThreadFiles", activeThread);
     return true;
-  }, [fileInspector.supported, layout.usesSplitView, pathname, navigation, showAuxiliaryPane]);
+  };
   useHardwareKeyboardCommand("files", handleOpenFilesCommand);
-  const toggleAuxiliaryPane = useCallback(() => {
+  const toggleAuxiliaryPane = () => {
     if (auxiliaryPaneRole === "inspector") {
       setFileInspectorPreferredVisible((current) => !current);
       return;
     }
     setSupplementaryPanePreferredVisible((current) => !current);
-  }, [auxiliaryPaneRole]);
-  const setAuxiliaryPaneWidth = useCallback(
-    (nextWidth: number) => {
-      if (auxiliaryPaneRole === "inspector") {
-        setFileInspectorPreferredWidth(nextWidth);
-        return;
-      }
-      setSupplementaryPanePreferredWidth(nextWidth);
-    },
-    [auxiliaryPaneRole],
-  );
-  const handleOpenSettings = useCallback(() => {
+  };
+  const setAuxiliaryPaneWidth = (nextWidth: number) => {
+    if (auxiliaryPaneRole === "inspector") {
+      setFileInspectorPreferredWidth(nextWidth);
+      return;
+    }
+    setSupplementaryPanePreferredWidth(nextWidth);
+  };
+  const handleOpenSettings = () => {
     navigation.navigate("SettingsSheet", {
       screen: "SettingsContent",
       params: { screen: "Settings" },
     });
-  }, [navigation]);
+  };
 
-  const handleStartNewTask = useCallback(() => {
+  const handleStartNewTask = () => {
     navigation.navigate("NewTaskSheet", { screen: "NewTask" });
-  }, [navigation]);
+  };
 
   // Minted here (root stack navigation) so the sidebar pane stays free of
   // navigation hooks — on iOS it renders inside an independent nav tree.
-  const handleOpenEnvironmentSettings = useCallback(() => {
+  const handleOpenEnvironmentSettings = () => {
     navigation.navigate("SettingsSheet", {
       screen: "SettingsContent",
       params: { screen: "SettingsEnvironments" },
     });
-  }, [navigation]);
+  };
 
   const handleOpenThreadPullRequests = useOpenThreadPullRequests();
 
-  const handleNewThreadOnBranch = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
-          environmentId: String(thread.environmentId),
-          projectId: String(thread.projectId),
-          branch: thread.branch,
-          worktreePath: thread.worktreePath,
-        },
-      });
-    },
-    [navigation],
-  );
+  const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
+    navigation.navigate("NewTaskSheet", {
+      screen: "NewTaskDraft",
+      params: {
+        environmentId: String(thread.environmentId),
+        projectId: String(thread.projectId),
+        branch: thread.branch,
+        worktreePath: thread.worktreePath,
+      },
+    });
+  };
 
-  const handleNewThreadInProject = useCallback(
-    (project: EnvironmentProject) => {
-      navigation.navigate("NewTaskSheet", {
-        screen: "NewTaskDraft",
-        params: {
-          environmentId: String(project.environmentId),
-          projectId: String(project.id),
-          title: project.title,
-        },
-      });
-    },
-    [navigation],
-  );
+  const handleNewThreadInProject = (project: EnvironmentProject) => {
+    navigation.navigate("NewTaskSheet", {
+      screen: "NewTaskDraft",
+      params: {
+        environmentId: String(project.environmentId),
+        projectId: String(project.id),
+        title: project.title,
+      },
+    });
+  };
 
   const inspectorColumnTargetWidth =
     workspaceInspector !== null && workspaceInspector.active && panes.auxiliaryPaneVisible
@@ -550,7 +499,7 @@ function AdaptiveWorkspaceLayoutContent(
       revision: contentSizing.revision + 1,
     });
   }
-  const settleContentWidth = useCallback((revision: number) => {
+  const settleContentWidth = (revision: number) => {
     setContentSizing((current) =>
       current.revision !== revision ||
       (current.width === current.target &&
@@ -564,7 +513,7 @@ function AdaptiveWorkspaceLayoutContent(
             listPaneCeiling: current.listPaneTarget,
           },
     );
-  }, []);
+  };
   const listPaneFloor = contentSizing.listPaneFloor ?? 0;
   const listPaneCeiling = contentSizing.listPaneCeiling ?? 0;
   const contentSettledWidth = Platform.OS === "android" ? contentSizing.width : contentTargetWidth;
@@ -614,88 +563,62 @@ function AdaptiveWorkspaceLayoutContent(
   );
 
   const selectAndroidWorkspace = useAndroidWorkspaceSelection();
-  const handleSelectThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      const params = {
-        environmentId: String(thread.environmentId),
-        threadId: String(thread.id),
-      };
-      if (Platform.OS === "android") {
-        setFileInspectorPreferredVisible(false);
-        selectAndroidWorkspace({ name: "Thread", params });
-        return;
-      }
-      const navigationAction = resolveThreadSelectionNavigationAction({
-        usesSplitView: layout.usesSplitView,
-        pathname,
-      });
-      const overlayState = resolveThreadSelectionOverlayState({
-        state: navigation.getState(),
-        workspaceRouteKey: props.workspaceRouteKey,
-        action: navigationAction,
-        params,
-      });
-      if (overlayState !== null) {
-        setFileInspectorPreferredVisible(false);
-        navigation.dispatch(CommonActions.reset(overlayState));
-        return;
-      }
-      if (navigationAction === "set-params") {
-        const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
-        if (nextThreadKey === selectedThreadKey) {
-          return;
-        }
-        setFileInspectorPreferredVisible(false);
-        navigation.navigate("Thread", params);
-        return;
-      }
-      if (navigationAction === "replace") {
-        setFileInspectorPreferredVisible(false);
-        navigation.dispatch(StackActions.replace("Thread", params));
-        return;
-      }
-      navigation.navigate("Thread", params);
-    },
-    [
-      layout.usesSplitView,
+  const handleSelectThread = (thread: EnvironmentThreadShell) => {
+    const params = {
+      environmentId: String(thread.environmentId),
+      threadId: String(thread.id),
+    };
+    if (Platform.OS === "android") {
+      setFileInspectorPreferredVisible(false);
+      selectAndroidWorkspace({ name: "Thread", params });
+      return;
+    }
+    const navigationAction = resolveThreadSelectionNavigationAction({
+      usesSplitView: layout.usesSplitView,
       pathname,
-      navigation,
-      selectedThreadKey,
-      props.workspaceRouteKey,
-      selectAndroidWorkspace,
-    ],
-  );
+    });
+    const overlayState = resolveThreadSelectionOverlayState({
+      state: navigation.getState(),
+      workspaceRouteKey: props.workspaceRouteKey,
+      action: navigationAction,
+      params,
+    });
+    if (overlayState !== null) {
+      setFileInspectorPreferredVisible(false);
+      navigation.dispatch(CommonActions.reset(overlayState));
+      return;
+    }
+    if (navigationAction === "set-params") {
+      const nextThreadKey = scopedThreadKey(thread.environmentId, thread.id);
+      if (nextThreadKey === selectedThreadKey) {
+        return;
+      }
+      setFileInspectorPreferredVisible(false);
+      navigation.navigate("Thread", params);
+      return;
+    }
+    if (navigationAction === "replace") {
+      setFileInspectorPreferredVisible(false);
+      navigation.dispatch(StackActions.replace("Thread", params));
+      return;
+    }
+    navigation.navigate("Thread", params);
+  };
 
-  const contextValue = useMemo(
-    () => ({
-      layout,
-      panes,
-      fileInspector,
-      primarySidebarSearchQuery,
-      selectThread: handleSelectThread,
-      activateAuxiliaryPaneRole,
-      registerWorkspaceInspector,
-      setPrimarySidebarSearchQuery,
-      showAuxiliaryPane,
-      toggleAuxiliaryPane,
-      togglePrimarySidebar,
-      setAuxiliaryPaneWidth,
-    }),
-    [
-      activateAuxiliaryPaneRole,
-      fileInspector,
-      handleSelectThread,
-      layout,
-      panes,
-      primarySidebarSearchQuery,
-      registerWorkspaceInspector,
-      showAuxiliaryPane,
-      setPrimarySidebarSearchQuery,
-      setAuxiliaryPaneWidth,
-      toggleAuxiliaryPane,
-      togglePrimarySidebar,
-    ],
-  );
+  const contextValue = {
+    layout,
+    panes,
+    fileInspector,
+    primarySidebarSearchQuery,
+    selectThread: handleSelectThread,
+    activateAuxiliaryPaneRole,
+    registerWorkspaceInspector,
+    setPrimarySidebarSearchQuery,
+    showAuxiliaryPane,
+    toggleAuxiliaryPane,
+    togglePrimarySidebar,
+    setAuxiliaryPaneWidth,
+  };
 
   if (nativeWorkspace) {
     return (
