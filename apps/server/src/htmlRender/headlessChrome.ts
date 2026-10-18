@@ -23,10 +23,18 @@ export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowser
     reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
     output: Schema.optional(Schema.String),
+    exitCode: Schema.optional(Schema.Number),
+    signal: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Headless Chrome could not render the page: ${this.reason}.`;
+    const exit =
+      this.exitCode !== undefined
+        ? ` (exit code ${this.exitCode})`
+        : this.signal !== undefined
+          ? ` (signal ${this.signal})`
+          : "";
+    return `Headless Chrome could not render the page: ${this.reason}${exit}.`;
   }
 }
 
@@ -238,6 +246,9 @@ const Ignored = Schema.Unknown;
 const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
+// Effect's spawner names the signal that ended a child only in its error message.
+const EXIT_SIGNAL = /signal: '(SIG[A-Z0-9]+)'/;
+
 interface PageEvents {
   readonly mainFrameId: string;
   body: Uint8Array | undefined;
@@ -406,9 +417,20 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   // sandbox, says why on stderr, which may still be draining, so give it a moment.
   const disconnect = Effect.gen(function* () {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
+    const exit = yield* child.exitCode.pipe(
+      Effect.map((code): { exitCode?: number; signal?: string; cause?: unknown } => ({
+        exitCode: code,
+      })),
+      Effect.catch((error) => {
+        const signal = EXIT_SIGNAL.exec(String(error.cause))?.[1];
+        return Effect.succeed(signal === undefined ? { cause: error } : { signal, cause: error });
+      }),
+      Effect.timeoutOption("1 second"),
+    );
     const error = new HtmlRenderBrowserError({
       reason: "the browser exited unexpectedly",
       output: stderrTail,
+      ...Option.getOrElse(exit, () => ({})),
     });
     disconnected = error;
     const waiters = [...pending.values()];
