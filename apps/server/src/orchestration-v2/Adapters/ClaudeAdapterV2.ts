@@ -3005,6 +3005,8 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    // The CLI repeats a notice that ends a prompt as the turn's result text.
+    noticeTexts: Set<string>;
   };
   readonly reasoning: {
     messageId: string | null;
@@ -7180,9 +7182,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
 
-          if (message.type === "system" && message.subtype === "model_refusal_fallback") {
+          if (
+            message.type === "system" &&
+            (message.subtype === "model_refusal_fallback" ||
+              (message.subtype === "informational" && message.level !== "info"))
+          ) {
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
+            context.assistant.noticeTexts.add(message.content);
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -7802,7 +7809,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.assistant.emittedNativeItemIds.size === 0 &&
             context.assistant.fallbackText.length === 0 &&
             resultText !== null &&
-            resultText.text.length > 0
+            resultText.text.length > 0 &&
+            !context.assistant.noticeTexts.has(resultText.text)
           ) {
             context.assistant.fallbackText = resultText.text;
             context.assistant.fallbackNativeItemId = resultText.nativeItemId;
@@ -8677,6 +8685,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                noticeTexts: new Set(),
               },
               reasoning: {
                 messageId: null,
