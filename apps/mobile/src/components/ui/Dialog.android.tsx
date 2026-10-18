@@ -117,6 +117,7 @@ export function Host() {
       inputInitialValue={
         presented.kind === "text-input" ? presented.request.initialValue : undefined
       }
+      inputPlaceholder={presented.kind === "text-input" ? presented.request.placeholder : undefined}
       onInputChange={setInputValue}
       onCancel={handleCancel}
       onConfirm={handleConfirm}
@@ -200,29 +201,39 @@ function DialogPresentation(props: DialogPresentationProps) {
         </AlertDialog.Title>
         {props.inputInitialValue !== undefined ? (
           <AlertDialog.Text>
-            <OutlinedTextField
-              autoFocus
-              singleLine
-              value={inputState}
-              selection={inputSelection}
-              onValueChange={props.onInputChange}
-              textStyle={inputTypography}
-              keyboardOptions={{ imeAction: "done" }}
-              keyboardActions={{
-                onDone: confirm,
-              }}
-              colors={{
-                focusedTextColor: colors["--color-foreground"],
-                unfocusedTextColor: colors["--color-foreground"],
-                focusedIndicatorColor: colors["--color-focus"],
-                unfocusedIndicatorColor: colors["--color-border"],
-                cursorColor: colors["--color-focus"],
-              }}
-            >
-              <OutlinedTextField.Label>
-                <Text style={bodyTypography}>{props.request.title}</Text>
-              </OutlinedTextField.Label>
-            </OutlinedTextField>
+            <Column verticalArrangement={{ spacedBy: 16 }}>
+              {props.request.message ? (
+                <Text style={bodyTypography}>{props.request.message}</Text>
+              ) : null}
+              <OutlinedTextField
+                autoFocus
+                singleLine
+                value={inputState}
+                selection={inputSelection}
+                onValueChange={props.onInputChange}
+                textStyle={inputTypography}
+                keyboardOptions={{ imeAction: "done" }}
+                keyboardActions={{
+                  onDone: confirm,
+                }}
+                colors={{
+                  focusedTextColor: colors["--color-foreground"],
+                  unfocusedTextColor: colors["--color-foreground"],
+                  focusedIndicatorColor: colors["--color-focus"],
+                  unfocusedIndicatorColor: colors["--color-border"],
+                  cursorColor: colors["--color-focus"],
+                }}
+              >
+                <OutlinedTextField.Label>
+                  <Text style={bodyTypography}>{props.request.title}</Text>
+                </OutlinedTextField.Label>
+                {props.inputPlaceholder ? (
+                  <OutlinedTextField.Placeholder>
+                    <Text style={bodyTypography}>{props.inputPlaceholder}</Text>
+                  </OutlinedTextField.Placeholder>
+                ) : null}
+              </OutlinedTextField>
+            </Column>
           </AlertDialog.Text>
         ) : props.request.message ? (
           <AlertDialog.Text>
@@ -253,6 +264,7 @@ interface DialogPresentationProps {
     "title" | "message" | "cancelText" | "confirmText" | "destructive"
   >;
   readonly inputInitialValue?: string;
+  readonly inputPlaceholder?: string;
   readonly onInputChange?: (value: string) => void;
   readonly onCancel: () => void;
   readonly onConfirm: (inputValue?: string) => void;

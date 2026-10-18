@@ -23,6 +23,7 @@ import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import { useWorkspaceState } from "../../state/workspace";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 /** One toolbar height for the compact list and expanded sidebar, including search. */
 export function ThreadListToolbar(props: {
@@ -129,7 +130,7 @@ export function ThreadListToolbar(props: {
               {props.sidebar && workspace ? (
                 <AndroidHeaderIconButton
                   accessibilityLabel="Show pull requests"
-                  icon="arrow.triangle.pull"
+                  icon={PullRequestGlyph.pullRequest}
                   onPress={showPullRequests}
                 />
               ) : null}
