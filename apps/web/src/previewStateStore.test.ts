@@ -453,6 +453,18 @@ describe("previewStateStore (single-tab)", () => {
     expect(state.snapshot).toBeNull();
   });
 
+  it("keeps the state object when a refetched list changes nothing", () => {
+    reconcilePreviewServerSessions(ref, { sessions: [], serverEpoch, revision: 1 });
+    const loaded = readThreadPreviewState(ref);
+
+    reconcilePreviewServerSessions(ref, { sessions: [], serverEpoch, revision: 1 });
+    expect(readThreadPreviewState(ref)).toBe(loaded);
+
+    const snapshot = makeSnapshot();
+    reconcilePreviewServerSessions(ref, { sessions: [snapshot], serverEpoch, revision: 2 });
+    expect(readThreadPreviewState(ref).sessions).toEqual({ [snapshot.tabId]: snapshot });
+  });
+
   it("ignores a list response older than the latest server event", () => {
     const snapshot = makeSnapshot();
     applyPreviewServerEvent(ref, {
