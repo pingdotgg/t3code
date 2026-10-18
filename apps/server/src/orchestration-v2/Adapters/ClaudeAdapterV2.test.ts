@@ -3386,6 +3386,104 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
+    {
+      name: "fails a /compact the usage limit stopped",
+      limited: true,
+      compaction: "failed",
+      compact: true,
+      status: "failed",
+    },
+    {
+      name: "completes an unlimited failed /compact",
+      limited: false,
+      compaction: "failed",
+      compact: true,
+      status: "completed",
+    },
+    {
+      name: "completes a successful limited /compact",
+      limited: true,
+      compaction: "success",
+      compact: true,
+      status: "completed",
+    },
+    {
+      name: "completes a failed automatic compaction",
+      limited: true,
+      compaction: "failed",
+      compact: false,
+      status: "completed",
+    },
+  ] as const)("$name", ({ name, limited, compaction, compact, status }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const resetsAt = 1791991200;
+      const compactError =
+        "Error during compaction: You've hit your session limit · resets 5:20pm (Europe/Berlin).";
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make(`attempt-claude-compaction-${name}`),
+          text: compact ? "/compact" : "Continue.",
+          attachments: [],
+        }),
+      );
+      // Claude reports a compaction's outcome on a status frame. A /compact
+      // then ends with a success result naming the command and no terminal
+      // reason, even when the compaction failed (#19327). The automatic case
+      // omits the terminal reason too, so only the missing command keeps it
+      // completed.
+      const result = makeResultFrame({
+        uuid: "00000000-0000-4000-8000-000000000613",
+        result: compact ? "" : "Done.",
+        numTurns: compact ? 0 : 1,
+        terminalReason: null,
+      });
+      yield* Queue.offerAll(harness.sdkMessages, [
+        ...(limited
+          ? [
+              claudeSdkFrame({
+                type: "rate_limit_event",
+                rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt },
+                uuid: "00000000-0000-4000-8000-000000000611",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]
+          : []),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: null,
+          compact_result: compaction,
+          ...(compaction === "failed"
+            ? { compact_error: limited ? compactError : "Not enough messages to compact." }
+            : {}),
+          uuid: "00000000-0000-4000-8000-000000000612",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        compact ? claudeSdkFrame({ ...result, local_command: "compact" }) : result,
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, status);
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.failure.message, compactError);
+      assert.equal(
+        terminal.failure.resetAt,
+        DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000)),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect.each([
     { name: "parent limit", parentErrors: ["rate_limit"], expectedLimit: true },
     {
       name: "parent limit then nested response",
