@@ -1742,6 +1742,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             id: OpenCodeRuntime.openCodeQuestionId(index, question),
             header: question.header.trim() || `Question ${index + 1}`,
             question: question.question.trim() || question.header.trim() || `Question ${index + 1}`,
+            ...(question.multiple === undefined ? {} : { multiSelect: question.multiple }),
+            ...(question.custom === undefined ? {} : { allowCustomAnswer: question.custom }),
             options: question.options.map((option) => ({
               label: option.label.trim() || "Option",
               description: option.description.trim() || option.label.trim() || "Option",
