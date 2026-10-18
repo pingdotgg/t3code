@@ -668,7 +668,9 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
-        composerHandleRef?.current?.focusAtEnd();
+        const composer = composerHandleRef?.current;
+        if (!composer) return true;
+        composer.focusAtEnd();
         return false;
       }}
       onBackdropPointerDown={() => {
