@@ -3341,8 +3341,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const emitEvent = emit(events, command);
       const activeRunIds = new Set(
-        projection.runs.filter((run) => run.status === "queued").map((run) => run.id),
+        projection.runs
+          .filter((run) => run.status === "queued" || run.status === "preparing")
+          .map((run) => run.id),
       );
+      const preparingRuns = projection.runs.filter((run) => run.status === "preparing");
+      const preparationItems =
+        preparingRuns.length === 0
+          ? []
+          : (yield* loadProjectionForCommand(command, ["turnItems"], {
+              turnItemTypes: ["command_execution"],
+              turnItemRunIds: preparingRuns.map((run) => run.id),
+            })).turnItems;
       for (const run of projection.runs.filter((candidate) => activeRunIds.has(candidate.id))) {
         yield* emitEvent({
           type: "run.updated",
@@ -3351,6 +3361,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+        });
+      }
+      for (const run of preparingRuns) {
+        const preparationItem = preparationItems.find(
+          (item) =>
+            item.runId === run.id &&
+            item.type === "command_execution" &&
+            item.input === WORKSPACE_PREPARATION_INPUT &&
+            item.status === "running",
+        );
+        if (preparationItem === undefined) continue;
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: preparationItem.nodeId ?? undefined,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...preparationItem,
+            status: "cancelled",
+            title: "Workspace preparation cancelled",
+            completedAt: now,
+            updatedAt: now,
+          },
         });
       }
       for (const attempt of projection.attempts.filter(

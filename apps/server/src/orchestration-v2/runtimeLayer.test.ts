@@ -3873,6 +3873,113 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("cancels preparing work on archive and keeps it cancelled through replay", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("runtime-layer-archive-preparing-thread");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("archive-preparing-create"),
+        threadId,
+        projectId: ProjectId.make("archive-preparing-project"),
+        title: "Archive preparing work",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("archive-preparing-message"),
+        threadId,
+        messageId: MessageId.make("archive-preparing-message"),
+        text: "Prepare my workspace.",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "defer_start" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(before.runs, 1);
+      assert.isEmpty(before.subagents);
+      const run = before.runs[0]!;
+      assert.equal(run.status, "preparing");
+      const preparation = before.turnItems.find((item) => item.type === "command_execution")!;
+      assert.equal(preparation.status, "running");
+      assert.isEmpty((yield* orchestrator.getThreadShell(threadId))!.pendingBackgroundTasks);
+
+      const archive = {
+        type: "thread.archive" as const,
+        commandId: CommandId.make("archive-preparing-archive"),
+        threadId,
+      };
+      const archivedResult = yield* orchestrator.dispatch(archive);
+      assert.equal((yield* orchestrator.dispatch(archive)).sequence, archivedResult.sequence);
+
+      const assertCancelled = Effect.gen(function* () {
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const cancelledRun = projection.runs.find((candidate) => candidate.id === run.id)!;
+        assert.equal(cancelledRun.status, "cancelled");
+        assert.isNull(cancelledRun.queuePosition);
+        assert.isNotNull(cancelledRun.completedAt);
+        assert.equal(projection.attempts[0]?.status, "cancelled");
+        assert.isNotNull(projection.attempts[0]?.completedAt);
+        assert.equal(projection.nodes[0]?.status, "cancelled");
+        assert.isNotNull(projection.nodes[0]?.completedAt);
+        const item = projection.turnItems.find((candidate) => candidate.id === preparation.id)!;
+        assert.equal(item.status, "cancelled");
+        assert.equal(item.title, "Workspace preparation cancelled");
+        assert.deepEqual(item.completedAt, cancelledRun.completedAt);
+        assert.deepEqual(item.updatedAt, cancelledRun.completedAt);
+        assert.isEmpty((yield* orchestrator.getThreadShell(threadId))!.pendingBackgroundTasks);
+        assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+      });
+      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+      yield* assertCancelled;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* assertCancelled;
+
+      // Preparation may finish after archive. Even reopening must not let its
+      // late callbacks revive the cancelled run or its background activity.
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("archive-preparing-unarchive"),
+        threadId,
+      });
+      for (const callback of [
+        { type: "prepared-run.progress", phase: "setup" },
+        { type: "prepared-run.release" },
+        {
+          type: "prepared-run.fail",
+          failure: {
+            class: "validation_error",
+            message: "Late preparation failure",
+            code: null,
+            retryable: false,
+          },
+        },
+      ] as const) {
+        const error = yield* orchestrator
+          .dispatch({
+            ...callback,
+            commandId: CommandId.make(`archive-preparing-late:${callback.type}`),
+            threadId,
+            runId: run.id,
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorDispatchError");
+      }
+      yield* assertCancelled;
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* assertCancelled;
+    }),
+  );
+
   it.effect("cancels queued work when a thread is archived", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
