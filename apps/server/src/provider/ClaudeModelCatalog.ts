@@ -209,6 +209,13 @@ export function resolveClaudeCatalogEffort(
   model: string | null | undefined,
   raw: string | null | undefined,
 ): string | undefined {
+  if (!resolveClaudeCatalogModel(catalog, model)) {
+    const effort = raw?.trim();
+    return effort && ["low", "medium", "high", "xhigh", "max"].includes(effort)
+      ? effort
+      : undefined;
+  }
+
   const caps = getClaudeCatalogModelCapabilities(catalog, model);
   const descriptors = getProviderOptionDescriptors({
     caps,
