@@ -8,12 +8,15 @@ import type { Atom } from "effect/reactivity";
  * Home stays mounted under a pushed Thread, and native-stack never freezes the
  * route directly below the focused one on Fabric, so Home has to stop its own
  * work.
+ *
+ * `shownBesideDetail` covers mounts inside a split sidebar that is already on
+ * screen, where Home is visible without focus and no appear event follows.
  */
-export function useHomeRouteVisible(): boolean {
+export function useHomeRouteVisible(shownBesideDetail = false): boolean {
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "Home">>();
   // A cold deep link mounts Home under its Thread without ever showing it.
-  const [visible, setVisible] = useState(() => navigation.isFocused());
+  const [visible, setVisible] = useState(() => shownBesideDetail || navigation.isFocused());
   useEffect(() => {
     const show = () => setVisible(true);
     const removeTransitionStart = navigation.addListener("transitionStart", ({ data }) => {

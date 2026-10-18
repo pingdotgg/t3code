@@ -33,6 +33,7 @@ import {
   nativeWorkspacePopCount,
   partitionStackPresentations,
   reconcileStackScreens,
+  replacesStackRoot,
 } from "./workspace-stack-projection";
 
 export type V5StackViewProps = ComponentProps<typeof NativeStackView>;
@@ -58,6 +59,7 @@ export function V5CardStackView(
   const { preventedRoutes } = usePreventRemoveContext();
   const nativePopSource = useRef<string | null>(null);
   const [screens, setScreens] = useState({
+    nativeStack: 0,
     completedNativeDismissals: new Set<string>(),
     nativeCompletingPops: new Set<string>(),
     routes: props.state.routes,
@@ -66,6 +68,19 @@ export function V5CardStackView(
     observedDescriptors: props.descriptors,
   });
   if (
+    screens.observedRoutes !== props.state.routes &&
+    replacesStackRoot(screens.observedRoutes, props.state.routes)
+  ) {
+    setScreens({
+      nativeStack: screens.nativeStack + 1,
+      completedNativeDismissals: new Set(),
+      nativeCompletingPops: new Set(),
+      routes: props.state.routes,
+      descriptors: props.descriptors,
+      observedRoutes: props.state.routes,
+      observedDescriptors: props.descriptors,
+    });
+  } else if (
     screens.observedRoutes !== props.state.routes ||
     screens.observedDescriptors !== props.descriptors
   ) {
@@ -77,6 +92,7 @@ export function V5CardStackView(
     const active = new Set(props.state.routes.map((route) => route.key));
     const retainedKeys = new Set(routes.map((route) => route.key));
     setScreens({
+      nativeStack: screens.nativeStack,
       nativeCompletingPops: new Set(
         [...screens.nativeCompletingPops].filter((key) => retainedKeys.has(key)),
       ),
@@ -144,7 +160,7 @@ export function V5CardStackView(
   );
   return (
     <View className="flex-1 bg-screen">
-      <Stack.Host>
+      <Stack.Host key={screens.nativeStack}>
         {screens.routes.map((route, index) => {
           const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
           if (!descriptor) return null;

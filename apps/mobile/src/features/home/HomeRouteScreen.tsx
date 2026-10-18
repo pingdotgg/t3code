@@ -44,7 +44,9 @@ export function HomeRouteScreen() {
   const projects = useProjects();
   // Streaming turns rewrite thread shells many times a second. While a Thread
   // covers Home, rebuilding this list is invisible work.
-  const visible = useHomeRouteVisible();
+  const visible = useHomeRouteVisible(
+    nativePrimaryColumn !== null && layout.usesSplitView && panes.primarySidebarVisible,
+  );
   const threads = useAtomValueWhileVisible(
     environmentThreadShells.navigationThreadShellsAtom,
     visible,

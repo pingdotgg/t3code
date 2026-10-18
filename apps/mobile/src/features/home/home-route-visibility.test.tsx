@@ -42,8 +42,8 @@ let registry: AtomRegistry.AtomRegistry;
 let root: Root | null = null;
 let renders: Array<{ readonly visible: boolean; readonly value: number }> = [];
 
-function Probe() {
-  const visible = useHomeRouteVisible();
+function Probe(props: { readonly shownBesideDetail: boolean }) {
+  const visible = useHomeRouteVisible(props.shownBesideDetail);
   const value = useAtomValueWhileVisible(shellsAtom, visible);
   useEffect(() => {
     renders.push({ visible, value });
@@ -51,13 +51,13 @@ function Probe() {
   return null;
 }
 
-function mount() {
+function mount(shownBesideDetail = false) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   root = createRoot(document.createElement("div"));
   act(() =>
     root!.render(
       <RegistryContext.Provider value={registry}>
-        <Probe />
+        <Probe shownBesideDetail={shownBesideDetail} />
       </RegistryContext.Provider>,
     ),
   );
@@ -138,5 +138,12 @@ describe("Home route visibility", () => {
     expect(renders).toEqual([{ visible: false, value: 7 }]);
     act(() => harness.emit("transitionStart", { closing: false }));
     expect(renders.at(-1)).toEqual({ visible: true, value: 17 });
+  });
+
+  it("stays live when it remounts in a sidebar already shown beside a Thread", () => {
+    harness.state.focused = false;
+    mount(true);
+    stream(4);
+    expect(renders.at(-1)).toEqual({ visible: true, value: 4 });
   });
 });

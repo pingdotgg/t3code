@@ -1019,14 +1019,31 @@ function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: 
 }
 
 export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navigator }) {
-  const { width, height } = useWindowDimensions();
+  const windowDimensions = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
+  // Same source as AdaptiveWorkspaceLayout. The RN window size can land before or
+  // after native metrics, so mixing them opens a sheet as a modal while the split
+  // still renders expanded.
+  const { width, height } = nativeMetrics ?? windowDimensions;
   const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
   const usesWorkspaceFlowScreens = Platform.OS === "android" || usesSplitView;
+  // An open sheet keeps the presentation it opened with. Moving it between the
+  // split and a modal on a fold or resize remounts its nested navigators, which
+  // drops their state, while UIKit already collapses an open split flow natively.
+  // Settings moves anyway by reopening under a new key with its page.
+  const flowPresentations = useRef(new Map<string, boolean>());
 
   return (
     <Navigator
       screenLayout={(props) => <GuardedScreenLayout {...props} />}
+      screenListeners={{
+        state: ({ data }) => {
+          const open = new Set(data.state.routes.map((route) => route.key));
+          for (const key of flowPresentations.current.keys()) {
+            if (!open.has(key)) flowPresentations.current.delete(key);
+          }
+        },
+      }}
       screenOptions={({ route }) => {
         if (route.name !== "SettingsSheet" && route.name !== "NewTaskSheet") {
           return Platform.OS === "android"
@@ -1034,7 +1051,9 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
             : {};
         }
 
-        return usesWorkspaceFlowScreens
+        const flow = flowPresentations.current.get(route.key) ?? usesWorkspaceFlowScreens;
+        flowPresentations.current.set(route.key, flow);
+        return flow
           ? { presentation: "card" }
           : {
               ...FORM_SHEET_PRESENTATION_OPTIONS,

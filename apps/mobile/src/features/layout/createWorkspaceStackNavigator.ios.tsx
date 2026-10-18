@@ -19,13 +19,38 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import { use, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import {
+  use,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { View } from "react-native";
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider } from "../workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
+import { SettingsScopeProvider } from "../settings/settings-environment-filter";
+import type { SettingsSearchItem } from "../settings/settings-search";
+import {
+  resolveSettingsLocation,
+  settingsSectionState,
+  settingsSheetStateFor,
+} from "../settings/settings-sections";
+import { SettingsSidebarColumn } from "../settings/SettingsSidebar.ios";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout } from "./AdaptiveWorkspaceLayout";
@@ -46,6 +71,7 @@ import {
   nativeWorkspacePopAction,
   projectWorkspaceStack,
   partitionStackPresentations,
+  replaceWorkspaceRouteAction,
 } from "../../native/workspace-stack-projection";
 import {
   NativePrimaryColumnContext,
@@ -57,6 +83,40 @@ type ViewProps = ComponentProps<typeof NativeStackView>;
 type Descriptor = ViewProps["descriptors"][string];
 type Route = ViewProps["state"]["routes"][number];
 
+// Matches the split's native primary column resize, so content kept off the
+// fold moves with the column edge.
+const COLUMN_RESIZE_TIMING = {
+  duration: 300,
+  easing: Easing.out(Easing.cubic),
+  reduceMotion: ReduceMotion.System,
+} as const;
+
+const SETTINGS_PAGE_ID = "workspace-settings-page";
+
+// A book fold ends the sidebar, leaving the crease at the start of the detail
+// column, inside its safe area. Taking the gap from the layout that sizes the
+// sidebar keeps both in one commit; the column's own metrics would first report
+// the fold mid-column, before the sidebar widens to it. A window resize moves
+// the columns at once, so the gap does too.
+function FoldAvoidingView(props: { readonly nativeID: string; readonly children: ReactNode }) {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const width = useNativeLayoutMetrics()?.width;
+  const gap = layout.usesSplitView ? (layout.listPaneGap ?? 0) : 0;
+  const margin = useSharedValue(gap);
+  const settledWidth = useRef(width);
+  useEffect(() => {
+    const resized = settledWidth.current !== width;
+    settledWidth.current = width;
+    margin.set(resized ? gap : withTiming(gap, COLUMN_RESIZE_TIMING));
+  }, [gap, margin, width]);
+  const style = useAnimatedStyle(() => ({ marginLeft: margin.get() }));
+  return (
+    <Animated.View nativeID={props.nativeID} style={[{ flex: 1 }, style]}>
+      {props.children}
+    </Animated.View>
+  );
+}
+
 function ColumnScreen(props: {
   readonly descriptor: Descriptor;
   readonly primary?: boolean;
@@ -64,6 +124,12 @@ function ColumnScreen(props: {
   readonly selectedPullRequestKey?: string | null;
   readonly onDismiss: (routeKey: string) => void;
   readonly navigation: ViewProps["navigation"];
+  readonly activityMode?: ComponentProps<typeof Split.Screen>["activityMode"];
+  /** Keeps the content clear of a book fold, as the view with this nativeID. */
+  readonly foldAvoidingID?: string;
+  readonly onDidAppear?: () => void;
+  /** Replaces the route's header and content without pushing another screen. */
+  readonly cover?: ReactNode;
 }) {
   const { descriptor } = props;
   const primaryColumn = useMemo(
@@ -80,15 +146,17 @@ function ColumnScreen(props: {
   return (
     <Split.Screen
       screenKey={key}
+      activityMode={props.activityMode}
       onDismiss={(event) => {
         if (event.nativeEvent.isNativeDismiss) props.onDismiss(key);
       }}
       onWillAppear={() =>
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: false } })
       }
-      onDidAppear={() =>
-        props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: false } })
-      }
+      onDidAppear={() => {
+        props.onDidAppear?.();
+        props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: false } });
+      }}
       onWillDisappear={() =>
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: true } })
       }
@@ -96,25 +164,34 @@ function ColumnScreen(props: {
         props.navigation.emit({ type: "transitionEnd", target: key, data: { closing: true } })
       }
     >
-      <NavigationContext value={descriptor.navigation}>
-        <NavigationRouteContext value={descriptor.route}>
-          <V5StackHeader
-            options={descriptor.options}
-            canGoBack={!props.primary}
-            primary={props.primary}
-          />
-          <ColumnContent
-            primary={props.primary}
-            insetHorizontally={
-              (descriptor.options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
-            }
-          >
-            <NativePrimaryColumnContext value={primaryColumn}>
-              {descriptor.render()}
-            </NativePrimaryColumnContext>
-          </ColumnContent>
-        </NavigationRouteContext>
-      </NavigationContext>
+      {props.cover ?? (
+        <NavigationContext value={descriptor.navigation}>
+          <NavigationRouteContext value={descriptor.route}>
+            <V5StackHeader
+              options={descriptor.options}
+              canGoBack={!props.primary}
+              primary={props.primary}
+            />
+            <ColumnContent
+              primary={props.primary}
+              insetHorizontally={
+                (descriptor.options as AppNativeStackNavigationOptions)
+                  .nativeContentInsetHorizontally
+              }
+            >
+              <NativePrimaryColumnContext value={primaryColumn}>
+                {props.foldAvoidingID ? (
+                  <FoldAvoidingView nativeID={props.foldAvoidingID}>
+                    {descriptor.render()}
+                  </FoldAvoidingView>
+                ) : (
+                  descriptor.render()
+                )}
+              </NativePrimaryColumnContext>
+            </ColumnContent>
+          </NavigationRouteContext>
+        </NavigationContext>
+      )}
     </Split.Screen>
   );
 }
@@ -123,10 +200,19 @@ function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
   const { layout, panes, togglePrimarySidebar, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  // The split resizes its sidebar gradually, so a collapsed split keeps the
+  // width it will expand to instead of resizing as it unfolds.
+  const [primaryWidth, setPrimaryWidth] = useState(layout.listPaneWidth ?? 320);
+  if (layout.listPaneWidth !== null && layout.listPaneWidth !== primaryWidth) {
+    setPrimaryWidth(layout.listPaneWidth);
+  }
   const inspector = use(NativeWorkspaceInspectorContext);
   const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
-  const compactColumn = activeDetailKey ? "secondary" : "primary";
+  // Settings moves to a sheet when the split collapses, so the collapsed split
+  // opens on the sidebar instead of showing settings until it leaves.
+  const compactColumn =
+    activeDetailKey && props.detail.at(-1)?.name !== "SettingsSheet" ? "secondary" : "primary";
   const shownCompactColumn = useRef(compactColumn);
   const threadParams = props.detail.findLast((route) => route.name === "Thread")?.params;
   const pullRequestParams = props.detail.findLast(
@@ -166,9 +252,49 @@ function WorkspaceColumns(
     },
     [props.navigation],
   );
+  const settingsIndex = props.detail.findLastIndex((route) => route.name === "SettingsSheet");
+  const settingsRoute = props.detail[settingsIndex];
+  const settingsDescriptor = settingsRoute ? props.descriptors[settingsRoute.key] : undefined;
+  const closeSettings = useCallback(() => {
+    const state = props.navigation.getState();
+    const route = state.routes.findLast((candidate) => candidate.name === "SettingsSheet");
+    const action = route ? nativeWorkspacePopAction(state, route.key) : null;
+    if (action) props.navigation.dispatch(action);
+  }, [props.navigation]);
+  const selectSettingsPage = useCallback(
+    (page: SettingsSearchItem["page"]) => {
+      const state = props.navigation.getState();
+      const index = state.routes.findLastIndex((candidate) => candidate.name === "SettingsSheet");
+      const route = state.routes[index];
+      if (!route) return;
+      const location = resolveSettingsLocation(route);
+      if (
+        index === state.routes.length - 1 &&
+        location.atSectionRoot &&
+        location.section === page
+      ) {
+        return;
+      }
+      // Replacing the whole sheet keeps each section a root page, so its content
+      // swaps in place instead of pushing onto the previous section.
+      const action = replaceWorkspaceRouteAction(state, route.key, {
+        key: route.key,
+        name: "SettingsSheet",
+        state: settingsSectionState(page),
+      });
+      if (action) props.navigation.dispatch(action);
+    },
+    [props.navigation],
+  );
 
+  // A collapsed split's Back reveals the sidebar without a router change. The
+  // sidebar's appearance records it, so the next detail is brought forward.
   useEffect(() => {
-    if (layout.usesSplitView || shownCompactColumn.current === compactColumn) return;
+    if (layout.usesSplitView) {
+      shownCompactColumn.current = compactColumn;
+      return;
+    }
+    if (shownCompactColumn.current === compactColumn) return;
     shownCompactColumn.current = compactColumn;
     hostRef.current?.show(compactColumn);
   }, [compactColumn, layout.usesSplitView]);
@@ -180,9 +306,16 @@ function WorkspaceColumns(
       ref={hostRef}
       testID="adaptive-workspace-layout"
       preferredSplitBehavior="tile"
+      // The sidebar style extends the detail column beneath the sidebar and
+      // insets its content through the safe area, which reaches React a frame
+      // late. Tiled columns resize their content in the frame the sidebar
+      // resizes, so the two never part while the sidebar follows the fold.
+      primaryBackgroundStyle="none"
       topColumnForCollapsing={compactColumn}
       preferredDisplayMode={
-        panes.primarySidebarVisible || (!layout.usesSplitView && !activeDetailKey)
+        panes.primarySidebarVisible ||
+        settingsDescriptor ||
+        (!layout.usesSplitView && !activeDetailKey)
           ? "oneBesideSecondary"
           : "secondaryOnly"
       }
@@ -194,8 +327,8 @@ function WorkspaceColumns(
       }}
       columnMetrics={{
         minimumPrimaryColumnWidth: 280,
-        maximumPrimaryColumnWidth: Math.max(380, layout.listPaneWidth ?? 0),
-        preferredPrimaryColumnWidthOrFraction: layout.listPaneWidth ?? 320,
+        maximumPrimaryColumnWidth: Math.max(380, primaryWidth),
+        preferredPrimaryColumnWidthOrFraction: primaryWidth,
         minimumSecondaryColumnWidth: 320,
       }}
     >
@@ -207,7 +340,26 @@ function WorkspaceColumns(
             selectedThreadKey={selectedThreadKey}
             selectedPullRequestKey={selectedPullRequestKey}
             onDismiss={handleNativeDismiss}
+            onDidAppear={() => {
+              if (!layout.usesSplitView) shownCompactColumn.current = "primary";
+            }}
             navigation={props.navigation}
+            // A second screen here would be popped when settings closes. Folding the
+            // Duo nests the detail column above this stack first, so that pop would
+            // no longer be the top screen and RNScreens aborts.
+            cover={
+              settingsRoute && settingsDescriptor ? (
+                <NavigationContext value={settingsDescriptor.navigation}>
+                  <NavigationRouteContext value={settingsDescriptor.route}>
+                    <SettingsSidebarColumn
+                      selectedSection={resolveSettingsLocation(settingsRoute).section}
+                      onSelect={selectSettingsPage}
+                      onClose={closeSettings}
+                    />
+                  </NavigationRouteContext>
+                </NavigationContext>
+              ) : undefined
+            }
           />
         </Split.Stack>
       </Split.Column>
@@ -240,7 +392,7 @@ function WorkspaceColumns(
               />
             </ColumnContent>
           </Split.Screen>
-          {props.detail.map((route) => {
+          {props.detail.map((route, index) => {
             const descriptor = props.descriptors[route.key];
             return descriptor ? (
               <ColumnScreen
@@ -248,6 +400,10 @@ function WorkspaceColumns(
                 descriptor={descriptor}
                 onDismiss={handleNativeDismiss}
                 navigation={props.navigation}
+                // Settings owns the detail column alone, so no Back gesture uncovers
+                // the thread beneath it.
+                activityMode={index < settingsIndex ? "detached" : "attached"}
+                foldAvoidingID={index === settingsIndex ? SETTINGS_PAGE_ID : undefined}
               />
             ) : null;
           })}
@@ -273,6 +429,49 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     const presentation = props.descriptors[route.key]?.options.presentation;
     return presentation !== undefined && presentation !== "card";
   });
+  const overlays = partitionStackPresentations(projection.overlays, (route) => {
+    const presentation = props.descriptors[route.key]?.options.presentation;
+    return presentation !== undefined && presentation !== "card";
+  });
+  const settingsKey = props.state.routes.findLast((route) => route.name === "SettingsSheet")?.key;
+  const settingsFlows =
+    settingsKey !== undefined && props.descriptors[settingsKey]?.options.presentation === "card";
+  const settingsInSplit = projection.detail.some((route) => route.key === settingsKey);
+  // An open route keeps the presentation it opened with, but settings follows
+  // the columns: its sections sit beside the sidebar, or in a sheet once the
+  // split collapses. Its nested navigators remount there, and React Navigation
+  // clears a navigator's state when its previous instance unmounts, so settings
+  // reopens as a new route seeded with its page.
+  const settingsMoving =
+    props.nativeColumns && settingsKey !== undefined && settingsFlows !== layout.usesSplitView;
+  // Settings that moves with the columns appears in place, and its sheet leaves
+  // by moving onto the page that takes it over. Modal changes stay instant until
+  // the open modals next change, because the native stack applies them after the
+  // commit that carries them has mounted.
+  const modalKeys = overlays.map((group) => group[0]!.key).join(" ");
+  const [settingsSwap, setSettingsSwap] = useState<
+    "moving" | { readonly modalKeys: string } | null
+  >(null);
+  if (settingsMoving) {
+    if (settingsSwap !== "moving") setSettingsSwap("moving");
+  } else if (settingsSwap === "moving") {
+    setSettingsSwap(settingsKey === undefined ? null : { modalKeys });
+  } else if (settingsSwap !== null && settingsSwap.modalKeys !== modalKeys) {
+    setSettingsSwap(null);
+  }
+  const instantModalTransitions =
+    settingsSwap !== null && settingsSwap !== "moving" && settingsSwap.modalKeys === modalKeys;
+  useLayoutEffect(() => {
+    if (!settingsMoving) return;
+    const state = props.navigation.getState();
+    const route = state.routes.find((candidate) => candidate.key === settingsKey);
+    if (!route) return;
+    const action = replaceWorkspaceRouteAction(state, route.key, {
+      name: "SettingsSheet",
+      state: settingsSheetStateFor(route, layout.usesSplitView),
+    });
+    if (action) props.navigation.dispatch(action);
+  }, [layout.usesSplitView, props.navigation, settingsKey, settingsMoving]);
   // Linking normally restores Home via initialRouteName. A detail-only history
   // must stay a single stack: placeholder descriptors cannot own an interactive
   // sidebar because React Navigation rejects their actions and setOptions.
@@ -326,47 +525,50 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
       </WorkspaceNativeTabs>
     ),
   };
-  const overlays = partitionStackPresentations(projection.overlays, (route) => {
-    const presentation = props.descriptors[route.key]?.options.presentation;
-    return presentation !== undefined && presentation !== "card";
-  });
   const routes = [baseRoute, ...overlays.map((group) => group[0]!)];
   return (
-    <NativeStackView
-      presentationEnvelope
-      {...props}
-      state={{ ...props.state, routes, index: routes.length - 1, preloadedRoutes: [] }}
-      descriptors={{
-        ...Object.fromEntries(
-          overlays.map((group) => {
-            const route = group[0]!;
-            const descriptor = props.descriptors[route.key]!;
-            const visibleRoute = group.at(-1)!;
-            return [
-              route.key,
-              {
-                ...descriptor,
-                navigation: props.descriptors[visibleRoute.key]!.navigation,
-                route: visibleRoute,
-                options: modalEnvelopeOptions(descriptor.options),
-                render: () => (
-                  <V5CardStackView
-                    {...props}
-                    state={{
-                      ...props.state,
-                      routes: group,
-                      index: group.length - 1,
-                      preloadedRoutes: [],
-                    }}
-                  />
-                ),
-              },
-            ];
-          }),
-        ),
-        [baseRoute.key]: baseDescriptor,
-      }}
-    />
+    <SettingsScopeProvider
+      open={settingsKey !== undefined}
+      sidebar={props.nativeColumns && settingsInSplit}
+    >
+      <NativeStackView
+        presentationEnvelope
+        {...props}
+        instantModalTransitions={instantModalTransitions}
+        instantModalDismissalTarget={SETTINGS_PAGE_ID}
+        state={{ ...props.state, routes, index: routes.length - 1, preloadedRoutes: [] }}
+        descriptors={{
+          ...Object.fromEntries(
+            overlays.map((group) => {
+              const route = group[0]!;
+              const descriptor = props.descriptors[route.key]!;
+              const visibleRoute = group.at(-1)!;
+              return [
+                route.key,
+                {
+                  ...descriptor,
+                  navigation: props.descriptors[visibleRoute.key]!.navigation,
+                  route: visibleRoute,
+                  options: modalEnvelopeOptions(descriptor.options),
+                  render: () => (
+                    <V5CardStackView
+                      {...props}
+                      state={{
+                        ...props.state,
+                        routes: group,
+                        index: group.length - 1,
+                        preloadedRoutes: [],
+                      }}
+                    />
+                  ),
+                },
+              ];
+            }),
+          ),
+          [baseRoute.key]: baseDescriptor,
+        }}
+      />
+    </SettingsScopeProvider>
   );
 }
 

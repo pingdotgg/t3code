@@ -1,5 +1,8 @@
 import { useNavigation } from "@react-navigation/native";
-import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
+import type {
+  NativeStackHeaderItem,
+  NativeStackHeaderItemMenu,
+} from "@react-navigation/native-stack";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { Platform, Pressable } from "react-native";
 
@@ -9,15 +12,13 @@ import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../../components/EnvironmentMach
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { withNativeGlassHeaderItem } from "../../layout/native-glass-header-items";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
-import { useSettingsEnvironmentFilter } from "../settings-environment-filter";
+import {
+  useSettingsEnvironmentFilter,
+  useSettingsSidebarActive,
+} from "../settings-environment-filter";
 
-export function SettingsEnvironmentFilterHeader(props: {
-  readonly closeSettings?: boolean;
-  readonly trailingItems?: readonly NativeStackHeaderItem[];
-}) {
-  const navigation = useNavigation();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const closeSettings = props.closeSettings === true && !layout.usesSplitView;
+/** The iOS header menu that scopes settings to environments and a project. */
+export function useSettingsScopeHeaderItem() {
   const {
     availableTargets,
     selectedTargets,
@@ -28,14 +29,11 @@ export function SettingsEnvironmentFilterHeader(props: {
     selectedProjectKey,
     selectProject,
   } = useSettingsEnvironmentFilter();
-  if (Platform.OS !== "ios") return null;
-
   const filterIcon =
     selectedIds === null && selectedProjectKey === null
       ? "line.3.horizontal.decrease"
       : "line.3.horizontal.decrease.circle.fill";
-  const filterVersion = JSON.stringify({
-    closeSettings,
+  const version = JSON.stringify({
     selection: selectedIds === null ? null : [...selectedIds].sort(),
     targets: availableTargets.map((entry) => [
       entry.environmentId,
@@ -45,78 +43,91 @@ export function SettingsEnvironmentFilterHeader(props: {
     ]),
     project: selectedProjectKey,
     projects: selectableProjectGroups.map((group) => [group.key, group.label]),
-    trailingItems: props.trailingItems,
   });
+  const item = withNativeGlassHeaderItem<NativeStackHeaderItemMenu>({
+    axisBehavior: "horizontalOnly",
+    accessibilityLabel: "Filter settings environments and projects",
+    icon: { name: filterIcon, type: "sfSymbol" },
+    label: "",
+    type: "menu",
+    menu: {
+      title: "Settings scope",
+      items: [
+        {
+          type: "submenu",
+          label:
+            selectedIds === null
+              ? "All environments"
+              : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
+          items: [
+            {
+              type: "action",
+              label: "All connected environments",
+              state: selectedIds === null ? "on" : undefined,
+              onPress: selectAll,
+            },
+            ...availableTargets.map((entry) => ({
+              type: "action" as const,
+              label: entry.label,
+              icon: {
+                type: "sfSymbol" as const,
+                name: ENVIRONMENT_MACHINE_SYMBOLS[
+                  resolveEnvironmentMachineKind(entry.serverConfig)
+                ],
+              },
+              description: entry.displayUrl ?? undefined,
+              state:
+                selectedIds === null || selectedIds.has(entry.environmentId)
+                  ? ("on" as const)
+                  : undefined,
+              onPress: () => toggleEnvironment(entry.environmentId),
+            })),
+          ],
+        },
+        {
+          type: "submenu",
+          label:
+            selectableProjectGroups.find((group) => group.key === selectedProjectKey)?.label ??
+            (selectedProjectKey === null ? "All projects" : "Unavailable project"),
+          items: [
+            {
+              type: "action",
+              label: "All projects",
+              state: selectedProjectKey === null ? "on" : undefined,
+              onPress: () => selectProject(null),
+            },
+            ...selectableProjectGroups.map((group) => ({
+              type: "action" as const,
+              label: group.label,
+              state: selectedProjectKey === group.key ? ("on" as const) : undefined,
+              onPress: () => selectProject(group.key),
+            })),
+          ],
+        },
+      ],
+    },
+  });
+  return { item, version };
+}
+
+export function SettingsEnvironmentFilterHeader(props: {
+  readonly closeSettings?: boolean;
+  readonly trailingItems?: readonly NativeStackHeaderItem[];
+}) {
+  const navigation = useNavigation();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const closeSettings = props.closeSettings === true && !layout.usesSplitView;
+  // The settings sidebar carries the scope menu for every section beside it.
+  const sidebarOwnsScope = useSettingsSidebarActive();
+  const scope = useSettingsScopeHeaderItem();
+  if (Platform.OS !== "ios") return null;
 
   return (
     <NativeStackScreenOptions
-      optionsVersion={filterVersion}
+      optionsVersion={[scope.version, sidebarOwnsScope, closeSettings, props.trailingItems]}
       options={{
         unstable_headerRightItems: () => [
-          withNativeGlassHeaderItem({
-            axisBehavior: "horizontalOnly",
-            accessibilityLabel: "Filter settings environments and projects",
-            icon: { name: filterIcon, type: "sfSymbol" },
-            label: "",
-            type: "menu",
-            menu: {
-              title: "Settings scope",
-              items: [
-                {
-                  type: "submenu",
-                  label:
-                    selectedIds === null
-                      ? "All environments"
-                      : `${selectedTargets.length} ${selectedTargets.length === 1 ? "environment" : "environments"}`,
-                  items: [
-                    {
-                      type: "action",
-                      label: "All connected environments",
-                      state: selectedIds === null ? "on" : undefined,
-                      onPress: selectAll,
-                    },
-                    ...availableTargets.map((entry) => ({
-                      type: "action" as const,
-                      label: entry.label,
-                      icon: {
-                        type: "sfSymbol" as const,
-                        name: ENVIRONMENT_MACHINE_SYMBOLS[
-                          resolveEnvironmentMachineKind(entry.serverConfig)
-                        ],
-                      },
-                      description: entry.displayUrl ?? undefined,
-                      state:
-                        selectedIds === null || selectedIds.has(entry.environmentId)
-                          ? ("on" as const)
-                          : undefined,
-                      onPress: () => toggleEnvironment(entry.environmentId),
-                    })),
-                  ],
-                },
-                {
-                  type: "submenu",
-                  label:
-                    selectableProjectGroups.find((group) => group.key === selectedProjectKey)
-                      ?.label ??
-                    (selectedProjectKey === null ? "All projects" : "Unavailable project"),
-                  items: [
-                    {
-                      type: "action",
-                      label: "All projects",
-                      state: selectedProjectKey === null ? "on" : undefined,
-                      onPress: () => selectProject(null),
-                    },
-                    ...selectableProjectGroups.map((group) => ({
-                      type: "action" as const,
-                      label: group.label,
-                      state: selectedProjectKey === group.key ? ("on" as const) : undefined,
-                      onPress: () => selectProject(group.key),
-                    })),
-                  ],
-                },
-              ],
-            },
-          }),
+          ...(sidebarOwnsScope ? [] : [scope.item]),
           ...(props.trailingItems ?? []),
           ...(closeSettings
             ? [

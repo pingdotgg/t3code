@@ -1,6 +1,7 @@
 import type {
   NavigationState,
   ParamListBase,
+  PartialState,
   StackNavigationState,
 } from "@react-navigation/native";
 
@@ -43,6 +44,30 @@ export function nativeWorkspacePopAction(
     : null;
 }
 
+/**
+ * Swap a route, closing whatever was opened above it, and start its nested
+ * navigators over from `state`. Nested params would be navigated to on top of
+ * a mounted navigator's pages instead. Given the same key, the screen and its
+ * presentation stay put. Without a key it reopens as a new screen.
+ */
+export function replaceWorkspaceRouteAction(
+  state: NavigationState,
+  replacedKey: string,
+  route: {
+    readonly key?: string;
+    readonly name: string;
+    readonly state: PartialState<NavigationState>;
+  },
+) {
+  const index = state.routes.findIndex((candidate) => candidate.key === replacedKey);
+  if (index < 0) return null;
+  return {
+    type: "RESET" as const,
+    payload: { ...state, index, routes: [...state.routes.slice(0, index), route] },
+    target: state.key,
+  };
+}
+
 /** A native card pop must preserve pushes made before its completion event reaches JS. */
 export function nativeStackPopAction(
   state: Pick<NavigationState, "key" | "index" | "routes">,
@@ -80,6 +105,20 @@ export function partitionStackPresentations<T>(
     groups.at(-1)!.push(route);
   }
   return groups;
+}
+
+/**
+ * RNScreens pops before it pushes and never pops a stack's root, so a router
+ * update that drops the root needs a fresh native stack. A nested navigator
+ * that starts over in place, as settings does when the sidebar switches
+ * sections, comes back with new route keys.
+ */
+export function replacesStackRoot(
+  attached: readonly { readonly key: string }[],
+  next: readonly { readonly key: string }[],
+): boolean {
+  const root = attached[0];
+  return root !== undefined && !next.some((route) => route.key === root.key);
 }
 
 /** Keep outgoing screens in place until dismissal; Fabric moves enqueue native pop/push operations. */

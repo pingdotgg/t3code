@@ -1,5 +1,5 @@
 diff --git a/lib/module/views/NativeStackView.native.js b/lib/module/views/NativeStackView.native.js
-index 6882090..011ad0e 100644
+index 6882090..660728a 100644
 --- a/lib/module/views/NativeStackView.native.js
 +++ b/lib/module/views/NativeStackView.native.js
 @@ -17,8 +17,12 @@ const ANDROID_DEFAULT_HEADER_HEIGHT = 56;
@@ -25,18 +25,22 @@ index 6882090..011ad0e 100644
      route: route,
      navigation: navigation,
      children: /*#__PURE__*/_jsx(ScreenStackItem, {
-@@ -427,6 +432,7 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
+@@ -427,6 +432,9 @@ const SceneView = /*#__PURE__*/React.memo(function SceneView({
    });
  });
  export function NativeStackView({
 +  presentationEnvelope,
++  instantModalTransitions,
++  instantModalDismissalTarget,
    state,
    navigation,
    descriptors,
-@@ -444,6 +450,17 @@ export function NativeStackView({
+@@ -444,6 +452,19 @@ export function NativeStackView({
    return /*#__PURE__*/_jsx(SafeAreaProviderCompat, {
      children: /*#__PURE__*/_jsx(ScreenStack, {
        style: styles.container,
++      instantModalTransitions: instantModalTransitions,
++      instantModalDismissalTarget: instantModalDismissalTarget,
 +      onFinishTransitioning: () => {
 +        // Surface UIKit's transition-completion callback to every route of
 +        // this navigator. Unlike transitionEnd, this also fires when a modal
@@ -51,7 +55,7 @@ index 6882090..011ad0e 100644
        children: state.routes.concat(state.preloadedRoutes).map((route, index) => {
          const descriptor = descriptors[route.key] ?? preloadedDescriptors[route.key];
          const isFocused = state.index === index;
-@@ -460,6 +477,7 @@ export function NativeStackView({
+@@ -460,6 +481,7 @@ export function NativeStackView({
          // due to component being unmounted. To avoid this, we don't freeze the previous screen there
          const shouldFreeze = isFabric() ? !isPreloaded && !isFocused && !isBelowFocused && !isModalOnIos : !isPreloaded && !isFocused && !isModalOnIos;
          return /*#__PURE__*/_jsx(SceneView, {
@@ -60,7 +64,7 @@ index 6882090..011ad0e 100644
            focused: isFocused,
            shouldFreeze: shouldFreeze,
 diff --git a/lib/module/views/useHeaderConfigProps.js b/lib/module/views/useHeaderConfigProps.js
-index 08055b2..8718847 100644
+index 08055b2..ccf1fde 100644
 --- a/lib/module/views/useHeaderConfigProps.js
 +++ b/lib/module/views/useHeaderConfigProps.js
 @@ -18,6 +18,12 @@ const processBarButtonItems = (items, colors, fonts) => {
@@ -201,33 +205,37 @@ index 27a3d8e..3adf86e 100644
       * A React Element to display as the item.
       */
 diff --git a/lib/typescript/src/views/NativeStackView.d.ts b/lib/typescript/src/views/NativeStackView.d.ts
-index cc688e2..0ec33c8 100644
+index cc688e2..d06f6f9 100644
 --- a/lib/typescript/src/views/NativeStackView.d.ts
 +++ b/lib/typescript/src/views/NativeStackView.d.ts
-@@ -2,6 +2,7 @@ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@
+@@ -2,6 +2,9 @@ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@
  import * as React from 'react';
  import type { NativeStackDescriptor, NativeStackDescriptorMap, NativeStackNavigationHelpers } from '../types.js';
  type Props = {
 +    presentationEnvelope?: boolean;
++    instantModalTransitions?: boolean;
++    instantModalDismissalTarget?: string;
      state: StackNavigationState<ParamListBase>;
      navigation: NativeStackNavigationHelpers;
      descriptors: NativeStackDescriptorMap;
 diff --git a/lib/typescript/src/views/NativeStackView.native.d.ts b/lib/typescript/src/views/NativeStackView.native.d.ts
-index d533cd9..857b7ad 100644
+index d533cd9..06321eb 100644
 --- a/lib/typescript/src/views/NativeStackView.native.d.ts
 +++ b/lib/typescript/src/views/NativeStackView.native.d.ts
-@@ -2,11 +2,12 @@ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@
+@@ -2,11 +2,14 @@ import { type ParamListBase, type RouteProp, type StackNavigationState } from '@
  import * as React from 'react';
  import type { NativeStackDescriptor, NativeStackDescriptorMap, NativeStackNavigationHelpers } from '../types.js';
  type Props = {
 +    presentationEnvelope?: boolean;
++    instantModalTransitions?: boolean;
++    instantModalDismissalTarget?: string;
      state: StackNavigationState<ParamListBase>;
      navigation: NativeStackNavigationHelpers;
      descriptors: NativeStackDescriptorMap;
      describe: (route: RouteProp<ParamListBase>, placeholder: boolean) => NativeStackDescriptor;
  };
 -export declare function NativeStackView({ state, navigation, descriptors, describe, }: Props): React.JSX.Element;
-+export declare function NativeStackView({ presentationEnvelope, state, navigation, descriptors, describe, }: Props): React.JSX.Element;
++export declare function NativeStackView({ presentationEnvelope, instantModalTransitions, instantModalDismissalTarget, state, navigation, descriptors, describe, }: Props): React.JSX.Element;
  export {};
  //# sourceMappingURL=NativeStackView.native.d.ts.map
 \ No newline at end of file
@@ -259,7 +267,7 @@ index 5d63f41..e9c53ee 100644
     * A React Element to display as the item.
     */
 diff --git a/src/views/NativeStackView.native.tsx b/src/views/NativeStackView.native.tsx
-index aa13bc7..ab4a9d1 100644
+index aa13bc7..7ffcfd2 100644
 --- a/src/views/NativeStackView.native.tsx
 +++ b/src/views/NativeStackView.native.tsx
 @@ -52,7 +52,14 @@ function isFabric() {
@@ -294,7 +302,7 @@ index aa13bc7..ab4a9d1 100644
        <ScreenStackItem
          screenId={route.key}
          activityState={isPreloaded ? 0 : 2}
-@@ -571,11 +579,12 @@ const SceneView = React.memo(function SceneView({
+@@ -571,11 +579,14 @@ const SceneView = React.memo(function SceneView({
            </HeaderHeightContext.Provider>
          </AnimatedHeaderHeightContext.Provider>
        </ScreenStackItem>
@@ -305,18 +313,35 @@ index aa13bc7..ab4a9d1 100644
  
  type Props = {
 +  presentationEnvelope?: boolean;
++  instantModalTransitions?: boolean;
++  instantModalDismissalTarget?: string;
    state: StackNavigationState<ParamListBase>;
    navigation: NativeStackNavigationHelpers;
    descriptors: NativeStackDescriptorMap;
-@@ -586,6 +595,7 @@ type Props = {
+@@ -586,6 +597,9 @@ type Props = {
  };
  
  export function NativeStackView({
 +  presentationEnvelope,
++  instantModalTransitions,
++  instantModalDismissalTarget,
    state,
    navigation,
    descriptors,
-@@ -633,6 +643,7 @@ export function NativeStackView({
+@@ -605,7 +619,11 @@ export function NativeStackView({
+ 
+   return (
+     <SafeAreaProviderCompat>
+-      <ScreenStack style={styles.container}>
++      <ScreenStack
++        style={styles.container}
++        instantModalTransitions={instantModalTransitions}
++        instantModalDismissalTarget={instantModalDismissalTarget}
++      >
+         {state.routes.concat(state.preloadedRoutes).map((route, index) => {
+           const descriptor =
+             descriptors[route.key] ?? preloadedDescriptors[route.key];
+@@ -633,6 +651,7 @@ export function NativeStackView({
  
            return (
              <SceneView
@@ -325,14 +350,16 @@ index aa13bc7..ab4a9d1 100644
                index={index}
                focused={isFocused}
 diff --git a/src/views/NativeStackView.tsx b/src/views/NativeStackView.tsx
-index c50a3fa..6305ed5 100644
+index c50a3fa..5eee0af 100644
 --- a/src/views/NativeStackView.tsx
 +++ b/src/views/NativeStackView.tsx
-@@ -25,6 +25,7 @@ import type {
+@@ -25,6 +25,9 @@ import type {
  import { AnimatedHeaderHeightContext } from '../utils/useAnimatedHeaderHeight';
  
  type Props = {
 +    presentationEnvelope?: boolean;
++    instantModalTransitions?: boolean;
++    instantModalDismissalTarget?: string;
    state: StackNavigationState<ParamListBase>;
    // This is used for the native implementation of the stack.
    navigation: NativeStackNavigationHelpers;

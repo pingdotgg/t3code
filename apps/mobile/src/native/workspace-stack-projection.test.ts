@@ -9,6 +9,8 @@ import {
   projectWorkspaceStack,
   partitionStackPresentations,
   reconcileStackScreens,
+  replacesStackRoot,
+  replaceWorkspaceRouteAction,
 } from "./workspace-stack-projection";
 
 const requireNavigation = NodeModule.createRequire(
@@ -125,6 +127,65 @@ describe("native workspace dismissal", () => {
     const state = history([home, thread, files]);
     expect(nativeWorkspacePopCount(state, home.key)).toBe(0);
     expect(nativeWorkspacePopCount({ ...state, index: 1 }, files.key)).toBe(0);
+  });
+});
+
+describe("workspace route replacement", () => {
+  const routerOptions = {
+    routeNames: history([home]).routeNames,
+    routeParamList: {},
+    routeGetIdList: {},
+  };
+  const appearance = {
+    name: "SettingsSheet",
+    state: {
+      routes: [{ name: "SettingsContent", state: { routes: [{ name: "SettingsAppearance" }] } }],
+    },
+  };
+
+  it("swaps settings to another section in place while keeping the routes beneath it", () => {
+    const open = { ...settings, state: { routes: [{ name: "SettingsAuth" }] } };
+    const state = history([home, thread, open]);
+    const next = StackRouter({}).getStateForAction(
+      state,
+      replaceWorkspaceRouteAction(state, settings.key, { ...appearance, key: settings.key })!,
+      routerOptions,
+    );
+    expect(next?.routes.slice(0, 2)).toEqual([home, thread]);
+    expect(next?.routes[2]).toEqual({ ...appearance, key: settings.key });
+    expect(next?.index).toBe(2);
+  });
+
+  it("reopens settings as a new screen that starts from the given nested state", () => {
+    const nested = { routes: [{ name: "SettingsContent" }, { name: "SettingsAuth" }] };
+    const state = history([home, thread, settings]);
+    const next = StackRouter({}).getStateForAction(
+      state,
+      replaceWorkspaceRouteAction(state, settings.key, { name: "SettingsSheet", state: nested })!,
+      routerOptions,
+    );
+    expect(next?.routes.slice(0, 2)).toEqual([home, thread]);
+    expect(next?.routes[2]).toMatchObject({ name: "SettingsSheet", state: nested });
+    expect(next?.routes[2]?.key).not.toBe(settings.key);
+  });
+
+  it("closes a thread opened from settings when switching sections", () => {
+    const opened = { key: "archived", name: "Thread", params: { threadId: "archived" } };
+    const state = history([home, thread, settings, opened]);
+    const next = StackRouter({}).getStateForAction(
+      state,
+      replaceWorkspaceRouteAction(state, settings.key, { ...appearance, key: settings.key })!,
+      routerOptions,
+    );
+    expect(next?.routes.map((route) => route.name)).toEqual(["Home", "Thread", "SettingsSheet"]);
+    expect(next?.routes[1]).toBe(thread);
+    expect(next?.index).toBe(2);
+  });
+
+  it("ignores a route that already left the stack", () => {
+    expect(
+      replaceWorkspaceRouteAction(history([home, thread]), settings.key, appearance),
+    ).toBeNull();
   });
 });
 
@@ -248,5 +309,16 @@ describe("v5 stack handoff", () => {
         (route) => route.name === "SettingsSheet",
       ),
     ).toEqual([[home, thread], [settings, legal], [secondModal]]);
+  });
+  it("needs a fresh native stack when a remounted nested navigator replaces its root", () => {
+    const reinitialized = { ...settings, key: "settings-reinitialized" };
+    expect(replacesStackRoot([settings], [reinitialized])).toBe(true);
+    expect(replacesStackRoot([settings, legal], [reinitialized, legal])).toBe(true);
+  });
+  it("keeps the native stack for pushes, pops, and swaps above the root", () => {
+    expect(replacesStackRoot([home], [home, thread])).toBe(false);
+    expect(replacesStackRoot([home, thread, files], [home])).toBe(false);
+    expect(replacesStackRoot([home, thread], [home, files])).toBe(false);
+    expect(replacesStackRoot([], [home])).toBe(false);
   });
 });

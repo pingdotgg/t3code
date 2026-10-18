@@ -1,0 +1,673 @@
+diff --git a/ios/header/RNSHeaderCoordinator.h b/ios/header/RNSHeaderCoordinator.h
+index b8269ff..eef2022 100644
+--- a/ios/header/RNSHeaderCoordinator.h
++++ b/ios/header/RNSHeaderCoordinator.h
+@@ -17,6 +17,8 @@ NS_ASSUME_NONNULL_BEGIN
+ @property (nonatomic, weak, nullable) id<RNSViewFrameChangeDelegate> frameChangeDelegate;
+ @property (nonatomic, weak, nullable) id<RNSHeaderEventsDelegate> eventsDelegate;
+ @property (nonatomic, weak, nullable) id<RNSImageLoading> imageLoader;
++/// Applies rebuilds to the bar at once, for a header that replaces another along with its screen's content.
++@property (nonatomic) BOOL rebuildsWithoutAnimation;
+ 
+ - (void)rebuild;
+ 
+diff --git a/ios/header/RNSHeaderCoordinator.mm b/ios/header/RNSHeaderCoordinator.mm
+index 5c93625..2fcd872 100644
+--- a/ios/header/RNSHeaderCoordinator.mm
++++ b/ios/header/RNSHeaderCoordinator.mm
+@@ -143,9 +143,9 @@ - (void)rebuild
+                   forController:controller];
+ 
+   [self applyTitleMenuForController:controller];
+-  [self updateNavigationBarVisibilityAnimated:YES];
++  [self updateNavigationBarVisibilityAnimated:!_rebuildsWithoutAnimation];
+ #if !TARGET_OS_TV
+-  [self updateToolbarVisibilityAnimated:YES];
++  [self updateToolbarVisibilityAnimated:!_rebuildsWithoutAnimation];
+   [self updateBackButtonMenuEnabled];
+ #endif // !TARGET_OS_TV
+ }
+@@ -724,8 +724,8 @@ - (void)applyItemsWithTitleView:(nullable UIView *)titleView
+   navItem.leftItemsSupplementBackButton = YES;
+ #endif // !TARGET_OS_TV
+ 
+-  [navItem setLeftBarButtonItems:[_leadingBarButtonItems copy] animated:YES];
+-  [navItem setRightBarButtonItems:[_trailingBarButtonItems copy] animated:YES];
++  [navItem setLeftBarButtonItems:[_leadingBarButtonItems copy] animated:!_rebuildsWithoutAnimation];
++  [navItem setRightBarButtonItems:[_trailingBarButtonItems copy] animated:!_rebuildsWithoutAnimation];
+ 
+   navItem.titleView = titleView;
+ 
+diff --git a/ios/legacy/RNSScreenStack.mm b/ios/legacy/RNSScreenStack.mm
+index 7aa57cf..2597ba1 100644
+--- a/ios/legacy/RNSScreenStack.mm
++++ b/ios/legacy/RNSScreenStack.mm
+@@ -177,6 +177,228 @@ @implementation RNSPanGestureRecognizer
+ @end
+ #endif
+ 
++static const CFTimeInterval RNSModalDismissalMoveDuration = 0.4;
++static const CFTimeInterval RNSModalDismissalFadeDuration = 0.2;
++static const CFTimeInterval RNSModalDismissalSettleDuration = 0.1;
++static const CFTimeInterval RNSModalDismissalTimeout = 1;
++static NSString *const RNSModalDismissalFadeKey = @"rnsModalDismissalFade";
++
++static UIView *_Nullable RNSFindViewWithNativeId(UIView *view, NSString *nativeId)
++{
++  if ([view isKindOfClass:RCTViewComponentView.class] &&
++      [static_cast<RCTViewComponentView *>(view).nativeId isEqualToString:nativeId]) {
++    return view;
++  }
++  for (UIView *subview in view.subviews) {
++    UIView *match = RNSFindViewWithNativeId(subview, nativeId);
++    if (match != nil) {
++      return match;
++    }
++  }
++  return nil;
++}
++
++/**
++ * Explicit animations, because Fabric and UIKit write the model opacity of the revealed view during the layout changes
++ * this move covers.
++ */
++static void RNSAnimateOpacity(CALayer *layer, float from, float to, CFTimeInterval duration)
++{
++  CABasicAnimation *animation = [CABasicAnimation animationWithKeyPath:@"opacity"];
++  animation.fromValue = @(from);
++  animation.toValue = @(to);
++  animation.duration = duration;
++  animation.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
++  [layer addAnimation:animation forKey:RNSModalDismissalFadeKey];
++}
++
++/**
++ * Moves a snapshot of a modal that is dismissed without animation onto the view that now shows its content, then
++ * cross-fades the two. The navigation controller showing the target, bar included, stays hidden until then, so the
++ * content arrives instead of appearing twice. That controller may only push the target once its own transition ends,
++ * so the snapshot waits for the target to attach. During a size transition UIKit removes the modal, and settles the
++ * layout beneath it, only once the transition ends, so the snapshot follows the target until the modal is gone and
++ * the target has held still.
++ */
++@interface RNSModalDismissalMove : NSObject
+++ (void)moveModal:(UIViewController *)modal ontoViewWithNativeId:(NSString *)nativeId within:(UIView *)root;
++@end
++
++@implementation RNSModalDismissalMove {
++  UIView *_snapshot;
++  __weak UIView *_modalView;
++  __weak UIView *_root;
++  NSString *_nativeId;
++  UIView *_target;
++  CALayer *_revealed;
++  CGSize _size;
++  CGFloat _scale;
++  CGRect _targetFrame;
++  CFTimeInterval _start;
++  CFTimeInterval _moveStart;
++  CFTimeInterval _stillSince;
++  CFTimeInterval _fadeStart;
++  UIUpdateLink *_commitLink API_AVAILABLE(ios(18.0));
++}
++
+++ (void)moveModal:(UIViewController *)modal ontoViewWithNativeId:(NSString *)nativeId within:(UIView *)root
++{
++  UIView *modalView = modal.presentationController.presentedView ?: modal.view;
++  UIWindow *window = root.window;
++  if (window == nil || modalView.window != window || modalView.hidden || UIAccessibilityIsReduceMotionEnabled()) {
++    return;
++  }
++  UIView *snapshot = [modalView snapshotViewAfterScreenUpdates:NO];
++  if (snapshot == nil) {
++    return;
++  }
++  const CGRect from = [modalView convertRect:modalView.bounds toView:window];
++  RNSModalDismissalMove *move = [RNSModalDismissalMove new];
++  move->_snapshot = snapshot;
++  move->_modalView = modalView;
++  move->_root = root;
++  move->_nativeId = nativeId;
++  move->_size = from.size;
++  move->_scale = 1;
++  move->_targetFrame = CGRectNull;
++  move->_start = CACurrentMediaTime();
++  // Scaling about the corner keeps the snapshot's edge on its way to the target's while its size changes.
++  snapshot.layer.anchorPoint = CGPointZero;
++  snapshot.frame = from;
++  [window addSubview:snapshot];
++  modalView.hidden = YES;
++  [move findTarget];
++  if (@available(iOS 18.0, *)) {
++    [move findTargetBeforeEachCommitIn:window];
++  }
++  UIView *container = modal.presentationController.containerView;
++  [UIView animateWithDuration:RNSModalDismissalFadeDuration
++                   animations:^{
++                     container.alpha = 0;
++                   }];
++  // The display link keeps the move alive until it lands.
++  CADisplayLink *link = [CADisplayLink displayLinkWithTarget:move selector:@selector(step:)];
++  [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
++}
++
++/**
++ * The target can attach while a commit lays it out, and with the main thread busy the display link may only run again
++ * after that commit has shown it.
++ */
++- (void)findTargetBeforeEachCommitIn:(UIWindow *)window API_AVAILABLE(ios(18.0))
++{
++  if (_target != nil) {
++    return;
++  }
++  __weak RNSModalDismissalMove *weakSelf = self;
++  __weak UIWindow *weakWindow = window;
++  _commitLink = [UIUpdateLink updateLinkForView:window];
++  [_commitLink addActionToPhase:UIUpdateActionPhase.beforeCATransactionCommit
++                        handler:^(UIUpdateLink *updateLink, UIUpdateInfo *updateInfo) {
++                          [weakWindow layoutIfNeeded];
++                          [weakSelf findTarget];
++                        }];
++  _commitLink.enabled = YES;
++}
++
++- (BOOL)findTarget
++{
++  if (_target != nil) {
++    return YES;
++  }
++  UIView *root = _root;
++  UIView *target = root == nil ? nil : RNSFindViewWithNativeId(root, _nativeId);
++  if (target == nil) {
++    return NO;
++  }
++  UIView *revealed = target;
++  for (UIResponder *responder = target; responder != nil; responder = responder.nextResponder) {
++    if ([responder isKindOfClass:UIViewController.class]) {
++      revealed = static_cast<UIViewController *>(responder).navigationController.view ?: target;
++      break;
++    }
++  }
++  _target = target;
++  _revealed = revealed.layer;
++  RNSAnimateOpacity(_revealed, 0, 0, RNSModalDismissalTimeout + RNSModalDismissalFadeDuration);
++  if (@available(iOS 18.0, *)) {
++    _commitLink.enabled = NO;
++  }
++  return YES;
++}
++
++- (void)step:(CADisplayLink *)link
++{
++  const CFTimeInterval now = CACurrentMediaTime();
++  if (_target != nil && _target.window == nil) {
++    [_revealed removeAnimationForKey:RNSModalDismissalFadeKey];
++    [self finish:link];
++    return;
++  }
++  if (_fadeStart > 0 && now >= _fadeStart + RNSModalDismissalFadeDuration) {
++    [self finish:link];
++    return;
++  }
++  if ([self findTarget]) {
++    const CGRect targetFrame = [_target convertRect:_target.bounds toView:_snapshot.superview];
++    // A column resizing into place only passes through its other widths, so the snapshot takes the target's width once
++    // the target holds still.
++    if (!CGRectEqualToRect(targetFrame, _targetFrame)) {
++      _targetFrame = targetFrame;
++      _stillSince = now;
++      _moveStart = _moveStart ?: now;
++      [self moveSnapshotTo:targetFrame.origin];
++    } else if (_scale != CGRectGetWidth(targetFrame) / _size.width) {
++      _scale = CGRectGetWidth(targetFrame) / _size.width;
++      [self moveSnapshotTo:targetFrame.origin];
++    }
++    if (_modalView.window != nil) {
++      _stillSince = now;
++    }
++  }
++  const BOOL settled = _moveStart > 0 &&
++      now - _moveStart >= RNSModalDismissalMoveDuration - RNSModalDismissalFadeDuration &&
++      now - _stillSince >= RNSModalDismissalSettleDuration;
++  if (_fadeStart == 0 && (settled || now - _start >= RNSModalDismissalTimeout)) {
++    _fadeStart = now;
++    _snapshot.layer.opacity = 0;
++    RNSAnimateOpacity(_snapshot.layer, 1, 0, RNSModalDismissalFadeDuration);
++    RNSAnimateOpacity(_revealed, 0, _revealed.opacity, RNSModalDismissalFadeDuration);
++  }
++}
++
++/**
++ * Core Animation runs the move, so it stays smooth while the main thread lays out the new posture. UIKit adds each
++ * retargeted animation to the ones in flight, so following a moving target keeps the snapshot's momentum.
++ */
++- (void)moveSnapshotTo:(CGPoint)origin
++{
++  UIView *snapshot = _snapshot;
++  const CGFloat scale = _scale;
++  [UIView animateWithDuration:RNSModalDismissalMoveDuration
++                        delay:0
++       usingSpringWithDamping:1
++        initialSpringVelocity:0
++                      options:0
++                   animations:^{
++                     snapshot.transform = CGAffineTransformMakeScale(scale, scale);
++                     snapshot.layer.position = origin;
++                   }
++                   completion:nil];
++}
++
++- (void)finish:(CADisplayLink *)link
++{
++  if (@available(iOS 18.0, *)) {
++    _commitLink.enabled = NO;
++  }
++  [_snapshot removeFromSuperview];
++  // Releases the move, so nothing may touch it afterwards.
++  [link invalidate];
++}
++
++@end
++
+ @implementation RNSScreenStackView {
+   UINavigationController *_controller;
+   NSMutableArray<RNSScreenView *> *_reactSubviews;
+@@ -185,6 +407,8 @@ @implementation RNSScreenStackView {
+   RNSPercentDrivenInteractiveTransition *_interactionController;
+   __weak RNSScreenStackManager *_manager;
+   BOOL _updateScheduled;
++  BOOL _instantModalTransitions;
++  NSString *_instantModalDismissalTarget;
+ }
+ 
+ - (instancetype)initWithFrame:(CGRect)frame
+@@ -478,6 +702,7 @@ - (void)setModalViewControllers:(NSArray<UIViewController *> *)controllers
+   }
+ 
+   _updatingModals = YES;
++  const BOOL animatesModals = !_instantModalTransitions;
+ 
+   // We need to find bottom-most view controller that should stay on the stack
+   // for the duration of transition.
+@@ -555,7 +780,7 @@ - (void)setModalViewControllers:(NSArray<UIViewController *> *)controllers
+       // like date picker or segmented control.
+       next.overrideUserInterfaceStyle = self->_controller.overrideUserInterfaceStyle;
+ 
+-      BOOL shouldAnimate = lastModal && [next isKindOfClass:[RNSScreen class]] &&
++      BOOL shouldAnimate = animatesModals && lastModal && [next isKindOfClass:[RNSScreen class]] &&
+           ((RNSScreen *)next).screenView.stackAnimation != RNSScreenStackAnimationNone;
+ 
+       // if you want to present another modal quick enough after dismissing the previous one,
+@@ -617,7 +842,7 @@ - (void)setModalViewControllers:(NSArray<UIViewController *> *)controllers
+               ? static_cast<RNSScreen *>(firstModalToBeDismissed).screenView.stackAnimation !=
+                   RNSScreenStackAnimationNone
+               : YES;
+-          [changeRootController dismissViewControllerAnimated:firstModalToBeDismissedPrefersAnimation
++          [changeRootController dismissViewControllerAnimated:animatesModals && firstModalToBeDismissedPrefersAnimation
+                                                    completion:finish];
+         } else {
+           // We need to wait for its dismissal and then run our presentation code.
+@@ -649,7 +874,7 @@ - (void)setModalViewControllers:(NSArray<UIViewController *> *)controllers
+       // Here we handle just the simplest case where the top level VC was dismissed. In any more complex
+       // scenario we will still have problems, see: https://github.com/software-mansion/react-native-screens/issues/1813
+       if ([_presentedModals containsObject:topMostVc] && ![controllers containsObject:topMostVc]) {
+-        [changeRootController dismissViewControllerAnimated:YES completion:finish];
++        [changeRootController dismissViewControllerAnimated:animatesModals completion:finish];
+         return;
+       }
+     }
+@@ -1378,6 +1603,10 @@ - (void)updateProps:(const facebook::react::Props::Shared &)props
+   }
+ #endif // TARGET_OS_TV
+ 
++  // Modal changes run after the transaction mounts, so this applies to the update that carries it.
++  _instantModalTransitions = newScreenProps.instantModalTransitions;
++  _instantModalDismissalTarget = RCTNSStringFromStringNilIfEmpty(newScreenProps.instantModalDismissalTarget);
++
+   [super updateProps:props oldProps:oldProps];
+ }
+ 
+@@ -1452,6 +1681,24 @@ - (void)mountingTransactionWillMount:(const facebook::react::MountingTransaction
+   }
+ }
+ 
++/**
++ * Starts at mount rather than with the deferred modal update, which can run frames after the content that replaces the
++ * modal has appeared.
++ */
++- (void)moveInstantlyDismissedModal
++{
++  if (!_instantModalTransitions || _instantModalDismissalTarget == nil) {
++    return;
++  }
++  for (UIViewController *modal in _presentedModals) {
++    if ([modal isKindOfClass:RNSScreen.class] &&
++        ![_reactSubviews containsObject:static_cast<RNSScreen *>(modal).screenView]) {
++      [RNSModalDismissalMove moveModal:modal ontoViewWithNativeId:_instantModalDismissalTarget within:self];
++      return;
++    }
++  }
++}
++
+ - (void)mountingTransactionDidMount:(const facebook::react::MountingTransaction &)transaction
+                withSurfaceTelemetry:(const facebook::react::SurfaceTelemetry &)surfaceTelemetry
+ {
+@@ -1462,6 +1709,7 @@ - (void)mountingTransactionDidMount:(const facebook::react::MountingTransaction
+     if (mutation.parentTag == self.tag &&
+         (mutation.type == react::ShadowViewMutation::Type::Insert ||
+          mutation.type == react::ShadowViewMutation::Type::Remove)) {
++      [self moveInstantlyDismissedModal];
+       // we need to wait until children have their layout set. At this point they don't have the layout
+       // set yet, however the layout call is already enqueued on ui thread. Enqueuing update call on the
+       // ui queue will guarantee that the update will run after layout.
+diff --git a/ios/split/RNSSplitAppearanceApplicator.mm b/ios/split/RNSSplitAppearanceApplicator.mm
+index 3754d8d..8a89cd0 100644
+--- a/ios/split/RNSSplitAppearanceApplicator.mm
++++ b/ios/split/RNSSplitAppearanceApplicator.mm
+@@ -1,11 +1,23 @@
+ #import "RNSSplitAppearanceApplicator.h"
+ 
++#import <QuartzCore/QuartzCore.h>
+ #import <React/RCTAssert.h>
+ #import "RNSDefines.h"
+ #import "RNSScreenWindowTraits.h"
+ #import "RNSSplitHostController.h"
+ 
+-@implementation RNSSplitAppearanceApplicator
++static const CFTimeInterval RNSPrimaryColumnResizeDuration = 0.3;
++
++@implementation RNSSplitAppearanceApplicator {
++  CADisplayLink *_primaryColumnResizeLink;
++  __weak RNSSplitHostController *_primaryColumnResizeController;
++  CFTimeInterval _primaryColumnResizeStart;
++  CGFloat _primaryColumnResizeFrom;
++  CGFloat _primaryColumnResizeTo;
++  CGFloat _primaryColumnMinimumWidth;
++  CGFloat _primaryColumnMaximumWidth;
++  CGFloat _primaryColumnContainerWidth;
++}
+ 
+ - (void)updateAppearanceIfNeeded:(id<RNSSplitHostAppearanceProvider>)provider
+              splitHostController:(RNSSplitHostController *)splitHostController
+@@ -87,19 +99,7 @@ - (void)updateSplitViewConfigurationFor:(id<RNSSplitHostAppearanceProvider>)prov
+ #endif
+ 
+   // Step 2.2 - applying updates to columns
+-  if (provider.minimumPrimaryColumnWidth >= 0) {
+-    splitHostController.minimumPrimaryColumnWidth = provider.minimumPrimaryColumnWidth;
+-  }
+-
+-  if (provider.maximumPrimaryColumnWidth >= 0) {
+-    splitHostController.maximumPrimaryColumnWidth = provider.maximumPrimaryColumnWidth;
+-  }
+-
+-  if (provider.preferredPrimaryColumnWidthOrFraction >= 0 && provider.preferredPrimaryColumnWidthOrFraction < 1) {
+-    splitHostController.preferredPrimaryColumnWidthFraction = provider.preferredPrimaryColumnWidthOrFraction;
+-  } else if (provider.preferredPrimaryColumnWidthOrFraction >= 1) {
+-    splitHostController.preferredPrimaryColumnWidth = provider.preferredPrimaryColumnWidthOrFraction;
+-  }
++  [self updatePrimaryColumnFor:provider withController:splitHostController];
+ 
+   if (provider.minimumSupplementaryColumnWidth >= 0) {
+     splitHostController.minimumSupplementaryColumnWidth = provider.minimumSupplementaryColumnWidth;
+@@ -149,6 +149,92 @@ - (void)updateSplitViewConfigurationFor:(id<RNSSplitHostAppearanceProvider>)prov
+   [splitHostController toggleSplitViewInspector:provider.showInspector];
+ }
+ 
++/**
++ * @brief Applies the primary column's width constraints, resizing a displayed split over several frames.
++ *
++ * The width follows layout that changes without a UIKit transition, such as a foldable's hinge settling. An animation
++ * block would only move the native containers: this runs while a React mount transaction is in flight, so the frames
++ * that split screens commit mount after the block, at their final size. Laying out each intermediate width from a
++ * display link lets every frame mount synchronously instead, so content reflows with its column as in a window resize.
++ * The new width arrives after the system has started its own posture transition, so the resize eases out to settle as
++ * that transition clears rather than easing in behind it.
++ *
++ * A width that follows the split's own size, as in a window resize, is applied at once: the resize already moves the
++ * columns, and restarting a resize on each of its steps would leave the column trailing behind.
++ */
++- (void)updatePrimaryColumnFor:(id<RNSSplitHostAppearanceProvider>)provider
++                withController:(RNSSplitHostController *)splitHostController
++{
++  const CGFloat preferredWidth = provider.preferredPrimaryColumnWidthOrFraction;
++  _primaryColumnMinimumWidth = provider.minimumPrimaryColumnWidth;
++  _primaryColumnMaximumWidth = provider.maximumPrimaryColumnWidth;
++  UIView *view = splitHostController.viewIfLoaded;
++  const CGFloat containerWidth = view.bounds.size.width;
++  const BOOL keepsContainerWidth = containerWidth == _primaryColumnContainerWidth;
++  _primaryColumnContainerWidth = containerWidth;
++  if (_primaryColumnResizeLink != nil && preferredWidth == _primaryColumnResizeTo) {
++    return;
++  }
++  [self stopPrimaryColumnResize];
++
++  const CGFloat currentWidth = splitHostController.primaryColumnWidth;
++  const BOOL shouldAnimate = preferredWidth >= 1 && splitHostController.preferredPrimaryColumnWidth != preferredWidth &&
++      keepsContainerWidth && view.window != nil && !splitHostController.isCollapsed &&
++      splitHostController.displayMode != UISplitViewControllerDisplayModeSecondaryOnly && currentWidth > 0 &&
++      fabs(currentWidth - preferredWidth) >= 1 && !UIAccessibilityIsReduceMotionEnabled();
++  if (!shouldAnimate) {
++    [self applyPrimaryColumnConstraintsTo:splitHostController];
++    if (preferredWidth >= 0 && preferredWidth < 1) {
++      splitHostController.preferredPrimaryColumnWidthFraction = preferredWidth;
++    } else if (preferredWidth >= 1) {
++      splitHostController.preferredPrimaryColumnWidth = preferredWidth;
++    }
++    return;
++  }
++
++  _primaryColumnResizeController = splitHostController;
++  _primaryColumnResizeStart = CACurrentMediaTime();
++  _primaryColumnResizeFrom = currentWidth;
++  _primaryColumnResizeTo = preferredWidth;
++  // UIKit clamps the preferred width, so the constraints admit every width in between until the resize ends.
++  splitHostController.minimumPrimaryColumnWidth = MIN(currentWidth, preferredWidth);
++  splitHostController.maximumPrimaryColumnWidth = MAX(currentWidth, preferredWidth);
++  _primaryColumnResizeLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(stepPrimaryColumnResize:)];
++  [_primaryColumnResizeLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
++}
++
++- (void)stepPrimaryColumnResize:(CADisplayLink *)link
++{
++  RNSSplitHostController *splitHostController = _primaryColumnResizeController;
++  UIView *view = splitHostController.viewIfLoaded;
++  const double progress = (link.targetTimestamp - _primaryColumnResizeStart) / RNSPrimaryColumnResizeDuration;
++  if (progress >= 1 || view.window == nil || splitHostController.isCollapsed) {
++    [self stopPrimaryColumnResize];
++    [self applyPrimaryColumnConstraintsTo:splitHostController];
++    splitHostController.preferredPrimaryColumnWidth = _primaryColumnResizeTo;
++  } else {
++    const double eased = 1 - pow(1 - progress, 3);
++    const CGFloat width = _primaryColumnResizeFrom + (_primaryColumnResizeTo - _primaryColumnResizeFrom) * eased;
++    const CGFloat scale = MAX(1, splitHostController.traitCollection.displayScale);
++    splitHostController.preferredPrimaryColumnWidth = round(width * scale) / scale;
++  }
++  [view layoutIfNeeded];
++}
++
++- (void)stopPrimaryColumnResize
++{
++  [_primaryColumnResizeLink invalidate];
++  _primaryColumnResizeLink = nil;
++}
++
++- (void)applyPrimaryColumnConstraintsTo:(RNSSplitHostController *)splitHostController
++{
++  splitHostController.minimumPrimaryColumnWidth =
++      _primaryColumnMinimumWidth >= 0 ? _primaryColumnMinimumWidth : UISplitViewControllerAutomaticDimension;
++  splitHostController.maximumPrimaryColumnWidth =
++      _primaryColumnMaximumWidth >= 0 ? _primaryColumnMaximumWidth : UISplitViewControllerAutomaticDimension;
++}
++
+ /**
+  * @brief Function that updates `preferredDisplayMode` property on SplitView.
+  *
+diff --git a/ios/split/RNSSplitHostController.mm b/ios/split/RNSSplitHostController.mm
+index bb2c124..0503646 100644
+--- a/ios/split/RNSSplitHostController.mm
++++ b/ios/split/RNSSplitHostController.mm
+@@ -230,7 +230,18 @@ - (void)showColumnNamed:(NSString *)columnName
+     return;
+   }
+ 
+-  [self showColumn:(UISplitViewControllerColumn)column.integerValue];
++  UISplitViewControllerColumn splitColumn = (UISplitViewControllerColumn)column.integerValue;
++  UINavigationController *secondary = _columnControllers.lastObject.navigationController;
++  if (self.isCollapsed && splitColumn == UISplitViewControllerColumnPrimary &&
++      [secondary isKindOfClass:RNSStackNavigationController.class] &&
++      ((RNSStackNavigationController *)secondary).isStackEmpty) {
++    // Only the empty placeholder is left in the collapsed secondary column, and sliding it away flashes a blank page.
++    [UIView performWithoutAnimation:^{
++      [self showColumn:splitColumn];
++    }];
++    return;
++  }
++  [self showColumn:splitColumn];
+ }
+ 
+ - (void)hideColumnNamed:(NSString *)columnName
+diff --git a/ios/split/RNSSplitScreenComponentView.mm b/ios/split/RNSSplitScreenComponentView.mm
+index 6648de5..d5d2b8d 100644
+--- a/ios/split/RNSSplitScreenComponentView.mm
++++ b/ios/split/RNSSplitScreenComponentView.mm
+@@ -1,6 +1,7 @@
+ #import "RNSSplitScreenComponentView.h"
+ #import <React/RCTAssert.h>
+ #import <React/RCTConversions.h>
++#import <React/RCTMountingTransactionObserving.h>
+ #import <React/RCTSurfaceTouchHandler.h>
+ #import <react/renderer/components/rnscreens/RNSSplitScreenComponentDescriptor.h>
+ #import "RNSConversions.h"
+@@ -15,7 +16,7 @@
+ 
+ namespace react = facebook::react;
+ 
+-@interface RNSSplitScreenComponentView () <RNSSplitScreenControllerDelegate>
++@interface RNSSplitScreenComponentView () <RNSSplitScreenControllerDelegate, RCTMountingTransactionObserving>
+ @end
+ 
+ @implementation RNSSplitScreenComponentView {
+@@ -26,6 +27,7 @@ @implementation RNSSplitScreenComponentView {
+   NSMutableSet<UIView *> *_viewsForFrameCorrection;
+   BOOL _hasUpdatedActivityMode;
+   BOOL _isInvalidated;
++  BOOL _clearsHeaderConfiguration;
+ }
+ 
+ - (RNSSplitScreenController *)controller
+@@ -206,6 +208,7 @@ + (BOOL)shouldBeRecycled
+ - (void)mountChildComponentView:(UIView<RCTComponentViewProtocol> *)childComponentView index:(NSInteger)index
+ {
+   if ([childComponentView isKindOfClass:RNSHeaderConfigComponentView.class]) {
++    _clearsHeaderConfiguration = NO;
+     _headerConfig = (RNSHeaderConfigComponentView *)childComponentView;
+     _headerConfig.headerCoordinator = _controller.headerCoordinator;
+     _controller.headerCoordinator.configDataProvider = _headerConfig;
+@@ -219,7 +222,9 @@ - (void)mountChildComponentView:(UIView<RCTComponentViewProtocol> *)childCompone
+ - (void)unmountChildComponentView:(UIView<RCTComponentViewProtocol> *)childComponentView index:(NSInteger)index
+ {
+   if ([childComponentView isKindOfClass:RNSHeaderConfigComponentView.class]) {
+-    [_controller.headerCoordinator clearHeaderConfiguration];
++    // A header replaced within this transaction takes over the navigation item as it is. Clearing it first hides and
++    // reshows the bar and resets its item style, so UIKit fades the title out and back in.
++    _clearsHeaderConfiguration = YES;
+     _headerConfig.headerCoordinator = nil;
+     _headerConfig = nil;
+   }
+@@ -270,6 +275,34 @@ - (void)finalizeUpdates:(RNComponentViewUpdateMask)updateMask
+   [super finalizeUpdates:updateMask];
+ }
+ 
++#pragma mark - RCTMountingTransactionObserving
++
++- (void)mountingTransactionWillMount:(const facebook::react::MountingTransaction &)transaction
++                withSurfaceTelemetry:(const facebook::react::SurfaceTelemetry &)surfaceTelemetry
++{
++  if (_headerConfig == nil) {
++    return;
++  }
++  for (const auto &mutation : transaction.getMutations()) {
++    if (mutation.type == react::ShadowViewMutation::Remove && mutation.oldChildShadowView.tag == _headerConfig.tag) {
++      // The header's content swaps in this frame. Removing the old header's items one by one would otherwise
++      // animate the bar through each step, and a new title view's first layout would animate in from its edge.
++      _controller.headerCoordinator.rebuildsWithoutAnimation = YES;
++      return;
++    }
++  }
++}
++
++- (void)mountingTransactionDidMount:(const facebook::react::MountingTransaction &)transaction
++               withSurfaceTelemetry:(const facebook::react::SurfaceTelemetry &)surfaceTelemetry
++{
++  _controller.headerCoordinator.rebuildsWithoutAnimation = NO;
++  if (_clearsHeaderConfiguration) {
++    _clearsHeaderConfiguration = NO;
++    [_controller.headerCoordinator clearHeaderConfiguration];
++  }
++}
++
+ - (void)updateEventEmitter:(const facebook::react::EventEmitter::Shared &)eventEmitter
+ {
+   [super updateEventEmitter:eventEmitter];
+diff --git a/src/fabric/legacy/ScreenStackNativeComponent.ts b/src/fabric/legacy/ScreenStackNativeComponent.ts
+index 4f1277f..74ed728 100644
+--- a/src/fabric/legacy/ScreenStackNativeComponent.ts
++++ b/src/fabric/legacy/ScreenStackNativeComponent.ts
+@@ -16,6 +16,10 @@ export interface NativeProps extends ViewProps {
+ 
+   disableDefaultMenuAction?: CT.WithDefault<boolean, false>;
+ 
++  instantModalTransitions?: CT.WithDefault<boolean, false>;
++
++  instantModalDismissalTarget?: string | undefined;
++
+   onFinishTransitioning?:
+     | CT.DirectEventHandler<FinishTransitioningEvent>
+     | undefined;
+diff --git a/src/legacy/types.ts b/src/legacy/types.ts
+index ed29506..050becf 100644
+--- a/src/legacy/types.ts
++++ b/src/legacy/types.ts
+@@ -666,6 +666,20 @@ export interface ScreenStackProps extends ViewProps, GestureProps {
+    * @platform tvOS
+    */
+   disableDefaultMenuAction?: boolean | undefined;
++  /**
++   * When true, modals that this stack presents or dismisses appear and
++   * disappear without animation. Set it in the same update that changes the
++   * modals: a dismissed screen keeps the animation it was last given.
++   * @platform ios
++   */
++  instantModalTransitions?: boolean | undefined;
++  /**
++   * The `nativeID` of the view that takes over the content of a modal this
++   * stack dismisses without animation. The modal moves onto that view and
++   * fades into it instead of disappearing.
++   * @platform ios
++   */
++  instantModalDismissalTarget?: string | undefined;
+ }
+ 
+ export interface ScreenStackHeaderConfigProps extends ViewProps {
+diff --git a/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackViewManager.kt b/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackViewManager.kt
+index 15d3766..2933314 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackViewManager.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/legacy/ScreenStackViewManager.kt
+@@ -83,6 +83,17 @@ class ScreenStackViewManager :
+         value: Boolean,
+     ) = Unit
+ 
++    // iOS-only: modals are UIKit presentations there.
++    override fun setInstantModalTransitions(
++        view: ScreenStack,
++        value: Boolean,
++    ) = Unit
++
++    override fun setInstantModalDismissalTarget(
++        view: ScreenStack,
++        value: String?,
++    ) = Unit
++
+     companion object {
+         const val REACT_CLASS = "RNSScreenStack"
+     }
