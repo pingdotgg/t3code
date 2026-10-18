@@ -179,8 +179,9 @@ function hasDnsLabel(host: string, label: string): boolean {
   return host.split(".").includes(label);
 }
 
+/** `*.ghe.com` is GitHub Enterprise Cloud with data residency, one subdomain per enterprise. */
 function isGitHubHost(host: string): boolean {
-  return host === "github.com" || hasDnsLabel(host, "github");
+  return host === "github.com" || host.endsWith(".ghe.com") || hasDnsLabel(host, "github");
 }
 
 function isGitLabHost(host: string): boolean {
