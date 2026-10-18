@@ -127,6 +127,8 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   readonly directory: string;
   readonly scope: "user" | "project";
   readonly budget: CursorSkillScanBudget;
+  /** Real paths of the roots already walked in this scan. */
+  readonly scannedRoots: Set<string>;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -134,6 +136,10 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   if (input.budget.exhausted) return skills;
   const rootDirectory = yield* orUndefined(fileSystem.realPath(input.directory), input.budget);
   if (!rootDirectory) return skills;
+  // A root linked to another one, such as `~/.agents/skills` pointing at `~/.claude/skills`,
+  // is the same tree: walking it again would charge the scan budget twice for nothing new.
+  if (input.scannedRoots.has(rootDirectory)) return skills;
+  input.scannedRoots.add(rootDirectory);
   const visitedDirectories = new Set<string>();
 
   const visit = Effect.fn("visitCursorSkillDirectory")(function* (
@@ -235,9 +241,10 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     exhausted: false,
     incomplete: false,
   };
+  const scannedRoots = new Set<string>();
   for (const root of roots) {
     if (budget.exhausted) break;
-    const skills = yield* discoverSkillsInRoot({ ...root, budget });
+    const skills = yield* discoverSkillsInRoot({ ...root, budget, scannedRoots });
     for (const skill of skills) {
       if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
     }

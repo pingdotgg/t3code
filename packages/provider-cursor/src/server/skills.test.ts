@@ -230,6 +230,42 @@ describe("Cursor skills", () => {
     ));
 
   it.skipIf(!symlinksSupported)(
+    "scans a skills root linked to another root only once",
+    async () =>
+      await runNode(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const userHome = yield* fileSystem.makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-skills-home-",
+          });
+          // More than half the entry budget, so a second walk of the same tree runs out.
+          const claudeRoot = path.join(userHome, ".claude", "skills");
+          yield* fileSystem.makeDirectory(path.join(claudeRoot, "review"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(claudeRoot, "review", "SKILL.md"),
+            "---\n---\n",
+          );
+          yield* Effect.forEach(
+            Array.from({ length: 6_000 }, (_, index) => path.join(claudeRoot, `entry-${index}`)),
+            (file) => fileSystem.writeFileString(file, ""),
+            { concurrency: 64, discard: true },
+          );
+          yield* fileSystem.makeDirectory(path.join(userHome, ".agents"), { recursive: true });
+          yield* fileSystem.symlink(claudeRoot, path.join(userHome, ".agents", "skills"));
+
+          const result = yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(
+            Effect.result,
+          );
+          expect(result._tag).toBe("Success");
+          const skills = yield* discoverCursorSkills(undefined, { HOME: userHome });
+          expect(skills.map((skill) => `${skill.scope}:${skill.name}`)).toEqual(["user:review"]);
+        }),
+      ),
+  );
+
+  it.skipIf(!symlinksSupported)(
     "treats a symlinked skill outside the root as a package boundary",
     async () =>
       await runNode(
