@@ -15079,6 +15079,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               yield* TestClock.adjust("100 millis");
             }
             yield* Fiber.join(notified);
+            // The reply is read with real file I/O after the clock moves, and its
+            // events reach the collector fiber after the frame counts as processed.
+            yield* awaitUntil(() => texts(2).at(-1) === "a2 found README.md", "a2 reply");
             assert.deepEqual(texts(2), [
               "Reply with exactly: A2",
               ...early("a2"),
