@@ -166,7 +166,7 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   return {
     rows,
     hiddenCount: filtered?.hiddenCount ?? 0,
-    pending: result.isPending,
+    pending: result.isPending && !result.data,
     error: result.error,
   };
 }
