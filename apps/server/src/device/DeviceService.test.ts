@@ -886,3 +886,65 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
     Effect.provide(Layer.mergeAll(ServerSettings.layerTest(), NodeServices.layer)),
   ),
 );
+
+it.effect("a failed tool update reports npm's exit code but not its output", () =>
+  Effect.gen(function* () {
+    const host: DeviceHost.DeviceHost["Service"] = {
+      id: LOCAL_DEVICE_HOST_ID,
+      summary: Effect.succeed({
+        id: LOCAL_DEVICE_HOST_ID,
+        kind: "local",
+        label: "Test server",
+        platforms: [],
+        hubInstalled: false,
+        agentDeviceInstalled: false,
+      }),
+      platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
+      ensureReady: () => Effect.die("Updating a tool does not start the hub"),
+      ensureAgentReady: () => Effect.die("Updating a tool does not start the agent"),
+      current: Effect.succeed(null),
+      stopAgent: Effect.void,
+      stop: Effect.void,
+    };
+    const npmFailure = {
+      code: ChildProcessSpawner.ExitCode(243),
+      stdout: "",
+      stderr: "npm error EACCES https://private:credential@registry.example.test/expo-device-hub",
+      timedOut: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdoutInvalidUtf8: false,
+      stderrInvalidUtf8: false,
+    };
+    const service = yield* DeviceService.make.pipe(
+      Effect.provideService(DeviceHost.DeviceHost, host),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.succeed(npmFailure),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Updating a tool makes no hub requests")),
+      ),
+    );
+
+    const error = yield* service.updateTool("hub").pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "DeviceOperationError",
+      reason: "command_failed",
+      exitCode: 243,
+    });
+    expect(error.message).toBe(
+      "Device update device tool failed: The device command failed (exit code 243).",
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest({ enableDeviceSupport: true }),
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
+        NodeCrypto.layer,
+        NetService.layer,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    ),
+    Effect.scoped,
+  ),
+);
