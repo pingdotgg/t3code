@@ -2994,6 +2994,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ...ThreadPullRequestKey.fields,
     startedAt: IsoDateTime,
     watch: Schema.NullOr(ThreadPullRequestWatch),
+    /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
+    endedWatch: Schema.optional(ThreadPullRequestWatch),
     wake: Schema.optional(
       Schema.Struct({
         messageId: MessageId,
