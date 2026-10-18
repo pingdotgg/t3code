@@ -48,6 +48,7 @@ import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
+import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
 
@@ -357,6 +358,10 @@ export function SubagentNotificationLink(props: {
       null,
   );
   if (agent === null) return props.fallback;
+  // A subagent resumed since this notification shows its live status, not the outcome reported then.
+  const resumed =
+    NOTIFICATION_OUTCOME_STATUS[props.outcome] !== null &&
+    subagentResumedSince(agent, props.createdAt);
   return (
     <SubagentTimelineLink
       parentRef={props.parentRef}
@@ -372,11 +377,15 @@ export function SubagentNotificationLink(props: {
       completedAt={agent.completedAt}
       threadId={props.childThreadId}
       onOpenThread={props.onOpenThread}
-      event={{
-        status: NOTIFICATION_OUTCOME_STATUS[props.outcome],
-        label: NOTIFICATION_OUTCOME_LABEL[props.outcome],
-        timestamp: formatShortTimestamp(props.createdAt, props.timestampFormat),
-      }}
+      {...(resumed
+        ? {}
+        : {
+            event: {
+              status: NOTIFICATION_OUTCOME_STATUS[props.outcome],
+              label: NOTIFICATION_OUTCOME_LABEL[props.outcome],
+              timestamp: formatShortTimestamp(props.createdAt, props.timestampFormat),
+            },
+          })}
     />
   );
 }
