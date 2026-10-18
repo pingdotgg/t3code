@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { View } from "react-native";
 
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
@@ -15,7 +14,7 @@ export interface UsageDailyChartProps {
 
 export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
-  const chartDays = useMemo(() => buildChartDays(days, daily, metric), [days, daily, metric]);
+  const chartDays = buildChartDays(days, daily, metric);
   const max = chartDays.reduce((peak, day) => Math.max(peak, day.total), 0);
 
   return (
