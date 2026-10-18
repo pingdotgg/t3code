@@ -94,7 +94,7 @@ it.runIf(hasDbus)("captures through real D-Bus marshalling on a private bus", as
       } else if (message.member === "GetExtensionInfo") {
         server!.send(
           Message.newMethodReturn(message, "a{sv}", [
-            { state: new Variant("d", shellExtensionState), version: new Variant("d", 2) },
+            { state: new Variant("d", shellExtensionState), version: new Variant("d", 3) },
           ]),
         );
       } else if (message.member === "EnableExtension" || message.member === "DisableExtension") {
