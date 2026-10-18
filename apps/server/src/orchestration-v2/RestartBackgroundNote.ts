@@ -118,6 +118,7 @@ export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTa
         description === undefined ? task.taskId : `${description} (id ${task.taskId})`,
       ) ?? "background task",
     id: task.taskId,
+    ...(task.awaited === true ? { awaited: true as const } : {}),
   };
 }
 
@@ -158,11 +159,12 @@ export function isRestartNoteSource(
 }
 
 /**
- * A shell does not wake it: most are dev servers that nobody waits on, so their
- * note waits for the next user message.
+ * Matches the Working-section hold: a shell or monitor wakes it only when the agent said it
+ * waits on it. Most are dev servers and their watchdogs, so their note waits for the next
+ * user message.
  */
-export function isAwaitedWork(work: Pick<Work, "kind">): boolean {
-  return work.kind !== "shell";
+export function isAwaitedWork(work: Pick<Work, "kind" | "awaited">): boolean {
+  return work.awaited === true || (work.kind !== "shell" && work.kind !== "monitor");
 }
 
 export function runOutcome(

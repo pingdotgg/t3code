@@ -31,6 +31,7 @@ import {
   OrchestratorMcpThreadWaitResult,
   ThreadMetadataMcpUpdateInput,
   ThreadMetadataMcpUpdateResult,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
@@ -115,6 +116,25 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
 })
   .annotate(Tool.Title, "Stop a workflow")
   .annotate(Tool.Destructive, true);
+
+const BackgroundWaitTool = Tool.make("t3_background_wait", {
+  description:
+    "Keep this thread in the user's Working list while you wait on your own background work. After starting a background command or Monitor whose result you will act on when you are woken, call this with its task ID (the ID shown when it started) before ending your turn. Until that task ends, the thread stays in Working and the user is not told it finished. Unmarked background commands and monitors, such as dev servers and their watchdogs, never keep the thread in Working, so do not mark those. Pass waiting=false to stop waiting without stopping the task. IDs that are not running come back in unmatched and change nothing. Only Claude threads support this.",
+  parameters: Schema.Struct({
+    taskIds: Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(20),
+    ),
+    waiting: Schema.optional(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    matched: Schema.Array(Schema.String),
+    unmatched: Schema.Array(Schema.String),
+  }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+}).annotate(Tool.Title, "Wait on background work");
 
 const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
@@ -279,6 +299,7 @@ export const OrchestratorToolkit = Toolkit.make(
   TaskStatusTool,
   TaskCancelTool,
   WorkflowStopTool,
+  BackgroundWaitTool,
   ScheduleTaskTool,
   ListScheduledTasksTool,
   UpdateScheduledTaskTool,
