@@ -122,7 +122,7 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
   );
 });
 
-it.effect("reads Forgejo checks without repository or viewer requests", () => {
+it.effect("reads the newest Forgejo checks without repository or viewer requests", () => {
   const paths: string[] = [];
   return Effect.gen(function* () {
     const provider = yield* ForgejoPullRequestProvider.make;
@@ -154,7 +154,7 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
             "head":{"ref":"feature","sha":"head","repo":null},"base":{"ref":"main","sha":"base","repo":null},
             "created_at":"2026-09-16T00:00:00Z","updated_at":"2026-09-16T00:00:00Z","closed_at":null,"merged_at":null,"labels":[]}`
                 : input.path.endsWith("page=1")
-                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
+                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00.500Z"},{"context":"build","status":"success","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
                   : "[]",
             ),
           );
