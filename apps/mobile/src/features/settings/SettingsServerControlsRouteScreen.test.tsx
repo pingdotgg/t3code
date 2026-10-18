@@ -25,13 +25,14 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));
 vi.mock("../threads/thread-settings-options", () => ({ RUNTIME_MODE_CHOICES: [] }));
-vi.mock("../../components/ScreenScrollView", () => ({ ScreenScrollView: Children }));
-vi.mock("../../components/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
 vi.mock("./components/SettingsScreen", () => ({ SettingsScreen: Children }));
 vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   AndroidSettingsEnvironmentFilter: () => null,
   SettingsEnvironmentFilterHeader: () => null,
 }));
+vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
 vi.mock("./components/SettingsChoiceRow", () => ({ SettingsChoiceRow: () => null }));
 vi.mock("./components/SettingsSwitchRow", () => ({ SettingsSwitchRow: () => null }));
