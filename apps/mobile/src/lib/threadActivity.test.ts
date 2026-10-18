@@ -2820,13 +2820,25 @@ describe("html renders", () => {
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",
       "run-fold",
-      "work-toggle",
+      "activity-group",
       "html-render",
-      "work-toggle",
+      "activity-group",
       "message",
     ]);
     expect(expanded[3]).toMatchObject({ type: "html-render", render: page, runId });
-    expect(expanded[2]?.continuesWorkLog).toBeUndefined();
+    // The render splits the work log, so each command is a lone call with its own group.
+    const callIds = [expanded[2], expanded[4]].map((row) =>
+      row?.type === "activity-group"
+        ? row.activities.map((activity) => activity.projectedItem.item.id)
+        : [],
+    );
+    expect(callIds).toEqual([["item-command"], ["item-command-later"]]);
+    const groupIds = [expanded[2], expanded[4]].map((row) =>
+      row?.type === "activity-group" ? row.activities[0]?.groupStandIn?.groupId : undefined,
+    );
+    expect(groupIds[0]).toBeDefined();
+    expect(groupIds[1]).toBeDefined();
+    expect(groupIds[0]).not.toBe(groupIds[1]);
   });
 
   it("keeps a render visible and in order when its run folds", () => {
