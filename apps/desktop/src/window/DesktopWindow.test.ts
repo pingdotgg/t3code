@@ -798,6 +798,40 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  // Ctrl+wheel bypasses the menu accelerators, so it has to take the same
+  // zoom step, preview restore included, from the window's zoom-changed event.
+  it.effect("zooms the app from Ctrl+wheel like the menu does", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const previewZoomReapplies: number[] = [];
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        previewZoomReapplies,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const zoomChanged = fakeWindow.webContentsListeners.get("zoom-changed");
+        if (!zoomChanged) return yield* Effect.die("zoom-changed listener was not registered");
+        zoomChanged({}, "in");
+        zoomChanged({}, "out");
+        zoomChanged({}, "out");
+
+        assert.deepEqual(
+          fakeWindow.setZoomLevel.mock.calls.map(([level]) => level),
+          [0.5, 0, -0.5],
+        );
+        assert.deepEqual(previewZoomReapplies, [0.5, 0, -0.5]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("reloads and inspects the main window even when a popup has focus", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();

@@ -264,6 +264,26 @@ export const make = Effect.gen(function* () {
             click: zoomClick("in"),
           },
           { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
+          // The numeric keypad sends its own key codes, so the number-row
+          // accelerators above never match it.
+          {
+            label: "Actual Size",
+            accelerator: "CmdOrCtrl+num0",
+            visible: false,
+            click: zoomClick("reset"),
+          },
+          {
+            label: "Zoom In",
+            accelerator: "CmdOrCtrl+numadd",
+            visible: false,
+            click: zoomClick("in"),
+          },
+          {
+            label: "Zoom Out",
+            accelerator: "CmdOrCtrl+numsub",
+            visible: false,
+            click: zoomClick("out"),
+          },
           { type: "separator" },
           { role: "togglefullscreen" },
         ],

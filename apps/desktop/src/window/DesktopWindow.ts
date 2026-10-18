@@ -329,6 +329,21 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
+  const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
+    window: Electron.BrowserWindow,
+    direction: MainWindowZoomDirection,
+  ) {
+    const webContents = window.webContents;
+    webContents.setZoomLevel(
+      direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
+    );
+    if (environment.platform === "darwin") syncMacosWindowButtons(window);
+    // Chromium pushes the new level down to embedded guests, which would zoom
+    // the previewed page along with the app UI. The preview browser keeps its
+    // own zoom, so put each guest back where the preview left it.
+    yield* previewManager.reapplyZoom();
+  });
+
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
     Electron.BrowserWindow,
     DesktopWindowError
@@ -644,6 +659,13 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("input-event", (_event, input) => {
       if (input.type === "gestureScrollEnd") window.webContents.send(TRACKPAD_SCROLL_END_CHANNEL);
+    });
+    // Ctrl+wheel never reaches the menu accelerators: Chromium reports it here
+    // and leaves applying the zoom to the app. A preview guest under the
+    // pointer emits this on its own webContents and keeps its own zoom.
+    window.webContents.on("zoom-changed", (_event, direction) => {
+      if (window.isDestroyed()) return;
+      runFork(zoomWindow(window, direction));
     });
 
     window.on("page-title-updated", (event) => {
@@ -976,15 +998,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }
-      const webContents = window.value.webContents;
-      webContents.setZoomLevel(
-        direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
-      );
-      if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
-      // Chromium pushes the new level down to embedded guests, which would zoom
-      // the previewed page along with the app UI. The preview browser keeps its
-      // own zoom, so put each guest back where the preview left it.
-      yield* previewManager.reapplyZoom();
+      yield* zoomWindow(window.value, direction);
     }),
     runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
       yield* Effect.annotateCurrentSpan({ command });
