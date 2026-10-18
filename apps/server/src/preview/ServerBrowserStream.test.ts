@@ -153,6 +153,79 @@ it.effect.each([
   }).pipe(Effect.scoped),
 );
 
+it.effect("sends replies ahead of stale frames and only the newest frame after an ack", () =>
+  Effect.gen(function* () {
+    const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
+    const released: number[] = [];
+    const frame = (id: number): ServerBrowser.ServerBrowserViewerOutput => ({
+      _tag: "frame",
+      data: new Uint8Array([id]),
+      ack: Effect.sync(() => void released.push(id)),
+    });
+    const browser = ServerBrowser.ServerBrowser.of({
+      clearProfile: () => Effect.void,
+      reportProfiles: () => Effect.void,
+      openDownload: () => Effect.succeedNone,
+      answerFileChooser: () => Effect.succeed(false),
+      attachViewer: () => Effect.succeed({ output, input: () => Effect.void }),
+    });
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        routeLayer.pipe(
+          Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+          Layer.provide(platformLayer),
+        ),
+        { disableListenLog: true },
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
+      ),
+    );
+    const server = Context.get(services, HttpServer.HttpServer);
+    const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+    const received: Array<number | string> = [];
+    let next = Promise.withResolvers<void>();
+    const socket = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new WebSocket(
+            `${origin}/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=one-use-ticket`,
+          ),
+      ),
+      (socket) => Effect.sync(() => socket.close()),
+    );
+    socket.binaryType = "arraybuffer";
+    socket.addEventListener("message", (event) => {
+      received.push(
+        typeof event.data === "string"
+          ? JSON.parse(event.data).type
+          : new Uint8Array(event.data as ArrayBuffer)[0]!,
+      );
+      next.resolve();
+    });
+
+    yield* Queue.offer(output, frame(1));
+    yield* Effect.promise(() => next.promise);
+    next = Promise.withResolvers();
+    yield* Queue.offerAll(output, [
+      frame(2),
+      frame(3),
+      frame(4),
+      { _tag: "probe", x: 0, y: 0, editable: false },
+    ]);
+    yield* Effect.promise(() => next.promise);
+    expect(received).toEqual([1, "probe"]);
+    // Frames 2 and 3 were superseded before they could be sent.
+    expect(released).toEqual([2, 3]);
+
+    next = Promise.withResolvers();
+    socket.send(JSON.stringify({ type: "ack" }));
+    yield* Effect.promise(() => next.promise);
+    expect(received).toEqual([1, "probe", 4]);
+    expect(released).toEqual([2, 3, 1]);
+  }).pipe(Effect.scoped),
+);
+
 it.effect.each([
   { scopes: [], error: undefined, status: 403 },
   { scopes: [AuthOrchestrationOperateScope], error: undefined, status: 403 },

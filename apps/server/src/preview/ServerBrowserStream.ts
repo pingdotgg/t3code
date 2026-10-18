@@ -31,13 +31,14 @@ const TAB_GONE_CODE = 4404;
 
 const DEFAULT_QUALITY = 70;
 const MAX_SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
-const MAX_UNACKNOWLEDGED_FRAMES = 64;
 const textDecoder = new TextDecoder();
 
 const intParam = (params: URLSearchParams, name: string, fallback: number, max: number) => {
   const value = Number(params.get(name));
   return Number.isFinite(value) && value > 0 ? Math.min(Math.round(value), max) : fallback;
 };
+
+type Frame = Extract<ServerBrowser.ServerBrowserViewerOutput, { readonly _tag: "frame" }>;
 
 const isAck = (message: unknown) =>
   typeof message === "object" && message !== null && "type" in message && message.type === "ack";
@@ -124,8 +125,11 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         }
         const viewer = attached.viewer;
         // `write` returns once the frame is queued, so Chromium's ack for each
-        // frame waits for the viewer's `ack` message instead.
-        const unacknowledged: Array<Effect.Effect<void>> = [];
+        // frame waits for the viewer's `ack` message instead. Only one frame
+        // is on the wire and only the newest waits behind it, so replies never
+        // queue behind stale images on a slow link.
+        let inFlight: Effect.Effect<void> | null = null;
+        let pending: Frame | null = null;
         const disconnectSlowViewer = Effect.sync(() => transport.destroy()).pipe(
           Effect.andThen(Effect.interrupt),
         );
@@ -137,16 +141,20 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             }
             return writer.write(data);
           });
+        const sendFrame = (frame: Frame) => {
+          inFlight = frame.ack;
+          return write(frame.data);
+        };
         const sendOutput = Queue.take(viewer.output).pipe(
           Effect.flatMap((output) => {
             switch (output._tag) {
-              case "frame":
-                if (unacknowledged.length >= MAX_UNACKNOWLEDGED_FRAMES) {
-                  return disconnectSlowViewer;
-                }
-                return write(output.data).pipe(
-                  Effect.andThen(Effect.sync(() => unacknowledged.push(output.ack))),
-                );
+              case "frame": {
+                if (inFlight === null) return sendFrame(output);
+                const superseded = pending;
+                pending = output;
+                // Never sent, but Chromium still waits for its ack.
+                return superseded ? Effect.forkScoped(superseded.ack) : Effect.void;
+              }
               case "viewport":
               case "control":
               case "clipboard":
@@ -176,9 +184,15 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             return canOperate
               ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
               : Effect.void;
-          const ack = unacknowledged.shift();
+          const ack = inFlight;
+          const next = pending;
+          inFlight = null;
+          pending = null;
           // Forked: Chromium acks are paced and must not hold up input.
-          return ack ? Effect.forkScoped(ack).pipe(Effect.asVoid) : Effect.void;
+          return Effect.andThen(
+            ack ? Effect.forkScoped(ack) : Effect.void,
+            next ? sendFrame(next) : Effect.void,
+          );
         };
         const receiveInput = reader.pull.pipe(
           Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
