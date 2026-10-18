@@ -1,6 +1,9 @@
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import {
+  remarkKeepWindowsPaths,
+  shouldPreserveAssistantLineBreaks,
+} from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, findRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
@@ -3850,6 +3853,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             <ReactMarkdown
               remarkPlugins={[
                 remarkGfm,
+                remarkKeepWindowsPaths,
                 [remarkThoughtPreview, row.active ? "Thinking" : "Thought"],
               ]}
             >
@@ -5480,6 +5484,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 <ReactMarkdown
                   remarkPlugins={[
                     remarkGfm,
+                    remarkKeepWindowsPaths,
                     [
                       remarkThoughtPreview,
                       workEntry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought",
