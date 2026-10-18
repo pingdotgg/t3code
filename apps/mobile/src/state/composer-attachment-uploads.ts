@@ -21,6 +21,7 @@ import { useThreadOutboxMessages } from "./use-thread-outbox";
 import {
   ComposerDraftPersistenceError,
   composerDraftsAtom,
+  composerDraftUploadSourcesAtom,
   ensureComposerDraftsLoaded,
   flushComposerDrafts,
   setComposerDraftAttachmentUpload,
@@ -56,7 +57,7 @@ export function retryComposerAttachmentUpload(environmentId: EnvironmentId, atta
 }
 
 export function useComposerAttachmentUploadWorker() {
-  const drafts = useAtomValue(composerDraftsAtom);
+  const drafts = useAtomValue(composerDraftUploadSourcesAtom);
   const queuedMessages = useThreadOutboxMessages();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();

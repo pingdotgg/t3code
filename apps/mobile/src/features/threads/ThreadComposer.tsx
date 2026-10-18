@@ -55,6 +55,7 @@ import {
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
+  useComposerDraft,
 } from "../../state/use-composer-drafts";
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
@@ -79,7 +80,6 @@ import {
 import { ProviderIcon } from "../../components/ProviderIcon";
 import {
   composerStripAttachments,
-  type DraftComposerAttachment,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
 import {
@@ -130,8 +130,6 @@ export const COMPOSER_EXPANDED_CHROME = 156;
 
 export interface ThreadComposerProps {
   readonly canOperateThread: boolean;
-  readonly draftMessage: string;
-  readonly draftAttachments: ReadonlyArray<DraftComposerAttachment>;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
@@ -349,12 +347,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
+  const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const composerDraftKey = props.draftKey ?? composerOwnerKey;
+  const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
-    props.draftMessage.trim().length > 0 ||
-    props.draftAttachments.length > 0 ||
+    draftMessage.trim().length > 0 ||
+    draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  const stripAttachments = composerStripAttachments(props.draftAttachments);
+  const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
 
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
@@ -362,7 +363,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     props.connectionState === "connected" &&
     composerAttachmentsStillUploading({
       environmentId: props.environmentId,
-      attachments: props.draftAttachments,
+      attachments: draftAttachments,
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
@@ -392,8 +393,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) ?? null
     );
   })();
-  const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
-  const composerDraftKey = props.draftKey ?? composerOwnerKey;
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -429,7 +428,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   };
 
   const composerMenu = useComposerCommandMenu({
-    draftMessage: props.draftMessage,
+    draftMessage: draftMessage,
     ownerKey: composerDraftKey,
     environmentId: props.environmentId,
     threadShells: useThreadShells(),
@@ -450,7 +449,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
-      usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
+      usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
@@ -471,7 +470,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
     environmentId: props.environmentId,
-    attachments: props.draftAttachments,
+    attachments: draftAttachments,
     connected: props.connectionState === "connected",
     serverConfig: props.serverConfig,
     states: uploadStates,
@@ -501,7 +500,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       (current) =>
         current ?? {
           ...source,
-          gallery: filePreviewGallery(source, composerImageGallery(props.draftAttachments)),
+          gallery: filePreviewGallery(source, composerImageGallery(draftAttachments)),
         },
     );
   };
@@ -538,11 +537,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   };
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
     if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
-    if (
-      usageLimitsOffered &&
-      isUsageLimitsCommand(props.draftMessage) &&
-      props.draftAttachments.length === 0
-    ) {
+    if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
     }
@@ -808,7 +803,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 onInertChipPress={() => inputRef.current?.focus()}
                 ref={inputRef}
                 multiline
-                value={props.draftMessage}
+                value={draftMessage}
                 readOnly={voiceInput.freezesEditor}
                 skills={composerMenu.skills}
                 selection={composerMenu.selection}

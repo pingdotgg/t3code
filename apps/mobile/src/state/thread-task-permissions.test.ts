@@ -126,6 +126,8 @@ vi.mock("./use-composer-drafts", async () => {
     mergeComposerDraftContent: vi.fn(),
     removeComposerDraftAttachment: vi.fn(),
     useComposerDraft: () => state.draft,
+    useComposerDraftSettings: () => ({}),
+    questionAttachmentDraftsAtom: () => Atom.make({}),
   };
 });
 vi.mock("../lib/composerImages", () => ({

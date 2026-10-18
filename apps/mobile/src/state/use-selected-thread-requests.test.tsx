@@ -19,7 +19,8 @@ vi.mock("@effect/atom-react", () => ({
           : {},
 }));
 vi.mock("./use-composer-drafts", () => ({
-  composerDraftsAtom: "drafts",
+  composerDraftsAtom: "all-drafts",
+  questionAttachmentDraftsAtom: () => "drafts",
   clearComposerDraft: vi.fn(),
 }));
 vi.mock("./composer-attachment-uploads", async () => ({
