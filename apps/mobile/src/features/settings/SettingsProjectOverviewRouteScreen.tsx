@@ -75,19 +75,16 @@ function ProjectOverviewContent(props: {
     if (!canSave) return;
     setIsSaving(true);
     void (async () => {
-      try {
-        const results = await Promise.all(
-          props.members.map((member) =>
-            updateProject({
-              environmentId: member.environmentId,
-              input: { projectId: member.id, title: nextName },
-            }),
-          ),
-        );
-        if (results.every((result) => result._tag !== "Failure")) setDraftName(null);
-      } finally {
-        setIsSaving(false);
-      }
+      const results = await Promise.all(
+        props.members.map((member) =>
+          updateProject({
+            environmentId: member.environmentId,
+            input: { projectId: member.id, title: nextName },
+          }),
+        ),
+      );
+      setIsSaving(false);
+      if (results.every((result) => result._tag !== "Failure")) setDraftName(null);
     })();
   };
 

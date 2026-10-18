@@ -7,7 +7,7 @@ import {
   type EnvironmentId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
@@ -96,15 +96,14 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     setPending(label);
     setError(null);
     setNotice(null);
-    try {
-      await action();
-    } catch (cause) {
+    const result = await settlePromise(action);
+    pendingRef.current = false;
+    setPending(null);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error ? cause.message : "The action could not be completed. Try again.",
       );
-    } finally {
-      pendingRef.current = false;
-      setPending(null);
     }
   }
 
@@ -268,19 +267,15 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                         const controller = new AbortController();
                         checkController.current = controller;
                         const timeout = setTimeout(() => controller.abort(), 20_000);
-                        try {
-                          const targetVersion = await findEnvironmentUpdate(
-                            config.environment.serverVersion,
-                            controller.signal,
-                          );
-                          setRelease({
-                            fromVersion: config.environment.serverVersion,
-                            targetVersion,
-                          });
-                        } finally {
-                          clearTimeout(timeout);
-                          checkController.current = null;
-                        }
+                        const fromVersion = config.environment.serverVersion;
+                        const result = await settlePromise(() =>
+                          findEnvironmentUpdate(fromVersion, controller.signal),
+                        );
+                        clearTimeout(timeout);
+                        checkController.current = null;
+                        // `run` owns the error message, so a failed lookup rethrows to it.
+                        if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
+                        setRelease({ fromVersion, targetVersion: result.value });
                       });
                     }}
                   />

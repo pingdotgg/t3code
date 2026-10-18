@@ -127,20 +127,15 @@ function ProviderAccount({
     pendingRef.current = true;
     setPending(true);
     setError(null);
-    let succeeded = false;
-    try {
-      const result = await command();
-      if (result._tag === "Success") succeeded = true;
-      else if (!isAtomCommandInterrupted(result)) {
-        const failure = squashAtomCommandFailure(result);
-        setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
-      }
-    } catch {
-      setError("Could not update provider sign-in.");
-    }
+    const result = await command();
     pendingRef.current = false;
     setPending(false);
-    return succeeded;
+    if (result._tag === "Success") return true;
+    if (!isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
+    }
+    return false;
   }
   function send(response: ProviderAuthResponse) {
     if (!state?.flowId || !interaction) return Promise.resolve(false);

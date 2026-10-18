@@ -3,7 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Platform, RefreshControl } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -59,49 +59,40 @@ export function SettingsEnvironmentsRouteScreen() {
     if (!relaySession || cloudRefreshPendingRef.current) return;
     cloudRefreshPendingRef.current = true;
     setIsRefreshingCloud(true);
-    try {
-      await refreshRelayEnvironments();
-    } finally {
-      cloudRefreshPendingRef.current = false;
-      setIsRefreshingCloud(false);
-    }
+    await refreshRelayEnvironments();
+    cloudRefreshPendingRef.current = false;
+    setIsRefreshingCloud(false);
   }
 
-  const openEnvironment = useCallback(
-    (environmentId: EnvironmentId) => {
-      navigation.navigate("SettingsSheet", {
-        screen: "SettingsContent",
-        params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
-      });
-    },
-    [navigation],
-  );
-  const handleUpdateEnvironment = useCallback(
-    (
-      environmentId: EnvironmentId,
-      updates: { readonly label: string; readonly displayUrl: string },
-    ) => {
-      if (!SHOWCASE_ENABLED) return onUpdateEnvironment(environmentId, updates);
-      const actualEnvironment = environmentSections.localEnvironments.find(
-        (environment) => environment.environmentId === environmentId,
-      );
-      const presentedEnvironment = localEnvironments.find(
-        (environment) => environment.environmentId === environmentId,
-      );
-      return onUpdateEnvironment(environmentId, {
-        ...updates,
-        displayUrl:
-          actualEnvironment && presentedEnvironment
-            ? resolveShowcaseEnvironmentUpdateDisplayUrl({
-                actualDisplayUrl: actualEnvironment.displayUrl,
-                presentedDisplayUrl: presentedEnvironment.displayUrl,
-                submittedDisplayUrl: updates.displayUrl,
-              })
-            : updates.displayUrl,
-      });
-    },
-    [environmentSections.localEnvironments, localEnvironments, onUpdateEnvironment],
-  );
+  const openEnvironment = (environmentId: EnvironmentId) => {
+    navigation.navigate("SettingsSheet", {
+      screen: "SettingsContent",
+      params: { screen: "SettingsEnvironmentDetail", params: { environmentId } },
+    });
+  };
+  const handleUpdateEnvironment = (
+    environmentId: EnvironmentId,
+    updates: { readonly label: string; readonly displayUrl: string },
+  ) => {
+    if (!SHOWCASE_ENABLED) return onUpdateEnvironment(environmentId, updates);
+    const actualEnvironment = environmentSections.localEnvironments.find(
+      (environment) => environment.environmentId === environmentId,
+    );
+    const presentedEnvironment = localEnvironments.find(
+      (environment) => environment.environmentId === environmentId,
+    );
+    return onUpdateEnvironment(environmentId, {
+      ...updates,
+      displayUrl:
+        actualEnvironment && presentedEnvironment
+          ? resolveShowcaseEnvironmentUpdateDisplayUrl({
+              actualDisplayUrl: actualEnvironment.displayUrl,
+              presentedDisplayUrl: presentedEnvironment.displayUrl,
+              submittedDisplayUrl: updates.displayUrl,
+            })
+          : updates.displayUrl,
+    });
+  };
 
   return (
     <SettingsScreen
