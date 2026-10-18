@@ -1,5 +1,5 @@
-import { act, type SyntheticEvent } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { act, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { AttachmentImage } from "./AttachmentImage";
 import { prepareImageForAttachment } from "../../lib/imageCompression";
@@ -9,10 +9,10 @@ vi.mock("../../lib/imageCompression", async (importOriginal) => ({
   prepareImageForAttachment: vi.fn(),
 }));
 
-let renderer: ReactTestRenderer;
+let root: Root | undefined;
+let container: HTMLDivElement | undefined;
 const fetchImage = vi.fn();
 const revokeUrl = vi.fn();
-const decodeError = {} as SyntheticEvent<HTMLImageElement>;
 const jpeg = new File(["jpeg"], "photo.jpg", { type: "image/jpeg" });
 
 beforeEach(() => {
@@ -29,11 +29,41 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(() => root?.unmount());
+  container?.remove();
+  root = undefined;
+  container = undefined;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
+
+async function render(element: ReactNode) {
+  if (!container) {
+    container = document.body.appendChild(document.createElement("div"));
+    root = createRoot(container);
+  }
+  await act(() => root!.render(element));
+}
+
+function image() {
+  const img = container!.querySelector("img");
+  expect(img).not.toBeNull();
+  return img!;
+}
+
+// Stands in for the browser failing to decode the current source.
+async function failDecode() {
+  const img = image();
+  await act(() => {
+    img.dispatchEvent(new Event("error"));
+  });
+  return img;
+}
+
+function expectDecodeErrorFor(onError: ReturnType<typeof vi.fn>, img: HTMLImageElement) {
+  expect(onError).toHaveBeenCalledWith(expect.objectContaining({ type: "error", target: img }));
+}
 
 it.each([
   { name: "photo.HEIC", mimeType: undefined },
@@ -41,41 +71,34 @@ it.each([
 ])(
   "converts $name after native decoding fails and releases its preview",
   async ({ name, mimeType }) => {
-    await act(() => {
-      renderer = create(
-        <AttachmentImage src="https://environment.test/photo" name={name} mimeType={mimeType} />,
-      );
-    });
+    await render(
+      <AttachmentImage src="https://environment.test/photo" name={name} mimeType={mimeType} />,
+    );
     expect(fetchImage).not.toHaveBeenCalled();
-    await act(() => renderer.root.findByType("img").props.onError(decodeError));
-    expect(renderer.root.findByType("img").props.src).toBe("blob:jpeg");
+    await failDecode();
+    expect(image().getAttribute("src")).toBe("blob:jpeg");
     expect(prepareImageForAttachment).toHaveBeenCalledWith(
       expect.objectContaining({ name, type: "image/heic" }),
       50 * 1024 * 1024,
     );
-    await act(() => renderer.unmount());
+    await act(() => root!.unmount());
+    root = undefined;
     expect(revokeUrl).toHaveBeenCalledWith("blob:jpeg");
   },
 );
 
 it("leaves PNG errors to the caller without fetching or converting", async () => {
   const onError = vi.fn();
-  await act(() => {
-    renderer = create(<AttachmentImage src="blob:png" name="photo.png" onError={onError} />);
-  });
-  await act(() => renderer.root.findByType("img").props.onError(decodeError));
-  expect(onError).toHaveBeenCalledWith(decodeError);
+  await render(<AttachmentImage src="blob:png" name="photo.png" onError={onError} />);
+  expectDecodeErrorFor(onError, await failDecode());
   expect(fetchImage).not.toHaveBeenCalled();
 });
 
 it("reports failed HEIC conversion through the existing error handler", async () => {
   const onError = vi.fn();
   vi.mocked(prepareImageForAttachment).mockResolvedValue({ ok: false, reason: "unreadable" });
-  await act(() => {
-    renderer = create(<AttachmentImage src="blob:heic" name="photo.heif" onError={onError} />);
-  });
-  await act(() => renderer.root.findByType("img").props.onError(decodeError));
-  expect(onError).toHaveBeenCalledWith(decodeError);
+  await render(<AttachmentImage src="blob:heic" name="photo.heif" onError={onError} />);
+  expectDecodeErrorFor(onError, await failDecode());
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
@@ -86,13 +109,11 @@ it("discards an old decode when navigating to a different source", async () => {
       finishDecode = resolve;
     }),
   );
-  await act(() => {
-    renderer = create(<AttachmentImage src="blob:first" name="photo.heic" />);
-  });
-  await act(() => renderer.root.findByType("img").props.onError(decodeError));
-  await act(() => renderer.update(<AttachmentImage src="blob:second" name="photo.heic" />));
+  await render(<AttachmentImage src="blob:first" name="photo.heic" />);
+  await failDecode();
+  await render(<AttachmentImage src="blob:second" name="photo.heic" />);
   await act(() => finishDecode({ ok: true, file: jpeg, recompressed: true }));
-  expect(renderer.root.findByType("img").props.src).toBe("blob:second");
+  expect(image().getAttribute("src")).toBe("blob:second");
   expect(URL.createObjectURL).not.toHaveBeenCalled();
   expect(fetchImage.mock.calls[0]?.[1].signal.aborted).toBe(true);
 });
