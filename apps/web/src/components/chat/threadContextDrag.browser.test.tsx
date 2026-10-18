@@ -40,6 +40,20 @@ const ComposerDropTarget = memo(function ComposerDropTarget({
   return <div data-drop-target ref={targetRef} />;
 });
 
+// Same target key, so the listener effect never re-runs: only the effect event
+// itself can hand the drop the latest props (React 19.2 kept the first render's).
+const StableKeyDropTarget = memo(function StableKeyDropTarget({
+  received,
+}: {
+  received: Array<ThreadId>;
+}) {
+  const targetRef = useRef<HTMLDivElement | null>(null);
+  useThreadContextDrop(targetRef, ENVIRONMENT_ID, "thread-a", (refs) => {
+    received.push(...refs.map((ref) => ref.threadId));
+  });
+  return <div data-drop-target ref={targetRef} />;
+});
+
 describe("useThreadContextDrop", () => {
   it("drops into the last rendered thread's draft when the memoized target is reused", async () => {
     const drafts = new Map<string, Array<ThreadId>>([
@@ -62,5 +76,26 @@ describe("useThreadContextDrop", () => {
 
     expect(drafts.get("thread-b")).toEqual(["thread-dropped"]);
     expect(drafts.get("thread-a")).toEqual([]);
+  });
+
+  it("reads the latest props in a memoized target whose listener stays attached", async () => {
+    const first: Array<ThreadId> = [];
+    const latest: Array<ThreadId> = [];
+
+    await act(() => root.render(<StableKeyDropTarget received={first} />));
+    await act(() => root.render(<StableKeyDropTarget received={latest} />));
+
+    const target = container.querySelector("[data-drop-target]");
+    expect(target).not.toBeNull();
+    act(() => {
+      target!.dispatchEvent(
+        new CustomEvent(THREAD_CONTEXT_DROP_EVENT, {
+          detail: [{ environmentId: ENVIRONMENT_ID, threadId: "thread-dropped" as ThreadId }],
+        }),
+      );
+    });
+
+    expect(latest).toEqual(["thread-dropped"]);
+    expect(first).toEqual([]);
   });
 });
