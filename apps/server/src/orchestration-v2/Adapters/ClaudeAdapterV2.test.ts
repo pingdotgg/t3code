@@ -3877,6 +3877,263 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const usageStreamFrame = (event: unknown, parentToolUseId: string | null = null) =>
+    claudeSdkFrame({
+      type: "stream_event",
+      event,
+      parent_tool_use_id: parentToolUseId,
+      session_id: WAKE_NATIVE_SESSION,
+      uuid: "usage-stream-frame",
+    });
+  const usageSnapshotFrame = (id: string, uuid: string, usage: unknown) =>
+    claudeSdkFrame({
+      type: "assistant",
+      message: {
+        model: "claude-sonnet-4-6",
+        id,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "Working." }],
+        stop_reason: null,
+        stop_sequence: null,
+        usage,
+      },
+      parent_tool_use_id: null,
+      uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const zeroUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+  };
+  const reportedContextTokens = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+        ? [event.providerTurn.tokenUsage.usedTokens]
+        : [],
+    );
+
+  it.effect("reports context from final stream usage when the request starts at zero", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-zero-start-usage"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      // Some Anthropic-compatible proxies report zero usage at message_start
+      // and the real counts on the final message_delta.
+      const frames = [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_first", usage: zeroUsage },
+        }),
+        usageSnapshotFrame("msg_first", "00000000-0000-4000-8000-000000000670", zeroUsage),
+        usageStreamFrame(
+          {
+            type: "message_delta",
+            delta: { stop_reason: "tool_use", stop_sequence: null },
+            usage: { ...zeroUsage, input_tokens: 999_999, output_tokens: 9 },
+          },
+          "child-tool",
+        ),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "tool_use", stop_sequence: null },
+          usage: { ...zeroUsage, input_tokens: 37_939, output_tokens: 184 },
+        }),
+        usageSnapshotFrame("msg_first", "00000000-0000-4000-8000-000000000671", zeroUsage),
+        // The next request starts at zero again and its delta reports only output.
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_second", usage: zeroUsage },
+        }),
+        usageSnapshotFrame("msg_second", "00000000-0000-4000-8000-000000000672", zeroUsage),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { input_tokens: null, output_tokens: 12 },
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000673", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [38_123]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("fills zero message_start input from a positive assistant snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-snapshot-input-usage"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const snapshotUsage = {
+        input_tokens: 5,
+        output_tokens: 3,
+        cache_creation_input_tokens: 100,
+        cache_read_input_tokens: 2_000,
+      };
+      const frames = [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_snapshot", usage: zeroUsage },
+        }),
+        usageSnapshotFrame("msg_snapshot", "00000000-0000-4000-8000-000000000690", snapshotUsage),
+        usageSnapshotFrame("msg_snapshot", "00000000-0000-4000-8000-000000000691", zeroUsage),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { input_tokens: null, output_tokens: 40 },
+        }),
+        // Frozen snapshots of the same message must not revert the merged output.
+        usageSnapshotFrame("msg_snapshot", "00000000-0000-4000-8000-000000000692", snapshotUsage),
+        usageSnapshotFrame("msg_snapshot", "00000000-0000-4000-8000-000000000693", zeroUsage),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000694", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [2_108, 2_145]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("merges cumulative stream usage into the message_start counts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-merged-stream-usage"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const startUsage = {
+        input_tokens: 10,
+        output_tokens: 1,
+        cache_creation_input_tokens: 200,
+        cache_read_input_tokens: 1_000,
+      };
+      const frames = [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_native", usage: startUsage },
+        }),
+        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000680", startUsage),
+        // Output-only deltas keep the input and cache counts from message_start.
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: null, stop_sequence: null },
+          usage: { input_tokens: null, output_tokens: 20 },
+        }),
+        // A delta that restates input (server tools) replaces it, explicit zeros included.
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: {
+            input_tokens: 25,
+            output_tokens: 50,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 1_000,
+          },
+        }),
+        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000681", startUsage),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000000682",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        // Usage for the message before the boundary no longer describes the context.
+        usageSnapshotFrame("msg_native", "00000000-0000-4000-8000-000000000684", startUsage),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { input_tokens: null, output_tokens: 60 },
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000683", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [1_211, 1_230, 1_075, 400]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("ignores snapshot usage from before a compaction without stream usage", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-snapshot-usage-compaction"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };
+      const frames = [
+        usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000790", usage),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000000791",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000792", usage),
+        // A new request after the boundary reports the compacted context.
+        usageSnapshotFrame("msg_after", "00000000-0000-4000-8000-000000000793", {
+          ...zeroUsage,
+          input_tokens: 450,
+          output_tokens: 10,
+        }),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000794", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(reportedContextTokens(harness.events), [1_075, 400, 460]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
