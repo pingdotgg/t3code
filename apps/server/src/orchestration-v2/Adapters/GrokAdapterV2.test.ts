@@ -26,7 +26,6 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
