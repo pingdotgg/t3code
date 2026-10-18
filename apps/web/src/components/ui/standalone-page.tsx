@@ -19,7 +19,9 @@ export function StandalonePage({
   readonly children: ReactNode;
 }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+    // #root never scrolls, so the page owns its scroll. Safe centering keeps a
+    // card taller than the viewport anchored at the top instead of clipping it.
+    <div className="relative h-full overflow-hidden bg-background text-foreground">
       <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
         <div className={backdropClassNames[tone]} />
         {tone === "pairing" ? (
@@ -34,12 +36,14 @@ export function StandalonePage({
         />
       </div>
 
-      <section
-        className={`relative w-full max-w-xl rounded-2xl border border-border/80 shadow-2xl shadow-black/20 backdrop-blur-md ${tone === "brand" ? "overflow-hidden bg-card/94" : "bg-card/90"}`}
-      >
-        {masthead}
-        <div className="p-6 sm:p-8">{children}</div>
-      </section>
+      <div className="relative flex h-full items-center-safe justify-center overflow-y-auto scrollbar-gutter-both px-4 py-10 sm:px-6">
+        <section
+          className={`relative w-full max-w-xl rounded-2xl border border-border/80 shadow-2xl shadow-black/20 backdrop-blur-md ${tone === "brand" ? "overflow-hidden bg-card/94" : "bg-card/90"}`}
+        >
+          {masthead}
+          <div className="p-6 sm:p-8">{children}</div>
+        </section>
+      </div>
     </div>
   );
 }
