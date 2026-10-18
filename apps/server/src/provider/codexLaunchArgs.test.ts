@@ -29,6 +29,13 @@ describe("resolveCodexLaunchArgs", () => {
 });
 
 describe("codexAppServerArgs", () => {
+  it("preserves escaped TOML quotes in config values", () => {
+    NodeAssert.deepStrictEqual(
+      codexAppServerArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
+      ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
+    );
+  });
+
   it("returns the app-server command for empty launch args", () => {
     NodeAssert.deepStrictEqual(codexAppServerArgs(""), ["app-server"]);
   });
@@ -44,6 +51,13 @@ describe("codexAppServerArgs", () => {
 });
 
 describe("codexExecLaunchArgs", () => {
+  it("preserves escaped TOML quotes in config values", () => {
+    NodeAssert.deepStrictEqual(
+      codexExecLaunchArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
+      ["--config", 'model="gpt-6.1-sol"', "--strict-config"],
+    );
+  });
+
   it("keeps shared codex flags and omits app-server-only flags", () => {
     NodeAssert.deepStrictEqual(
       codexExecLaunchArgs('--strict-config --enable foo --listen off --config model="gpt 5"'),
