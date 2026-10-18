@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
@@ -53,6 +54,149 @@ const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
     layer,
   }));
 });
+
+it.effect("a persisted fork leaves PR watching with its parent until explicitly opted in", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const { instanceId, modelSelection } = forkCases[0]!;
+    const sourceThreadId = ThreadId.make("fork-watch-source");
+    const targetThreadId = ThreadId.make("fork-watch-target");
+    const sourceRunId = RunId.make("fork-watch-source-run");
+    const key = { host: "github.com", repository: "example/repo", number: 1 };
+    const link = { url: "https://github.com/example/repo/pull/1", source: "agent" as const };
+
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("fork-watch-create"),
+      threadId: sourceThreadId,
+      projectId: ProjectId.make("fork-watch-project"),
+      title: "Watching source",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("fork-watch-source-run"),
+          type: "run.created",
+          threadId: sourceThreadId,
+          runId: sourceRunId,
+          occurredAt: now,
+          payload: {
+            id: sourceRunId,
+            threadId: sourceThreadId,
+            ordinal: 1,
+            providerInstanceId: instanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("fork-watch-source-message"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request.watch",
+      commandId: CommandId.make("fork-watch-parent-start"),
+      threadId: sourceThreadId,
+      ...key,
+      watching: true,
+      link,
+    });
+    const parentBefore = yield* orchestrator.getThreadShell(sourceThreadId);
+    const parentWatch = parentBefore?.pullRequests?.[0]?.watch;
+    assert.isDefined(parentWatch);
+    assert.lengthOf(parentBefore?.pendingBackgroundTasks ?? [], 1);
+
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fork-watch-fork"),
+      sourceThreadId,
+      targetThreadId,
+      sourcePoint: { type: "run", runId: sourceRunId },
+      createdBy: "user",
+      creationSource: "mcp",
+    });
+    const fork = yield* orchestrator.getThreadShell(targetThreadId);
+    assert.isNotNull(fork);
+    assert.deepEqual(fork.pullRequests, [
+      {
+        ...key,
+        ...link,
+        linkedAt: parentWatch.startedAt,
+        snapshot: null,
+        stack: null,
+      },
+    ]);
+    assert.deepEqual(fork.pendingBackgroundTasks, []);
+    assert.deepEqual(yield* orchestrator.getThreadShell(sourceThreadId), parentBefore);
+
+    // A delayed watcher update cannot reinstate the parent's subscription on the fork.
+    const stale = yield* orchestrator
+      .dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("fork-watch-stale-sync"),
+        threadId: targetThreadId,
+        ...key,
+        startedAt: parentWatch.startedAt,
+        watch: parentWatch,
+        wake: {
+          messageId: MessageId.make("fork-watch-unwanted-wake"),
+          text: "A check failed",
+          notification: {
+            source: { kind: "monitor" },
+            outcome: "updated",
+            summary: "A check failed",
+          },
+        },
+      })
+      .pipe(Effect.flip);
+    assert.equal(stale._tag, "OrchestratorDispatchError");
+    assert.deepEqual((yield* orchestrator.getThreadProjection(targetThreadId)).runs, []);
+
+    // Advance virtual time only to distinguish the independent watch's start time.
+    yield* TestClock.adjust("1 second");
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request.watch",
+      commandId: CommandId.make("fork-watch-opt-in"),
+      threadId: targetThreadId,
+      ...key,
+      watching: true,
+      link,
+    });
+    const watchingFork = yield* orchestrator.getThreadShell(targetThreadId);
+    assert.isDefined(watchingFork?.pullRequests?.[0]?.watch);
+    assert.notEqual(watchingFork.pullRequests[0].watch.startedAt, parentWatch.startedAt);
+    assert.lengthOf(watchingFork.pendingBackgroundTasks ?? [], 1);
+    assert.deepEqual(yield* orchestrator.getThreadShell(sourceThreadId), parentBefore);
+
+    yield* orchestrator.dispatch({
+      type: "thread.pull-request.watch",
+      commandId: CommandId.make("fork-watch-opt-out"),
+      threadId: targetThreadId,
+      ...key,
+      watching: false,
+    });
+    const stoppedFork = yield* orchestrator.getThreadShell(targetThreadId);
+    assert.deepEqual(stoppedFork?.pullRequests, fork.pullRequests);
+    assert.deepEqual(stoppedFork?.pendingBackgroundTasks, []);
+    assert.deepEqual(yield* orchestrator.getThreadShell(sourceThreadId), parentBefore);
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
 
 it.effect.each(forkCases)(
   "bounds $driver context when continuing a fork of a $status run",
