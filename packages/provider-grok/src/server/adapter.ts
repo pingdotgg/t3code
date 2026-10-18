@@ -186,9 +186,7 @@ const registerGrokAskUserQuestionExtensions = ({
       runtime.handleExtRequest(method, XAiAskUserQuestionRequest, (params, requestContext) => {
         const identity = extractXAiAskUserQuestionIdentity(params);
         const questions = extractXAiAskUserQuestions(params).map((question) => ({
-          id: question.id,
-          header: question.header,
-          question: question.question,
+          ...question,
           options: [...question.options],
         }));
         return requestUserInput(
