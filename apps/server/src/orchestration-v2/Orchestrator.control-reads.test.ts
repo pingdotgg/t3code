@@ -21,6 +21,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -952,4 +954,87 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       childThreadId: task.childThreadId!,
     });
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
+);
+
+it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(`thread:duplicate-create:${deleted}`);
+    const create = {
+      type: "thread.create",
+      commandId: CommandId.make(`create:${threadId}`),
+      threadId,
+      projectId: ProjectId.make("project:duplicate-create"),
+      title: "Original",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      importedNativeThread: {
+        ref: { driver: adapter.driver, nativeId: "native-original", strength: "strong" },
+      },
+    } as const;
+    yield* orchestrator.dispatch(create);
+    if (deleted) {
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`delete:${threadId}`),
+        threadId,
+      });
+    }
+    const before = yield* projections.getThread(threadId);
+    assert.isNotNull(before.activeProviderThreadId);
+    assert.equal(before.deletedAt !== null, deleted);
+    const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+    yield* TestClock.adjust("1 second");
+    const duplicate = {
+      ...create,
+      commandId: CommandId.make(`duplicate:${threadId}`),
+      title: "Replacement",
+      importedNativeThread: undefined,
+    };
+    const outcome = yield* orchestrator.dispatch(duplicate).pipe(Effect.result);
+    assert.ok(Result.isFailure(outcome), "duplicate create must be rejected");
+    const refused = outcome.failure;
+    assert.equal(refused._tag, "OrchestratorThreadAlreadyExistsError");
+    assert.equal(refused.message, `Thread ${threadId} already exists. Use a new thread id.`);
+    assert.deepEqual(yield* projections.getThread(threadId), before);
+    assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+    const retried = yield* orchestrator.dispatch(duplicate).pipe(Effect.flip);
+    assert.equal(retried._tag, "OrchestratorCommandPreviouslyRejectedError");
+    assert.include(retried.message, refused.message);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("replays a thread.create receipt without changing the thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:create-receipt-replay");
+    const create = {
+      type: "thread.create",
+      commandId: CommandId.make("create:receipt-replay"),
+      threadId,
+      projectId: ProjectId.make("project:duplicate-create"),
+      title: "Original",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    } as const;
+    const original = yield* orchestrator.dispatch(create);
+    const before = yield* projections.getThread(threadId);
+    const replayed = yield* orchestrator.dispatch(create);
+    assert.equal(replayed.sequence, original.sequence);
+    assert.deepEqual(replayed, original);
+    assert.deepEqual(yield* projections.getThread(threadId), before);
+    assert.equal(yield* orchestrator.getThreadEventSequence(threadId), original.sequence);
+  }).pipe(Effect.provide(layerTest)),
 );

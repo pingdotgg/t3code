@@ -159,6 +159,15 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
   }
 }
 
+export class OrchestratorThreadAlreadyExistsError extends Schema.TaggedError<OrchestratorThreadAlreadyExistsError>()(
+  "OrchestratorThreadAlreadyExistsError",
+  { commandId: CommandId, threadId: ThreadId },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} already exists. Use a new thread id.`;
+  }
+}
+
 export class OrchestratorCommandRejectedError extends Schema.TaggedError<OrchestratorCommandRejectedError>()(
   "OrchestratorCommandRejectedError",
   { commandId: CommandId, commandType: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -270,6 +279,7 @@ export function canReplayCommandReceipt(
 
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
+  OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
@@ -2232,6 +2242,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.thread_id": command.threadId,
       "orchestration_v2.driver": command.modelSelection.instanceId,
     });
+
+    // Tombstones reserve their ids too; recreating one would overwrite its history.
+    const existing = yield* projectionStore.getThread(command.threadId).pipe(
+      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+      ),
+    );
+    if (existing !== null) {
+      return yield* new OrchestratorThreadAlreadyExistsError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+      });
+    }
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
