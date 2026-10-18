@@ -1,5 +1,5 @@
 import { BranchNamingMode, type ServerSettingsPatch } from "@t3tools/contracts";
-import { useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
@@ -25,8 +25,36 @@ export function BranchNamingSettings(props: {
   disabled: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
-  const prefixEdited = useRef(false);
-  const instructionsEdited = useRef(false);
+  // Typed text waits here until it saves. Android's Back closes the keyboard
+  // without ending editing, so leaving the screen saves it too.
+  type Field = "branchNamePrefix" | "branchNameInstructions";
+  const drafts = useRef<Partial<Record<Field, { text: string; over: string | null }>>>({});
+  const savedValue = (field: Field) =>
+    field === "branchNamePrefix" ? props.prefix : props.instructions;
+  const edit = (field: Field, text: string) => {
+    drafts.current[field] = { text, over: savedValue(field) };
+  };
+  // Takes a field's draft as a patch, or {} when there is nothing new to save.
+  // A newer saved value remounts the input, so a draft typed over an older one
+  // is no longer on screen and is dropped.
+  const take = (field: Field): ServerSettingsPatch => {
+    const draft = drafts.current[field];
+    delete drafts.current[field];
+    const saved = savedValue(field);
+    // Not gated on `disabled`: a pending write disables the inputs, and the
+    // route queues this save behind it and checks write access itself.
+    if (draft === undefined || draft.over !== saved) return {};
+    const value = draft.text.trim();
+    return saved === null || value !== saved ? { [field]: value } : {};
+  };
+  const send = (patch: ServerSettingsPatch) => {
+    if (Object.keys(patch).length > 0) props.onChange(patch);
+  };
+  // One patch, because the screen drops writes while another is in flight.
+  const saveDrafts = useEffectEvent(() =>
+    send({ ...take("branchNamePrefix"), ...take("branchNameInstructions") }),
+  );
+  useEffect(() => () => saveDrafts(), []);
   return (
     <SettingsSection
       title="Worktree branch naming"
@@ -53,25 +81,14 @@ export function BranchNamingSettings(props: {
           <AppTextInput
             key={props.prefix}
             accessibilityLabel="Branch prefix"
-            onChangeText={() => {
-              prefixEdited.current = true;
-            }}
+            onChangeText={(text) => edit("branchNamePrefix", text)}
             defaultValue={props.prefix ?? ""}
             placeholder={props.prefix === null ? "Mixed" : "No prefix"}
             editable={!props.disabled}
             autoCapitalize="none"
             autoCorrect={false}
             className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
-            onEndEditing={(event) => {
-              const value = event.nativeEvent.text.trim();
-              if (
-                !props.disabled &&
-                prefixEdited.current &&
-                (props.prefix === null || value !== props.prefix)
-              )
-                props.onChange({ branchNamePrefix: value });
-              prefixEdited.current = false;
-            }}
+            onEndEditing={() => send(take("branchNamePrefix"))}
           />
         </View>
       ) : null}
@@ -83,9 +100,7 @@ export function BranchNamingSettings(props: {
           <AppTextInput
             key={props.instructions}
             accessibilityLabel="Branch naming instructions"
-            onChangeText={() => {
-              instructionsEdited.current = true;
-            }}
+            onChangeText={(text) => edit("branchNameInstructions", text)}
             defaultValue={props.instructions ?? ""}
             placeholder={
               props.instructions === null
@@ -96,16 +111,7 @@ export function BranchNamingSettings(props: {
             multiline
             autoCapitalize="sentences"
             className="min-h-24 rounded-xl px-3 py-2 text-base text-foreground"
-            onEndEditing={(event) => {
-              const value = event.nativeEvent.text.trim();
-              if (
-                !props.disabled &&
-                instructionsEdited.current &&
-                (props.instructions === null || value !== props.instructions)
-              )
-                props.onChange({ branchNameInstructions: value });
-              instructionsEdited.current = false;
-            }}
+            onEndEditing={() => send(take("branchNameInstructions"))}
           />
         </View>
       ) : null}
