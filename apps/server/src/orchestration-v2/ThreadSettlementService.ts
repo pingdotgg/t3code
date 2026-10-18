@@ -77,6 +77,34 @@ function pullRequestMatchesProject(
   );
 }
 
+type SettlementPullRequestLink = NonNullable<
+  ProjectionStore.ProjectionSettlementCandidate["pullRequests"]
+>[number];
+
+/** When the linked pull request merged or closed, or -Infinity if it has not. */
+function linkTerminalAtMs(link: SettlementPullRequestLink): number {
+  const snapshot = link.snapshot;
+  const value = snapshot?.state === "merged" ? snapshot.mergedAt : snapshot?.closedAt;
+  const timestamp = Date.parse(value ?? "");
+  return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
+}
+
+/**
+ * The links whose outcome the thread waits on. A link made after its pull
+ * request had already merged or closed records work the thread did, such as an
+ * agent merging pull requests it was asked to merge, so it cannot settle the
+ * thread.
+ */
+function settlementPullRequestLinks(
+  links: ReadonlyArray<SettlementPullRequestLink>,
+): ReadonlyArray<SettlementPullRequestLink> {
+  return visibleThreadPullRequests(links).filter((link) => {
+    if (link.snapshot === null || link.snapshot.state === "open") return true;
+    const linkedAtMs = Date.parse(link.linkedAt);
+    return Number.isNaN(linkedAtMs) || linkTerminalAtMs(link) >= linkedAtMs;
+  });
+}
+
 /**
  * Absolute age bounds client clock skew in both directions and stops stale
  * pre-adoption data from blocking the thread forever.
@@ -187,17 +215,11 @@ export function resolveAutoSettlementAt(input: {
 }): DateTime.Utc | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
-  const links = visibleThreadPullRequests(thread.pullRequests ?? []);
+  const links = settlementPullRequestLinks(thread.pullRequests ?? []);
   if (links.some((link) => link.snapshot === null || link.snapshot.state === "open")) return null;
   if (links.length > 0) {
-    const terminalAt = (link: (typeof links)[number]) => {
-      const snapshot = link.snapshot;
-      const value = snapshot?.state === "merged" ? snapshot.mergedAt : snapshot?.closedAt;
-      const timestamp = Date.parse(value ?? "");
-      return Number.isNaN(timestamp) ? Number.NEGATIVE_INFINITY : timestamp;
-    };
     const latest = links.reduce((current, candidate) =>
-      terminalAt(candidate) > terminalAt(current) ? candidate : current,
+      linkTerminalAtMs(candidate) > linkTerminalAtMs(current) ? candidate : current,
     );
     pullRequest =
       latest.snapshot === null
