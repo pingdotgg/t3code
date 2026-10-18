@@ -255,6 +255,7 @@ function BrowserAddressBar({
         keyboardType="url"
         returnKeyType="go"
         selectTextOnFocus
+        lineBreakModeIOS="tail"
         className="h-10 min-w-0 flex-1 rounded-full border border-input-border bg-input px-4 font-sans text-sm text-foreground"
       />
       <ControlPill
