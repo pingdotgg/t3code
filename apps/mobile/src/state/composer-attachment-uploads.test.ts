@@ -135,7 +135,10 @@ vi.mock("./attachments", () => ({
   attachmentEnvironment: { createUploadUrl: native.mint, remove: native.remove },
 }));
 vi.mock("./assets", () => ({ assetEnvironment: { createUrl: (input: unknown) => input } }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  // The worker settles uploads with the real settlePromise and squashAtomCommandFailure;
+  // only the RPC transport is substituted.
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
   executeAtomQuery: async (
     _registry: unknown,
@@ -164,7 +167,6 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
     }
     throw new Error("Unexpected RPC command");
   },
-  squashAtomCommandFailure: (result: { error: unknown }) => result.error,
 }));
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/reactivity");

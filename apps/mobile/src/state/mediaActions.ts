@@ -1,3 +1,4 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
@@ -62,11 +63,11 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
       if ("attachment" in source) {
         const preview = await loadLocalAttachmentPreview(source.attachment, request.signal);
         if (!preview) return;
-        try {
-          await preview.share(request.signal, source.sourceIdentifier);
-        } finally {
-          preview.dispose();
-        }
+        const shared = await settlePromise(() =>
+          preview.share(request.signal, source.sourceIdentifier),
+        );
+        preview.dispose();
+        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
         return;
       }
       const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();

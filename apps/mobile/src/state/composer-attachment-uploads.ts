@@ -1,6 +1,7 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { useEffect, useRef } from "react";
 
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -73,8 +74,8 @@ export function useComposerAttachmentUploadWorker() {
         const release = isFileBackedComposerAttachment(attachment)
           ? retainComposerAttachmentFileForPreview(attachment)
           : undefined;
-        try {
-          const result = await prepareTurnAttachments({
+        const prepared = await settlePromise(() =>
+          prepareTurnAttachments({
             environmentId,
             attachments: [attachment],
             supportsImageUploads: true,
@@ -104,11 +105,12 @@ export function useComposerAttachmentUploadWorker() {
               });
               return "persisted";
             },
-          });
-          return result.status === "ready";
-        } finally {
-          release?.();
-        }
+          }),
+        );
+        release?.();
+        // The upload queue owns retry and failure reporting, so a failed upload rethrows to it.
+        if (AsyncResult.isFailure(prepared)) throw squashAtomCommandFailure(prepared);
+        return prepared.value.status === "ready";
       },
     });
     queueRef.current = queue;

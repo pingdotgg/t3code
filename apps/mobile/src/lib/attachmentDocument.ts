@@ -1,3 +1,5 @@
+import { AsyncResult } from "effect/reactivity";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../components/ui/Dialog";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -5,7 +7,7 @@ import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
 import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
 import { fetch } from "expo/fetch";
 import { File } from "expo-file-system";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { FileBackedComposerAttachment } from "./composerImages";
 import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
@@ -33,25 +35,19 @@ export function useAttachmentDocument(input: {
   const delimiter = filePreviewDelimiter(input);
   const shareController = useRef<AbortController | null>(null);
   useEffect(() => () => shareController.current?.abort(), []);
-  const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId: input.attachmentId,
-      fileName: input.name,
-      mimeType: input.mimeType,
-      disposition: "inline" as const,
-    }),
-    [input.attachmentId, input.name, input.mimeType],
-  );
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId: input.attachmentId,
+    fileName: input.name,
+    mimeType: input.mimeType,
+    disposition: "inline" as const,
+  };
   const environmentId = input.attachment ? null : input.environmentId;
   const refresh = useRefreshAssetUrl(environmentId, resource);
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [remoteUri, setRemoteUri] = useState<string | null>(null);
   const [content, setContent] = useState<{ text: string; truncated: boolean } | null>(null);
-  const table = useMemo(
-    () => (content && delimiter ? parseDelimitedPreview(content.text, delimiter) : null),
-    [content, delimiter],
-  );
+  const table = content && delimiter ? parseDelimitedPreview(content.text, delimiter) : null;
   const [error, setError] = useState<string | null>(null);
   const [contentError, setContentError] = useState<string | null>(null);
   const textReadUrl = useRef<{ uri: string; authorizedAt: number } | null>(null);
@@ -170,18 +166,19 @@ export function useAttachmentDocument(input: {
       attachment: { name: input.name, mimeType: input.mimeType },
       signal: controller.signal,
     };
-    try {
+    const result = await settlePromise(async () => {
       if (isLocalUri(uri)) await shareLocalAttachment({ ...request, uri });
       else await downloadAndShareAttachment({ ...request, url: (await refresh()) ?? uri });
-    } catch (cause) {
-      if (controller.signal.aborted) return;
+    });
+    if (shareController.current === controller) shareController.current = null;
+    if (controller.signal.aborted) return;
+    setSharing(false);
+    if (AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       Dialog.alert(
         "Could not share file",
         cause instanceof Error ? cause.message : "Please try again.",
       );
-    } finally {
-      if (shareController.current === controller) shareController.current = null;
-      if (!controller.signal.aborted) setSharing(false);
     }
   };
   return {

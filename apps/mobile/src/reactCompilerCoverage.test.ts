@@ -17,17 +17,10 @@ const metroConfig: Promise<{ transformer: { babelTransformerPath: string } }> =
 // delete its entry (and its manual useMemo/useCallback/memo) in the same change.
 const KNOWN_BAILOUTS: Record<string, string> = {
   "src/components/ComposerAttachmentStrip.tsx": "unsupported syntax",
-  "src/components/ComposerContextAttachment.tsx":
-    "throw inside try, try without catch, try/finally",
-  "src/components/ComposerEditor.tsx": "try/finally",
-  "src/components/VideoPreviewModal.ios.tsx": "try without catch",
-  "src/components/VideoPreviewModal.tsx": "ref read during render",
   "src/components/ui/AndroidAnchoredMenu.tsx": "ref read during render",
   "src/components/ui/Menu.tsx": "ref read during render",
-  "src/features/connection/ConnectionsNewRouteScreen.tsx": "try without catch",
   "src/features/diffs/nativeReviewDiffSurface.ts": "ref read during render",
   "src/features/home/thread-swipe-actions.tsx": "ref read during render",
-  "src/features/projects/AddProjectScreen.tsx": "try without catch",
   "src/features/terminal/ThreadTerminalRouteScreen.tsx": "ref read during render",
   "src/features/threads/NewTaskContextPickerScreens.tsx":
     "manual memo not preserved, try without catch",
@@ -53,16 +46,11 @@ const KNOWN_BAILOUTS: Record<string, string> = {
   "src/features/threads/use-thread-list-v2-shelf-preferences.ts": "ref read during render",
   "src/features/voice-input/VoiceInputProvider.tsx": "ref read during render",
   "src/features/voice-input/useVoiceInputController.ts": "ref read during render",
-  "src/lib/attachmentDocument.ts": "try/finally",
   "src/native/StackHeader.tsx": "ref read during render",
   "src/native/T3ComposerEditor.ios.tsx": "ref read during render",
   "src/native/T3ComposerEditor.native.tsx": "ref read during render",
-  "src/state/composer-attachment-uploads.ts": "try without catch",
-  "src/state/mediaActions.ts": "try without catch",
-  "src/state/queries.ts": "manual memo not preserved",
   "src/state/use-thread-composer-state.ts": "try without catch",
   "src/state/use-thread-selection.ts": "ref read during render",
-  "src/state/use-vcs-action-state.ts": "manual memo not preserved",
 };
 
 // Caller flags Metro passes for an iOS release bundle. supportsReactCompiler is
