@@ -278,6 +278,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         align="start"
         className="before:hidden"
         padding="none"
+        touchBackdrop
       >
         <ModelPickerContent
           environmentId={props.environmentId}
