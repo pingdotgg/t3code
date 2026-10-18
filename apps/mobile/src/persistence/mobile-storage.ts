@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { pipe } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   isRelayManagedConnection,
@@ -119,6 +120,7 @@ export class MobileStorage extends Context.Service<
 
 export const make = Effect.fn("MobileStorage.make")(function* () {
   const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
+  const deviceIdLock = yield* Semaphore.make(1);
 
   const parseJson = <A>(key: string, raw: string): A | null => {
     if (!raw.trim()) return null;
@@ -197,7 +199,7 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
     });
     yield* secureStorage.setItem(AGENT_AWARENESS_DEVICE_ID_KEY, deviceId);
     return deviceId;
-  });
+  }).pipe(deviceIdLock.withPermits(1));
 
   const loadAgentAwarenessDeviceId = secureStorage
     .getItem(AGENT_AWARENESS_DEVICE_ID_KEY)
