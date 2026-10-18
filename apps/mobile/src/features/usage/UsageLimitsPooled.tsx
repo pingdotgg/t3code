@@ -50,23 +50,38 @@ function AccountSegment({
   readonly pending: boolean;
 }) {
   const patternId = useId().replace(/:/g, "");
+  const [size, setSize] = useState({ width: 0, height: 0 });
   return (
-    <Svg width="100%" height="100%" accessible={false}>
-      <Defs>
-        <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
-          <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
-        </Pattern>
-      </Defs>
-      {pending ? (
-        <Rect
-          x={`${remaining}%`}
-          width={`${100 - remaining}%`}
-          height="100%"
-          fill={`url(#${patternId})`}
-        />
+    <View
+      pointerEvents="none"
+      className="absolute inset-0"
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setSize((previous) =>
+          previous.width === width && previous.height === height ? previous : { width, height },
+        );
+      }}
+    >
+      {size.width > 0 && size.height > 0 ? (
+        // Numeric canvas dimensions clear Android SVG geometry cached before a segment resized.
+        <Svg width={size.width} height={size.height} accessible={false}>
+          <Defs>
+            <Pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse">
+              <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
+            </Pattern>
+          </Defs>
+          {pending ? (
+            <Rect
+              x={`${remaining}%`}
+              width={`${100 - remaining}%`}
+              height="100%"
+              fill={`url(#${patternId})`}
+            />
+          ) : null}
+          <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+        </Svg>
       ) : null}
-      <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
-    </Svg>
+    </View>
   );
 }
 
