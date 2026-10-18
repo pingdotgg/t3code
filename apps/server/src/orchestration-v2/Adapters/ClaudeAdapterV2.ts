@@ -2633,6 +2633,9 @@ function resultUserFacingError(result: SDKResultMessage): string | undefined {
   );
 }
 
+const CONTEXT_WINDOW_FULL_ERROR =
+  "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread.";
+
 function terminalResultError(
   reason: SDKResultMessage["terminal_reason"],
   failureHint?: string,
@@ -2651,11 +2654,13 @@ function terminalResultError(
     case "turn_setup_failed":
       return "Claude could not start the turn.";
     case "blocking_limit":
-      return "Claude stopped: a usage limit blocked the request.";
+      // The CLI also ends a turn with blocking_limit once the context window
+      // is full ("Prompt is too long"). Only rate-limit evidence sets the hint.
+      return failureHint ?? CONTEXT_WINDOW_FULL_ERROR;
     case "rapid_refill_breaker":
       return "Claude stopped: the context refilled too quickly after compaction.";
     case "prompt_too_long":
-      return "Claude stopped: the prompt exceeds the model's context window.";
+      return CONTEXT_WINDOW_FULL_ERROR;
     case "image_error":
       return "Claude stopped: an image in the conversation could not be processed.";
     case "model_error":
@@ -2822,9 +2827,7 @@ function providerFailureFromResult(
     }
   }
   const failureClass =
-    message.terminal_reason === "blocking_limit" ||
-    (message.subtype === "success" && message.api_error_status === 429) ||
-    usageLimited
+    (message.subtype === "success" && message.api_error_status === 429) || usageLimited
       ? "usage_limit"
       : "provider_error";
   const listedError = resultUserFacingError(message);

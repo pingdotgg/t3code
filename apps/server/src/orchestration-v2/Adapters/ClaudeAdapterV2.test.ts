@@ -2299,7 +2299,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeAssistantErrorFrame = (input: {
     readonly uuid: string;
-    readonly error: "authentication_failed" | "rate_limit" | "server_error" | undefined;
+    readonly error:
+      | "authentication_failed"
+      | "invalid_request"
+      | "rate_limit"
+      | "server_error"
+      | undefined;
+    readonly text?: string;
     readonly parentToolUseId?: string | null;
   }) =>
     claudeSdkFrame({
@@ -2309,7 +2315,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         id: `msg_${input.uuid}`,
         type: "message",
         role: "assistant",
-        content: [{ type: "text", text: "Claude could not complete this request." }],
+        content: [{ type: "text", text: input.text ?? "Claude could not complete this request." }],
         stop_reason: null,
         stop_sequence: null,
         usage: {
@@ -5295,10 +5301,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(terminal.status, "failed");
         if (terminal.status !== "failed") return;
         assert.isNotEmpty(terminal.failure.message);
-        assert.equal(
-          terminal.failure.class,
-          terminalReason === "blocking_limit" ? "usage_limit" : "provider_error",
-        );
+        assert.equal(terminal.failure.class, "provider_error");
         assert.isFalse(
           harness.events.some(
             (event) =>
@@ -5316,6 +5319,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  // Frames follow #19832: a full context window ends the turn with
+  // blocking_limit while the plan's rate-limit window is still allowed.
+  it.effect.each([
+    {
+      windowStatus: "allowed",
+      expectedClass: "provider_error",
+      expectedMessage: "Claude stopped: the prompt exceeds the model's context window.",
+    },
+    {
+      windowStatus: "rejected",
+      expectedClass: "usage_limit",
+      expectedMessage: "Claude usage limit reached. Send the message again once the limit resets.",
+    },
+  ] as const)(
+    "classifies blocking_limit by its rate-limit evidence ($windowStatus window)",
+    ({ windowStatus, expectedClass, expectedMessage }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-blocking-limit-${windowStatus}`),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: { status: windowStatus, rateLimitType: "five_hour" },
+            uuid: "00000000-0000-4000-8000-000000000660",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          makeAssistantErrorFrame({
+            uuid: "00000000-0000-4000-8000-000000000661",
+            error: "invalid_request",
+            text: "Prompt is too long",
+          }),
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000662",
+            result: "Prompt is too long",
+            isError: true,
+            numTurns: 189,
+            terminalReason: "blocking_limit",
+          }),
+        ]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, expectedClass);
+        assert.include(terminal.failure.message, expectedMessage);
+        assert.equal(terminal.failure.code, "blocking_limit");
+        if (expectedClass === "provider_error") {
+          assert.include(terminal.failure.message, "/compact");
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   const providerThreadRosterEvents = (
