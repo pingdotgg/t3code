@@ -484,15 +484,18 @@ function ThreadNavigationSidebarPane(
       openSwipeableRef.current = null;
     }
   };
+  // These close the open row too, so they cannot be pass-throughs. The compiler would
+  // recache a closure over `props` whenever any prop changed.
+  const { onSelectThread, onOpenThreadPullRequests } = props;
   const handleSelectThread = (thread: EnvironmentThreadShell) => {
-    props.onSelectThread(thread);
+    onSelectThread(thread);
     openSwipeableRef.current?.close();
   };
   const handleOpenThreadPullRequests = (
     thread: EnvironmentThreadShell,
     pr: ThreadPrPresentation,
   ) => {
-    props.onOpenThreadPullRequests(thread, pr);
+    onOpenThreadPullRequests(thread, pr);
     openSwipeableRef.current?.close();
   };
   const handleScrollBeginDrag = () => {

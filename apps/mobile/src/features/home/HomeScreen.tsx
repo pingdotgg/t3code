@@ -415,28 +415,14 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
         );
   const handleSettleThread = props.onSettleThread;
-  const handleSnoozeThread = (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-    void props.onSnoozeThread(thread, snoozedUntil);
-  };
-  const handleUnsnoozeThread = (thread: EnvironmentThreadShell) => {
-    void props.onUnsnoozeThread(thread);
-  };
-  const handlePinThread = (thread: EnvironmentThreadShell) => {
-    void props.onPinThread(thread);
-  };
-  const handleMoveThread = (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
-    void props.onMoveThread(thread, direction);
-  };
-  const handleUnpinThread = (thread: EnvironmentThreadShell) => {
-    void props.onUnpinThread(thread);
-  };
-  const handleSetThreadAutoSettle = (thread: EnvironmentThreadShell, enabled: boolean) => {
-    void props.onSetThreadAutoSettle(thread, enabled);
-  };
-  const handleRegenerateThreadTitle = (thread: EnvironmentThreadShell) => {
-    void props.onRegenerateThreadTitle(thread);
-  };
-  const handleRenameThread = (thread: EnvironmentThreadShell) => props.onRenameThread(thread);
+  const handleSnoozeThread = props.onSnoozeThread;
+  const handleUnsnoozeThread = props.onUnsnoozeThread;
+  const handlePinThread = props.onPinThread;
+  const handleMoveThread = props.onMoveThread;
+  const handleUnpinThread = props.onUnpinThread;
+  const handleSetThreadAutoSettle = props.onSetThreadAutoSettle;
+  const handleRegenerateThreadTitle = props.onRegenerateThreadTitle;
+  const handleRenameThread = props.onRenameThread;
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
   const [settledVisibleCount, setSettledVisibleCount] = useState(
