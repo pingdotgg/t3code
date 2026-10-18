@@ -25,9 +25,11 @@ const fixture = (
 ) => {
   let finalized = 0;
   const requests: string[] = [];
+  const headers: Array<Readonly<Record<string, string>>> = [];
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
+      headers.push(request.headers);
       signal.addEventListener("abort", () => {
         finalized++;
       });
@@ -61,7 +63,7 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, finalized: () => finalized };
+  return { handler, requests, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -129,6 +131,25 @@ describe("device hub proxy", () => {
     expect(operator.requests).toEqual([
       "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
     ]);
+  });
+
+  it("presents fold changes from an HTTPS client as same-origin hub requests", async () => {
+    const { handler, headers } = fixture([AuthOrchestrationOperateScope]);
+    const response = await handler(
+      new Request(
+        "https://relay.test/api/device-hub/vendor/serve-emu/api/fold?device=emulator-5554",
+        {
+          method: "POST",
+          headers: { origin: "https://relay.test", "x-forwarded-proto": "https" },
+          body: '{"posture":"opened"}',
+        },
+      ),
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(headers).toHaveLength(1);
+    expect(headers[0]?.origin).toBe("http://hub.test");
+    expect(headers[0]).not.toHaveProperty("x-forwarded-proto");
   });
 
   it("never forwards the vendor shell endpoint", async () => {

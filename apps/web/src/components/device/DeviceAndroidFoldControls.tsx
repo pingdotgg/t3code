@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
+  AndroidFoldError,
   readAndroidFold,
   setAndroidFold,
   type AndroidFoldPosture,
@@ -18,6 +19,7 @@ export function DeviceAndroidFoldControls(props: {
   readonly screenWidth: number | undefined;
   readonly screenHeight: number | undefined;
   readonly onFoldAngle: (angle: number | null) => void;
+  readonly renewAccess: () => Promise<DeviceHubAccess | null>;
 }) {
   const [fold, setFold] = useState<AndroidFoldState | null>(null);
   const [pending, setPending] = useState(false);
@@ -47,8 +49,10 @@ export function DeviceAndroidFoldControls(props: {
             );
           }
         })
-        .catch(() => {
-          if (!controller.signal.aborted) retry = window.setTimeout(read, 3_000);
+        .catch((cause: unknown) => {
+          // Retrying an expired ticket cannot succeed. New access re-runs this effect.
+          const expired = cause instanceof AndroidFoldError && cause.status === 401;
+          if (!controller.signal.aborted && !expired) retry = window.setTimeout(read, 3_000);
         });
     };
     read();
@@ -68,7 +72,16 @@ export function DeviceAndroidFoldControls(props: {
     props.onFoldAngle(posture === "closed" ? 0 : 180);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 12_000);
-    void setAndroidFold(props.access, props.deviceId, posture, controller.signal)
+    const send = (access: DeviceHubAccess) =>
+      setAndroidFold(access, props.deviceId, posture, controller.signal);
+    void send(props.access)
+      .catch(async (cause: unknown) => {
+        // Hub tickets expire after a few minutes, while the panel stays open much longer.
+        if (!(cause instanceof AndroidFoldError && cause.status === 401)) throw cause;
+        const renewed = await props.renewAccess();
+        if (!renewed || controller.signal.aborted) throw cause;
+        return send(renewed);
+      })
       .then((next) => {
         if (mounted.current) {
           setFold(next);

@@ -7,7 +7,7 @@ import {
 import type { DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -68,4 +68,20 @@ const EMPTY_ACCESS_ATOM = Atom.make(AsyncResult.initial<DeviceHubAccess, never>(
 
 export function refreshDeviceHubAccess(environmentId: EnvironmentId): void {
   appAtomRegistry.refresh(deviceHubAccessAtom(environmentId));
+}
+
+/** Mints a fresh hub ticket for a one-off request that failed with 401. Resolves null on failure. */
+export function renewDeviceHubAccess(
+  environmentId: EnvironmentId,
+  hostId = "local",
+): Promise<DeviceHubAccess | null> {
+  const atom = deviceHubAccessAtom(environmentId);
+  appAtomRegistry.refresh(atom);
+  return Effect.runPromise(
+    AtomRegistry.getResult(appAtomRegistry, atom, { suspendOnWaiting: true }).pipe(
+      Effect.map((access) => ({ ...access, query: { ...access.query, hostId } })),
+      Effect.timeout("10 seconds"),
+      Effect.orElseSucceed(() => null),
+    ),
+  );
 }

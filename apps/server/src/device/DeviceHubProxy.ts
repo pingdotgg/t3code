@@ -57,6 +57,9 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
+  // Describes the client's HTTPS hop to T3. The hub builds its own origin from it and then
+  // rejects the loopback Origin set below, so every mutation fails over T3 Connect.
+  "x-forwarded-proto",
 ]);
 
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
