@@ -1,3 +1,5 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -70,8 +72,8 @@ export function useNativeReviewDiffHighlighting(input: {
     const engine: NativeReviewDiffHighlightEngine = "native";
 
     void (async () => {
-      try {
-        const result = await highlightNativeReviewDiffVisibleRows({
+      const settled = await settlePromise(() =>
+        highlightNativeReviewDiffVisibleRows({
           files,
           rows,
           scheme,
@@ -80,41 +82,40 @@ export function useNativeReviewDiffHighlighting(input: {
           lastRowIndex: requestRange.lastRowIndex,
           alreadyHighlightedRowIds: highlightedRowIdsRef.current,
           signal: abortController.signal,
+        }),
+      );
+      if (abortController.signal.aborted) return;
+      if (AsyncResult.isFailure(settled)) {
+        logReviewDiffDiagnostic("native visible highlight failed", {
+          error: squashAtomCommandFailure(settled),
+          resetKey,
+          scheme,
+          firstRowIndex: requestRange.firstRowIndex,
+          lastRowIndex: requestRange.lastRowIndex,
         });
-
-        if (abortController.signal.aborted || result.rowCount === 0) {
-          return;
-        }
-
-        for (const rowId of Object.keys(result.tokensByRowId)) {
-          highlightedRowIdsRef.current.add(rowId);
-        }
-
-        const chunkIndex = visibleChunkIndexRef.current;
-        visibleChunkIndexRef.current += 1;
-        setTokensPatchJson(
-          JSON.stringify({
-            resetKey,
-            chunkIndex,
-            fileId: "visible",
-            filePath: "visible rows",
-            language: "diff",
-            lineCount: result.rowCount,
-            durationMs: result.durationMs,
-            tokensByRowId: result.tokensByRowId,
-          }),
-        );
-      } catch (error) {
-        if (!abortController.signal.aborted) {
-          logReviewDiffDiagnostic("native visible highlight failed", {
-            error,
-            resetKey,
-            scheme,
-            firstRowIndex: requestRange.firstRowIndex,
-            lastRowIndex: requestRange.lastRowIndex,
-          });
-        }
+        return;
       }
+      const result = settled.value;
+      if (result.rowCount === 0) return;
+
+      for (const rowId of Object.keys(result.tokensByRowId)) {
+        highlightedRowIdsRef.current.add(rowId);
+      }
+
+      const chunkIndex = visibleChunkIndexRef.current;
+      visibleChunkIndexRef.current += 1;
+      setTokensPatchJson(
+        JSON.stringify({
+          resetKey,
+          chunkIndex,
+          fileId: "visible",
+          filePath: "visible rows",
+          language: "diff",
+          lineCount: result.rowCount,
+          durationMs: result.durationMs,
+          tokensByRowId: result.tokensByRowId,
+        }),
+      );
     })();
 
     return () => abortController.abort();

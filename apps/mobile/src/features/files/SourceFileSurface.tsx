@@ -1,7 +1,8 @@
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import type { ComponentType } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
@@ -49,7 +50,7 @@ interface SourceFileSurfaceProps {
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
 
-const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
+const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
   readonly index: number;
   readonly line: string;
@@ -124,20 +125,21 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       </NativeText>
     </View>
   );
-});
+};
 
 function useSourceFileModel(props: SourceFileSurfaceProps) {
   const { themeAppearance: theme } = useAppearancePreferences();
-  const document = useMemo(() => prepareSourceFileDocument(props.contents), [props.contents]);
+  const document = prepareSourceFileDocument(props.contents);
   const { contents: normalizedContents, lines, rowsJson } = document;
   const targetIndex =
     props.initialLine !== null && props.initialLine !== undefined && props.initialLine > 0
       ? Math.min(Math.floor(props.initialLine) - 1, Math.max(0, lines.length - 1))
       : null;
-  const highlightAtom = useMemo(
-    () => sourceHighlightAtom({ path: props.path, contents: normalizedContents, theme }),
-    [normalizedContents, props.path, theme],
-  );
+  const highlightAtom = sourceHighlightAtom({
+    path: props.path,
+    contents: normalizedContents,
+    theme,
+  });
   const highlightResult = useAtomValue(highlightAtom);
   const tokens = AsyncResult.isSuccess(highlightResult) ? highlightResult.value : null;
   const status: SourceHighlightStatus = AsyncResult.isFailure(highlightResult)
@@ -165,17 +167,15 @@ function SourceHighlightStatusView(props: { readonly status: SourceHighlightStat
 
 function useSourceFileRefresh(onRefresh: SourceFileSurfaceProps["onRefresh"]) {
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const handlePullToRefresh = useCallback(async () => {
+  const handlePullToRefresh = async () => {
     if (!onRefresh) {
       return;
     }
     setIsPullRefreshing(true);
-    try {
-      await onRefresh();
-    } finally {
-      setIsPullRefreshing(false);
-    }
-  }, [onRefresh]);
+    // RefreshControl only needs the spinner cleared; the caller surfaces its own errors.
+    await settlePromise(async () => onRefresh());
+    setIsPullRefreshing(false);
+  };
   return { isPullRefreshing, handlePullToRefresh };
 }
 
@@ -194,16 +194,12 @@ function NativeSourceFileSurface(
   const { width: viewportWidth } = useWindowDimensions();
   const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(onRefresh);
-  const tokensJson = useMemo(() => JSON.stringify(buildNativeSourceTokens(tokens)), [tokens]);
-  const selectedRowIdsJson = useMemo(
-    () => JSON.stringify(targetIndex === null ? [] : [nativeSourceRowId(targetIndex)]),
-    [targetIndex],
+  const tokensJson = JSON.stringify(buildNativeSourceTokens(tokens));
+  const selectedRowIdsJson = JSON.stringify(
+    targetIndex === null ? [] : [nativeSourceRowId(targetIndex)],
   );
-  const themeJson = useMemo(
-    () => JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId, appTheme)),
-    [appTheme, themeAppearance, themeId],
-  );
-  const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
+  const themeJson = JSON.stringify(createNativeReviewDiffTheme(themeAppearance, themeId, appTheme));
+  const styleJson = JSON.stringify(nativeSourceStyle);
   const contentWidth = codeWordBreak
     ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
     : NATIVE_SOURCE_CONTENT_WIDTH;
@@ -243,10 +239,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const foreground = useUniwindTheme()["--color-foreground"];
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
-  const selectableTokens = useMemo(
-    () => (props.selectable ? boundedSelectableSourceTokens(tokens) : null),
-    [props.selectable, tokens],
-  );
+  const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
@@ -263,18 +256,15 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     return () => cancelAnimationFrame(frame);
   }, [props.path, targetIndex]);
 
-  const renderLine = useCallback(
-    ({ item, index }: { item: string; index: number }) => (
-      <HighlightedSourceLine
-        codeSurface={codeSurface}
-        index={index}
-        line={item}
-        tokens={tokens?.[index] ?? null}
-        highlighted={index === targetIndex}
-        wordBreak={codeWordBreak}
-      />
-    ),
-    [codeSurface, codeWordBreak, targetIndex, tokens],
+  const renderLine = ({ item, index }: { item: string; index: number }) => (
+    <HighlightedSourceLine
+      codeSurface={codeSurface}
+      index={index}
+      line={item}
+      tokens={tokens?.[index] ?? null}
+      highlighted={index === targetIndex}
+      wordBreak={codeWordBreak}
+    />
   );
 
   // On iOS `uiTextView` renders a real `UITextView`, which selects across every line,
