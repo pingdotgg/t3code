@@ -102,15 +102,39 @@ describe("composerSubmissionIntentForKey", () => {
       metaKey: platform === "MacIntel",
       ctrlKey: platform !== "MacIntel",
     };
-    for (const sendShortcut of ["enter", "mod-enter", "mod-enter-multiline"] as const) {
-      const running = { ...input, platform, sendShortcut, prompt: "two\nlines", isRunning: true };
+    for (const [sendShortcut, prompt, requiresModifier] of [
+      ["enter", "one line", false],
+      ["enter", "two\nlines", false],
+      ["mod-enter", "one line", true],
+      ["mod-enter", "two\nlines", true],
+      ["mod-enter-multiline", "one line", false],
+      ["mod-enter-multiline", "two\nlines", true],
+    ] as const) {
+      const running = { ...input, platform, sendShortcut, prompt, isRunning: true };
       const intent = composerSubmissionIntentForKey({ ...running, event: modEnter });
-      expect(intent).toBe("alternate");
+      expect(intent).toBe(requiresModifier ? "foreground" : "alternate");
+      const alternateIntent = composerSubmissionIntentForKey({
+        ...running,
+        event: { ...modEnter, shiftKey: requiresModifier },
+      });
+      expect(alternateIntent).toBe("alternate");
+      expect(composerSubmissionIntentForKey({ ...running, event: enter })).toBe(
+        requiresModifier ? null : "foreground",
+      );
       for (const activeTurnDefault of ["queue", "steer"] as const) {
         expect(
           resolveComposerDispatchMode({
             running: true,
             alternateModifier: intent === "alternate",
+            activeTurnDefault,
+          }),
+        ).toBe(
+          requiresModifier ? activeTurnDefault : activeTurnDefault === "queue" ? "steer" : "queue",
+        );
+        expect(
+          resolveComposerDispatchMode({
+            running: true,
+            alternateModifier: alternateIntent === "alternate",
             activeTurnDefault,
           }),
         ).toBe(activeTurnDefault === "queue" ? "steer" : "queue");
@@ -137,6 +161,7 @@ describe("composerSubmissionIntentForKey", () => {
           ...input,
           platform,
           sendShortcut,
+          prompt,
           isDraftThread: true,
           event: modEnter,
         }),
@@ -155,6 +180,28 @@ describe("composerSubmissionIntentForKey", () => {
         event: { ...enter, ctrlKey: true, shiftKey: true },
       }),
     ).toBeNull();
+  });
+
+  it("honors the send preference with an existing install's saved alternate binding", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        {
+          key: "mod+enter",
+          command: "composer.sendAlternate",
+          when: "composerFocus && turnRunning",
+        },
+      ]),
+    );
+    const running = { ...input, keybindings, isRunning: true, sendShortcut: "mod-enter" as const };
+    expect(composerSubmissionIntentForKey({ ...running, event: { ...enter, ctrlKey: true } })).toBe(
+      "foreground",
+    );
+    expect(
+      composerSubmissionIntentForKey({
+        ...running,
+        event: { ...enter, ctrlKey: true, shiftKey: true },
+      }),
+    ).toBe("alternate");
   });
 
   it("does not start a background thread with the queued-message shortcut", () => {
@@ -186,54 +233,64 @@ describe("composerSubmissionIntentForKey", () => {
     ).toBe("background");
   });
 
-  it("uses remapped keys and removes the old action bindings", () => {
-    const keybindings = mergeWithDefaultKeybindings(
-      compileResolvedKeybindingsConfig([
-        {
-          key: "alt+q",
-          command: "composer.sendAlternate",
-          when: "composerFocus && turnRunning",
-        },
-        {
-          key: "alt+b",
-          command: "composer.sendBackground",
-          when: "composerFocus && draftThreadRoute",
-        },
-      ]),
-    );
-    const custom = { ...input, keybindings };
-    expect(
-      composerSubmissionIntentForKey({
-        ...custom,
-        isRunning: true,
-        event: { ...enter, key: "q", altKey: true },
-      }),
-    ).toBe("alternate");
-    expect(
-      composerSubmissionIntentForKey({
-        ...custom,
-        isDraftThread: true,
-        event: { ...enter, key: "b", altKey: true },
-      }),
-    ).toBe("background");
-    expect(
-      composerSubmissionIntentForKey({
-        ...custom,
-        isRunning: true,
-        event: { ...enter, ctrlKey: true },
-      }),
-    ).toBe("foreground");
-    expect(
-      composerSubmissionIntentForKey({
-        ...custom,
-        isDraftThread: true,
-        event: { ...enter, ctrlKey: true, shiftKey: true },
-      }),
-    ).toBeNull();
-    expect(
-      composerSubmissionIntentForKey({ ...custom, event: { ...enter, key: "b", altKey: true } }),
-    ).toBeNull();
-  });
+  it.each(["enter", "mod-enter", "mod-enter-multiline"] as const)(
+    "uses remapped keys and removes the old action bindings with %s",
+    (sendShortcut) => {
+      const keybindings = mergeWithDefaultKeybindings(
+        compileResolvedKeybindingsConfig([
+          {
+            key: "alt+q",
+            command: "composer.sendAlternate",
+            when: "composerFocus && turnRunning",
+          },
+          {
+            key: "alt+b",
+            command: "composer.sendBackground",
+            when: "composerFocus && draftThreadRoute",
+          },
+        ]),
+      );
+      const custom = { ...input, keybindings, sendShortcut, prompt: "two\nlines" };
+      expect(
+        composerSubmissionIntentForKey({
+          ...custom,
+          isRunning: true,
+          event: { ...enter, key: "q", altKey: true },
+        }),
+      ).toBe("alternate");
+      expect(
+        composerSubmissionIntentForKey({
+          ...custom,
+          isDraftThread: true,
+          event: { ...enter, key: "b", altKey: true },
+        }),
+      ).toBe("background");
+      expect(
+        composerSubmissionIntentForKey({
+          ...custom,
+          isRunning: true,
+          event: { ...enter, ctrlKey: true },
+        }),
+      ).toBe("foreground");
+      expect(
+        composerSubmissionIntentForKey({
+          ...custom,
+          isDraftThread: true,
+          event: { ...enter, ctrlKey: true, shiftKey: true },
+        }),
+      ).toBeNull();
+      expect(
+        composerSubmissionIntentForKey({
+          ...custom,
+          isRunning: true,
+          event: { ...enter, ctrlKey: true, shiftKey: true },
+        }),
+      ).toBeNull();
+      expect(
+        composerSubmissionIntentForKey({ ...custom, event: { ...enter, key: "b", altKey: true } }),
+      ).toBeNull();
+    },
+  );
 
   it.each([
     { isMobileViewport: true },

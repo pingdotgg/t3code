@@ -1454,6 +1454,48 @@ describe("composer and pull request shortcuts", () => {
   ] as const;
 
   it.each(["MacIntel", "Win32", "Linux"])(
+    "reserves the alternate send chord for the focused composer on %s",
+    (platform) => {
+      const modifier = {
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      };
+      const shiftedEnter = event({ key: "Enter", shiftKey: true, ...modifier });
+      for (const composerRequiresModifier of [false, true]) {
+        const context = {
+          composerFocus: true,
+          turnRunning: true,
+          composerRequiresModifier,
+        };
+        assert.strictEqual(
+          resolveShortcutCommand(shiftedEnter, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context,
+          }),
+          composerRequiresModifier ? "composer.sendAlternate" : "thread.steerQueuedMessage",
+        );
+        assert.strictEqual(
+          shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "composer.sendAlternate", {
+            platform,
+            context,
+          }),
+          formatShortcutLabel(
+            modShortcut("enter", { shiftKey: composerRequiresModifier }),
+            platform,
+          ),
+        );
+        assert.strictEqual(
+          resolveShortcutCommand(shiftedEnter, DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context: { ...context, composerFocus: false },
+          }),
+          "thread.steerQueuedMessage",
+        );
+      }
+    },
+  );
+
+  it.each(["MacIntel", "Win32", "Linux"])(
     "separates queued steering and background start on %s",
     (platform) => {
       const modifier = {
