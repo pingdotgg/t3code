@@ -65,6 +65,7 @@ import type {
 } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
+import { ProviderDriverError } from "./Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -1866,12 +1867,6 @@ it.layer(
           slashCommands: [{ name: "project" }],
           skills: [{ name: "project", path: "/workspace/SKILL.md", enabled: true }],
         } as const satisfies ServerProvider;
-        const pendingScopedProvider = {
-          ...scopedProvider,
-          status: "error",
-          installed: false,
-          slashCommands: [],
-        } as const satisfies ServerProvider;
         const snapshotCalls = yield* Ref.make(0);
         const scopedResult = yield* Ref.make<ProviderWorkspaceSnapshot>({
           ...scopedProvider,
@@ -1884,7 +1879,7 @@ it.layer(
           readonly started: Deferred.Deferred<void>;
           readonly release: Deferred.Deferred<void>;
         } | null>(null);
-        const returnPendingSnapshot = yield* Ref.make(true);
+        const failScan = yield* Ref.make(true);
         const probeStarted = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
         const makeInstance = (
@@ -1920,7 +1915,13 @@ it.layer(
         const firstInstance = makeInstance(machineProvider, () =>
           Effect.gen(function* () {
             yield* Ref.update(snapshotCalls, (count) => count + 1);
-            if (yield* Ref.get(returnPendingSnapshot)) return pendingScopedProvider;
+            if (yield* Ref.get(failScan)) {
+              return yield* new ProviderDriverError({
+                driver,
+                instanceId,
+                detail: "The workspace scan failed.",
+              });
+            }
             yield* Deferred.succeed(probeStarted, undefined);
             yield* Deferred.await(releaseProbe);
             const result = yield* Ref.get(scopedResult);
@@ -1977,7 +1978,7 @@ it.layer(
           const registry = yield* ProviderRegistry.ProviderRegistry;
           yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
           assert.strictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, undefined);
-          yield* Ref.set(returnPendingSnapshot, false);
+          yield* Ref.set(failScan, false);
           const workspaceUpdate = yield* registry.streamChanges.pipe(
             Stream.runHead,
             Effect.forkChild,
@@ -2085,6 +2086,138 @@ it.layer(
           }
           assert.strictEqual(rebuilt[0]?.checkedAt, rebuiltProvider.checkedAt);
           assert.strictEqual(rebuilt[0]?.workspaceSnapshots, undefined);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("publishes workspace skills while machine health is in error", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
+        const healthyProvider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [COMPACT_SLASH_COMMAND],
+          skills: [],
+        } as const satisfies ServerProvider;
+        // Codex's account check failed; its skill scan did not.
+        const unhealthyProvider = {
+          ...healthyProvider,
+          status: "error",
+          auth: { status: "unknown" },
+          message: "Codex app-server provider probe failed: unauthorized (401).",
+          slashCommands: [],
+        } as const satisfies ServerProvider;
+        const firstSkills = [{ name: "first", path: "/workspace/first/SKILL.md", enabled: true }];
+        const laterSkills = [{ name: "later", path: "/workspace/later/SKILL.md", enabled: true }];
+        const scanResult = yield* Ref.make<ProviderWorkspaceSnapshot>({
+          ...healthyProvider,
+          skills: firstSkills,
+        });
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: { driverKind: driver, continuationKey: "codex:instance:codex" },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Effect.succeed(unhealthyProvider),
+            refresh: Effect.succeed(unhealthyProvider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd: () => Ref.get(scanResult),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-unhealthy-workspace-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const workspaceOf = Effect.map(
+            registry.getProviders,
+            (providers) => providers[0]?.workspaceSnapshots?.[0],
+          );
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.deepStrictEqual((yield* workspaceOf)?.slashCommands, [COMPACT_SLASH_COMMAND]);
+
+          // An expired scan runs while the account check fails: the skills are
+          // current, but commands that ride on the health check are unknown.
+          yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS);
+          yield* Ref.set(scanResult, { ...unhealthyProvider, skills: laterSkills });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          const unhealthy = yield* workspaceOf;
+          assert.deepStrictEqual(unhealthy?.skills, laterSkills);
+          assert.deepStrictEqual(unhealthy?.slashCommands, [COMPACT_SLASH_COMMAND]);
+          assert.strictEqual(unhealthy?.slashCommandsPending, true);
+          const provider = (yield* registry.getProviders)[0];
+          assert.strictEqual(provider?.status, "error");
+          assert.strictEqual(provider?.message, unhealthyProvider.message);
+
+          // A pending entry is rescanned on the next request; an empty scan
+          // removes the skills.
+          yield* Ref.set(scanResult, { ...unhealthyProvider, skills: [] });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          assert.deepStrictEqual((yield* workspaceOf)?.skills, []);
+
+          // A driver that discovers its own commands reports them even while
+          // health is in error.
+          const discoveredCommand = { name: "review", description: "Review changes" };
+          yield* Ref.set(scanResult, {
+            ...unhealthyProvider,
+            slashCommands: [discoveredCommand],
+            slashCommandsPending: false,
+          });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          const discovered = yield* workspaceOf;
+          assert.deepStrictEqual(discovered?.slashCommands, [discoveredCommand]);
+          assert.strictEqual(discovered?.slashCommandsPending, undefined);
+
+          // Once health recovers, the next scan restores the full entry.
+          yield* TestClock.adjust(PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS);
+          yield* Ref.set(scanResult, { ...healthyProvider, skills: laterSkills });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" });
+          const recovered = yield* workspaceOf;
+          assert.deepStrictEqual(recovered?.skills, laterSkills);
+          assert.deepStrictEqual(recovered?.slashCommands, [COMPACT_SLASH_COMMAND]);
+          assert.strictEqual(recovered?.slashCommandsPending, undefined);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
