@@ -29,7 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -115,8 +115,12 @@ const layerService = (input: {
   readonly prefix: string;
   readonly home: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
-  readonly onRatesFetch?: () => void;
+  readonly onRatesFetch?: (request: HttpClientRequest.HttpClientRequest) => void;
   readonly ratesDocument?: unknown;
+  readonly ratesStatus?: () => number;
+  readonly ratesResponse?: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<Response, HttpClientError.HttpClientError>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
 }) =>
@@ -137,9 +141,18 @@ const layerService = (input: {
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.sync(() => {
-            input.onRatesFetch?.();
-            return HttpClientResponse.fromWeb(request, Response.json(input.ratesDocument ?? {}));
+          Effect.suspend(() => {
+            input.onRatesFetch?.(request);
+            const response = input.ratesResponse
+              ? input.ratesResponse(request)
+              : Effect.succeed(
+                  Response.json(input.ratesDocument ?? {}, {
+                    status: input.ratesStatus?.() ?? 200,
+                  }),
+                );
+            return response.pipe(
+              Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+            );
           }),
         ),
       ),
@@ -1834,7 +1847,7 @@ describe("UsageService", () => {
         { concurrency: 2 },
       );
       assert.deepStrictEqual(first, second);
-      assert.strictEqual(ratesFetches, 1);
+      assert.strictEqual(ratesFetches, 2);
 
       yield* service.readSummary(WINDOW);
       assert.strictEqual(ratesFetches, 2);
@@ -1878,6 +1891,228 @@ describe("UsageService", () => {
       assert.strictEqual(refreshed.status, "fresh");
       assert.strictEqual(refreshed.knownModels, 1);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("preserves cached estimates when both pricing downloads fail and recovers", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      let status = 200;
+      const requests: string[] = [];
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-failure-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+            },
+            ratesStatus: () => status,
+            onRatesFetch: (request) => requests.push(request.url),
+          }),
+        ),
+      );
+      const first = yield* service.readSummary(WINDOW);
+      yield* TestClock.adjust(Duration.minutes(2));
+      status = 503;
+
+      const failed = yield* service.refreshRates;
+      assert.strictEqual(failed.status, "cached");
+      assert.strictEqual(failed.fetchedAt, first.pricing.fetchedAt);
+      assert.strictEqual(requests.length, 3);
+      assert.strictEqual(
+        requests[2],
+        "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main",
+      );
+      const cached = yield* service.readSummary(WINDOW);
+      assert.deepStrictEqual(cached.buckets, first.buckets);
+
+      status = 200;
+      yield* TestClock.adjust(Duration.minutes(1));
+      const recovered = yield* service.refreshRates;
+      assert.strictEqual(recovered.status, "fresh");
+      assert.notStrictEqual(recovered.fetchedAt, first.pricing.fetchedAt);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live.each(["network", "http", "invalidJson", "empty"] as const)(
+    "recovers pricing through the GitHub API after a %s failure",
+    (failure) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+        const requests: HttpClientRequest.HttpClientRequest[] = [];
+        const ratesDocument = {
+          "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+        };
+        const serviceLayer = layerService({
+          prefix: `usage-service-rates-fallback-${failure}-test`,
+          home,
+          settings,
+          onRatesFetch: (request) => requests.push(request),
+          ratesResponse: (request) => {
+            if (request.url.startsWith("https://api.github.com/")) {
+              return Effect.succeed(Response.json(ratesDocument));
+            }
+            if (failure === "network") {
+              return Effect.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.TransportError({
+                    request,
+                    cause: new Error("getaddrinfo ENOTFOUND raw.githubusercontent.com"),
+                  }),
+                }),
+              );
+            }
+            return Effect.succeed(
+              failure === "invalidJson"
+                ? new Response("not JSON")
+                : Response.json({}, { status: failure === "http" ? 503 : 200 }),
+            );
+          },
+        });
+        const service = yield* UsageService.make.pipe(Effect.provide(serviceLayer));
+
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(summary.pricing.status, "fresh");
+        assert.strictEqual(summary.pricing.knownModels, 1);
+        assert.closeTo(summary.buckets[0]?.costUsd ?? -1, 0.00035, 1e-12);
+        assert.deepStrictEqual(
+          requests.map((request) => request.url),
+          [
+            "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+            "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main",
+          ],
+        );
+        assert.strictEqual(requests[1]?.headers.accept, "application/vnd.github.raw+json");
+
+        const restarted = yield* UsageService.make.pipe(Effect.provide(serviceLayer));
+        const cached = yield* restarted.readSummary(WINDOW);
+        assert.strictEqual(cached.pricing.status, "cached");
+        assert.deepStrictEqual(cached.buckets, summary.buckets);
+        assert.strictEqual(requests.length, 2);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("tries the GitHub API after the primary pricing request times out", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const primaryStarted = yield* Deferred.make<void>();
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-rates-timeout-test",
+            home,
+            settings,
+            ratesResponse: (request) =>
+              request.url.startsWith("https://api.github.com/")
+                ? Effect.succeed(
+                    Response.json({
+                      "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+                    }),
+                  )
+                : Deferred.succeed(primaryStarted, undefined).pipe(Effect.andThen(Effect.never)),
+          }),
+        ),
+      );
+      const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
+      yield* Deferred.await(primaryStarted);
+      yield* TestClock.adjust(Duration.seconds(10));
+      const pricing = yield* Fiber.join(refresh);
+      assert.strictEqual(pricing.status, "fresh");
+      assert.strictEqual(pricing.knownModels, 1);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("keeps pricing unavailable when neither download has usable rates", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(layerService({ prefix: "usage-service-rates-empty-test", home, settings })),
+      );
+      const pricing = yield* service.refreshRates;
+      assert.strictEqual(pricing.status, "unavailable");
+      assert.isNull(pricing.fetchedAt);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live.each([false, true])(
+    "throttles failed pricing loads from completion with cached rates: %s",
+    (hasCachedRates) =>
+      Effect.gen(function* () {
+        const { settings, home } = yield* setup;
+        const primaryStarted = yield* Deferred.make<void>();
+        const fallbackStarted = yield* Deferred.make<void>();
+        let responding = true;
+        let requests = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-rates-retry-floor-test",
+              home,
+              settings,
+              onRatesFetch: () => {
+                requests += 1;
+              },
+              ratesResponse: (request) =>
+                responding
+                  ? Effect.succeed(
+                      Response.json({
+                        "claude-fable-5": {
+                          input_cost_per_token: 1e-5,
+                          output_cost_per_token: 5e-5,
+                        },
+                      }),
+                    )
+                  : Deferred.succeed(
+                      request.url.startsWith("https://api.github.com/")
+                        ? fallbackStarted
+                        : primaryStarted,
+                      undefined,
+                    ).pipe(Effect.andThen(Effect.never)),
+            }),
+          ),
+        );
+        let fetchedAt: string | null = null;
+        if (hasCachedRates) {
+          fetchedAt = (yield* service.refreshRates).fetchedAt;
+          yield* TestClock.adjust(Duration.hours(24));
+        }
+        responding = false;
+        const refresh = yield* service.refreshRates.pipe(Effect.forkChild);
+        yield* Deferred.await(primaryStarted);
+        yield* TestClock.adjust(Duration.seconds(10));
+        yield* Deferred.await(fallbackStarted);
+        yield* TestClock.adjust(Duration.seconds(10));
+        const failed = yield* Fiber.join(refresh);
+        const expectedStatus = hasCachedRates ? "cached" : "unavailable";
+        assert.strictEqual(failed.status, expectedStatus);
+        assert.strictEqual(failed.fetchedAt, fetchedAt);
+        const requestsAfterFailure = requests;
+        assert.strictEqual(requestsAfterFailure, hasCachedRates ? 3 : 2);
+
+        responding = true;
+        const [immediate, summary] = yield* Effect.all(
+          [service.refreshRates, service.readSummary(WINDOW)],
+          { concurrency: 2 },
+        );
+        assert.strictEqual(immediate.status, expectedStatus);
+        assert.strictEqual(summary.pricing.status, expectedStatus);
+        assert.strictEqual(requests, requestsAfterFailure);
+        yield* TestClock.adjust(Duration.seconds(59));
+        const coolingDown = yield* service.refreshRates;
+        assert.strictEqual(coolingDown.status, expectedStatus);
+        assert.strictEqual(coolingDown.fetchedAt, fetchedAt);
+        assert.strictEqual(requests, requestsAfterFailure);
+
+        yield* TestClock.adjust(Duration.seconds(1));
+        const recovered = yield* service.refreshRates;
+        assert.strictEqual(recovered.status, "fresh");
+        assert.strictEqual(recovered.knownModels, 1);
+        assert.notStrictEqual(recovered.fetchedAt, fetchedAt);
+        assert.strictEqual(requests, requestsAfterFailure + 1);
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("does not orphan an in-flight scan when its first caller is interrupted", () =>
