@@ -14,6 +14,9 @@ const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
 export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
+// Android reading width for the thread feed, composer, and full-width thread list.
+// Phones are narrower; foldables in portrait and the keyboard-open split view are not.
+export const ANDROID_READING_MAX_WIDTH = 640;
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
 
@@ -136,26 +139,18 @@ export interface VerticalHinge {
   readonly width: number;
 }
 
-/**
- * Moves the list/detail split onto a book-posture hinge so neither pane straddles the crease.
- * `leadingWidth` is chrome left of the list pane, such as the Android navigation rail.
- */
+/** Moves the list/detail split onto a book-posture hinge so neither pane straddles the crease. */
 export function alignListPaneToHinge(input: {
   readonly layout: Layout;
   readonly hinge: VerticalHinge | null;
   readonly viewportWidth: number;
-  readonly leadingWidth: number;
 }): Layout {
   const { layout, hinge } = input;
   if (!hinge || !layout.usesSplitView) return layout;
-  const listPaneWidth = hinge.x - input.leadingWidth;
-  if (
-    listPaneWidth < SPLIT_SIDEBAR_MIN_WIDTH ||
-    input.viewportWidth - hinge.x - hinge.width < 320
-  ) {
+  if (hinge.x < SPLIT_SIDEBAR_MIN_WIDTH || input.viewportWidth - hinge.x - hinge.width < 320) {
     return layout;
   }
-  return { ...layout, listPaneWidth, listPaneGap: hinge.width };
+  return { ...layout, listPaneWidth: hinge.x, listPaneGap: hinge.width };
 }
 
 /**

@@ -2,7 +2,9 @@ import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
   androidWorkspaceNavigationState,
+  resetAndroidWorkspace,
   type AndroidWorkspaceDestination,
+  type AndroidWorkspaceResetAction,
 } from "./android-workspace-navigation";
 
 const require = NodeModule.createRequire(import.meta.url);
@@ -182,5 +184,48 @@ describe("Android workspace navigation", () => {
     expect(names(state)).toEqual(["Home"]);
     expect(state.routes[0]?.key).toBe(previous.routes[0]?.key);
     expect(state.index).toBe(0);
+  });
+
+  it("resets the root stack when a nested Settings stack has focus", () => {
+    const root = apply(router.getInitialState(options), StackActions.push("SettingsSheet"));
+    const settings = router.getInitialState({
+      ...options,
+      routeNames: ["SettingsContent", "SettingsEnvironments"],
+    });
+    const actions: AndroidWorkspaceResetAction[] = [];
+    const rootNavigation = {
+      dispatch: () => undefined,
+      getParent: () => undefined,
+      getState: () => root,
+    };
+    resetAndroidWorkspace(
+      {
+        dispatch: (action) => actions.push(action),
+        getParent: () => rootNavigation,
+        getState: () => settings,
+      },
+      thread,
+    );
+    const [action] = actions;
+    expect(action?.target).toBe(root.key);
+    expect(names(apply(root, action!))).toEqual(["Home", "Thread"]);
+  });
+
+  it("resets from the navigation container before any navigation action", () => {
+    const root = router.getInitialState(options);
+    const actions: AndroidWorkspaceResetAction[] = [];
+    // The container only learns the root state after the first action.
+    resetAndroidWorkspace(
+      {
+        dispatch: (action) => actions.push(action),
+        getParent: () => undefined,
+        getState: () => undefined,
+        getRootState: () => root,
+      },
+      thread,
+    );
+    const [action] = actions;
+    expect(action?.target).toBe(root.key);
+    expect(names(apply(root, action!))).toEqual(["Home", "Thread"]);
   });
 });

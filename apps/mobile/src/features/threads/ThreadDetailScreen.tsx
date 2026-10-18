@@ -97,7 +97,11 @@ import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
-import { CHAT_CONTENT_MAX_WIDTH, type LayoutVariant } from "../../lib/layout";
+import {
+  ANDROID_READING_MAX_WIDTH,
+  CHAT_CONTENT_MAX_WIDTH,
+  type LayoutVariant,
+} from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
@@ -768,7 +772,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const showContent = props.showContent ?? true;
   const layoutVariant = props.layoutVariant ?? "compact";
   const isSplitLayout = layoutVariant === "split";
-  const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
+  const contentMaxWidth =
+    Platform.OS === "android"
+      ? ANDROID_READING_MAX_WIDTH
+      : isSplitLayout
+        ? CHAT_CONTENT_MAX_WIDTH
+        : undefined;
   const providerSubagentProvider = props.serverConfig?.providers.find(
     (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
   );
