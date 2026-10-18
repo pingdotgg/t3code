@@ -175,7 +175,7 @@ export const make = Effect.gen(function* () {
   const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
 
   const sweep = Effect.gen(function* () {
-    const mode = config.managedEndpointCleanupMode ?? "off";
+    const mode = config.managedEndpointCleanupMode ?? "enabled";
     const legacyMode = config.legacyManagedEndpointCleanupMode ?? "off";
     const namespace = config.managedEndpointNamespace;
     if ((mode === "off" && legacyMode === "off") || !namespace) {

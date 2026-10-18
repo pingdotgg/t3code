@@ -70,17 +70,11 @@ reconciles that intent. CLI logout removes the stored cloud credential and
 disables exposure without uninstalling the environment's background service.
 
 Managed allocations belong to a user/environment pair. Provisioning checkpoints
-external tunnel and DNS resources so retries can reconcile partial work. A
-normal shutdown of a CLI-managed link releases its tunnel to avoid paying for
-an idle resource, retaining the hostname reservation for the next startup.
-It also retains the allocation record so the environment remains "offline"
-rather than becoming "not authorized".
-
-Two cases must retain the tunnel across shutdown. A link installed through a
-client has no startup provisioning path and depends on its stored connector
-token. An update handoff immediately starts a replacement server, and replacing
-the tunnel would add routing propagation delay to every update. These exceptions
-belong to [shutdown handling](../../apps/server/src/cloud/CloudLink.ts).
+external tunnel and DNS resources so retries can reconcile partial work.
+Server shutdown stops the connector but keeps the tunnel and its stored config,
+so restarts reconnect without provisioning or routing propagation. Explicit
+unlink removes the link and tunnel. The relay reclaims tunnels that remain
+offline after the grace period below.
 
 Release and unlink claim the allocation generation before deleting external
 resources. A delayed cleanup must not delete a tunnel reused by a concurrent
@@ -94,7 +88,7 @@ teardown retains enough state to retry. See the
 Cloudflare bills a tunnel whether or not a connector is attached, so a laptop
 that sleeps with a linked environment leaves a paid tunnel behind. The relay's
 five-minute maintenance job can reclaim those tunnels. `RELAY_TUNNEL_CLEANUP_MODE`
-selects `off`, `dry-run`, or `enabled`, with `off` as the default. The mode is
+selects `off`, `dry-run`, or `enabled`, with `enabled` as the default. The mode is
 read at deploy time, so changing it means a relay deploy, not a variable flip.
 A candidate is a same-stage tunnel that Cloudflare reports down for at least
 five minutes, or one that never connected and is at least an hour old. The
