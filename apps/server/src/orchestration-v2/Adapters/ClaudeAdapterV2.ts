@@ -7307,8 +7307,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const parentToolUseId = message.parent_tool_use_id;
             const snapshotModel =
               typeof message.message.model === "string" ? message.message.model.trim() : "";
+            // Claude's own notices (a usage limit, an API error) carry
+            // "<synthetic>", which says nothing about the subagent's model.
             const model =
-              snapshotModel.length === 0
+              snapshotModel.length === 0 || snapshotModel === "<synthetic>"
                 ? undefined
                 : canonicalClaudeSubagentModel(subagentModelCatalog, snapshotModel);
             if (parentToolUseId !== null && model !== undefined) {
