@@ -24,13 +24,11 @@ const KNOWN_BAILOUTS: Record<string, string> = {
   "src/features/terminal/ThreadTerminalRouteScreen.tsx": "ref read during render",
   "src/features/threads/PendingUserInputCard.tsx": "mutates a frozen value",
   "src/features/threads/ThreadArrangementSheet.tsx": "ref read during render",
-  "src/features/threads/ThreadFeed.tsx": "ref read during render, throw inside try, try/finally",
   "src/features/voice-input/VoiceInputProvider.tsx": "ref read during render",
   "src/features/voice-input/useVoiceInputController.ts": "ref read during render",
   "src/native/StackHeader.tsx": "ref read during render",
   "src/native/T3ComposerEditor.ios.tsx": "ref read during render",
   "src/native/T3ComposerEditor.native.tsx": "ref read during render",
-  "src/state/use-thread-selection.ts": "ref read during render",
 };
 
 // Caller flags Metro passes for an iOS release bundle. supportsReactCompiler is
