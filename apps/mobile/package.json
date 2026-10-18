@@ -41,6 +41,7 @@
     "config:prod": "APP_VARIANT=production expo config",
     "profile:android:hermes": "mkdir -p profiles/review && react-native profile-hermes profiles/review",
     "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
+    "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "test": "vp test run --config ../../vite.config.ts --dir .",
     "typecheck": "tsc-rs --noEmit"
@@ -141,6 +142,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
+    "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@pierre/trees": "1.0.0-beta.6",
     "@types/mdast": "^4.0.4",
