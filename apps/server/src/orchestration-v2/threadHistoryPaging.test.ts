@@ -718,6 +718,41 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
   });
 
+  it("keeps agent-only turns visible when checkpoint file lists fill the byte budget", () => {
+    const items = Array.from({ length: 3 }, (_, turn) => {
+      const first = makeRow(turn * 5);
+      const prompt = {
+        ...first,
+        item: {
+          ...first.item,
+          type: "user_message" as const,
+          createdBy: "agent" as const,
+          creationSource: "provider" as const,
+          inputIntent: "turn_start" as const,
+          messageId: MessageId.make(`agent-prompt-${turn}`),
+          text: `Step ${turn}`,
+          attachments: [],
+        },
+      } as OrchestrationV2ProjectedTurnItem;
+      return [prompt, ...Array.from({ length: 4 }, (_, index) => makeRow(turn * 5 + index + 1))];
+    }).flat();
+    const files = Array.from(
+      { length: 15_000 },
+      (_, index) =>
+        `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
+    );
+    const projection = {
+      ...makeProjection(items),
+      checkpoints: [{ id: "checkpoint-1", files }],
+    } as unknown as ReturnType<typeof makeProjection>;
+
+    const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
+
+    expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
+    expect(bounded.hasMoreHistory).toBe(false);
+    expect(bounded.payloadBudgetExceeded).toBe(true);
+  });
+
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {
     const detail = "Implement the historical plan exactly.\n".repeat(1_000);
     const item = {
