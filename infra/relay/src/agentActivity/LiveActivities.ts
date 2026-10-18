@@ -140,6 +140,26 @@ export const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const updatedAt = DateTime.formatIso(yield* DateTime.now);
         const registration = input.registration;
+        const [current] = yield* db
+          .select({
+            activityPushToken: relayLiveActivities.activityPushToken,
+            remoteStartedAt: relayLiveActivities.remoteStartedAt,
+          })
+          .from(relayLiveActivities)
+          .where(
+            and(
+              eq(relayLiveActivities.userId, input.userId),
+              eq(relayLiveActivities.deviceId, registration.deviceId),
+            ),
+          );
+        // The app re-registers its current card's token on every foreground.
+        // Restamping the arming time would make that card look freshly armed,
+        // and the arming grace in ApnsDeliveries would swallow the end that
+        // the registration replay owes a card whose work is gone.
+        const armedAt =
+          (current?.activityPushToken === registration.activityPushToken
+            ? current.remoteStartedAt
+            : null) ?? updatedAt;
 
         yield* db
           .update(relayLiveActivities)
@@ -159,7 +179,7 @@ export const make = Effect.gen(function* () {
             deviceId: registration.deviceId,
             activityPushToken: registration.activityPushToken,
             remoteStartQueuedAt: null,
-            remoteStartedAt: updatedAt,
+            remoteStartedAt: armedAt,
             endedAt: null,
             lastAggregateJson: null,
             lastLiveActivityDeliveryAt: null,
@@ -171,7 +191,7 @@ export const make = Effect.gen(function* () {
             set: {
               activityPushToken: registration.activityPushToken,
               remoteStartQueuedAt: null,
-              remoteStartedAt: updatedAt,
+              remoteStartedAt: armedAt,
               endedAt: null,
               lastAggregateJson: null,
               lastLiveActivityDeliveryAt: null,
