@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import {
   SourceControlProviderError,
   SourceControlRepositoryError,
+  type GitCommandFailureReason,
   type SourceControlCloneRepositoryInput,
   type SourceControlCloneRepositoryResult,
   type SourceControlCloneProtocol,
@@ -139,6 +140,33 @@ const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]+@/gi;
 
 function redactUrlCredentials(text: string): string {
   return text.replace(URL_WITH_USERINFO, "$1");
+}
+
+/**
+ * Explains a failed first push of a published repository. The repository
+ * already exists by then, so publishing again cannot help; the user has to
+ * fix access and push. Built from fixed text and the provider's URLs only,
+ * since git's stderr can carry credentials.
+ */
+function publishPushFailureDetail(input: {
+  readonly urls: SourceControlRepositoryCloneUrls;
+  readonly remoteName: string;
+  readonly remoteUrl: string;
+  readonly reason: GitCommandFailureReason | undefined;
+}): string {
+  const created = `Created ${input.urls.nameWithOwner} and added it as remote "${input.remoteName}", but the push failed`;
+  const switchToHttps = `git remote set-url ${input.remoteName} ${input.urls.url}`;
+  const usesSsh = input.remoteUrl === input.urls.sshUrl;
+  switch (input.reason) {
+    case "authentication_failed":
+      return usesSsh
+        ? `${created} because SSH authentication was rejected. Add an SSH key to your account, or switch the remote to HTTPS with "${switchToHttps}", then push again.`
+        : `${created} because Git could not authenticate. Check your Git credentials, then push again.`;
+    case "host_key_unverified":
+      return `${created} because the host's SSH key is not trusted yet. Verify it by connecting once with ssh, or switch the remote to HTTPS with "${switchToHttps}", then push again.`;
+    default:
+      return `${created}. Fix the problem, then push again.`;
+  }
 }
 
 function selectRemoteUrl(
@@ -437,7 +465,22 @@ export const make = Effect.gen(function* () {
         };
       }
 
-      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName });
+      const pushResult = yield* git.pushCurrentBranch(input.cwd, null, { remoteName }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlRepositoryError({
+              operation: "publishRepository",
+              provider: providerKind,
+              detail: publishPushFailureDetail({
+                urls,
+                remoteName,
+                remoteUrl,
+                reason: cause.reason,
+              }),
+              cause,
+            }),
+        ),
+      );
 
       return {
         repository: toRepositoryInfo(providerKind, urls),
