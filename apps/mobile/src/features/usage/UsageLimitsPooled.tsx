@@ -24,7 +24,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
-import { useProviderColors } from "./usageProviders";
+import { usageProviderKind, useProviderColors } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
   codex: "Codex",
@@ -283,13 +283,7 @@ export function UsageLimitsSection({
                   <PoolWindowCard
                     key={`${window.kind}:${window.id}`}
                     pool={window}
-                    color={
-                      pool.driver === "claudeAgent"
-                        ? colors.claude
-                        : pool.driver === "antigravity"
-                          ? colors.antigravity
-                          : colors.codex
-                    }
+                    color={colors[usageProviderKind(pool.driver) ?? "codex"]}
                     now={now}
                     environmentIds={
                       selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]

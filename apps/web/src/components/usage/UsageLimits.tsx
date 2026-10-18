@@ -47,15 +47,10 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
 };
 
 export function barColor(driver: ServerProvider["driver"]): string {
-  const kind: UsageProviderKind | undefined =
-    driver === "codex"
-      ? "codex"
-      : driver === "claudeAgent"
-        ? "claude"
-        : driver === "antigravity"
-          ? "antigravity"
-          : undefined;
-  return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
+  const presentation = Object.values(PROVIDER_PRESENTATION).find(
+    (entry) => entry.driverKind === driver,
+  );
+  return presentation?.color ?? "var(--foreground)";
 }
 
 export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
