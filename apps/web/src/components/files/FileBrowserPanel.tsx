@@ -31,6 +31,7 @@ import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 
@@ -366,12 +367,7 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!selectedPath) return;
     const controller = new AbortController();
-    void (async () => {
-      const segments = selectedPath.split("/");
-      for (let index = 0; index < segments.length && !controller.signal.aborted; index++) {
-        await load(segments.slice(0, index).join("/"));
-      }
-    })();
+    void loadFileAncestors(selectedPath, load, { signal: controller.signal });
     return () => {
       controller.abort();
     };
