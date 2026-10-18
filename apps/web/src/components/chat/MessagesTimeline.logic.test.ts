@@ -2368,6 +2368,123 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps answered questions in their own row outside tool groups and turn folds", () => {
+    const threadId = ThreadId.make("answered-question-thread");
+    const runId = RunId.make("answered-question-run");
+    const requestId = RuntimeRequestId.make("scope-question");
+    const at = (second: number) =>
+      DateTime.makeUnsafe(new Date(Date.UTC(2026, 9, 17, 12, 0, second)).toISOString());
+    const base = (id: string, ordinal: number, second: number) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status: "completed" as const,
+      title: null,
+      startedAt: at(second),
+      completedAt: at(second),
+      updatedAt: at(second),
+    });
+    const command = (id: string, ordinal: number, second: number) => ({
+      ...base(id, ordinal, second),
+      type: "command_execution" as const,
+      input: `cat ${id}`,
+    });
+    const items = (settled: boolean) =>
+      [
+        {
+          ...base("prompt", 0, 0),
+          type: "user_message" as const,
+          messageId: MessageId.make("prompt"),
+          text: "Pick a repository",
+          attachments: [],
+          inputIntent: "turn_start" as const,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+        },
+        command("before", 1, 1),
+        {
+          ...base("question", 2, 2),
+          type: "user_input_request" as const,
+          requestId,
+          questions: [],
+          questionAnswer: {
+            requestId,
+            questionTextById: { scope: "Which repository?" },
+            answers: { scope: "The private one" },
+            attachmentsByQuestionId: {},
+          },
+        },
+        command("after", 3, 3),
+        settled
+          ? {
+              ...base("answer", 4, 5),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Done",
+              streaming: false,
+            }
+          : { ...command("running", 4, 4), status: "running" as const, completedAt: null },
+      ].map((item, position) => ({
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: item.id,
+        item,
+      }));
+    const rows = (settled: boolean, expandedRunIds?: ReadonlySet<RunId>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items(settled),
+          optimisticMessages: [],
+        }),
+        latestRun: {
+          runId,
+          status: settled ? "completed" : "running",
+          startedAt: DateTime.formatIso(at(0)),
+          completedAt: settled ? DateTime.formatIso(at(5)) : null,
+        },
+        runningRunId: settled ? null : runId,
+        isWorking: !settled,
+        activeTurnStartedAt: settled ? null : DateTime.formatIso(at(0)),
+        ...(expandedRunIds === undefined ? {} : { expandedRunIds }),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
+      timeline.map((row) =>
+        row.kind === "turn-fold"
+          ? "fold"
+          : row.kind === "message"
+            ? `${row.message.role}:${row.message.id}`
+            : row.kind === "work" || row.kind === "work-live"
+              ? `${row.kind}:${row.groupedEntries.map((entry) => entry.id).join(" + ")}`
+              : row.kind,
+      );
+
+    expect(shape(rows(true))).toEqual(["user:prompt", "fold", "work:question", "assistant:answer"]);
+    expect(shape(rows(true, new Set([runId])))).toEqual([
+      "user:prompt",
+      "fold",
+      "work:before",
+      "work:question",
+      "work:after",
+      "assistant:answer",
+    ]);
+    expect(shape(rows(false))).toEqual([
+      "user:prompt",
+      "working",
+      "work:before",
+      "work:question",
+      "work-live:after + running",
+    ]);
+  });
+
   it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
     const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
     const message = (
