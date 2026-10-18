@@ -371,16 +371,12 @@ function notifyThemeSaveFailure(): void {
   );
 }
 
-// These helpers keep "use memo" until the palette's item building moves out of this
-// component: inlined, each result reaches the returned <CommandPaletteContent> through
-// the action and thread item arrays built after the browse hooks, and the compiler
-// leaves all of them uncached.
-function useThemeCards(
-  customThemes: ReturnType<typeof useCustomThemes>,
-  environmentThemes: ReturnType<typeof useEnvironmentThemeDefinitions>,
-) {
-  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
-  "use memo";
+// Each helper reads its own source hook so the compiler caches the derived value on that
+// source. Taking the source as an argument instead leaves the helper hook-free, and the
+// compiler then treats it as a plain function and caches nothing.
+function useThemeCards() {
+  const customThemes = useCustomThemes();
+  const environmentThemes = useEnvironmentThemeDefinitions();
   const seen = new Set<string>();
   return [
     ...STANDARD_THEME_CARDS.map((card) => ({ ...card, id: null })),
@@ -394,21 +390,23 @@ function useThemeCards(
   ];
 }
 
-function useThreadContentMatchByKey(matches: ReturnType<typeof useThreadSearch>["matches"]) {
-  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
-  "use memo";
-  return new Map(
-    matches.flatMap((match) =>
+function useThreadSearchWithContentMatches(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  query: string,
+) {
+  const threadSearch = useThreadSearch(environmentIds, query);
+  const contentMatchByKey = new Map(
+    threadSearch.matches.flatMap((match) =>
       match.source === "user" || match.source === "assistant"
         ? [[threadSearchMatchKey(match), match] as const]
         : [],
     ),
   );
+  return { threadSearch, contentMatchByKey };
 }
 
-function useEnvironmentLookups(environments: ReturnType<typeof useEnvironments>["environments"]) {
-  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
-  "use memo";
+function useEnvironmentLookups() {
+  const { environments } = useEnvironments();
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
@@ -429,9 +427,8 @@ function useEnvironmentLookups(environments: ReturnType<typeof useEnvironments>[
   return { environmentLabelById, projectEnvironmentLocationById };
 }
 
-function useProjectLookups(projects: ReturnType<typeof useProjects>) {
-  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
-  "use memo";
+function useProjectLookups() {
+  const projects = useProjects();
   const projectCwdById = new Map<ProjectId, string>(
     projects.map((project) => [project.id, project.workspaceRoot]),
   );
@@ -450,25 +447,13 @@ const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({
   sidebarProjectSortOrder: settings.sidebarProjectSortOrder,
   sidebarThreadSortOrder: settings.sidebarThreadSortOrder,
 });
-type CommandPaletteClientSettings = ReturnType<typeof selectCommandPaletteClientSettings>;
 
-function useSortedProjectGroups({
-  projects,
-  projectOrder,
-  clientSettings,
-  primaryEnvironmentId,
-  environmentLabelById,
-  threads,
-}: {
-  readonly projects: ReturnType<typeof useProjects>;
-  readonly projectOrder: ReturnType<typeof useUiStateStore.getState>["projectOrder"];
-  readonly clientSettings: CommandPaletteClientSettings;
-  readonly primaryEnvironmentId: ReturnType<typeof usePrimaryEnvironmentId>;
-  readonly environmentLabelById: ReadonlyMap<EnvironmentId, string>;
-  readonly threads: ReturnType<typeof useThreadShells>;
-}) {
-  // oxlint-disable-next-line t3code/no-manual-memo -- Kept until the palette's item building moves out of this component (see above).
-  "use memo";
+function useSortedProjectGroups(environmentLabelById: ReadonlyMap<EnvironmentId, string>) {
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = {
     sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
@@ -806,7 +791,6 @@ function OpenCommandPaletteDialog(props: {
       );
     }
   };
-  const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const {
@@ -818,9 +802,7 @@ function OpenCommandPaletteDialog(props: {
     setTheme,
     setThemeHalf,
   } = useTheme();
-  const customThemes = useCustomThemes();
-  const environmentThemes = useEnvironmentThemeDefinitions();
-  const themeCards = useThemeCards(customThemes, environmentThemes);
+  const themeCards = useThemeCards();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const providersByEnvironment = useEnvironmentProviders();
   const providerEntryByEnvironmentAndInstanceId = new Map<string, ProviderInstanceEntry>(
@@ -844,8 +826,8 @@ function OpenCommandPaletteDialog(props: {
     .filter((environment) => environment.connection.phase === "connected")
     .map((environment) => environment.environmentId);
   const threadSearchQuery = currentView === null && !isActionsOnly ? deferredQuery : "";
-  const threadSearch = useThreadSearch(environmentIds, threadSearchQuery);
-  const threadContentMatchByKey = useThreadContentMatchByKey(threadSearch.matches);
+  const { threadSearch, contentMatchByKey: threadContentMatchByKey } =
+    useThreadSearchWithContentMatches(environmentIds, threadSearchQuery);
   const [browseGeneration, setBrowseGeneration] = useState(0);
   const [browseNavigation] = useState(createBrowseNavigationCoordinator);
   const [addProjectEnvironmentId, setAddProjectEnvironmentId] = useState<EnvironmentId | null>(
@@ -868,16 +850,8 @@ function OpenCommandPaletteDialog(props: {
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
-  const { environmentLabelById, projectEnvironmentLocationById } =
-    useEnvironmentLookups(environments);
-  const projectGroups = useSortedProjectGroups({
-    projects,
-    projectOrder,
-    clientSettings,
-    primaryEnvironmentId,
-    environmentLabelById,
-    threads,
-  });
+  const { environmentLabelById, projectEnvironmentLocationById } = useEnvironmentLookups();
+  const projectGroups = useSortedProjectGroups(environmentLabelById);
   const contextualProjectRef = resolveThreadActionProjectRef({
     activeDraftThread,
     activeThread: activeThread ?? undefined,
@@ -1000,7 +974,7 @@ function OpenCommandPaletteDialog(props: {
     return ensureBrowseDirectoryPath(baseDirectory);
   };
 
-  const { projectCwdById, projectByKey, projectTitleById } = useProjectLookups(projects);
+  const { projectCwdById, projectByKey, projectTitleById } = useProjectLookups();
 
   const activeThreadId = activeThread?.id;
   const supportsThreadFind =
