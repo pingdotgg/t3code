@@ -1367,9 +1367,80 @@ describe("resolveThreadStatusPill", () => {
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
   });
+
+  it("shows failed, not completed, when the unseen run failed", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestRun: { ...makeLatestRun(), status: "failed" },
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          runtime: {
+            ...baseThread.runtime,
+            status: "failed",
+            activeRunId: null,
+            lastError: "Provider turn failed.",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Failed", pulse: false });
+  });
+
+  it("shows failed for a thread nobody has opened yet", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestRun: { ...makeLatestRun(), status: "failed" },
+          lastVisitedAt: null,
+          runtime: { ...baseThread.runtime, status: "failed", activeRunId: null },
+        },
+      }),
+    ).toMatchObject({ label: "Failed" });
+  });
+
+  it("shows failed, not plan ready, when a plan run proposed a plan and then failed", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasActionableProposedPlan: true,
+          latestRun: { ...makeLatestRun(), status: "failed" },
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          runtime: { ...baseThread.runtime, status: "failed", activeRunId: null },
+        },
+      }),
+    ).toMatchObject({ label: "Failed" });
+  });
+
+  it("drops the failed pill once the failure has been seen", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestRun: { ...makeLatestRun(), status: "failed" },
+          lastVisitedAt: "2026-03-09T10:06:00.000Z",
+          runtime: { ...baseThread.runtime, status: "failed", activeRunId: null },
+        },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("resolveProjectStatusIndicator", () => {
+  it("ranks a failure above work in progress and completions", () => {
+    expect(
+      resolveProjectStatusIndicator([
+        { label: "Completed", colorClass: "", dotClass: "", pulse: false },
+        { label: "Working", colorClass: "", dotClass: "", pulse: true },
+        { label: "Failed", colorClass: "", dotClass: "", pulse: false },
+      ]),
+    ).toMatchObject({ label: "Failed" });
+  });
+
   it("returns null when no threads have a notable status", () => {
     expect(resolveProjectStatusIndicator([null, null])).toBeNull();
   });
