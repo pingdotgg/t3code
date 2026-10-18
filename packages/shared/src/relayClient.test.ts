@@ -26,6 +26,7 @@ const layerHostRuntime = (env: Record<string, string> = {}, platform: NodeJS.Pla
   Layer.mergeAll(
     Layer.succeed(HostProcess.Platform, platform),
     Layer.succeed(HostProcess.Architecture, "x64"),
+    Layer.succeed(HostProcess.Environment, env),
     ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
   );
 
@@ -457,50 +458,77 @@ describe("RelayClient", () => {
     );
   });
 
-  it.effect.skipIf(windowsHost)(
-    "observes PATH changes after the manager has been constructed",
-    () => {
-      const env = { PATH: "" };
-      return Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-cloudflared-test-",
-        });
-        const binDir = `${baseDir}/bin`;
-        const executablePath = `${binDir}/cloudflared`;
-        const manager = yield* RelayClient.makeCloudflaredRelayClient({
-          baseDir,
-        });
+  it.effect("observes hydrated PATH changes after the manager has been constructed", () => {
+    const platform = windowsHost ? "win32" : "linux";
+    const executableName = windowsHost ? "cloudflared.exe" : "cloudflared";
+    const configEnv = { PATH: "" };
+    const hostEnv = { PATH: "" };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-cloudflared-test-",
+      });
+      const binDir = `${baseDir}/bin`;
+      const executablePath = `${binDir}/${executableName}`;
+      const resolvedExecutablePath = windowsHost
+        ? executablePath.replaceAll("/", "\\")
+        : executablePath;
+      const manager = yield* RelayClient.makeCloudflaredRelayClient({
+        baseDir,
+      });
 
-        expect(yield* manager.resolve).toEqual({
-          status: "missing",
-          version: RelayClient.CLOUDFLARED_VERSION,
-        });
-
-        yield* fileSystem.makeDirectory(binDir);
-        yield* fileSystem.writeFileString(executablePath, "cloudflared");
-        yield* fileSystem.chmod(executablePath, 0o755);
-        env.PATH = binDir;
-
-        expect(yield* manager.resolve).toEqual({
-          status: "available",
-          executablePath,
-          source: "path",
-          version: RelayClient.CLOUDFLARED_VERSION,
-        });
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            layerHttpClient(new Uint8Array()),
-            layerSpawner([]),
-            layerHostRuntime(env),
-          ),
+      const resolveWithStaleConfig = manager.resolve.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnv({ env: configEnv }),
         ),
+        Effect.provideService(HostProcess.Environment, hostEnv),
       );
-    },
-  );
+
+      expect(yield* resolveWithStaleConfig).toEqual({
+        status: "missing",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      });
+
+      yield* fileSystem.makeDirectory(binDir);
+      yield* fileSystem.writeFileString(executablePath, "cloudflared");
+      if (!windowsHost) yield* fileSystem.chmod(executablePath, 0o755);
+      hostEnv.PATH = binDir;
+
+      expect(yield* resolveWithStaleConfig).toEqual({
+        status: "available",
+        executablePath: resolvedExecutablePath,
+        source: "path",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      });
+
+      const resolveWithOverride = manager.resolve.pipe(
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnv({
+            env: { PATH: "", T3CODE_CLOUDFLARED_PATH: executablePath },
+          }),
+        ),
+        Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      );
+      expect(yield* resolveWithOverride).toEqual({
+        status: "available",
+        executablePath,
+        source: "override",
+        version: RelayClient.CLOUDFLARED_VERSION,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          layerHttpClient(new Uint8Array()),
+          layerSpawner([]),
+          layerHostRuntime(configEnv, platform),
+        ),
+      ),
+    );
+  });
 
   describe("version selection", () => {
     const run = <A, E>(
@@ -544,6 +572,7 @@ describe("RelayClient", () => {
                   ConfigProvider.ConfigProvider,
                   ConfigProvider.fromEnv({ env }),
                 ),
+                Effect.provideService(HostProcess.Environment, env),
               ),
             ).toEqual({
               status: "available",
@@ -608,6 +637,7 @@ describe("RelayClient", () => {
                   ConfigProvider.ConfigProvider,
                   ConfigProvider.fromEnv({ env: { PATH: `${baseDir}/bin` } }),
                 ),
+                Effect.provideService(HostProcess.Environment, { PATH: `${baseDir}/bin` }),
               );
 
               expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.1.0" });
