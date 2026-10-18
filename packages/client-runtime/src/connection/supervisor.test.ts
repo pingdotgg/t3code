@@ -36,6 +36,7 @@ import {
   type SupervisorConnectionState,
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
+import { presentConnectionState } from "./presentation.ts";
 import * as EnvironmentSupervisor from "./supervisor.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import { connectionRouteId, entryWithRoutes, isLearned, mergeLearnedRoutes } from "./routes.ts";
@@ -985,6 +986,73 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("does not report a session lost while suspended as a failed connection", () =>
+    Effect.gen(function* () {
+      const allowReconnect = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 2
+            ? Deferred.await(allowReconnect).pipe(Effect.as(PREPARED_CONNECTION))
+            : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      // The OS killed the socket while the app was suspended; its close arrives
+      // before the app reports it is active again.
+      yield* harness.closeLatestSession();
+      const waiting = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      expect(presentConnectionState(waiting)).toEqual({
+        phase: "reconnecting",
+        error: null,
+        traceId: null,
+      });
+
+      yield* harness.wake("application-active");
+      const replacing = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "preparing",
+      );
+      expect(presentConnectionState(replacing).error).toBeNull();
+
+      yield* Deferred.succeed(allowReconnect, undefined);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not show an earlier setup failure while replacing a short session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Effect.fail(transient("Relay connection timed out."))
+            : attempt === 3
+              ? Effect.never
+              : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      // A long resume replaces the session before it counts as stable.
+      yield* harness.wake("application-active-reconnect");
+      const replacing = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.generation === 2,
+      );
+
+      expect(presentConnectionState(replacing).error).toBeNull();
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps escalating backoff when a newly opened session flaps", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -1245,6 +1313,7 @@ describe("EnvironmentSupervisor", () => {
         (state) => state.phase === "connecting",
       );
       expect(reconnecting.attempt).toBe(1);
+      expect(reconnecting.lastFailure).toBeNull();
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
 
       yield* Deferred.succeed(allowReconnect, undefined);
