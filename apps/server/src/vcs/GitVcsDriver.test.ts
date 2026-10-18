@@ -163,6 +163,27 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("checkpoint capture keeps the shared index a split index still uses", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-split-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["config", "core.splitIndex", "true"]);
+    yield* git(["config", "splitIndex.sharedIndexExpire", "now"]);
+    yield* git(["update-index", "--split-index"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
+    // The real index points at a sharedindex.* file. Reading it fails if the capture expired it.
+    assert.strictEqual((yield* git(["ls-files", "--cached"])).stdout, "file.txt\n");
+    assert.strictEqual((yield* git(["diff", "--cached", "--name-only"])).stdout, "file.txt\n");
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint recovery discovers nested HEAD independently of inherited GIT_DIR", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
