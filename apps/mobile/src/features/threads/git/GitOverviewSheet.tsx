@@ -14,7 +14,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../../components/ui/AppSymbol";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
 import { ScreenStack } from "react-native-screens";
@@ -112,32 +112,25 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const hasPrimaryRemote = gitStatus.data?.hasPrimaryRemote ?? false;
   const isDefaultRef = gitStatus.data?.isDefaultRef ?? false;
 
-  const menuItems = useMemo(
-    () => (isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : []),
-    [busy, gitStatus.data, hasPrimaryRemote, isRepo],
-  );
+  const menuItems = isRepo ? buildMenuItems(gitStatus.data, busy, hasPrimaryRemote) : [];
 
-  const sheetMenuItems = useMemo(
-    () =>
-      menuItems.map((item) => ({
-        item: {
-          ...item,
-          disabled: item.disabled || (!canWriteSourceControl && item.kind !== "open_pr"),
-        },
-        disabledReason:
-          !canWriteSourceControl && item.kind !== "open_pr"
-            ? "This connection cannot change source control."
-            : getGitActionDisabledReason({
-                item,
-                gitStatus: gitStatus.data,
-                isBusy: busy,
-                hasOriginRemote: hasPrimaryRemote,
-              }),
-      })),
-    [busy, canWriteSourceControl, gitStatus.data, hasPrimaryRemote, menuItems],
-  );
+  const sheetMenuItems = menuItems.map((item) => ({
+    item: {
+      ...item,
+      disabled: item.disabled || (!canWriteSourceControl && item.kind !== "open_pr"),
+    },
+    disabledReason:
+      !canWriteSourceControl && item.kind !== "open_pr"
+        ? "This connection cannot change source control."
+        : getGitActionDisabledReason({
+            item,
+            gitStatus: gitStatus.data,
+            isBusy: busy,
+            hasOriginRemote: hasPrimaryRemote,
+          }),
+  }));
 
-  const openExistingPr = useCallback(async () => {
+  const openExistingPr = async () => {
     const prUrl = gitStatus.data?.pr?.state === "open" ? gitStatus.data.pr.url : null;
     if (!prUrl) {
       Dialog.alert("No open PR", "This branch does not have an open pull request.");
@@ -146,122 +139,92 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     if (!(await openPullRequest(prUrl))) {
       Dialog.alert("Unable to open PR", "The pull request could not be opened.");
     }
-  }, [gitStatus.data, openPullRequest]);
+  };
 
-  const runActionWithPrompt = useCallback(
-    async (input: GitActionRequestInput) => {
-      if (!canWriteSourceControl) return;
-      const confirmableAction =
-        input.action === "push" ||
-        input.action === "create_pr" ||
-        input.action === "commit_push" ||
-        input.action === "commit_push_pr"
-          ? input.action
-          : null;
-      const branchName = gitStatus.data?.refName;
-      if (
-        branchName &&
-        confirmableAction &&
-        !input.featureBranch &&
-        requiresDefaultBranchConfirmation(input.action, isDefaultRef)
-      ) {
-        navigation.navigate("GitConfirm", {
-          environmentId: String(environmentId),
-          threadId: String(threadId),
-          confirmAction: confirmableAction,
-          branchName,
-          includesCommit: String(
-            input.action === "commit_push" || input.action === "commit_push_pr",
-          ),
-        });
-        return;
-      }
+  const runActionWithPrompt = async (input: GitActionRequestInput) => {
+    if (!canWriteSourceControl) return;
+    const confirmableAction =
+      input.action === "push" ||
+      input.action === "create_pr" ||
+      input.action === "commit_push" ||
+      input.action === "commit_push_pr"
+        ? input.action
+        : null;
+    const branchName = gitStatus.data?.refName;
+    if (
+      branchName &&
+      confirmableAction &&
+      !input.featureBranch &&
+      requiresDefaultBranchConfirmation(input.action, isDefaultRef)
+    ) {
+      navigation.navigate("GitConfirm", {
+        environmentId: String(environmentId),
+        threadId: String(threadId),
+        confirmAction: confirmableAction,
+        branchName,
+        includesCommit: String(input.action === "commit_push" || input.action === "commit_push_pr"),
+      });
+      return;
+    }
 
-      if (!isInspector) {
-        navigation.goBack();
-      }
-      await gitActions.onRunSelectedThreadGitAction(input);
-    },
-    [
-      canWriteSourceControl,
-      environmentId,
-      gitActions,
-      gitStatus.data,
-      isDefaultRef,
-      isInspector,
-      navigation,
-      threadId,
-    ],
-  );
+    if (!isInspector) {
+      navigation.goBack();
+    }
+    await gitActions.onRunSelectedThreadGitAction(input);
+  };
 
-  const onPressMenuItem = useCallback(
-    async (item: (typeof menuItems)[number]) => {
-      if (item.disabled) return;
-      if (item.kind === "open_pr") {
-        await openExistingPr();
-        return;
-      }
-      if (!canWriteSourceControl) return;
-      if (item.dialogAction === "commit") {
-        navigation.navigate("GitCommit", {
-          environmentId: String(environmentId),
-          threadId: String(threadId),
-        });
-        return;
-      }
-      if (item.dialogAction === "push") {
-        await runActionWithPrompt({ action: "push" });
-        return;
-      }
-      if (item.dialogAction === "create_pr") {
-        await runActionWithPrompt({ action: "create_pr" });
-      }
-    },
-    [
-      canWriteSourceControl,
-      environmentId,
-      openExistingPr,
-      navigation,
-      runActionWithPrompt,
-      threadId,
-    ],
-  );
+  const onPressMenuItem = async (item: (typeof menuItems)[number]) => {
+    if (item.disabled) return;
+    if (item.kind === "open_pr") {
+      await openExistingPr();
+      return;
+    }
+    if (!canWriteSourceControl) return;
+    if (item.dialogAction === "commit") {
+      navigation.navigate("GitCommit", {
+        environmentId: String(environmentId),
+        threadId: String(threadId),
+      });
+      return;
+    }
+    if (item.dialogAction === "push") {
+      await runActionWithPrompt({ action: "push" });
+      return;
+    }
+    if (item.dialogAction === "create_pr") {
+      await runActionWithPrompt({ action: "create_pr" });
+    }
+  };
 
-  const rowStatusDetail = useCallback(
-    (item: (typeof menuItems)[number]): string | undefined => {
-      const status = gitStatus.data;
-      if (status == null) {
-        return undefined;
-      }
-      if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
-        const fileCount = status.workingTree?.files.length ?? 0;
-        return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
-      }
-      if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
-        const ahead = status.aheadCount ?? 0;
-        return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
-      }
-      if (item.kind === "open_pr" && status.pr?.number != null) {
-        return `PR #${status.pr.number} ${status.pr.state ?? "open"}`;
-      }
+  const rowStatusDetail = (item: (typeof menuItems)[number]): string | undefined => {
+    const status = gitStatus.data;
+    if (status == null) {
       return undefined;
-    },
-    [gitStatus.data, menuItems],
-  );
+    }
+    if (item.dialogAction === "commit" && status.hasWorkingTreeChanges) {
+      const fileCount = status.workingTree?.files.length ?? 0;
+      return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+    }
+    if (item.dialogAction === "push" && (status.aheadCount ?? 0) > 0) {
+      const ahead = status.aheadCount ?? 0;
+      return `${ahead} commit${ahead === 1 ? "" : "s"} ahead`;
+    }
+    if (item.kind === "open_pr" && status.pr?.number != null) {
+      return `PR #${status.pr.number} ${status.pr.state ?? "open"}`;
+    }
+    return undefined;
+  };
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
   // Tying RefreshControl to the query's isPending flag left the spinner stuck
   // (the status query reports pending during quiet background refreshes too).
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const handleRefresh = useCallback(async () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    try {
-      await gitActions.refreshSelectedThreadGitStatus();
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [gitActions]);
+    await gitActions.refreshSelectedThreadGitStatus();
+    setIsRefreshing(false);
+  };
 
   const content = (
     <ScrollView

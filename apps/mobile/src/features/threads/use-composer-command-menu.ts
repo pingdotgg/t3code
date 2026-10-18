@@ -45,7 +45,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
@@ -206,9 +206,9 @@ export function useComposerCommandMenu({
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
-  const onSelectionChange = useCallback((nextSelection: ComposerEditorSelection) => {
+  const onSelectionChange = (nextSelection: ComposerEditorSelection) => {
     setSelection(nextSelection);
-  }, []);
+  };
   useEffect(() => {
     const inserted = ownerKey ? readComposerDraftSelection(ownerKey, draftMessage) : null;
     if (inserted) {
@@ -233,11 +233,9 @@ export function useComposerCommandMenu({
     setSelection(composerSelectionAtEnd(draftMessage));
   }, [draftMessage, ownerKey]);
 
-  const skills = useMemo(
-    () =>
-      selectedProviderStatus ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd) : [],
-    [projectCwd, selectedProviderStatus],
-  );
+  const skills = selectedProviderStatus
+    ? resolveProviderSkillsForCwd(selectedProviderStatus, projectCwd)
+    : [];
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -334,12 +332,12 @@ export function useComposerCommandMenu({
     workspaceRefreshRetry,
   ]);
 
-  const trigger = useMemo(() => {
+  const trigger = (() => {
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
     return detectComposerTrigger(draftMessage, selection.end);
-  }, [draftMessage, enabled, selection]);
+  })();
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
@@ -353,7 +351,7 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
-  const items = useMemo<ComposerCommandItem[]>(() => {
+  const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
 
     if (trigger.kind === "pull-request") {
@@ -521,132 +519,99 @@ export function useComposerCommandMenu({
     }
 
     return [];
-  }, [
-    currentThreadId,
-    environmentId,
-    threadShells,
-    hasThread,
-    hasCompactableConversation,
-    onUpdateInteractionMode,
-    pathSearch.entries,
-    pullRequestSearch.entries,
-    projectCwd,
-    selectedProviderStatus,
-    skills,
-    trigger,
-    offersUsageLimits,
-  ]);
+  })();
 
-  const onSelect = useCallback(
-    (item: ComposerCommandItem) => {
-      if (!trigger) return;
-      if (item.type === "thread") {
-        if (!ownerKey || trigger.kind !== "path") return;
-        const shell = threadShells.find(
-          (candidate) =>
-            candidate.environmentId === item.thread.environmentId &&
-            candidate.id === item.thread.threadId,
-        );
-        if (!shell) return;
-        const record = threadComposerContext(item.thread, shell.title);
-        const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
-        const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
-        if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-          Dialog.alert(
-            "Too many context items",
-            "Remove some context from the draft and try again.",
-          );
-          return;
-        }
-        const result = replaceTextRange(
-          draftMessage,
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          `${formatComposerContextReference(record)} `,
-        );
-        onChangeDraftMessage(result.text);
-        if (!alreadyAttached) {
-          const draft = getComposerDraftSnapshot(ownerKey);
-          setComposerDraftContext(ownerKey, {
-            version: 1,
-            records: [...(draft.context?.records ?? []), record],
-          });
-        }
-        setSelection({ start: result.cursor, end: result.cursor });
+  const onSelect = (item: ComposerCommandItem) => {
+    if (!trigger) return;
+    if (item.type === "thread") {
+      if (!ownerKey || trigger.kind !== "path") return;
+      const shell = threadShells.find(
+        (candidate) =>
+          candidate.environmentId === item.thread.environmentId &&
+          candidate.id === item.thread.threadId,
+      );
+      if (!shell) return;
+      const record = threadComposerContext(item.thread, shell.title);
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
         return;
       }
-      if (item.type === "pull-request") {
-        if (
-          !ownerKey ||
-          trigger.kind !== "pull-request" ||
-          !items.some((candidate) => candidate.id === item.id)
-        )
-          return;
-        const record = pullRequestComposerContext(item.pullRequest, uuidv4());
-        if (
-          (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
-          COMPOSER_CONTEXT_MAX_RECORDS
-        ) {
-          Dialog.alert(
-            "Too many context items",
-            "Remove some context from the draft and try again.",
-          );
-          return;
-        }
-        const result = replaceTextRange(
-          draftMessage,
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          `${formatComposerContextReference(record)} `,
-        );
-        onChangeDraftMessage(result.text);
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
         const draft = getComposerDraftSnapshot(ownerKey);
         setComposerDraftContext(ownerKey, {
           version: 1,
           records: [...(draft.context?.records ?? []), record],
         });
-        setSelection({ start: result.cursor, end: result.cursor });
-        return;
       }
-
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+    if (item.type === "pull-request") {
       if (
-        item.type === "provider-slash-command" &&
-        item.command.name === USAGE_LIMITS_COMMAND.name &&
-        onUsageLimits
+        !ownerKey ||
+        trigger.kind !== "pull-request" ||
+        !items.some((candidate) => candidate.id === item.id)
+      )
+        return;
+      const record = pullRequestComposerContext(item.pullRequest, uuidv4());
+      if (
+        (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
+        COMPOSER_CONTEXT_MAX_RECORDS
       ) {
-        const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
-        setSelection({ start: cleared.cursor, end: cleared.cursor });
-        onChangeDraftMessage(cleared.text);
-        onUsageLimits();
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
         return;
       }
-
-      const result = resolveComposerCommandSelection({
+      const result = replaceTextRange(
         draftMessage,
-        trigger,
-        item,
-        allowInteractionMode:
-          onUpdateInteractionMode !== undefined &&
-          selectedProviderStatus?.showInteractionModeToggle !== false,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      const draft = getComposerDraftSnapshot(ownerKey);
+      setComposerDraftContext(ownerKey, {
+        version: 1,
+        records: [...(draft.context?.records ?? []), record],
       });
       setSelection({ start: result.cursor, end: result.cursor });
-      onChangeDraftMessage(result.text);
-      if (result.interactionMode !== null) {
-        onUpdateInteractionMode?.(result.interactionMode);
-      }
-    },
-    [
+      return;
+    }
+
+    if (
+      item.type === "provider-slash-command" &&
+      item.command.name === USAGE_LIMITS_COMMAND.name &&
+      onUsageLimits
+    ) {
+      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+      onUsageLimits();
+      return;
+    }
+
+    const result = resolveComposerCommandSelection({
       draftMessage,
-      ownerKey,
-      items,
-      onChangeDraftMessage,
-      onUpdateInteractionMode,
-      onUsageLimits,
-      selectedProviderStatus?.showInteractionModeToggle,
-      threadShells,
       trigger,
-    ],
-  );
+      item,
+      allowInteractionMode:
+        onUpdateInteractionMode !== undefined &&
+        selectedProviderStatus?.showInteractionModeToggle !== false,
+    });
+    setSelection({ start: result.cursor, end: result.cursor });
+    onChangeDraftMessage(result.text);
+    if (result.interactionMode !== null) {
+      onUpdateInteractionMode?.(result.interactionMode);
+    }
+  };
 
   return {
     selection,

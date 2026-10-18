@@ -28,16 +28,7 @@ import { useNavigation, useRoute, type RouteProp } from "@react-navigation/nativ
 import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Haptics from "expo-haptics";
 import { AsyncResult } from "effect/reactivity";
-import {
-  createContext,
-  use,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, use, useEffect, useRef, useState, type ReactNode } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, TextInput, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -264,13 +255,13 @@ const ExistingThreadSettingsRouteContext =
 
 export function ExistingThreadSettingsRouteProvider(props: { readonly children: ReactNode }) {
   const [session, setSession] = useState<ExistingThreadSettingsRouteSession | null>(null);
-  const present = useCallback((nextSession: ExistingThreadSettingsRouteSession) => {
+  const present = (nextSession: ExistingThreadSettingsRouteSession) => {
     setSession(nextSession);
-  }, []);
-  const clear = useCallback((ownerId: string) => {
+  };
+  const clear = (ownerId: string) => {
     setSession((current) => (current?.ownerId === ownerId ? null : current));
-  }, []);
-  const value = useMemo(() => ({ session, present, clear }), [clear, present, session]);
+  };
+  const value = { session, present, clear };
 
   return (
     <ExistingThreadSettingsRouteContext.Provider value={value}>
@@ -339,28 +330,18 @@ function ThreadSettingsSessionProvider(
     new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
   );
   const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const providerGroups = useMemo(
-    () =>
-      manageHidden && config
-        ? groupByProvider(
-            buildModelOptions(
-              config,
-              props.selectedModel,
-              props.lockedProviderInstanceId,
-              props.projectId,
-              true,
-            ),
-          )
-        : props.providerGroups,
-    [
-      config,
-      manageHidden,
-      props.providerGroups,
-      props.selectedModel,
-      props.lockedProviderInstanceId,
-      props.projectId,
-    ],
-  );
+  const providerGroups =
+    manageHidden && config
+      ? groupByProvider(
+          buildModelOptions(
+            config,
+            props.selectedModel,
+            props.lockedProviderInstanceId,
+            props.projectId,
+            true,
+          ),
+        )
+      : props.providerGroups;
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
@@ -375,114 +356,98 @@ function ThreadSettingsSessionProvider(
     const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
     if (patch) void saveSettings({ environmentId: props.environmentId, input: { patch } });
   }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
-  const favoriteKeys = useMemo(
-    () =>
-      new Set(
-        modelFavorites.map((favorite) => modelFavoriteKey(favorite.provider, favorite.model)),
-      ),
-    [modelFavorites],
+  const favoriteKeys = new Set(
+    modelFavorites.map((favorite) => modelFavoriteKey(favorite.provider, favorite.model)),
   );
-  const toggleFavorite = useCallback(
-    async (option: ModelOption) => {
-      if (!favoritesLoaded || !props.environmentId) return;
-      const currentSettings = registry
-        .get(environmentServerConfigsAtom)
-        .get(props.environmentId)?.settings;
-      if (!currentSettings) return;
-      const favorites = resolveModelPreferences(currentSettings, {
-        favorites: legacyFavorites,
-      }).favorites;
-      const key = JSON.stringify([
-        props.environmentId,
-        option.selection.instanceId,
-        option.selection.model,
-      ]);
-      const previous = pendingFavorites.current.get(key);
-      const previousFavorite =
-        previous && (previous.pending || previous.settings.favorites === currentSettings.favorites)
-          ? previous.favorite
-          : favorites.some(
-              (favorite) =>
-                favorite.provider === option.selection.instanceId &&
-                favorite.model === option.selection.model,
-            );
-      const pending = { favorite: !previousFavorite, settings: currentSettings, pending: true };
-      pendingFavorites.current.set(key, pending);
-      void Haptics.selectionAsync();
-      try {
-        const result = await saveSettings({
-          environmentId: props.environmentId,
-          input: {
-            patch: {
-              setModelFavorites: [
-                {
-                  provider: option.selection.instanceId,
-                  model: option.selection.model,
-                  favorite: pending.favorite,
-                },
-              ],
-              ...(currentSettings.favorites === null
-                ? { migrateModelPreferences: { favorites } }
-                : {}),
+  const toggleFavorite = async (option: ModelOption) => {
+    const environmentId = props.environmentId;
+    if (!favoritesLoaded || !environmentId) return;
+    const currentSettings = registry.get(environmentServerConfigsAtom).get(environmentId)?.settings;
+    if (!currentSettings) return;
+    const favorites = resolveModelPreferences(currentSettings, {
+      favorites: legacyFavorites,
+    }).favorites;
+    const key = JSON.stringify([
+      environmentId,
+      option.selection.instanceId,
+      option.selection.model,
+    ]);
+    const previous = pendingFavorites.current.get(key);
+    const previousFavorite =
+      previous && (previous.pending || previous.settings.favorites === currentSettings.favorites)
+        ? previous.favorite
+        : favorites.some(
+            (favorite) =>
+              favorite.provider === option.selection.instanceId &&
+              favorite.model === option.selection.model,
+          );
+    const pending = { favorite: !previousFavorite, settings: currentSettings, pending: true };
+    pendingFavorites.current.set(key, pending);
+    void Haptics.selectionAsync();
+    const result = await saveSettings({
+      environmentId: environmentId,
+      input: {
+        patch: {
+          setModelFavorites: [
+            {
+              provider: option.selection.instanceId,
+              model: option.selection.model,
+              favorite: pending.favorite,
             },
-          },
-        });
-        if (
-          AsyncResult.isSuccess(result) &&
-          registry.get(environmentServerConfigsAtom).get(props.environmentId)?.settings
-            .favorites === currentSettings.favorites
-        ) {
-          pending.pending = false;
-        }
-      } finally {
-        if (pending.pending && pendingFavorites.current.get(key) === pending) {
-          if (
-            previous &&
-            !previous.pending &&
-            registry.get(environmentServerConfigsAtom).get(props.environmentId)?.settings
-              .favorites === previous.settings.favorites
-          ) {
-            pendingFavorites.current.set(key, previous);
-          } else {
-            pendingFavorites.current.delete(key);
-          }
-        }
-      }
-    },
-    [favoritesLoaded, legacyFavorites, props.environmentId, registry, saveSettings],
-  );
-  const toggleHidden = useCallback(
-    (option: ModelOption) => {
-      if (
-        !settings ||
-        !props.environmentId ||
-        !option.canHide ||
-        pendingHidden.current.has(option.key)
-      )
-        return;
-      pendingHidden.current.add(option.key);
-      setPendingHiddenKeys(new Set(pendingHidden.current));
-      void Haptics.selectionAsync();
-      void saveSettings({
-        environmentId: props.environmentId,
-        input: {
-          patch: {
-            setModelsHidden: [
-              {
-                provider: option.selection.instanceId,
-                model: option.selection.model,
-                hidden: !option.isHidden,
-              },
-            ],
-          },
+          ],
+          ...(currentSettings.favorites === null ? { migrateModelPreferences: { favorites } } : {}),
         },
-      }).then(() => {
-        pendingHidden.current.delete(option.key);
-        setPendingHiddenKeys(new Set(pendingHidden.current));
-      });
-    },
-    [props.environmentId, saveSettings, settings],
-  );
+      },
+    });
+    if (
+      AsyncResult.isSuccess(result) &&
+      registry.get(environmentServerConfigsAtom).get(environmentId)?.settings.favorites ===
+        currentSettings.favorites
+    ) {
+      pending.pending = false;
+    }
+    if (pending.pending && pendingFavorites.current.get(key) === pending) {
+      if (
+        previous &&
+        !previous.pending &&
+        registry.get(environmentServerConfigsAtom).get(environmentId)?.settings.favorites ===
+          previous.settings.favorites
+      ) {
+        pendingFavorites.current.set(key, previous);
+      } else {
+        pendingFavorites.current.delete(key);
+      }
+    }
+  };
+  const toggleHidden = (option: ModelOption) => {
+    if (
+      !settings ||
+      !props.environmentId ||
+      !option.canHide ||
+      pendingHidden.current.has(option.key)
+    )
+      return;
+    pendingHidden.current.add(option.key);
+    setPendingHiddenKeys(new Set(pendingHidden.current));
+    void Haptics.selectionAsync();
+    void saveSettings({
+      environmentId: props.environmentId,
+      input: {
+        patch: {
+          setModelsHidden: [
+            {
+              provider: option.selection.instanceId,
+              model: option.selection.model,
+              hidden: !option.isHidden,
+            },
+          ],
+        },
+      },
+    }).then(() => {
+      pendingHidden.current.delete(option.key);
+      setPendingHiddenKeys(new Set(pendingHidden.current));
+    });
+  };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -491,36 +456,24 @@ function ThreadSettingsSessionProvider(
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
 
-  const isApplied = useCallback(
-    (option: ModelOption) =>
-      option.selection.instanceId === props.selectedModel?.instanceId &&
-      option.selection.model === props.selectedModel.model,
-    [props.selectedModel],
-  );
-  const isDisplayed = useCallback(
-    (option: ModelOption) => (pendingModel ? option.key === pendingModel.key : isApplied(option)),
-    [isApplied, pendingModel],
-  );
+  const isApplied = (option: ModelOption) =>
+    option.selection.instanceId === props.selectedModel?.instanceId &&
+    option.selection.model === props.selectedModel.model;
+  const isDisplayed = (option: ModelOption) =>
+    pendingModel ? option.key === pendingModel.key : isApplied(option);
 
-  const displayedDescriptors = useMemo(
-    () =>
-      pendingModel
-        ? pendingModel.capabilities
-          ? getProviderOptionDescriptors({
-              caps: pendingModel.capabilities,
-              selections: pendingModel.selection.options,
-            })
-          : []
-        : props.optionDescriptors,
-    [pendingModel, props.optionDescriptors],
-  );
-  const displayedModel = useMemo(
-    () =>
-      pendingModel ??
-      props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
-      null,
-    [isApplied, pendingModel, props.providerGroups],
-  );
+  const displayedDescriptors = pendingModel
+    ? pendingModel.capabilities
+      ? getProviderOptionDescriptors({
+          caps: pendingModel.capabilities,
+          selections: pendingModel.selection.options,
+        })
+      : []
+    : props.optionDescriptors;
+  const displayedModel =
+    pendingModel ??
+    props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
+    null;
   const runtimeModeChoices = runtimeModeChoicesForSupportedModes(
     displayedModel?.supportedRuntimeModes,
   );
@@ -529,11 +482,10 @@ function ThreadSettingsSessionProvider(
     runtimeModeChoices,
   );
 
-  const hasLegacyModels = useMemo(
-    () => props.providerGroups.some((group) => group.models.some((model) => model.isLegacy)),
-    [props.providerGroups],
+  const hasLegacyModels = props.providerGroups.some((group) =>
+    group.models.some((model) => model.isLegacy),
   );
-  const commitPendingModel = useCallback(() => {
+  const commitPendingModel = () => {
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Dialog.alert(
@@ -546,28 +498,25 @@ function ThreadSettingsSessionProvider(
       props.onSelectModel(pendingModel);
     }
     return true;
-  }, [pendingModel, props.onSelectModel, props.providerGroups]);
+  };
 
-  const applyOptionChange = useCallback(
-    (id: string, value: string | boolean) => {
-      const next = applyProviderOptionSelection(displayedDescriptors, { id, value });
-      if (!next) {
-        return;
-      }
-      if (pendingModel) {
-        rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
-        setPendingModel({
-          ...pendingModel,
-          selection: { ...pendingModel.selection, options: next },
-        });
-      } else {
-        props.onUpdateOptionSelections(next);
-      }
-    },
-    [displayedDescriptors, pendingModel, props.onUpdateOptionSelections],
-  );
+  const applyOptionChange = (id: string, value: string | boolean) => {
+    const next = applyProviderOptionSelection(displayedDescriptors, { id, value });
+    if (!next) {
+      return;
+    }
+    if (pendingModel) {
+      rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
+      setPendingModel({
+        ...pendingModel,
+        selection: { ...pendingModel.selection, options: next },
+      });
+    } else {
+      props.onUpdateOptionSelections(next);
+    }
+  };
 
-  const toggleProvider = useCallback((providerKey: string) => {
+  const toggleProvider = (providerKey: string) => {
     setProviderExpansionOverrides((current) => {
       const next = new Set(current);
       if (!next.delete(providerKey)) {
@@ -575,86 +524,52 @@ function ThreadSettingsSessionProvider(
       }
       return next;
     });
-  }, []);
+  };
 
-  const pressModel = useCallback(
-    (option: ModelOption) => {
-      void Haptics.selectionAsync();
-      setPendingModel((current) =>
-        pendingModelAfterPress({
-          current,
-          pressed: option,
-          pressedIsApplied: isApplied(option),
-        }),
-      );
-    },
-    [isApplied],
-  );
+  const pressModel = (option: ModelOption) => {
+    void Haptics.selectionAsync();
+    setPendingModel((current) =>
+      pendingModelAfterPress({
+        current,
+        pressed: option,
+        pressedIsApplied: isApplied(option),
+      }),
+    );
+  };
 
-  const value = useMemo<ThreadSettingsSessionValue>(
-    () => ({
-      environmentId: props.environmentId,
-      providerInstanceId: props.providerInstanceId,
-      providerGroups,
-      manageHidden,
-      setManageHidden,
-      toggleHidden,
-      pendingHiddenKeys,
-      runtimeMode: compatibleRuntimeMode,
-      runtimeModeChoices,
-      onUpdateRuntimeMode: props.onUpdateRuntimeMode,
-      displayedDescriptors,
-      displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
-      reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
-      favoriteKeys,
-      favoritesLoaded,
-      providerExpansionOverrides,
-      hasLegacyModels,
-      pendingModel,
-      providerFilter,
-      searchQuery,
-      showLegacy: showLegacyToggle,
-      applyOptionChange,
-      commitPendingModel,
-      isApplied,
-      isDisplayed,
-      pressModel,
-      setProviderFilter,
-      setSearchQuery,
-      setShowLegacy: setShowLegacyToggle,
-      toggleProvider,
-      toggleFavorite,
-    }),
-    [
-      applyOptionChange,
-      commitPendingModel,
-      compatibleRuntimeMode,
-      displayedDescriptors,
-      favoriteKeys,
-      favoritesLoaded,
-      providerExpansionOverrides,
-      hasLegacyModels,
-      isApplied,
-      isDisplayed,
-      props.environmentId,
-      props.selectedModel,
-      props.reportedModelSelection,
-      props.providerInstanceId,
-      pendingModel,
-      pressModel,
-      providerFilter,
-      props.onUpdateRuntimeMode,
-      providerGroups,
-      manageHidden,
-      toggleHidden,
-      pendingHiddenKeys,
-      runtimeModeChoices,
-      searchQuery,
-      showLegacyToggle,
-      toggleProvider,
-      toggleFavorite,
-    ],
-  );
+  const value = {
+    environmentId: props.environmentId,
+    providerInstanceId: props.providerInstanceId,
+    providerGroups,
+    manageHidden,
+    setManageHidden,
+    toggleHidden,
+    pendingHiddenKeys,
+    runtimeMode: compatibleRuntimeMode,
+    runtimeModeChoices,
+    onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+    displayedDescriptors,
+    displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
+    reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
+    favoriteKeys,
+    favoritesLoaded,
+    providerExpansionOverrides,
+    hasLegacyModels,
+    pendingModel,
+    providerFilter,
+    searchQuery,
+    showLegacy: showLegacyToggle,
+    applyOptionChange,
+    commitPendingModel,
+    isApplied,
+    isDisplayed,
+    pressModel,
+    setProviderFilter,
+    setSearchQuery,
+    setShowLegacy: setShowLegacyToggle,
+    toggleProvider,
+    toggleFavorite,
+  } satisfies ThreadSettingsSessionValue;
 
   return (
     <ThreadSettingsSessionContext.Provider value={value}>
@@ -715,10 +630,7 @@ function ThreadSettingsModelListRow(props: {
   readonly isLast: boolean;
 }) {
   const session = useThreadSettingsSession();
-  const onPress = useCallback(
-    () => session.pressModel(props.option),
-    [props.option, session.pressModel],
-  );
+  const onPress = () => session.pressModel(props.option);
 
   return (
     <ModelRow
@@ -744,10 +656,7 @@ function ThreadSettingsProviderListHeader(props: {
   readonly provider: ThreadSettingsProviderCatalog;
 }) {
   const session = useThreadSettingsSession();
-  const onToggle = useCallback(
-    () => session.toggleProvider(props.provider.key),
-    [props.provider.key, session.toggleProvider],
-  );
+  const onToggle = () => session.toggleProvider(props.provider.key);
 
   return (
     <ProviderHeader
@@ -762,106 +671,90 @@ function ThreadSettingsProviderListHeader(props: {
   );
 }
 
-function useThreadSettingsCatalogItems(
+function buildThreadSettingsCatalogItems(
   session: ThreadSettingsSessionValue,
 ): ReadonlyArray<ThreadSettingsCatalogItem> {
-  return useMemo(
-    () =>
-      session.providerGroups.flatMap((group) => {
-        if (
-          session.providerFilter !== null &&
-          session.providerFilter !== FAVORITES_PROVIDER_FILTER &&
-          group.providerKey !== session.providerFilter
-        ) {
-          return [];
-        }
-        const driver = group.models[0]?.providerDriver ?? group.providerKey;
-        const catalogModels =
-          session.manageHidden ||
-          session.showLegacy ||
-          session.providerFilter === FAVORITES_PROVIDER_FILTER
-            ? group.models
-            : group.models.filter(
-                (model) =>
-                  !model.isLegacy ||
-                  session.isDisplayed(model) ||
-                  session.favoriteKeys.has(model.key),
-              );
-        const visibleModels = favoritesFirst(
-          catalogModels.filter(
+  return session.providerGroups.flatMap((group) => {
+    if (
+      session.providerFilter !== null &&
+      session.providerFilter !== FAVORITES_PROVIDER_FILTER &&
+      group.providerKey !== session.providerFilter
+    ) {
+      return [];
+    }
+    const driver = group.models[0]?.providerDriver ?? group.providerKey;
+    const catalogModels =
+      session.manageHidden ||
+      session.showLegacy ||
+      session.providerFilter === FAVORITES_PROVIDER_FILTER
+        ? group.models
+        : group.models.filter(
             (model) =>
-              (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
-                session.favoriteKeys.has(model.key)) &&
-              modelMatchesCatalogQuery({
-                model,
-                providerLabel: group.providerLabel,
-                query: session.searchQuery,
-              }),
-          ),
-          session.favoriteKeys,
-        );
-        const updateRequiredNotice =
-          group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
-            ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
-            : null;
-        if (visibleModels.length === 0 && !updateRequiredNotice) {
-          return [];
-        }
-        const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
-        const containsAppliedSelection = group.models.some(session.isApplied);
-        const isNarrowed = session.providerFilter !== null || session.searchQuery.trim().length > 0;
-        const collapsible = !isNarrowed;
-        const collapsed = providerSectionIsCollapsed({
-          defaultExpanded: isPrimary || containsAppliedSelection,
-          hasExpansionOverride: session.providerExpansionOverrides.has(group.providerKey),
-          isNarrowed,
-        });
-        const provider: ThreadSettingsProviderCatalog = {
-          key: group.providerKey,
-          driver,
-          iconUrl: group.models[0]?.providerIconUrl,
-          label: group.providerLabel,
-          collapsible,
-          collapsed,
-          modelCount: visibleModels.length,
-          models: collapsed ? [] : visibleModels,
-        };
-        return [
-          {
-            kind: "provider" as const,
-            key: `provider:${group.providerKey}`,
-            provider,
-          },
-          ...provider.models.map((option, index) => ({
-            kind: "model" as const,
-            key: `model:${option.key}`,
-            option,
-            isFirst: index === 0,
-            isLast: index === provider.models.length - 1,
-          })),
-          ...(!collapsed && updateRequiredNotice
-            ? [
-                {
-                  kind: "notice" as const,
-                  key: `notice:${group.providerKey}`,
-                  text: updateRequiredNotice,
-                },
-              ]
-            : []),
-        ];
-      }),
-    [
-      session.isApplied,
-      session.isDisplayed,
+              !model.isLegacy || session.isDisplayed(model) || session.favoriteKeys.has(model.key),
+          );
+    const visibleModels = favoritesFirst(
+      catalogModels.filter(
+        (model) =>
+          (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
+            session.favoriteKeys.has(model.key)) &&
+          modelMatchesCatalogQuery({
+            model,
+            providerLabel: group.providerLabel,
+            query: session.searchQuery,
+          }),
+      ),
       session.favoriteKeys,
-      session.providerExpansionOverrides,
-      session.providerFilter,
-      session.providerGroups,
-      session.searchQuery,
-      session.showLegacy,
-      session.manageHidden,
-    ],
-  );
+    );
+    const updateRequiredNotice =
+      group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
+        ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
+        : null;
+    if (visibleModels.length === 0 && !updateRequiredNotice) {
+      return [];
+    }
+    const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
+    const containsAppliedSelection = group.models.some(session.isApplied);
+    const isNarrowed = session.providerFilter !== null || session.searchQuery.trim().length > 0;
+    const collapsible = !isNarrowed;
+    const collapsed = providerSectionIsCollapsed({
+      defaultExpanded: isPrimary || containsAppliedSelection,
+      hasExpansionOverride: session.providerExpansionOverrides.has(group.providerKey),
+      isNarrowed,
+    });
+    const provider: ThreadSettingsProviderCatalog = {
+      key: group.providerKey,
+      driver,
+      iconUrl: group.models[0]?.providerIconUrl,
+      label: group.providerLabel,
+      collapsible,
+      collapsed,
+      modelCount: visibleModels.length,
+      models: collapsed ? [] : visibleModels,
+    };
+    return [
+      {
+        kind: "provider" as const,
+        key: `provider:${group.providerKey}`,
+        provider,
+      },
+      ...provider.models.map((option, index) => ({
+        kind: "model" as const,
+        key: `model:${option.key}`,
+        option,
+        isFirst: index === 0,
+        isLast: index === provider.models.length - 1,
+      })),
+      ...(!collapsed && updateRequiredNotice
+        ? [
+            {
+              kind: "notice" as const,
+              key: `notice:${group.providerKey}`,
+              text: updateRequiredNotice,
+            },
+          ]
+        : []),
+    ];
+  });
 }
 
 function ThreadSettingsOptionsItem(props: {
@@ -968,12 +861,9 @@ function ThreadSettingsMainContent(props: {
   const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const refreshProviderCatalog = useMemo(
-    () => createProviderCatalogRefreshRunner(refreshProvidersCommand),
-    [refreshProvidersCommand],
-  );
+  const refreshProviderCatalog = createProviderCatalogRefreshRunner(refreshProvidersCommand);
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
-  const refreshProviders = useCallback(() => {
+  const refreshProviders = () => {
     if (!session.environmentId || isRefreshingProviders) return;
     setIsRefreshingProviders(true);
     void refreshProviderCatalog(session.environmentId).then((result) => {
@@ -981,75 +871,63 @@ function ThreadSettingsMainContent(props: {
       const error = providerCatalogRefreshError(result);
       if (error) Dialog.alert("Could not refresh models", error);
     });
-  }, [isRefreshingProviders, refreshProviderCatalog, session.environmentId]);
-  const catalogItems = useThreadSettingsCatalogItems(session);
+  };
   const [animationsReady, setAnimationsReady] = useState(false);
+  const catalogItems = buildThreadSettingsCatalogItems(session);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
-  const listItems = useMemo<ReadonlyArray<ThreadSettingsCatalogItem>>(
-    () => [
-      ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
-      { kind: "options", key: "options" },
-    ],
-    [catalogItems],
-  );
-  const renderCatalogItem = useCallback(
-    (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
-      const item = itemProps.item;
-      let content: ReactNode;
+  const listItems = [
+    ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
+    { kind: "options", key: "options" },
+  ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
+  const renderCatalogItem = (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
+    const item = itemProps.item;
+    let content: ReactNode;
 
-      if (item.kind === "provider") {
-        content = <ThreadSettingsProviderListHeader provider={item.provider} />;
-      } else if (item.kind === "model") {
-        content = (
-          <ThreadSettingsModelListRow
-            isFirst={item.isFirst}
-            isLast={item.isLast}
-            option={item.option}
-          />
-        );
-      } else if (item.kind === "notice") {
-        content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
-      } else if (item.kind === "empty") {
-        content = (
-          <View className="items-center px-8 py-14">
-            <Text className="text-center text-sm text-foreground-muted">
-              {session.providerFilter === FAVORITES_PROVIDER_FILTER &&
-              session.searchQuery.trim().length === 0
-                ? "No favorite models"
-                : hasActiveCatalogFilter
-                  ? "No matching models"
-                  : "No available models"}
-            </Text>
-          </View>
-        );
-      } else {
-        content = (
-          <ThreadSettingsOptionsItem
-            animationsReady={animationsReady}
-            onOpenSubmenu={props.onOpenSubmenu}
-          />
-        );
-      }
-
-      return (
-        <Animated.View
-          key={item.key}
-          entering={animationsReady ? THREAD_SETTINGS_CATALOG_ENTER_TRANSITION : undefined}
-          exiting={animationsReady ? THREAD_SETTINGS_CATALOG_EXIT_TRANSITION : undefined}
-        >
-          {content}
-        </Animated.View>
+    if (item.kind === "provider") {
+      content = <ThreadSettingsProviderListHeader provider={item.provider} />;
+    } else if (item.kind === "model") {
+      content = (
+        <ThreadSettingsModelListRow
+          isFirst={item.isFirst}
+          isLast={item.isLast}
+          option={item.option}
+        />
       );
-    },
-    [
-      animationsReady,
-      hasActiveCatalogFilter,
-      props.onOpenSubmenu,
-      session.providerFilter,
-      session.searchQuery,
-    ],
-  );
+    } else if (item.kind === "notice") {
+      content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
+    } else if (item.kind === "empty") {
+      content = (
+        <View className="items-center px-8 py-14">
+          <Text className="text-center text-sm text-foreground-muted">
+            {session.providerFilter === FAVORITES_PROVIDER_FILTER &&
+            session.searchQuery.trim().length === 0
+              ? "No favorite models"
+              : hasActiveCatalogFilter
+                ? "No matching models"
+                : "No available models"}
+          </Text>
+        </View>
+      );
+    } else {
+      content = (
+        <ThreadSettingsOptionsItem
+          animationsReady={animationsReady}
+          onOpenSubmenu={props.onOpenSubmenu}
+        />
+      );
+    }
+
+    return (
+      <Animated.View
+        key={item.key}
+        entering={animationsReady ? THREAD_SETTINGS_CATALOG_ENTER_TRANSITION : undefined}
+        exiting={animationsReady ? THREAD_SETTINGS_CATALOG_EXIT_TRANSITION : undefined}
+      >
+        {content}
+      </Animated.View>
+    );
+  };
 
   return (
     <AnimatedLegendList
@@ -1243,50 +1121,44 @@ function ThreadSettingsModelsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
-  const commitAndClose = useCallback(() => {
+  const commitAndClose = () => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
-  }, [presentation, session]);
-  const providerFilters = useMemo(
-    () => [
-      { id: "all-providers", title: "All providers", value: null },
-      { id: "favorites", title: "Favorites", value: FAVORITES_PROVIDER_FILTER },
-      ...session.providerGroups.map((group) => ({
-        id: `provider:${group.providerKey}`,
-        title: group.providerLabel,
-        value: group.providerKey,
-      })),
+  };
+  const providerFilters = [
+    { id: "all-providers", title: "All providers", value: null },
+    { id: "favorites", title: "Favorites", value: FAVORITES_PROVIDER_FILTER },
+    ...session.providerGroups.map((group) => ({
+      id: `provider:${group.providerKey}`,
+      title: group.providerLabel,
+      value: group.providerKey,
+    })),
+  ];
+  const filterMenu = {
+    title: "Model filters",
+    items: [
+      {
+        type: "submenu" as const,
+        title: "Provider",
+        items: providerFilters.map((filter) => ({
+          type: "action" as const,
+          title: filter.title,
+          state: session.providerFilter === filter.value ? ("on" as const) : ("off" as const),
+          onPress: () => session.setProviderFilter(filter.value),
+        })),
+      },
+      ...(session.hasLegacyModels
+        ? [
+            {
+              type: "action" as const,
+              title: "Show legacy models",
+              state: session.showLegacy ? ("on" as const) : ("off" as const),
+              onPress: () => session.setShowLegacy(!session.showLegacy),
+            },
+          ]
+        : []),
     ],
-    [session.providerGroups],
-  );
-  const filterMenu = useMemo(
-    () => ({
-      title: "Model filters",
-      items: [
-        {
-          type: "submenu" as const,
-          title: "Provider",
-          items: providerFilters.map((filter) => ({
-            type: "action" as const,
-            title: filter.title,
-            state: session.providerFilter === filter.value ? ("on" as const) : ("off" as const),
-            onPress: () => session.setProviderFilter(filter.value),
-          })),
-        },
-        ...(session.hasLegacyModels
-          ? [
-              {
-                type: "action" as const,
-                title: "Show legacy models",
-                state: session.showLegacy ? ("on" as const) : ("off" as const),
-                onPress: () => session.setShowLegacy(!session.showLegacy),
-              },
-            ]
-          : []),
-      ],
-    }),
-    [providerFilters, session],
-  );
+  };
 
   return (
     <>
@@ -1486,12 +1358,9 @@ function ThreadSettingsPickerNavigator(props: ThreadSettingsPickerPresentation) 
   const theme = useUniwindTheme();
   const solidSheetBackground = theme["--color-sheet-solid"];
   const foreground = theme["--color-foreground"];
-  const presentation = useMemo(
-    () => ({
-      onClose: props.onClose,
-    }),
-    [props.onClose],
-  );
+  const presentation = {
+    onClose: props.onClose,
+  };
 
   return (
     <ThreadSettingsPickerPresentationContext.Provider value={presentation}>
@@ -1570,14 +1439,10 @@ export function ExistingThreadSettingsRouteScreen() {
 export function NewTaskThreadSettingsRouteScreen() {
   const flow = useNewTaskFlow();
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
-  const optionDescriptors = useMemo(
-    () =>
-      resolveProviderOptionDescriptors({
-        capabilities: flow.selectedModelOption?.capabilities,
-        selections: flow.selectedModel?.options,
-      }),
-    [flow.selectedModel?.options, flow.selectedModelOption?.capabilities],
-  );
+  const optionDescriptors = resolveProviderOptionDescriptors({
+    capabilities: flow.selectedModelOption?.capabilities,
+    selections: flow.selectedModel?.options,
+  });
 
   return (
     <ThreadSettingsPickerScreen
