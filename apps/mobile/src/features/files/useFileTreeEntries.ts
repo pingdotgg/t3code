@@ -118,7 +118,14 @@ export function useFileTreeEntries(input: {
       }
     };
     visit((rootData?.entries ?? []).filter((entry) => !entry.path.includes("/")));
-    return { revision: entriesRevision, entries: [...merged.values()], reachableDirectories };
+    return {
+      revision: entriesRevision,
+      entries: [...merged.values()],
+      reachableDirectories,
+      searchResultPaths: searching
+        ? new Set((searchData?.entries ?? []).map((entry) => entry.path))
+        : null,
+    };
   }, [directories, entriesRevision, rootData, searchData, searching]);
 
   const refresh = useCallback(() => {
@@ -178,6 +185,7 @@ export function useFileTreeEntries(input: {
 
   return {
     entries: snapshot.entries,
+    searchResultPaths: snapshot.searchResultPaths,
     isRefreshing: refreshingDirectories === directories,
     error:
       root.error ??

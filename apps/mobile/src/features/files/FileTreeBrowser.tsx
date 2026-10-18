@@ -110,6 +110,7 @@ export function FileTreeBrowser(props: {
   readonly isPending: boolean;
   readonly isRefreshing: boolean;
   readonly searchQuery: string;
+  readonly searchResultPaths: ReadonlySet<string> | null;
   readonly searchTruncated: boolean;
   readonly selectedPath: string | null;
   readonly loadingDirectories: ReadonlySet<string>;
@@ -147,9 +148,9 @@ export function FileTreeBrowser(props: {
       flattenFileTree({
         nodes: tree,
         expanded: expandedPaths,
-        searchQuery: props.searchQuery,
+        searchResultPaths: props.searchResultPaths,
       }),
-    [expandedPaths, props.searchQuery, tree],
+    [expandedPaths, props.searchResultPaths, tree],
   );
 
   useEffect(() => {
