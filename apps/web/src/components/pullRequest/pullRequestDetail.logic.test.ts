@@ -1825,8 +1825,36 @@ describe("cached pull request detail", () => {
     return {
       getItem: (key: string) => held.get(key) ?? null,
       setItem: (key: string, value: string) => void held.set(key, value),
+      removeItem: (key: string) => void held.delete(key),
+      size: () => held.size,
     };
   };
+
+  it("keeps only the 20 most recently saved pull requests", () => {
+    const storage = makeStorage();
+    const numbered = (number: number) => ({ ...reference, number });
+    for (let number = 1; number <= 21; number += 1) {
+      writePullRequestDetailSnapshot(storage, "env-1", numbered(number), detail({ number }));
+    }
+    expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(1))).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(2))?.number).toBe(2);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(21))?.number).toBe(21);
+    // Twenty snapshots plus the list of their keys.
+    expect(storage.size()).toBe(21);
+  });
+
+  it("saving a pull request again keeps it as the newest without growing the list", () => {
+    const storage = makeStorage();
+    const numbered = (number: number) => ({ ...reference, number });
+    for (let number = 1; number <= 20; number += 1) {
+      writePullRequestDetailSnapshot(storage, "env-1", numbered(number), detail({ number }));
+    }
+    writePullRequestDetailSnapshot(storage, "env-1", numbered(1), detail({ number: 1 }));
+    writePullRequestDetailSnapshot(storage, "env-1", numbered(21), detail({ number: 21 }));
+    expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(1))?.number).toBe(1);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", numbered(2))).toBeNull();
+    expect(storage.size()).toBe(21);
+  });
 
   it("hydrates the last title, author, and counts so a reopen does not ghost the tab", () => {
     const storage = makeStorage();
