@@ -99,6 +99,39 @@ it("does not suggest copying a command that installs an incompatible latest vers
   ).not.toBeNull();
 });
 
+it("does not offer an update that cannot change a limited-support version", () => {
+  // OpenCode 1.18.35 is the newest `opencode-ai`; the recommended 2.x ships as another package.
+  const advisory = {
+    status: "current" as const,
+    currentVersion: "1.18.35",
+    latestVersion: "1.18.35",
+    updateCommand: "npm install -g opencode-ai@latest",
+    canUpdate: true,
+    checkedAt: provider.checkedAt,
+    message: null,
+  };
+  const compatibility = {
+    status: "graceful" as const,
+    latestVersionStatus: "graceful" as const,
+    message: null,
+    recommendedRange: ">=2.0.18",
+    recommendedVersion: null,
+  };
+  expect(getProviderVersionAdvisoryPresentation(advisory, compatibility)).toEqual({
+    title: "Limited support",
+    detail: "Use >=2.0.18 for full support.",
+    updateCommand: null,
+    emphasis: "normal",
+    targetVersion: null,
+  });
+  expect(
+    getProviderVersionAdvisoryPresentation(
+      { ...advisory, status: "behind_latest", currentVersion: "1.18.34" },
+      compatibility,
+    )?.updateCommand,
+  ).toBe(advisory.updateCommand);
+});
+
 it("shows compatibility in the version popover even when the installed version is current", () => {
   const advisory = {
     status: "current" as const,
