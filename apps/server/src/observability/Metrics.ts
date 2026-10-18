@@ -35,6 +35,14 @@ export const orchestrationEffectQueueWait = Metric.timer("t3_orchestration_effec
     "Time from an orchestration effect's temporal availability until claim, including same-thread blocking.",
 });
 
+export const orchestrationEffectOverdueTotal = Metric.counter(
+  "t3_orchestration_effect_overdue_total",
+  {
+    description:
+      "Orchestration effects that outlived their lease and kept running after freeing their worker.",
+  },
+);
+
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });
