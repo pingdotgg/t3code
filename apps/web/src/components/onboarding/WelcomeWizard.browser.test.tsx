@@ -27,7 +27,7 @@ vi.mock("../../state/use-atom-command", () => ({
         ? mocks.createProject
         : mocks.refresh,
 }));
-vi.mock("../../onboarding/firstRun", () => ({ useCompleteOnboarding: () => mocks.complete }));
+vi.mock("../../onboarding/firstRun", () => ({ completeOnboarding: mocks.complete }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => mocks.projects,
   readProjects: () => mocks.projects,

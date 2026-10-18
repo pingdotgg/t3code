@@ -114,7 +114,7 @@ vi.mock(import("../../onboarding/useProjectScans"), async (original) => ({
 }));
 vi.mock(import("../../onboarding/firstRun"), async (original) => ({
   ...(await original()),
-  useCompleteOnboarding: () => state.complete,
+  completeOnboarding: state.complete,
 }));
 vi.mock(import("../../cloud/publicConfig"), async (original) => ({
   ...(await original()),

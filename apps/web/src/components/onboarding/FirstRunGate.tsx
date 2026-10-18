@@ -10,7 +10,7 @@ import {
   useClientSettingsHydrationStatus,
 } from "../../hooks/useSettings";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { useCompleteOnboarding } from "../../onboarding/firstRun";
+import { completeOnboarding } from "../../onboarding/firstRun";
 import {
   isFirstRunWorkspaceProvenanceAuthoritative,
   isFreshFirstRunWorkspace,
@@ -82,7 +82,6 @@ export function FirstRunGate({
   const pathname = useLocation({ select: (location) => location.pathname });
   const hydrationStatus = useClientSettingsHydrationStatus();
   const hydrated = hydrationStatus === "ready";
-  const completeOnboarding = useCompleteOnboarding();
   const onboardingCompletedAt = useClientSettings((settings) => settings.onboardingCompletedAt);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady: environmentCatalogReady } = useEnvironments();
@@ -160,7 +159,7 @@ export function FirstRunGate({
     if (persistCompletion && onboardingCompletedAt === null) {
       void completeOnboarding().catch(() => undefined);
     }
-  }, [completeOnboarding, decision, hydrated, onboardingCompletedAt, persistCompletion]);
+  }, [decision, hydrated, onboardingCompletedAt, persistCompletion]);
 
   useEffect(() => {
     if (!enabled || decision !== "pending" || !hydrated) return;

@@ -5,7 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { useFontFamily } from "../../lib/useFontFamily";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import {
@@ -45,8 +45,8 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   const codeBackground = theme["--color-md-code-bg"];
   const codeText = theme["--color-md-code-text"];
   const horizontalRule = theme["--color-md-hr"];
-  const regularFontFamily = useFontFamily("regular");
-  const boldFontFamily = useFontFamily("bold");
+  const regularFontFamily = FONT_FAMILIES.regular;
+  const boldFontFamily = FONT_FAMILIES.bold;
 
   return useMemo(() => {
     return {

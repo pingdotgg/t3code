@@ -28,7 +28,7 @@ import {
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useFontFamily } from "../../lib/useFontFamily";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import {
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -641,7 +641,7 @@ export function NewTaskDraftScreen(props: {
 
   const theme = useUniwindTheme();
   const foregroundColor = theme["--color-foreground"];
-  const regularFontFamily = useFontFamily("regular");
+  const regularFontFamily = FONT_FAMILIES.regular;
   const bodyText = useScaledTextRole("body");
 
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);

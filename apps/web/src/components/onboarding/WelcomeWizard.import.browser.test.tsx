@@ -57,7 +57,7 @@ vi.mock(import("../../cloud/publicConfig"), async (original) => ({
 }));
 vi.mock(import("../../onboarding/firstRun"), async (original) => ({
   ...(await original()),
-  useCompleteOnboarding: () => state.completeOnboarding,
+  completeOnboarding: state.completeOnboarding,
 }));
 vi.mock(import("../../state/environments"), async (original) => {
   const environment = (environmentId: string) => ({

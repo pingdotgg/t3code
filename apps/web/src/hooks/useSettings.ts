@@ -728,8 +728,8 @@ export function useUpdatePrimarySettings() {
   return useUpdateSettingsTarget(usePrimaryEnvironment()?.environmentId ?? null);
 }
 
-export function useUpdateClientSettings() {
-  return (patch: ClientSettingsPatch) => persistClientSettingsPatch(patch);
+export function updateClientSettings(patch: ClientSettingsPatch): Promise<void> {
+  return persistClientSettingsPatch(patch);
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {

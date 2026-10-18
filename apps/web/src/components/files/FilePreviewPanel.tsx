@@ -49,7 +49,7 @@ import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -1084,7 +1084,6 @@ export default function FilePreviewPanel({
         : null;
   const canToggleRendered =
     previewPath !== null && attachment === undefined && renderedMode !== null;
-  const updateClientSettings = useUpdateClientSettings();
   const showsRawText =
     previewPath !== null &&
     file.data !== null &&

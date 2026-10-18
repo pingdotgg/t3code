@@ -13,7 +13,7 @@ import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   readSnapShotSetupResume,
@@ -86,7 +86,6 @@ export function SnapShotSettings() {
     snapShotShortcut: current.snapShotShortcut,
     snapShotSound: current.snapShotSound,
   }));
-  const updateSettings = useUpdateClientSettings();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const bridge = getDesktopSnapShotBridge();
   const [state, setState] = useState<DesktopSnapShotState | null>(null);
@@ -226,7 +225,7 @@ export function SnapShotSettings() {
   const save = async (patch: ClientSettingsPatch) => {
     setSetupError(null);
     try {
-      await updateSettings(patch);
+      await updateClientSettings(patch);
       return await refreshState();
     } catch (error) {
       setSetupError(captureSettingsError("Couldn't save capture settings", error));

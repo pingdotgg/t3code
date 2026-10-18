@@ -3,7 +3,7 @@ import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import {
   useClientSettings,
   useClientSettingsHydrated,
-  useUpdateClientSettings,
+  updateClientSettings,
 } from "~/hooks/useSettings";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -54,7 +54,6 @@ export function LoadBalancingSettings({
     loadBalancingWeights: current.loadBalancingWeights,
   }));
   const settingsHydrated = useClientSettingsHydrated();
-  const updateSettings = useUpdateClientSettings();
 
   if (environments.length < 2) return null;
 
@@ -73,7 +72,7 @@ export function LoadBalancingSettings({
           aria-label="Automatically balance load"
           checked={settings.loadBalancingEnabled}
           disabled={!settingsHydrated}
-          onCheckedChange={(loadBalancingEnabled) => updateSettings({ loadBalancingEnabled })}
+          onCheckedChange={(loadBalancingEnabled) => updateClientSettings({ loadBalancingEnabled })}
         />
       }
     >
@@ -96,7 +95,7 @@ export function LoadBalancingSettings({
             disabled={!settingsHydrated || !settings.loadBalancingEnabled}
             onValueChange={(value) => {
               if (value === null) return;
-              updateSettings({
+              updateClientSettings({
                 loadBalancingWeights: {
                   ...settings.loadBalancingWeights,
                   [environment.environmentId]: value,

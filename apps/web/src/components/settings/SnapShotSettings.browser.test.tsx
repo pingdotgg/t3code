@@ -54,7 +54,7 @@ vi.mock(import("../../hooks/useSettings"), async (original) => {
     ...(await original()),
     useClientSettings: (() =>
       useSyncExternalStore(subscribe, () => settingsStore.current)) as never,
-    useUpdateClientSettings: () => settingsStore.update as never,
+    updateClientSettings: settingsStore.update as never,
   };
 });
 
