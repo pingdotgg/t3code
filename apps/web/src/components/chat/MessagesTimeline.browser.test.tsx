@@ -8,7 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
-import { act, createRef, useState, type ComponentProps, type ReactElement } from "react";
+import { act, createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
@@ -1164,6 +1164,48 @@ describe("MessagesTimeline scroll position", () => {
     });
     return props.listRef.current!.getScrollableNode()!;
   }
+
+  it("settles when earlier short replies load above long ones", async () => {
+    const props = baseProps();
+    const short = Array.from({ length: 80 }, (_, index) =>
+      message(`Short reply ${index}`, { role: "assistant" }, `short-${index}`),
+    );
+    const long = Array.from({ length: 4 }, (_, index) =>
+      message(
+        `${"Long handbook paragraph. ".repeat(40)}\n\n`.repeat(60),
+        { role: "assistant" },
+        `long-${index}`,
+      ),
+    );
+    let nestedCommits = 0;
+    let maxNestedCommits = 0;
+    const onRender = (_id: string, phase: string) => {
+      nestedCommits = phase === "nested-update" ? nestedCommits + 1 : 0;
+      maxNestedCommits = Math.max(maxNestedCommits, nestedCommits);
+    };
+    const timeline = (entries: Entry[]) => (
+      <Profiler id="timeline" onRender={onRender}>
+        <MessagesTimeline {...props} timelineEntries={entries} />
+      </Profiler>
+    );
+    await renderElement(timeline(long));
+    const viewport = await waitForList(props);
+    await act(async () => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+
+    maxNestedCommits = 0;
+    await act(async () => roots.at(-1)!.render(timeline([...short, ...long])));
+    await vi.waitFor(async () => {
+      await act(async () => {
+        viewport.scrollTop = 0;
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      expect(text()).toContain("Short reply 0");
+    });
+    expect(maxNestedCommits).toBeLessThan(8);
+  });
 
   it("remembers a manual reading position when the chat closes", async () => {
     const props = baseProps();
