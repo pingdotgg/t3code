@@ -456,6 +456,28 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("reuses parses across queries in a thread of a few hundred messages", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const total = 600;
+      yield* putItems(
+        Array.from({ length: total }, (_, i) => item(`long:${i}`, i + 1, `message ${i} needle`)),
+      );
+      const parse = vi.spyOn(ThreadFindText, "searchableMessageSegments");
+      try {
+        const first = yield* projection.searchThread({ threadId, query: "needle" });
+        assert.equal(first.totalMatches, total);
+        assert.equal(parse.mock.calls.length, total);
+        parse.mockClear();
+        const typed = yield* projection.searchThread({ threadId, query: "message 5" });
+        assert.equal(typed.totalMatches, 111);
+        assert.equal(parse.mock.calls.length, 0);
+      } finally {
+        parse.mockRestore();
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("searches visible rendered messages and plans in canonical item order", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
