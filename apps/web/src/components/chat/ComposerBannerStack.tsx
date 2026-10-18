@@ -178,7 +178,9 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
               stackExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
             )}
           >
-            <div className="min-h-0 overflow-hidden">
+            {/* Clip only the collapsing axis: at fractional widths a horizontal clip
+                shaves the notice's right border. */}
+            <div className="min-h-0 overflow-y-clip">
               <div
                 className={cn(
                   "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-transform",
