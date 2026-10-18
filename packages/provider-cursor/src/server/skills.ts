@@ -197,6 +197,8 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
         return;
       }
       input.budget.remainingEntries -= 1;
+      // Installed dependencies can exhaust the shared budget and hide unrelated skills.
+      if (entry === "node_modules") continue;
       const child = path.join(directory, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
       if (info?.type !== "Directory") continue;

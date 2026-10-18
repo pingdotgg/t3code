@@ -162,6 +162,51 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("discovers skills across roots without scanning installed node_modules", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-skills-home-",
+          })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const root = path.join(userHome, ".agents", "skills");
+        const dependencies = path.join(root, "review", "tests", "node_modules");
+        yield* fileSystem.makeDirectory(dependencies, { recursive: true });
+        yield* Effect.forEach(
+          Array.from({ length: 10_001 }, (_, index) => path.join(dependencies, `entry-${index}`)),
+          (file) => fileSystem.writeFileString(file, ""),
+          { concurrency: 64, discard: true },
+        );
+        const skillDirectories = [
+          path.join(root, "review"),
+          path.join(root, "sibling"),
+          path.join(userHome, ".claude", "skills", "later"),
+        ];
+        for (const directory of skillDirectories) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+        }
+
+        const result = yield* probeCursorSkills(undefined, { HOME: userHome }).pipe(Effect.result);
+        expect(result._tag).toBe("Success");
+        if (result._tag !== "Success") return;
+        expect(result.success).toEqual(
+          skillDirectories
+            .map((directory) => ({
+              name: path.basename(directory),
+              path: path.join(directory, "SKILL.md"),
+              scope: "user",
+              enabled: true,
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        );
+      }),
+    ));
+
   it("still fails discovery when a root holds more entries than the scan allows", async () =>
     await runNode(
       Effect.gen(function* () {
