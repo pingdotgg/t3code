@@ -33,6 +33,7 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
@@ -634,4 +635,162 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
         outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
       );
     }),
+);
+
+it.effect.each(["success", "failure", "retry", "cancellation"] as const)(
+  "frees all worker slots at the lease deadline and preserves late %s settlement",
+  (outcome) =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const hungEffects = [0, 1, 2, 3].map((index) => ({
+        id: `effect:a-hung-${index}`,
+        commandId: CommandId.make(`command:hung-${index}`),
+        threadId: ThreadId.make(`thread:hung-${index}`),
+        request:
+          index % 2 === 0
+            ? { type: "provider-turn.start" as const, runId }
+            : {
+                type: "provider-turn.interrupt" as const,
+                providerSessionId: oldSessionId,
+                providerThreadId,
+                providerTurnId,
+              },
+      }));
+      const unrelatedEffect = {
+        id: "effect:b-unrelated",
+        commandId: CommandId.make("command:unrelated"),
+        threadId: ThreadId.make("thread:unrelated"),
+        request: { type: "terminal.cleanup" as const },
+      };
+      const followUp = {
+        ...unrelatedEffect,
+        id: "effect:c-follow-up",
+        threadId: hungEffects[0]!.threadId,
+      };
+      yield* outbox.enqueue([...hungEffects, unrelatedEffect, followUp]);
+      const started = yield* Effect.forEach(hungEffects, () => Deferred.make<void>());
+      const providerAnswer = yield* Deferred.make<void>();
+      const interrupted = yield* Effect.forEach(hungEffects, () => Deferred.make<void>());
+      const retryScheduled = yield* Effect.forEach(hungEffects, () => Deferred.make<void>());
+      const leaseDurationMs = outcome === "success" || outcome === "failure" ? 30_000 : 1_000;
+      const unrelatedStarted = yield* Deferred.make<void>();
+      const executions = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layerExecutor = Layer.succeed(
+        EffectWorker.OrchestrationEffectExecutorV2,
+        EffectWorker.OrchestrationEffectExecutorV2.of({
+          execute: (effect) =>
+            Effect.gen(function* () {
+              yield* Ref.update(executions, (ids) => [...ids, effect.id]);
+              const index = hungEffects.findIndex(({ id }) => id === effect.id);
+              if (index === -1) {
+                if (effect.id === unrelatedEffect.id) {
+                  yield* Deferred.succeed(unrelatedStarted, undefined);
+                }
+                return;
+              }
+              if (effect.attemptCount > 1) return;
+              yield* Deferred.succeed(started[index]!, undefined);
+              yield* Deferred.await(providerAnswer).pipe(
+                Effect.onInterrupt(() => Deferred.succeed(interrupted[index]!, undefined)),
+              );
+              if (outcome === "failure" || outcome === "retry") {
+                return yield* new EffectWorker.OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  cause: "late provider failure",
+                });
+              }
+            }),
+        }),
+      );
+      const layerOutbox = Layer.succeed(EffectOutbox.EffectOutboxV2, {
+        ...outbox,
+        retry: (input) =>
+          outbox
+            .retry(input)
+            .pipe(
+              Effect.tap(() =>
+                Deferred.succeed(
+                  retryScheduled[hungEffects.findIndex(({ id }) => id === input.effectId)]!,
+                  undefined,
+                ),
+              ),
+            ),
+      });
+      const layerWorker = EffectWorker.layerWithOptions({
+        leaseDurationMs,
+        maxAttempts: outcome === "retry" ? 2 : 1,
+      }).pipe(Layer.provide(Layer.merge(layerOutbox, layerExecutor)));
+      yield* EffectWorker.runDaemonWithOptions({ concurrency: hungEffects.length }).pipe(
+        Effect.provide(layerWorker),
+        Effect.forkScoped,
+      );
+      yield* Effect.forEach(started, Deferred.await);
+      yield* TestClock.adjust(leaseDurationMs - 1);
+      assert.isFalse(yield* Deferred.isDone(unrelatedStarted));
+      yield* TestClock.adjust("1 millis");
+      assert.isTrue(yield* Deferred.isDone(unrelatedStarted));
+      yield* outbox.awaitSettled(unrelatedEffect.id);
+
+      // Expiry releases capacity, not ownership: neither replay nor same-thread overtaking is safe.
+      yield* TestClock.adjust("60 seconds");
+      for (const effect of hungEffects) {
+        const row = yield* outbox.get(effect.id);
+        assert.isTrue(Option.isSome(row));
+        if (Option.isSome(row)) {
+          assert.equal(row.value.status, "running");
+          assert.equal(row.value.attemptCount, 1);
+        }
+      }
+      assert.deepEqual(
+        yield* outbox.get(followUp.id).pipe(Effect.map(Option.map(({ status }) => status))),
+        Option.some("pending"),
+      );
+      assert.deepEqual(yield* Ref.get(executions), [
+        ...hungEffects.map(({ id }) => id),
+        unrelatedEffect.id,
+      ]);
+
+      if (outcome === "cancellation") {
+        for (const effect of hungEffects) {
+          const cancelled = yield* outbox.cancelUnsettled({
+            threadId: effect.threadId,
+            effectTypes: [effect.request.type],
+            reason: "stopped after lease expiry",
+          });
+          yield* outbox.signalCancellations(cancelled);
+        }
+        yield* Effect.forEach(interrupted, Deferred.await);
+      }
+      yield* Deferred.succeed(providerAnswer, undefined);
+      if (outcome === "retry") {
+        yield* Effect.forEach(retryScheduled, Deferred.await);
+        yield* TestClock.adjust("100 millis");
+      }
+      yield* Effect.forEach(hungEffects, ({ id }) => outbox.awaitSettled(id));
+      yield* outbox.awaitSettled(followUp.id);
+      for (const effect of hungEffects) {
+        assert.deepEqual(
+          yield* outbox.get(effect.id).pipe(Effect.map(Option.map(({ status }) => status))),
+          Option.some(
+            outcome === "cancellation"
+              ? "cancelled"
+              : outcome === "failure"
+                ? "failed"
+                : "succeeded",
+          ),
+        );
+      }
+      assert.equal(
+        (yield* Ref.get(executions)).length,
+        hungEffects.length * (outcome === "retry" ? 2 : 1) + 2,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          TestClock.layer(),
+        ),
+      ),
+    ),
 );
