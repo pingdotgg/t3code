@@ -257,7 +257,13 @@ function SnoozePopoverNavigation(props: {
                         />
                       </Toolbar>
                       <Toolbar placement="right">
-                        <Toolbar.Button label="Snooze" onPress={props.onSubmit} />
+                        <Toolbar.Button
+                          accessibilityLabel="Snooze"
+                          icon="checkmark"
+                          variant="prominent"
+                          tintColor={colors["--color-prominent-action"]}
+                          onPress={props.onSubmit}
+                        />
                       </Toolbar>
                       <ScrollView
                         contentInsetAdjustmentBehavior="automatic"

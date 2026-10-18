@@ -1810,11 +1810,7 @@ export function NewTaskDraftScreen(props: {
         }}
       />
       <Toolbar placement="left">
-        <Toolbar.Button
-          accessibilityLabel="Cancel new task"
-          label="Cancel"
-          onPress={closeNewTask}
-        />
+        <Toolbar.Button accessibilityLabel="Cancel new task" icon="xmark" onPress={closeNewTask} />
       </Toolbar>
 
       {heroViewport}

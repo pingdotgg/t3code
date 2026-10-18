@@ -51,10 +51,9 @@ export function Sheet(props: SheetProps) {
               headerRightBarButtonItems={[
                 {
                   type: "button",
-                  title: "Done",
-                  variant: "done",
+                  icon: { name: "xmark", type: "sfSymbol" },
                   accessibilityLabel: `Close ${props.title}`,
-                  identifier: `app-sheet-done-${screenId}`,
+                  identifier: `app-sheet-close-${screenId}`,
                   onPress: close,
                 },
               ]}
