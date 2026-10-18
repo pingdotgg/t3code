@@ -26,6 +26,7 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsHiding,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
@@ -77,6 +78,8 @@ export function useThreadActionMenu(input: {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    hideThread,
+    unhideThread,
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
@@ -123,6 +126,7 @@ export function useThreadActionMenu(input: {
         settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
         autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
         snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
+        hiding: readEnvironmentSupportsHiding(threadRef.environmentId),
         pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
         titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
       };
@@ -137,6 +141,7 @@ export function useThreadActionMenu(input: {
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+        isHidden: thread.hiddenAt != null,
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
@@ -214,6 +219,12 @@ export function useThreadActionMenu(input: {
           return;
         case "unsnooze":
           await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
+          return;
+        case "hide":
+          await reportFailure("Failed to hide thread", () => hideThread(threadRef));
+          return;
+        case "unhide":
+          await reportFailure("Failed to unhide thread", () => unhideThread(threadRef));
           return;
         case "pin":
           await reportFailure("Failed to pin thread", () => pinThread(threadRef));

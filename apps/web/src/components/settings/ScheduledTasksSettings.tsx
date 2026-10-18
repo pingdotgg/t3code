@@ -139,6 +139,7 @@ const EMPTY_DRAFT: DraftState = {
   modelKey: "",
   runtimeMode: "full-access",
   interactionMode: "default",
+  hideThreads: false,
   baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
@@ -972,6 +973,7 @@ function ScheduledTaskEditorForm({
   const environment = useEnvironment(environmentId);
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
+  const supportsHiding = environment?.serverConfig?.environment.capabilities.threadHiding === true;
   const tasksQuery = useEnvironmentQuery(
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
@@ -1115,6 +1117,7 @@ function ScheduledTaskEditorForm({
       modelSelection,
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
+      ...(supportsHiding ? { hideThreads: draft.hideThreads } : {}),
       creationSource: "web",
     };
     // Lock before React renders, and keep successful creates locked until the form closes.
@@ -1558,6 +1561,28 @@ function ScheduledTaskEditorForm({
               onCheckedChange={(enabled) => setDraft((current) => ({ ...current, enabled }))}
             />
           </div>
+
+          {supportsHiding ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0 space-y-1">
+                <Label htmlFor="scheduled-task-hide-threads">Keep threads hidden</Label>
+                <p
+                  id="scheduled-task-hide-threads-description"
+                  className="text-sm text-muted-foreground"
+                >
+                  Runs stay out of the sidebar until they need an approval, an answer, or fail.
+                </p>
+              </div>
+              <Switch
+                id="scheduled-task-hide-threads"
+                aria-describedby="scheduled-task-hide-threads-description"
+                checked={draft.hideThreads}
+                onCheckedChange={(hideThreads) =>
+                  setDraft((current) => ({ ...current, hideThreads }))
+                }
+              />
+            </div>
+          ) : null}
         </fieldset>
       </DialogPanel>
 

@@ -60,6 +60,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2HiddenShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
@@ -122,6 +123,7 @@ interface HomeScreenProps {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  readonly onSetThreadHidden: (thread: EnvironmentThreadShell, hidden: boolean) => Promise<boolean>;
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -473,6 +475,12 @@ export function HomeScreen(props: HomeScreenProps) {
     },
     [props.onSetThreadAutoSettle],
   );
+  const handleSetThreadHidden = useCallback(
+    (thread: EnvironmentThreadShell, hidden: boolean) => {
+      void props.onSetThreadHidden(thread, hidden);
+    },
+    [props.onSetThreadHidden],
+  );
   const handleRegenerateThreadTitle = useCallback(
     (thread: EnvironmentThreadShell) => {
       void props.onRegenerateThreadTitle(thread);
@@ -504,9 +512,11 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    hiddenShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    toggleHiddenShelf,
   } = useThreadListV2ShelfPreferences();
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -525,6 +535,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    hidingEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -586,10 +597,12 @@ export function HomeScreen(props: HomeScreenProps) {
       workingShelfExpanded,
       inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
+      hiddenShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey,
     });
   }, [
+    hiddenShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     pendingOrder,
@@ -647,6 +660,9 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozedCount: threadListV2Layout.snoozedCount,
         snoozedShelfExpanded,
         snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+        hiddenCount: threadListV2Layout.hiddenCount,
+        hiddenShelfExpanded,
+        hiddenShelfHeaderIndex: threadListV2Layout.hiddenShelfHeaderIndex,
         settledCount: threadListV2Layout.settledCount,
         settledShelfExpanded,
         settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
@@ -657,6 +673,7 @@ export function HomeScreen(props: HomeScreenProps) {
         shelfPreferencesLoading: !shelfPreferencesLoaded,
       }),
     [
+      hiddenShelfExpanded,
       nowMinute,
       queuedThreadKeys,
       threadMoveAvailability,
@@ -721,6 +738,16 @@ export function HomeScreen(props: HomeScreenProps) {
           />
         );
       }
+      if (item.type === "v2-hidden-shelf") {
+        return (
+          <ThreadListV2HiddenShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleHiddenShelf}
+          />
+        );
+      }
       if (item.type === "v2-settled-shelf") {
         return (
           <ThreadListV2SettledShelfHeader
@@ -742,6 +769,7 @@ export function HomeScreen(props: HomeScreenProps) {
           variant={item.item.variant}
           hasQueuedMessages={item.hasQueuedMessages}
           snoozed={item.item.snoozed}
+          hidden={item.item.hidden}
           pinned={item.item.pinned}
           snoozePresetMinute={item.snoozePresetMinute ?? ""}
           snoozeWakeLabelText={item.snoozeWakeLabelText}
@@ -779,6 +807,7 @@ export function HomeScreen(props: HomeScreenProps) {
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+          hidingSupported={hidingEnvironmentIds.has(thread.environmentId)}
           reorderSupported={
             item.item.pinned
               ? pinReorderEnvironmentIds.has(thread.environmentId)
@@ -792,6 +821,7 @@ export function HomeScreen(props: HomeScreenProps) {
           onPinThread={handlePinThread}
           onUnpinThread={handleUnpinThread}
           onSetThreadAutoSettle={handleSetThreadAutoSettle}
+          onSetThreadHidden={handleSetThreadHidden}
           onMoveThread={handleMoveThread}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -815,6 +845,8 @@ export function HomeScreen(props: HomeScreenProps) {
       handleSwipeableWillOpen,
       handleUnsettleThread,
       handleSetThreadAutoSettle,
+      handleSetThreadHidden,
+      hidingEnvironmentIds,
       homeScrollGesture,
       autoSettleOptOutEnvironmentIds,
       pinningEnvironmentIds,
@@ -840,6 +872,7 @@ export function HomeScreen(props: HomeScreenProps) {
       toggleSettledShelf,
       toggleSnoozedShelf,
       toggleWorkingShelf,
+      toggleHiddenShelf,
       v2ProjectTitleByProjectKey,
       props.searchQuery,
       workingShelfEnabled,

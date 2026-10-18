@@ -42,6 +42,7 @@ import {
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
   type SetThreadAutoSettleInput,
+  type SetThreadHiddenInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -78,6 +79,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  setThreadHidden,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -124,6 +126,7 @@ export type {
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
   SetThreadAutoSettleInput,
+  SetThreadHiddenInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -219,6 +222,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
       execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
+      scheduler,
+      concurrency,
+    }),
+    setHidden: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-hidden",
+      execute: (input: SetThreadHiddenInput) => setThreadHidden(input),
       scheduler,
       concurrency,
     }),
@@ -459,10 +468,16 @@ export function createThreadEnvironmentAtoms<R, E>(
       ...thread,
       autoSettleDisabledAt: input.enabled ? null : (thread.autoSettleDisabledAt ?? now),
     })),
+    setHidden: optimistic.wrap(commands.setHidden, (thread, input, now) =>
+      input.hidden
+        ? { ...thread, hiddenAt: thread.hiddenAt ?? now, pinnedAt: null, pinOrderKey: null }
+        : { ...thread, hiddenAt: null },
+    ),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,
       pinnedAt: thread.pinnedAt ?? now,
       pinOrderKey: thread.pinnedAt == null ? (input.orderKey ?? null) : thread.pinOrderKey,
+      hiddenAt: null,
       ...(thread.settledOverride === "settled"
         ? {
             settledOverride: "active" as const,

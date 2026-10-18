@@ -226,6 +226,19 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
+## Hide threads until they need you
+
+Choose **Hide thread** from a thread's menu to move it into the collapsed
+**Hidden** section. A hidden thread returns to the active list only while it
+needs an approval or an answer, has a plan ready, or has failed since you last
+opened it. Finishing normally keeps it hidden. On web and desktop, you can also
+hide several selected threads together. Choose **Unhide thread**, or pin the
+thread, to bring it back. Hiding a pinned thread removes its pin.
+
+To keep a scheduled task's runs hidden, turn on **Keep threads hidden** in the
+task's settings. A task that creates a new thread for each run creates it
+hidden; a task bound to one thread hides that thread each time it runs.
+
 ## Snooze until later
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your

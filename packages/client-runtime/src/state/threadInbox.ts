@@ -16,6 +16,10 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.pendingSubagentRequest != null) return false;
   if (!threadRuntimeIsActive(thread.runtime) && thread.runtime?.status !== "idle") return false;
+  return !hasReadyPlan(thread);
+}
+
+function hasReadyPlan(thread: WorkingThreadInput): boolean {
   const run = thread.latestRun;
   const runSettled =
     run !== null &&
@@ -25,7 +29,25 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
     run.status !== "running" &&
     run.status !== "waiting" &&
     thread.runtime?.activeRunId !== run.runId;
-  return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
+  return thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled;
+}
+
+type HiddenThreadInput = WorkingThreadInput &
+  Pick<EnvironmentThreadShell, "hiddenAt" | "lastVisitedAt">;
+
+/**
+ * A hidden thread leaves the thread list until it needs the user: an approval,
+ * an answer, a ready plan, or a failure they have not opened since it happened.
+ */
+export function isThreadHiddenFromList(thread: HiddenThreadInput): boolean {
+  if (thread.hiddenAt == null) return false;
+  if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
+  if (thread.pendingSubagentRequest != null) return false;
+  if (hasReadyPlan(thread)) return false;
+  if (thread.runtime?.status !== "failed") return true;
+  const failedAt = Date.parse(thread.latestRun?.completedAt ?? "");
+  const visitedAt = Date.parse(thread.lastVisitedAt ?? "");
+  return !Number.isNaN(failedAt) && !Number.isNaN(visitedAt) && visitedAt >= failedAt;
 }
 
 type InboxThreadInput = Pick<

@@ -312,6 +312,18 @@ describe("resolveThreadListV2SwipeActions", () => {
       }),
     ).toEqual({ primary: "unsnooze", secondary: null });
   });
+
+  it("offers unhide instead of un-settle on a hidden row", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "slim",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        hidden: true,
+      }),
+    ).toEqual({ primary: "unhide", secondary: null });
+  });
 });
 
 describe("resolveThreadListV2SnoozeGateExpiryMs", () => {
@@ -460,6 +472,35 @@ describe("buildThreadListV2Items", () => {
 
     expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "woken"]);
     expect(layout.snoozedCount).toBe(1);
+  });
+
+  it("collapses hidden threads into their own shelf until one needs the user", () => {
+    const hiddenAt = "2026-06-01T12:00:00.000Z";
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({ id: ThreadId.make("active"), title: "Active" }),
+        makeThread({ id: ThreadId.make("hidden"), title: "Hidden", hiddenAt }),
+        makeThread({
+          id: ThreadId.make("asking"),
+          title: "Needs approval",
+          hiddenAt,
+          hasPendingApprovals: true,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "asking"]);
+    expect(layout.hiddenCount).toBe(1);
+    const items = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      hiddenCount: layout.hiddenCount,
+      hiddenShelfHeaderIndex: layout.hiddenShelfHeaderIndex,
+    });
+    expect(items.map((item) => item.type)).toEqual(["v2-thread", "v2-thread", "v2-hidden-shelf"]);
   });
 
   it("places settled pinned threads in the settled shelf", () => {

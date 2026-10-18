@@ -30,7 +30,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
+    "Pin, snooze, settle, hide, archive, or mark a thread unread. Omit threadId for this thread. A hidden thread leaves the sidebar until it needs an approval, an answer, or has failed. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -42,6 +42,8 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unsettle",
       "archive",
       "unarchive",
+      "hide",
+      "unhide",
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),

@@ -40,6 +40,7 @@ import {
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
   readEnvironmentSupportsSettlement,
+  readEnvironmentSupportsHiding,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsVisitedTracking,
   readEnvironmentThreadRefs,
@@ -115,6 +116,18 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+export class ThreadHidingUnsupportedError extends Schema.TaggedError<ThreadHidingUnsupportedError>()(
+  "ThreadHidingUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support hiding threads yet. Update the server to use it.";
+  }
 }
 
 export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<ThreadAutoSettleOptOutUnsupportedError>()(
@@ -268,6 +281,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
+  const setThreadHiddenMutation = useOrchestrationCommand(threadEnvironment.setHidden, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useOrchestrationCommand(threadEnvironment.reorderPin, {
@@ -752,6 +768,61 @@ export function useThreadActions() {
     return result;
   };
 
+  const unhideThread = async (target: ScopedThreadRef) => {
+    if (!readEnvironmentSupportsHiding(target.environmentId)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadHidingUnsupportedError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    ThreadUndo.invalidate("hide", scopedThreadKey(target));
+    return setThreadHiddenMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, hidden: false },
+    });
+  };
+
+  const hideThread = async (target: ScopedThreadRef) => {
+    if (!readEnvironmentSupportsHiding(target.environmentId)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadHidingUnsupportedError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    // Hiding drops the pin server-side, so Undo has to put it back.
+    const resolved = resolveThreadTarget(target);
+    const wasPinned = resolved?.thread.pinnedAt != null;
+    const pinOrderKey = wasPinned ? resolved?.thread.pinOrderKey : null;
+    ThreadUndo.invalidate("pin", scopedThreadKey(target));
+    const action = ThreadUndo.begin("hide", scopedThreadKey(target));
+    const result = await setThreadHiddenMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, hidden: true },
+    });
+    if (result._tag !== "Success") {
+      action.finish();
+      return result;
+    }
+    showThreadUndoNotice({
+      action: "Hidden",
+      claim: action,
+      undo: () =>
+        wasPinned
+          ? pinThread(target, pinOrderKey == null ? {} : { orderKey: pinOrderKey })
+          : unhideThread(target),
+      failureTitle: "Failed to undo hide",
+    });
+    return result;
+  };
+
   const confirmAndUnpinThread = async (target: ScopedThreadRef) => {
     const permissionFailure = threadOperationFailure(target);
     if (permissionFailure) return permissionFailure;
@@ -901,6 +972,8 @@ export function useThreadActions() {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    hideThread,
+    unhideThread,
     pinThread,
     unpinThread,
     confirmAndUnpinThread,

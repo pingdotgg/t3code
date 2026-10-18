@@ -539,6 +539,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
                   prompt: editor.draft.prompt,
                   schedule: editor.draft.schedule,
                   enabled: editor.draft.enabled,
+                  hideThreads: editor.draft.hideThreads,
                 },
               });
             }}
@@ -586,6 +587,7 @@ function TaskForm({
   );
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
+  const supportsHiding = config?.environment.capabilities.threadHiding === true;
   const modelOptions = useMemo(
     () => buildModelOptions(config, null, undefined, draft.projectId),
     [config, draft.projectId],
@@ -680,6 +682,7 @@ function TaskForm({
               },
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
+      ...(supportsHiding ? { hideThreads: draft.hideThreads } : {}),
       creationSource: draft.task?.creationSource ?? "mobile",
     };
     submissionPending.current = true;
@@ -1012,6 +1015,21 @@ function TaskForm({
               onValueChange={(enabled) => setDraft({ ...draft, enabled })}
             />
           </View>
+          {supportsHiding ? (
+            <View className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3">
+              <View className="min-w-0 flex-1">
+                <Text className="text-lg text-foreground">Keep threads hidden</Text>
+                <Text className="text-sm text-foreground-muted">
+                  Runs stay out of the thread list until they need an approval, an answer, or fail.
+                </Text>
+              </View>
+              <ThemedSwitch
+                accessibilityLabel="Keep threads hidden"
+                value={draft.hideThreads}
+                onValueChange={(hideThreads) => setDraft({ ...draft, hideThreads })}
+              />
+            </View>
+          ) : null}
         </SettingsSection>
         {draft.schedule.mode === "fixed_time" ? (
           <Text className="px-2 text-sm text-foreground-muted">

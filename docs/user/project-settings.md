@@ -68,6 +68,9 @@ list by environment or project. Each task runs on the environment you choose,
 using its project, model, and workspace settings. Fixed-time schedules use that
 environment's time zone, which may differ from your phone's.
 
+Turn on **Keep threads hidden** to keep a task's runs out of the thread list
+until they need you; see [Hide threads](thread-sidebar.md#hide-threads-until-they-need-you).
+
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
 immediately.

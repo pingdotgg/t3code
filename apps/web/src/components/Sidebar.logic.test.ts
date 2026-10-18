@@ -131,19 +131,23 @@ describe("animateSidebarLayoutChanges", () => {
 });
 
 describe("resolveSidebarThreadSection", () => {
+  const none = { snoozed: false, settled: false, hidden: false, pinned: false };
+
   it("keeps a pinned thread in the pinned shelf", () => {
-    expect(resolveSidebarThreadSection({ snoozed: false, settled: false, pinned: true })).toBe(
-      "pinned",
-    );
+    expect(resolveSidebarThreadSection({ ...none, pinned: true })).toBe("pinned");
   });
 
   it("keeps lifecycle shelves authoritative over a stale pin", () => {
-    expect(resolveSidebarThreadSection({ snoozed: true, settled: true, pinned: true })).toBe(
-      "snoozed",
-    );
-    expect(resolveSidebarThreadSection({ snoozed: false, settled: true, pinned: true })).toBe(
-      "settled",
-    );
+    expect(
+      resolveSidebarThreadSection({ ...none, snoozed: true, settled: true, pinned: true }),
+    ).toBe("snoozed");
+    expect(resolveSidebarThreadSection({ ...none, settled: true, pinned: true })).toBe("settled");
+    expect(resolveSidebarThreadSection({ ...none, hidden: true, pinned: true })).toBe("hidden");
+  });
+
+  it("lets snoozed and settled shelves hold a hidden thread", () => {
+    expect(resolveSidebarThreadSection({ ...none, snoozed: true, hidden: true })).toBe("snoozed");
+    expect(resolveSidebarThreadSection({ ...none, settled: true, hidden: true })).toBe("settled");
   });
 });
 

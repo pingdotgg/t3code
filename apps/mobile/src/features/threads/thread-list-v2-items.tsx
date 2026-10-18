@@ -121,6 +121,11 @@ const SNOOZED_MENU_ACTIONS: MenuAction[] = [
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
 ];
 
+const HIDDEN_MENU_ACTIONS: MenuAction[] = [
+  { id: "unhide", title: "Unhide", image: "eye" },
+  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
+];
+
 const LEGACY_MENU_ACTIONS: MenuAction[] = [
   { id: "archive", title: "Archive", image: "archivebox" },
   { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
@@ -220,7 +225,12 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
+const SHELF_LABEL = {
+  working: "Working",
+  snoozed: "Snoozed",
+  hidden: "Hidden",
+  settled: "Settled",
+} as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
@@ -252,6 +262,12 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
+});
+
+export const ThreadListV2HiddenShelfHeader = memo(function ThreadListV2HiddenShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="hidden" />;
 });
 
 export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
@@ -470,6 +486,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly variant: "card" | "slim";
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
+  readonly hidden?: boolean;
   readonly pinned?: boolean;
   readonly snoozeWakeLabelText?: string;
   readonly timeLabel: string;
@@ -497,10 +514,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   readonly onSetThreadAutoSettle: (thread: EnvironmentThreadShell, enabled: boolean) => void;
+  readonly onSetThreadHidden: (thread: EnvironmentThreadShell, hidden: boolean) => void;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
+  readonly hidingSupported: boolean;
   readonly titleRegenerationSupported: boolean;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
@@ -533,9 +552,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onSetThreadAutoSettle,
+    onSetThreadHidden,
     onMoveThread,
   } = props;
   const snoozedRow = props.snoozed === true;
+  const hiddenRow = props.hidden === true;
   const pinnedRow = props.pinned === true;
   const dormant = useSwipeRowDormant(props.activationKey);
 
@@ -600,6 +621,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     (enabled: boolean) => onSetThreadAutoSettle(thread, enabled),
     [onSetThreadAutoSettle, thread],
   );
+  const handleSetHidden = useCallback(
+    (hidden: boolean) => onSetThreadHidden(thread, hidden),
+    [onSetThreadHidden, thread],
+  );
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
@@ -628,6 +653,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
+    hidden: hiddenRow,
   });
   const snoozePresets = useMemo(
     () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
@@ -670,13 +696,22 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : { id: "pin", title: "Pin", image: "pin" },
           ]
         : []),
+      ...(props.hidingSupported
+        ? [
+            thread.hiddenAt != null
+              ? { id: "unhide", title: "Unhide", image: "eye" }
+              : { id: "hide", title: "Hide", image: "eye.slash" },
+          ]
+        : []),
     ],
     [
       props.canMoveDown,
       props.canMoveUp,
       props.reorderSupported,
       props.pinningSupported,
+      props.hidingSupported,
       thread.pinnedAt,
+      thread.hiddenAt,
       variant,
     ],
   );
@@ -762,6 +797,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [autoSettleMenuItems, titleMenuItems],
   );
+  const hiddenMenuActions = useMemo<MenuAction[]>(
+    () => [
+      HIDDEN_MENU_ACTIONS[0]!,
+      ...titleMenuItems,
+      ...autoSettleMenuItems,
+      HIDDEN_MENU_ACTIONS[1]!,
+    ],
+    [autoSettleMenuItems, titleMenuItems],
+  );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [
       LEGACY_MENU_ACTIONS[0]!,
@@ -779,6 +823,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
+      if (nativeEvent.event === "hide") handleSetHidden(true);
+      if (nativeEvent.event === "unhide") handleSetHidden(false);
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
       if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
       if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
@@ -822,6 +868,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleSettle,
       handleSnooze,
       handleSetAutoSettle,
+      handleSetHidden,
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
@@ -846,6 +893,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onPress: handleUnsnooze,
       };
     }
+    if (swipeActions.primary === "unhide") {
+      return {
+        accessibilityLabel: `Unhide ${thread.title}`,
+        icon: "eye" as const,
+        label: "Unhide",
+        onPress: () => handleSetHidden(false),
+      };
+    }
     return swipeActions.primary === "unsettle"
       ? {
           accessibilityLabel: `Un-settle ${thread.title}`,
@@ -861,6 +916,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         };
   }, [
     handleArchive,
+    handleSetHidden,
     handleSettle,
     handleUnsettle,
     handleUnsnooze,
@@ -1227,7 +1283,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         onSwipeableWillOpen={props.onSwipeableWillOpen}
         primaryAction={primaryAction}
         secondaryAction={secondaryAction}
-        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}`}
+        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${hiddenRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}`}
         simultaneousWith={props.simultaneousSwipeGesture}
         threadTitle={thread.title}
       >
@@ -1246,13 +1302,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
               ...(snoozedRow
                 ? snoozedMenuActions
-                : !props.settlementSupported
-                  ? legacyMenuActions
-                  : canUnsettle
-                    ? slimMenuActions
-                    : swipeActions.secondary === "snooze"
-                      ? snoozableCardMenuActions
-                      : cardMenuActions),
+                : hiddenRow
+                  ? hiddenMenuActions
+                  : !props.settlementSupported
+                    ? legacyMenuActions
+                    : canUnsettle
+                      ? slimMenuActions
+                      : swipeActions.secondary === "snooze"
+                        ? snoozableCardMenuActions
+                        : cardMenuActions),
             ]}
             onPressAction={handleMenuAction}
             shouldOpenOnLongPress

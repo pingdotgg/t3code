@@ -62,6 +62,7 @@ import {
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
+  ThreadListV2HiddenShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
@@ -144,6 +145,7 @@ function ThreadNavigationSidebarPane(
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadHidden,
     moveThread,
     renameThread,
     regenerateThreadTitle,
@@ -281,9 +283,11 @@ function ThreadNavigationSidebarPane(
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    hiddenShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    toggleHiddenShelf,
   } = useThreadListV2ShelfPreferences();
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -300,6 +304,7 @@ function ThreadNavigationSidebarPane(
     snoozeEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    hidingEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -361,10 +366,12 @@ function ThreadNavigationSidebarPane(
       workingShelfExpanded,
       inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
+      hiddenShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
+    hiddenShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
     pendingOrder,
@@ -417,6 +424,9 @@ function ThreadNavigationSidebarPane(
       snoozedCount: threadListV2Layout.snoozedCount,
       snoozedShelfExpanded,
       snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+      hiddenCount: threadListV2Layout.hiddenCount,
+      hiddenShelfExpanded,
+      hiddenShelfHeaderIndex: threadListV2Layout.hiddenShelfHeaderIndex,
       settledCount: threadListV2Layout.settledCount,
       settledShelfExpanded,
       settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
@@ -435,6 +445,7 @@ function ThreadNavigationSidebarPane(
     }
     return items;
   }, [
+    hiddenShelfExpanded,
     nowMinute,
     options.selectedEnvironmentId,
     pendingTasks,
@@ -657,6 +668,7 @@ function ThreadNavigationSidebarPane(
               variant={item.item.variant}
               hasQueuedMessages={item.hasQueuedMessages}
               snoozed={item.item.snoozed}
+              hidden={item.item.hidden}
               pinned={item.item.pinned}
               snoozePresetMinute={item.snoozePresetMinute ?? ""}
               snoozeWakeLabelText={item.snoozeWakeLabelText}
@@ -694,6 +706,7 @@ function ThreadNavigationSidebarPane(
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
               autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+              hidingSupported={hidingEnvironmentIds.has(thread.environmentId)}
               reorderSupported={
                 item.item.pinned
                   ? pinReorderEnvironmentIds.has(thread.environmentId)
@@ -707,6 +720,7 @@ function ThreadNavigationSidebarPane(
               onPinThread={pinThread}
               onUnpinThread={unpinThread}
               onSetThreadAutoSettle={setThreadAutoSettle}
+              onSetThreadHidden={setThreadHidden}
               onMoveThread={moveThread}
               onSwipeableClose={handleSwipeableClose}
               onSwipeableWillOpen={handleSwipeableWillOpen}
@@ -731,6 +745,16 @@ function ThreadNavigationSidebarPane(
               disabled={item.disabled}
               expanded={item.expanded}
               onToggle={toggleSnoozedShelf}
+              pane="sidebar"
+            />
+          );
+        case "v2-hidden-shelf":
+          return (
+            <ThreadListV2HiddenShelfHeader
+              count={item.count}
+              disabled={item.disabled}
+              expanded={item.expanded}
+              onToggle={toggleHiddenShelf}
               pane="sidebar"
             />
           );
@@ -771,6 +795,8 @@ function ThreadNavigationSidebarPane(
       autoSettleOptOutEnvironmentIds,
       autoSettleOptOutEnvironmentIds,
       setThreadAutoSettle,
+      setThreadHidden,
+      hidingEnvironmentIds,
       projectByKey,
       projectTitleByProjectKey,
       regenerateThreadTitle,
@@ -793,6 +819,7 @@ function ThreadNavigationSidebarPane(
       toggleSettledShelf,
       toggleSnoozedShelf,
       toggleWorkingShelf,
+      toggleHiddenShelf,
       unpinThread,
       unsettleThread,
       unsnoozeThread,

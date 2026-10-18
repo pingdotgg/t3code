@@ -467,6 +467,20 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
   });
 });
 
+export interface SetThreadHiddenInput extends ThreadCommandInput {
+  readonly hidden: boolean;
+}
+export const setThreadHidden = Effect.fn("EnvironmentCommands.setThreadHidden")(function* (
+  input: SetThreadHiddenInput,
+) {
+  return yield* dispatch({
+    type: "thread.hidden.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    hidden: input.hidden,
+  });
+});
+
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,
 ) {

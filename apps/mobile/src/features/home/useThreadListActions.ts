@@ -238,6 +238,7 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  readonly setThreadHidden: (thread: EnvironmentThreadShell, hidden: boolean) => Promise<boolean>;
   readonly moveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -253,6 +254,7 @@ export function useThreadListActions(): {
   const setAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
     reportFailure: false,
   });
+  const setHiddenMutation = useAtomCommand(threadEnvironment.setHidden, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -472,6 +474,27 @@ export function useThreadListActions(): {
       return true;
     },
     [setAutoSettleMutation],
+  );
+  const setThreadHidden = useCallback(
+    async (thread: EnvironmentThreadShell, hidden: boolean) => {
+      selectionHaptic();
+      const result = await setHiddenMutation({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, hidden },
+      });
+      if (result._tag === "Failure") {
+        const error = Cause.squash(result.cause);
+        Dialog.alert(
+          hidden ? "Could not hide thread" : "Could not unhide thread",
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "The thread could not be changed.",
+        );
+        return false;
+      }
+      return true;
+    },
+    [setHiddenMutation],
   );
   const regenerateThreadTitle = useCallback(
     async (thread: EnvironmentThreadShell) => {
@@ -734,6 +757,7 @@ export function useThreadListActions(): {
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadHidden,
     moveThread,
     renameThread,
     regenerateThreadTitle,

@@ -1,7 +1,11 @@
 import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createInboxReturnTracker, sortWorkingThreadsBySend } from "./threadInbox.ts";
+import {
+  createInboxReturnTracker,
+  isThreadHiddenFromList,
+  sortWorkingThreadsBySend,
+} from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -79,5 +83,58 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("isThreadHiddenFromList", () => {
+  const failedAt = "2026-06-01T01:00:00.000Z";
+  const hidden = {
+    ...thread("hidden", false),
+    hiddenAt: "2026-06-01T00:30:00.000Z",
+    lastVisitedAt: null,
+    pendingSubagentRequest: null,
+  };
+  const failed = {
+    ...hidden,
+    latestRun: {
+      runId: RunId.make("run-failed"),
+      status: "failed" as const,
+      requestedAt: "2026-06-01T00:59:00.000Z",
+      startedAt: "2026-06-01T00:59:00.000Z",
+      completedAt: failedAt,
+      assistantMessageId: null,
+    },
+    runtime: {
+      status: "failed" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: "boom",
+      updatedAt: failedAt,
+    },
+  };
+
+  it("keeps a hidden thread out of the list while it works or finishes", () => {
+    expect(isThreadHiddenFromList(hidden)).toBe(true);
+    expect(isThreadHiddenFromList({ ...thread("busy", true), hiddenAt: hidden.hiddenAt })).toBe(
+      true,
+    );
+    expect(isThreadHiddenFromList({ ...hidden, hiddenAt: null })).toBe(false);
+  });
+
+  it("brings a hidden thread back while it needs the user", () => {
+    expect(isThreadHiddenFromList({ ...hidden, hasPendingApprovals: true })).toBe(false);
+    expect(isThreadHiddenFromList({ ...hidden, hasPendingUserInput: true })).toBe(false);
+    expect(isThreadHiddenFromList({ ...hidden, pendingSubagentRequest: "approval" })).toBe(false);
+  });
+
+  it("shows a failure until the user opens the thread after it", () => {
+    expect(isThreadHiddenFromList(failed)).toBe(false);
+    expect(isThreadHiddenFromList({ ...failed, lastVisitedAt: "2026-06-01T00:00:00.000Z" })).toBe(
+      false,
+    );
+    expect(isThreadHiddenFromList({ ...failed, lastVisitedAt: "2026-06-01T02:00:00.000Z" })).toBe(
+      true,
+    );
   });
 });

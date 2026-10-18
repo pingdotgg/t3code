@@ -15,6 +15,8 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "hide"
+  | "unhide"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -75,6 +77,7 @@ export interface ThreadActionMenuState {
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
+  readonly isHidden: boolean;
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
@@ -82,6 +85,7 @@ export interface ThreadActionMenuState {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
+    readonly hiding: boolean;
     readonly pinning: boolean;
     readonly titleRegeneration: boolean;
   };
@@ -145,6 +149,13 @@ export function buildThreadActionMenuItems(
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
               },
+        ]
+      : []),
+    ...(state.supports.hiding
+      ? [
+          state.isHidden
+            ? { id: "unhide" as const, label: "Unhide thread", icon: "eye" }
+            : { id: "hide" as const, label: "Hide thread", icon: "eye-off" },
         ]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },

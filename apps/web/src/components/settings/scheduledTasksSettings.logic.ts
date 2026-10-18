@@ -65,6 +65,7 @@ export interface DraftState {
   readonly modelKey: string;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly hideThreads: boolean;
   /**
    * The picker only edits `instanceId:model`; keeping the source object preserves provider
    * options (reasoning, temperature, …) when the model itself is left unchanged.
@@ -126,6 +127,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
+    hideThreads: task.hideThreads === true,
     scheduleMode:
       schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
     intervalMinutes:

@@ -37,7 +37,10 @@ import {
   QUEUED_TURN_START_GRACE_MS,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  createInboxReturnTracker,
+  isThreadHiddenFromList,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   resolveSettledThreadTimestamp,
@@ -365,6 +368,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const HIDDEN_SHELF_EXPANDED_KEY = "t3code:sidebar:hidden-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -476,6 +480,11 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [hiddenShelfExpanded, setHiddenShelfExpanded] = useLocalStorage(
+    HIDDEN_SHELF_EXPANDED_KEY,
+    false,
+    Schema.Boolean,
+  );
   // The settled tail restarts whenever the project scope changes.
   const [settledTail, setSettledTail] = useState({
     scopeKey: projectScopeKey,
@@ -498,8 +507,14 @@ function useSidebarThreads(input: {
   const partitionNextWakeAt = partition.snoozedThreads[0]?.snoozedUntil ?? null;
   if (partitionNextWakeAt !== nextSnoozeWakeAt) setNextSnoozeWakeAt(partitionNextWakeAt);
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const {
+    pinnedThreads,
+    activeThreads,
+    workingThreads,
+    snoozedThreads,
+    hiddenThreads,
+    settledThreads,
+  } = partition;
   const visibleSettledThreads = (() => {
     if (settledThreads.length <= settledVisibleCount) return settledThreads;
     const visible = settledThreads.slice(0, settledVisibleCount);
@@ -520,11 +535,15 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeThreadKey);
+  const visibleHiddenThreads = hiddenShelfExpanded
+    ? hiddenThreads
+    : routeThreadOnly(hiddenThreads, routeThreadKey);
   const orderedThreads = [
     ...pinnedThreads,
     ...activeThreads,
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
+    ...visibleHiddenThreads,
     ...renderedSettledThreads,
   ];
   const sectionByThreadKey = new Map<string, SidebarSection>();
@@ -533,6 +552,7 @@ function useSidebarThreads(input: {
     [activeThreads, "active"],
     [workingThreads, "working"],
     [snoozedThreads, "snoozed"],
+    [hiddenThreads, "hidden"],
     [settledThreads, "settled"],
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
@@ -546,6 +566,7 @@ function useSidebarThreads(input: {
       ...activeThreads,
       ...workingThreads,
       ...snoozedThreads,
+      ...hiddenThreads,
       ...settledThreads,
     ],
     settledVisibleCount,
@@ -561,9 +582,12 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
+    hiddenShelfExpanded,
+    toggleHiddenShelf: () => setHiddenShelfExpanded((value) => !value),
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
+    visibleHiddenThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
@@ -591,6 +615,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const inbox = (thread: EnvironmentThreadShell) =>
     workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
   const snoozed: EnvironmentThreadShell[] = [];
+  const hidden: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const draggable = new Set<string>();
   const activeReorderable = new Set<string>();
@@ -624,15 +649,18 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       const section = resolveSidebarThreadSection({
         snoozed: supportsSnooze && effectiveSnoozed(thread, { now: preciseNow }),
         settled: supportsSettlement && thread.settledOverride === "settled",
+        hidden: isThreadHiddenFromList(thread),
         pinned: thread.pinnedAt != null,
       });
       (section === "snoozed"
         ? snoozed
         : section === "settled"
           ? settled
-          : section === "pinned"
-            ? pinned
-            : inbox(thread)
+          : section === "hidden"
+            ? hidden
+            : section === "pinned"
+              ? pinned
+              : inbox(thread)
       ).push(thread);
     }
   }
@@ -668,6 +696,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         firstValidTimestampMs(left.snoozedUntil ?? null) -
         firstValidTimestampMs(right.snoozedUntil ?? null),
     ),
+    hiddenThreads: sortThreadsForSidebar(hidden),
     settledThreads: sortSettledThreads(settled),
     snoozeNow: preciseNow,
   };
@@ -1256,7 +1285,7 @@ function SidebarDragBoundary(props: {
 }
 
 function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
+  marker: "working-header" | "snoozed-header" | "hidden-header" | "settled-header";
   label: string;
   className?: string;
   dragging?: boolean;
@@ -1268,7 +1297,9 @@ function SidebarSectionHeader(props: {
       ? "working"
       : props.marker === "snoozed-header"
         ? "snoozed"
-        : "settled";
+        : props.marker === "hidden-header"
+          ? "hidden"
+          : "settled";
   const snoozed = shelf === "snoozed";
   return (
     <SortableSidebarMarker
@@ -2709,6 +2740,8 @@ export default function Sidebar() {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    hideThread,
+    unhideThread,
     pinThread,
     unpinThread,
     confirmAndUnpinThread,
@@ -2971,6 +3004,7 @@ export default function Sidebar() {
     activeThreads,
     workingThreads,
     snoozedThreads,
+    hiddenThreads,
     settledThreads,
     snoozeNow,
     searchableThreads,
@@ -2983,9 +3017,12 @@ export default function Sidebar() {
     toggleSnoozedShelf,
     workingShelfExpanded,
     toggleWorkingShelf,
+    hiddenShelfExpanded,
+    toggleHiddenShelf,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
+    visibleHiddenThreads,
     orderedThreadKeys,
     threadByKey,
     settledThreadKeys,
@@ -3299,6 +3336,21 @@ export default function Sidebar() {
       }
     })();
   };
+  const attemptSetHidden = (threadRef: ScopedThreadRef, hidden: boolean) => {
+    void (async () => {
+      const result = hidden ? await hideThread(threadRef) : await unhideThread(threadRef);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: hidden ? "Failed to hide thread" : "Failed to unhide thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    })();
+  };
   const restrictBelowPins: Modifier = (args) =>
     restrictBelowSidebarLabel(args, dragLabelOffsetRef.current);
   // A new array re-renders DndContext and with it every sortable row.
@@ -3534,6 +3586,7 @@ export default function Sidebar() {
         activeThreads.length +
         workingThreads.length +
         snoozedThreads.length +
+        hiddenThreads.length +
         settledThreads.length ===
       0
     ) {
@@ -3553,6 +3606,10 @@ export default function Sidebar() {
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
       items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
+    }
+    if (hiddenThreads.length > 0) {
+      items.push({ kind: "marker", marker: "hidden-header" });
+      items.push(...rowsOf(visibleHiddenThreads, "hidden"));
     }
     items.push({ kind: "marker", marker: "settled-header" });
     const settledRows = rowsOf(renderedSettledThreads, "settled");
@@ -3910,6 +3967,12 @@ export default function Sidebar() {
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
+      const hidingSelectedThreads = selectedThreads.filter(
+        (thread) =>
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadHiding === true,
+      );
+      const hideableThreads = hidingSelectedThreads.filter((thread) => thread.hiddenAt == null);
+      const unhideableThreads = hidingSelectedThreads.filter((thread) => thread.hiddenAt != null);
       const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
@@ -3922,6 +3985,24 @@ export default function Sidebar() {
               label: `Settle (${count})`,
               disabled: settlingThreads.length === 0 || !canOperateThreads(settlingThreads),
             },
+            ...(hideableThreads.length > 0
+              ? [
+                  {
+                    id: "hide",
+                    label: `Hide (${hideableThreads.length})`,
+                    disabled: !canOperateThreads(hideableThreads),
+                  },
+                ]
+              : []),
+            ...(unhideableThreads.length > 0
+              ? [
+                  {
+                    id: "unhide",
+                    label: `Unhide (${unhideableThreads.length})`,
+                    disabled: !canOperateThreads(unhideableThreads),
+                  },
+                ]
+              : []),
             ...(canSnoozeSelection
               ? [
                   {
@@ -3971,14 +4052,18 @@ export default function Sidebar() {
           ? pinnedSelectedThreads
           : clicked.value === "regenerate-title"
             ? regeneratableTitleThreads
-            : clicked.value === "settle"
-              ? settlingThreads.flatMap((thread) => {
-                  const current = threadByKeyRef.current.get(
-                    scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-                  );
-                  return current && current.settledOverride !== "settled" ? [current] : [];
-                })
-              : selectedThreads;
+            : clicked.value === "hide"
+              ? hideableThreads
+              : clicked.value === "unhide"
+                ? unhideableThreads
+                : clicked.value === "settle"
+                  ? settlingThreads.flatMap((thread) => {
+                      const current = threadByKeyRef.current.get(
+                        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+                      );
+                      return current && current.settledOverride !== "settled" ? [current] : [];
+                    })
+                  : selectedThreads;
       if (clicked.value === "settle" && actionTargets.length === 0) return;
       if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
       if (clicked.value?.startsWith("snooze:")) {
@@ -4023,6 +4108,16 @@ export default function Sidebar() {
       if (clicked.value === "unpin") {
         for (const thread of pinnedSelectedThreads) {
           attemptUnpin(scopeThreadRef(thread.environmentId, thread.id));
+        }
+        clearSelection();
+        return;
+      }
+      if (clicked.value === "hide" || clicked.value === "unhide") {
+        for (const thread of actionTargets) {
+          attemptSetHidden(
+            scopeThreadRef(thread.environmentId, thread.id),
+            clicked.value === "hide",
+          );
         }
         clearSelection();
         return;
@@ -4191,6 +4286,8 @@ export default function Sidebar() {
           true;
         const supportsSnooze =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+        const supportsHiding =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadHiding === true;
         const supportsPinning =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPinning === true;
         const supportsAutoSettleOptOut =
@@ -4231,12 +4328,14 @@ export default function Sidebar() {
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+              isHidden: thread.hiddenAt != null,
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
+                hiding: supportsHiding,
                 pinning: supportsPinning,
                 titleRegeneration: supportsTitleRegeneration,
               },
@@ -4301,6 +4400,10 @@ export default function Sidebar() {
             return;
           case "unsnooze":
             attemptUnsnooze(threadRef);
+            return;
+          case "hide":
+          case "unhide":
+            attemptSetHidden(threadRef, clicked.value === "hide");
             return;
           case "pin":
             attemptPin(threadRef);
@@ -4800,6 +4903,7 @@ export default function Sidebar() {
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
                               section === "working" ||
+                              section === "hidden" ||
                               !draggableThreadKeys.has(threadKey) ||
                               optimisticDrop !== null
                             }
@@ -4985,13 +5089,36 @@ export default function Sidebar() {
                               />,
                             );
                             break;
+                          case "hidden-header":
+                            items.push(
+                              <SidebarSectionHeader
+                                key="hidden-shelf-header"
+                                marker="hidden-header"
+                                className={cn(
+                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                )}
+                                label={
+                                  hiddenShelfExpanded
+                                    ? "Hidden"
+                                    : `Hidden (${hiddenThreads.length})`
+                                }
+                                toggle={{
+                                  expanded: hiddenShelfExpanded,
+                                  onToggle: toggleHiddenShelf,
+                                }}
+                              />,
+                            );
+                            break;
                           case "settled-header":
                             items.push(
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  workingThreads.length +
+                                    snoozedThreads.length +
+                                    hiddenThreads.length ===
+                                    0 && "mt-auto",
                                 )}
                                 label={
                                   settledShelfExpanded
@@ -5052,6 +5179,7 @@ export default function Sidebar() {
             activeThreads.length +
             workingThreads.length +
             snoozedThreads.length +
+            hiddenThreads.length +
             settledThreads.length ===
             0 ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">

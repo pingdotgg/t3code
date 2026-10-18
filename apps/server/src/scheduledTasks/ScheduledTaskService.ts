@@ -170,6 +170,7 @@ interface ScheduledTaskRow {
   readonly last_run_status: string;
   readonly last_run_error: string | null;
   readonly run_count: number;
+  readonly hide_threads: number;
   readonly webhook_token: string | null;
   readonly webhook_secret: string | null;
 }
@@ -307,6 +308,7 @@ const decodeRow = (row: ScheduledTaskRow, origin: WebhookOrigin | null = null) =
       lastRunStatus: row.last_run_status,
       lastRunError: row.last_run_error,
       runCount: row.run_count,
+      hideThreads: row.hide_threads === 1,
       ...(webhook === undefined ? {} : { webhook }),
     });
   }).pipe(
@@ -400,6 +402,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        hide_threads,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -434,6 +437,7 @@ export const layer = Layer.effect(
         last_run_status,
         last_run_error,
         run_count,
+        hide_threads,
         webhook_token,
         webhook_secret
       FROM scheduled_tasks
@@ -512,6 +516,7 @@ export const layer = Layer.effect(
           last_run_status,
           last_run_error,
           run_count,
+          hide_threads,
           webhook_token,
           webhook_secret
         )
@@ -536,6 +541,7 @@ export const layer = Layer.effect(
           ${task.lastRunStatus},
           ${task.lastRunError},
           ${task.runCount},
+          ${task.hideThreads === true ? 1 : 0},
           ${webhook.token},
           ${webhook.secret}
         WHERE ${requireExisting ? 0 : 1} = 1
@@ -552,6 +558,7 @@ export const layer = Layer.effect(
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
+          hide_threads = excluded.hide_threads,
           creation_source = excluded.creation_source,
           updated_at = excluded.updated_at,
           next_run_at = excluded.next_run_at,
@@ -750,6 +757,7 @@ export const layer = Layer.effect(
                   runtimeMode: active.runtimeMode,
                   interactionMode: active.interactionMode,
                   workspaceStrategy: active.workspaceStrategy,
+                  hidden: active.hideThreads === true,
                   initialMessage: {
                     messageId,
                     scheduledTaskId: active.id,
@@ -761,19 +769,31 @@ export const layer = Layer.effect(
                 }),
               )
             : yield* Effect.exit(
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text: prompt,
-                  attachments: [],
-                  modelSelection: active.modelSelection,
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                (active.hideThreads === true
+                  ? threadManagement.dispatch({
+                      type: "thread.hidden.set",
+                      commandId: CommandId.make(`scheduled-task:${fireKey}:hide`),
+                      threadId: ThreadId.make(active.threadId),
+                      hidden: true,
+                    })
+                  : Effect.void
+                ).pipe(
+                  Effect.andThen(
+                    threadManagement.sendToThread({
+                      projectId: active.projectId,
+                      commandId,
+                      threadId: ThreadId.make(active.threadId),
+                      messageId,
+                      scheduledTaskId: active.id,
+                      text: prompt,
+                      attachments: [],
+                      modelSelection: active.modelSelection,
+                      mode: "queue",
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    }),
+                  ),
+                ),
               );
 
         const completedAt = yield* localNow;
@@ -1036,6 +1056,7 @@ export const layer = Layer.effect(
           lastRunStatus: existingTask?.lastRunStatus ?? "never",
           lastRunError: existingTask?.lastRunError ?? null,
           runCount: existingTask?.runCount ?? 0,
+          hideThreads: input.hideThreads ?? existingTask?.hideThreads ?? false,
         };
         yield* saveTask(task, input.requireExisting === true, webhook);
         yield* notifyChanged;

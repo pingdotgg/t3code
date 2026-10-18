@@ -13,6 +13,7 @@ import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import {
   createInboxReturnTracker,
+  isThreadHiddenFromList,
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
@@ -65,7 +66,13 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
-export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
+export type ThreadListV2SwipeAction =
+  | "archive"
+  | "settle"
+  | "unsettle"
+  | "snooze"
+  | "unsnooze"
+  | "unhide";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
@@ -97,12 +104,16 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
   readonly snoozed?: boolean;
+  readonly hidden?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
   readonly secondary: "snooze" | null;
 } {
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
+  }
+  if (input.hidden === true) {
+    return { primary: "unhide", secondary: null };
   }
   const primary = input.settlementSupported
     ? input.variant === "slim"
@@ -221,6 +232,7 @@ export function getThreadListV2OrderedSection(input: {
     ) {
       return false;
     }
+    if (isThreadHiddenFromList(thread)) return false;
     return (thread.pinnedAt != null) === (input.section === "pinned");
   });
   const ordered =
@@ -238,6 +250,7 @@ export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   readonly snoozed: boolean;
+  readonly hidden: boolean;
   readonly pinned: boolean;
   readonly isLast: boolean;
 }
@@ -249,6 +262,8 @@ export interface ThreadListV2Layout {
   readonly workingShelfHeaderIndex: number | null;
   readonly snoozedCount: number;
   readonly snoozedShelfHeaderIndex: number | null;
+  readonly hiddenCount: number;
+  readonly hiddenShelfHeaderIndex: number | null;
   readonly settledCount: number;
   readonly settledShelfHeaderIndex: number | null;
   /**
@@ -305,6 +320,14 @@ export interface ThreadListV2SnoozedShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2HiddenShelfListItem {
+  readonly type: "v2-hidden-shelf";
+  readonly key: "v2-hidden-shelf";
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly disabled: boolean;
+}
+
 export interface ThreadListV2SettledShelfListItem {
   readonly type: "v2-settled-shelf";
   readonly key: "v2-settled-shelf";
@@ -318,6 +341,7 @@ export type ThreadListV2ListItem =
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
+  | ThreadListV2HiddenShelfListItem
   | ThreadListV2SettledShelfListItem;
 
 export function isThreadListV2ListItem(value: {
@@ -328,6 +352,7 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
+    value.type === "v2-hidden-shelf" ||
     value.type === "v2-settled-shelf"
   );
 }
@@ -349,6 +374,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.thread === item.item.thread &&
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
+        previous.item.hidden === item.item.hidden &&
         previous.item.pinned === item.item.pinned &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
@@ -380,6 +406,13 @@ export function threadListV2ListItemsAreEqual(
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
       );
+    case "v2-hidden-shelf":
+      return (
+        previous.type === "v2-hidden-shelf" &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded &&
+        previous.disabled === item.disabled
+      );
     case "v2-settled-shelf":
       return (
         previous.type === "v2-settled-shelf" &&
@@ -394,7 +427,7 @@ function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
 ): string {
-  const { thread, variant, snoozed } = item;
+  const { thread, variant, snoozed, hidden } = item;
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
@@ -402,7 +435,7 @@ function resolveThreadListV2ItemTimeLabel(
   )
     return "";
   const settledTimestamp =
-    variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
+    variant === "slim" && !snoozed && !hidden ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
     settledTimestamp ?? thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
@@ -417,6 +450,9 @@ export function buildThreadListV2ListItems(input: {
   readonly snoozedCount?: number;
   readonly snoozedShelfExpanded?: boolean;
   readonly snoozedShelfHeaderIndex?: number | null;
+  readonly hiddenCount?: number;
+  readonly hiddenShelfExpanded?: boolean;
+  readonly hiddenShelfHeaderIndex?: number | null;
   readonly settledCount?: number;
   readonly settledShelfExpanded?: boolean;
   readonly settledShelfHeaderIndex?: number | null;
@@ -472,8 +508,11 @@ export function buildThreadListV2ListItems(input: {
   const snoozedCount = input.snoozedCount ?? 0;
   const snoozedShelfHeaderIndex = input.snoozedShelfHeaderIndex ?? null;
   const settledCount = input.settledCount ?? 0;
+  const hiddenCount = input.hiddenCount ?? 0;
+  const hiddenShelfHeaderIndex = input.hiddenShelfHeaderIndex ?? null;
   const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
-  const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
+  const hiddenEnd = settledShelfHeaderIndex ?? threadItems.length;
+  const snoozedEnd = hiddenShelfHeaderIndex ?? hiddenEnd;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
   const result: ThreadListV2ListItem[] = [...threadItems.slice(0, activeEnd), ...pendingItems];
@@ -497,6 +536,16 @@ export function buildThreadListV2ListItems(input: {
       disabled: shelfDisabled,
     });
     result.push(...threadItems.slice(snoozedShelfHeaderIndex, snoozedEnd));
+  }
+  if (hiddenShelfHeaderIndex !== null && hiddenCount > 0) {
+    result.push({
+      type: "v2-hidden-shelf",
+      key: "v2-hidden-shelf",
+      count: hiddenCount,
+      expanded: input.hiddenShelfExpanded === true,
+      disabled: shelfDisabled,
+    });
+    result.push(...threadItems.slice(hiddenShelfHeaderIndex, hiddenEnd));
   }
   if (settledShelfHeaderIndex !== null && settledCount > 0) {
     result.push({
@@ -560,6 +609,7 @@ export function buildThreadListV2Items(input: {
   readonly workingShelfExpanded?: boolean;
   readonly inboxReturnAt?: (thread: EnvironmentThreadShell) => number | undefined;
   readonly snoozedShelfExpanded?: boolean;
+  readonly hiddenShelfExpanded?: boolean;
   readonly settledShelfExpanded?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly queuedThreadKeys?: ReadonlySet<string>;
@@ -587,6 +637,7 @@ export function buildThreadListV2Items(input: {
   const working: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
+  const hidden: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   for (const thread of input.threads) {
@@ -627,6 +678,8 @@ export function buildThreadListV2Items(input: {
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
     if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
       settled.push(thread);
+    } else if (isThreadHiddenFromList(thread)) {
+      hidden.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
     } else if (workingShelfEnabled && isThreadWorking(thread)) {
@@ -655,6 +708,13 @@ export function buildThreadListV2Items(input: {
     input.snoozedShelfExpanded === true
       ? orderedSnoozed
       : orderedSnoozed.filter(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
+  const orderedHidden = sortThreadsForListV2(hidden);
+  const visibleHidden =
+    input.hiddenShelfExpanded === true
+      ? orderedHidden
+      : orderedHidden.filter(
           (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
         );
   const orderedSettled = sortSettledThreadsReusingLast(settled);
@@ -686,6 +746,7 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "card",
       snoozed: false,
+      hidden: false,
       pinned: true,
       isLast: false,
     });
@@ -695,6 +756,7 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "card",
       snoozed: false,
+      hidden: false,
       pinned: false,
       isLast: false,
     });
@@ -705,6 +767,7 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "card",
       snoozed: false,
+      hidden: false,
       pinned: false,
       isLast: false,
     });
@@ -715,6 +778,18 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "slim",
       snoozed: true,
+      hidden: false,
+      pinned: false,
+      isLast: false,
+    });
+  }
+  const hiddenShelfHeaderIndex = orderedHidden.length > 0 ? items.length : null;
+  for (const thread of visibleHidden) {
+    items.push({
+      thread,
+      variant: "slim",
+      snoozed: false,
+      hidden: true,
       pinned: false,
       isLast: false,
     });
@@ -725,6 +800,7 @@ export function buildThreadListV2Items(input: {
       thread,
       variant: "slim",
       snoozed: false,
+      hidden: false,
       pinned: false,
       isLast: false,
     });
@@ -740,6 +816,8 @@ export function buildThreadListV2Items(input: {
     workingShelfHeaderIndex,
     snoozedCount: orderedSnoozed.length,
     snoozedShelfHeaderIndex,
+    hiddenCount: orderedHidden.length,
+    hiddenShelfHeaderIndex,
     settledCount: orderedSettled.length,
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
