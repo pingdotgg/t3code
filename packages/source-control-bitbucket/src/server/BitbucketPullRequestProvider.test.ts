@@ -70,6 +70,53 @@ it.effect.each([
   }),
 );
 
+it.effect.each([
+  { state: "MERGED", mergedAt: "2025-06-16T23:40:46.222Z", closedAt: null },
+  { state: "DECLINED", mergedAt: null, closedAt: "2025-06-16T23:40:46.222Z" },
+  { state: "OPEN", mergedAt: null, closedAt: null },
+])("reads the $state time from closed_on", ({ state, mergedAt, closedAt }) =>
+  Effect.gen(function* () {
+    const pullRequest = Result.getOrThrow(
+      decodePullRequestJson(
+        JSON.stringify({
+          id: 52,
+          title: "Release",
+          state,
+          source: { branch: { name: "release" } },
+          destination: { branch: { name: "master" } },
+          created_on: "2025-06-16T06:20:58.415108+00:00",
+          // Comments after a merge move this, so it is not the merge time.
+          updated_on: "2025-06-20T10:00:00.000000+00:00",
+          closed_on: state === "OPEN" ? null : "2025-06-16T23:40:46.222238+00:00",
+          links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/52" } },
+        }),
+      ),
+    );
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+          getPullRequest: () => Effect.succeed(pullRequest),
+          getDiffStat: () => Effect.succeed({ additions: 0, deletions: 0, changedFiles: 0 }),
+          getMergeability: () => Effect.succeed("unknown"),
+          listChecks: () => Effect.succeed([]),
+          getRepositoryPermission: () => Effect.succeed(true),
+        }),
+      ),
+    );
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "bitbucket.org",
+      number: 52,
+    });
+
+    expect({ mergedAt: detail.mergedAt, closedAt: detail.closedAt }).toEqual({
+      mergedAt,
+      closedAt,
+    });
+  }),
+);
+
 for (const operation of [
   "getMergeability",
   "listChecks",
