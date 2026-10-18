@@ -106,8 +106,10 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
     return;
   }
 
+  // The result dialogs need no main window. Opening one before the backend
+  // answers strands the renderer on a failed auth bootstrap.
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
-  yield* desktopWindow.ensureMain;
+  yield* desktopWindow.activate;
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 

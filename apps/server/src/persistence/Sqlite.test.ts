@@ -66,7 +66,7 @@ it.effect("limits the WAL file size in the shared persistence setup", () =>
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("collects planner statistics for an existing database on open", () => {
+it.effect("drops planner statistics a database already has", () => {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-stats-"));
   const dbPath = NodePath.join(tempDir, "state.sqlite");
   const persistence = () =>
@@ -75,20 +75,33 @@ it.effect("collects planner statistics for an existing database on open", () => 
   return Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* sql`CREATE TABLE stats_probe(id INTEGER PRIMARY KEY, thread_id TEXT NOT NULL)`;
-      yield* sql`CREATE INDEX stats_probe_thread_idx ON stats_probe(thread_id)`;
-      yield* sql`
-        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000)
-        INSERT INTO stats_probe(thread_id) SELECT 'thread-' || (i % 10) FROM n
-      `;
+      yield* sql`CREATE TABLE walk_probe(node_id TEXT PRIMARY KEY, parent_node_id TEXT)`;
+      yield* sql`INSERT INTO walk_probe VALUES ('node-1', NULL), ('node-2', 'node-1')`;
+      // Stats from a nearly empty table, as an older build collected on a new install.
+      yield* sql`ANALYZE walk_probe`;
     }).pipe(Effect.provide(persistence()));
 
     yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const rows = yield* sql<{ readonly stat: string }>`
-        SELECT stat FROM sqlite_stat1 WHERE idx = 'stats_probe_thread_idx'
+      const stats = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM sqlite_stat1
       `;
-      assert.deepEqual([...rows], [{ stat: "1000 100" }]);
+      assert.equal(stats[0]?.count, 0);
+      // A connection still using the old stats scans the table at each step.
+      const plan = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN
+        WITH RECURSIVE retained(node_id) AS (
+          SELECT 'node-2'
+          UNION
+          SELECT parent.parent_node_id FROM walk_probe AS parent
+          INNER JOIN retained ON parent.node_id = retained.node_id
+        )
+        SELECT node_id FROM retained
+      `;
+      assert.include(
+        plan.map((row) => row.detail),
+        "SEARCH parent USING INDEX sqlite_autoindex_walk_probe_1 (node_id=?)",
+      );
     }).pipe(Effect.provide(persistence()));
   }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
