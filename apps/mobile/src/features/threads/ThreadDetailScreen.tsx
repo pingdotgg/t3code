@@ -1,3 +1,5 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
@@ -52,16 +54,7 @@ import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import * as Haptics from "expo-haptics";
-import {
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AppState,
   Keyboard,
@@ -326,7 +319,7 @@ const USER_INPUT_TOGGLE_TIMING = {
   easing: Easing.out(Easing.cubic),
 };
 
-export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
   const navigation = useNavigation();
   const { session: voiceInputSession } = useGlobalVoiceInput();
@@ -334,33 +327,27 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
-  const devicePreviews = useMemo(
-    () => threadDevicePreviews(deviceState.data, props.selectedThread.id),
-    [deviceState.data, props.selectedThread.id],
-  );
-  const openDevicePreview = useCallback(() => {
+  const devicePreviews = threadDevicePreviews(deviceState.data, props.selectedThread.id);
+  const openDevicePreview = () => {
     Keyboard.dismiss();
     navigation.navigate("ThreadDevicePreview", {
       environmentId: props.environmentId,
       threadId: props.selectedThread.id,
     });
-  }, [navigation, props.environmentId, props.selectedThread.id]);
+  };
   const browserTabs = useThreadServerBrowserTabs({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
     enabled: props.serverConfig?.environment.capabilities.serverBrowser === true,
   });
-  const openBrowserPreview = useCallback(
-    (tabId?: string) => {
-      Keyboard.dismiss();
-      navigation.navigate("ThreadBrowserPreview", {
-        environmentId: props.environmentId,
-        threadId: props.selectedThread.id,
-        ...(tabId === undefined ? {} : { tabId }),
-      });
-    },
-    [navigation, props.environmentId, props.selectedThread.id],
-  );
+  const openBrowserPreview = (tabId?: string) => {
+    Keyboard.dismiss();
+    navigation.navigate("ThreadBrowserPreview", {
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+      ...(tabId === undefined ? {} : { tabId }),
+    });
+  };
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
@@ -389,12 +376,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   useEffect(() => {
     setKeyboardStateSuspect(false);
   }, [isKeyboardVisible, liveKeyboardHeight]);
-  const handleOwnedInputFocusChange = useCallback((focused: boolean) => {
+  const handleOwnedInputFocusChange = (focused: boolean) => {
     ownedInputFocusedRef.current = focused;
     if (focused) {
       setKeyboardStateSuspect(false);
     }
-  }, []);
+  };
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) ?? insets.top + 44;
   const [screenMetrics, setScreenMetrics] = useState<NativeLayoutMetrics | null>(null);
@@ -419,8 +406,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [editingRunId]);
-  const draftMessageRef = useRef(props.draftMessage);
-  draftMessageRef.current = props.draftMessage;
   const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
@@ -428,13 +413,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
-  const handleComposerFocusChange = useCallback(
-    (focused: boolean) => {
-      setComposerFocused(focused);
-      handleOwnedInputFocusChange(focused);
-    },
-    [handleOwnedInputFocusChange],
-  );
+  const handleComposerFocusChange = (focused: boolean) => {
+    setComposerFocused(focused);
+    handleOwnedInputFocusChange(focused);
+  };
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -579,46 +561,32 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   if (usageLimitsPanel !== null && usageLimitsPanel.key !== usageLimitsKey) {
     setUsageLimitsPanel(null);
   }
-  const usageLimitsReport = useMemo(
-    () =>
-      usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
-        ? collectProviderUsageLimits(
-            props.selectedThread.modelSelection.instanceId,
-            props.serverConfig?.providers ?? [],
-            props.serverConfig?.usageLimitSources ?? [],
-            usageLimitsPanel.now,
-          )
-        : null,
-    [
-      props.selectedThread.modelSelection.instanceId,
-      props.serverConfig,
-      usageLimitsKey,
-      usageLimitsPanel,
-    ],
-  );
-  const showUsageLimits = useCallback(
-    (report: UsageLimitsReport | null) =>
-      setUsageLimitsPanel(
-        report === null
-          ? null
-          : {
-              key: usageLimitsKey,
-              threadKey: selectedThreadKey,
-              now: Date.parse(report.createdAt),
-            },
-      ),
-    [selectedThreadKey, usageLimitsKey],
-  );
-  const dismissUsageLimits = useCallback(() => setUsageLimitsPanel(null), []);
+  const usageLimitsReport =
+    usageLimitsPanel !== null && usageLimitsPanel.key === usageLimitsKey
+      ? collectProviderUsageLimits(
+          props.selectedThread.modelSelection.instanceId,
+          props.serverConfig?.providers ?? [],
+          props.serverConfig?.usageLimitSources ?? [],
+          usageLimitsPanel.now,
+        )
+      : null;
+  const showUsageLimits = (report: UsageLimitsReport | null) =>
+    setUsageLimitsPanel(
+      report === null
+        ? null
+        : {
+            key: usageLimitsKey,
+            threadKey: selectedThreadKey,
+            now: Date.parse(report.createdAt),
+          },
+    );
+  const dismissUsageLimits = () => setUsageLimitsPanel(null);
   // A send may resolve after navigating away, so only the originating
   // thread's panel is cleared; a panel opened elsewhere in the meantime stays.
-  const clearUsageLimitsFor = useCallback(
-    (threadKey: string) =>
-      setUsageLimitsPanel((current) =>
-        current !== null && current.threadKey === threadKey ? null : current,
-      ),
-    [],
-  );
+  const clearUsageLimitsFor = (threadKey: string) =>
+    setUsageLimitsPanel((current) =>
+      current !== null && current.threadKey === threadKey ? null : current,
+    );
   const userInputCollapsed =
     activeUserInputRequestId !== null && collapsedUserInputRequestId === activeUserInputRequestId;
   // The card's height RESERVES keyboard space at all times instead of tracking the keyboard:
@@ -690,30 +658,32 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
+  // Repin timers fire after the render that scheduled them, so they read follow
+  // state from the ref the writers below keep in step with it.
   const endFollowEnabledRef = useRef(true);
-  endFollowEnabledRef.current = endFollowEnabled;
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousWorkingControlStateRef = useRef({
     threadKey: selectedThreadKey,
     visible: false,
   });
-  const scheduleOverlayRepin = useCallback(
-    (delayMs: number) => {
-      if (overlayRepinTimerRef.current !== null) {
-        clearTimeout(overlayRepinTimerRef.current);
+  const handleEndFollowEnabledChange = (enabled: boolean) => {
+    endFollowEnabledRef.current = enabled;
+    setEndFollowEnabled(enabled);
+  };
+  const scheduleOverlayRepin = (delayMs: number) => {
+    if (overlayRepinTimerRef.current !== null) {
+      clearTimeout(overlayRepinTimerRef.current);
+    }
+    overlayRepinTimerRef.current = setTimeout(() => {
+      overlayRepinTimerRef.current = null;
+      if (!endFollowEnabledRef.current) {
+        return;
       }
-      overlayRepinTimerRef.current = setTimeout(() => {
-        overlayRepinTimerRef.current = null;
-        if (!endFollowEnabledRef.current) {
-          return;
-        }
-        void scrollMessageToEnd({ animated: false, closeKeyboard: false }).catch(() => {
-          freeze.set(false);
-        });
-      }, delayMs);
-    },
-    [freeze, scrollMessageToEnd],
-  );
+      void scrollMessageToEnd({ animated: false, closeKeyboard: false }).catch(() => {
+        freeze.set(false);
+      });
+    }, delayMs);
+  };
   useEffect(
     () => () => {
       if (overlayRepinTimerRef.current !== null) {
@@ -739,35 +709,29 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     // checks follow state again so a user who scrolled up stays put.
     scheduleOverlayRepin(230);
   }, [scheduleOverlayRepin, selectedThreadKey, showFloatingStatus]);
-  const handleToggleUserInputCollapsed = useCallback(() => {
+  const handleToggleUserInputCollapsed = () => {
     if (activeUserInputRequestId === null) {
       return;
     }
     if (userInputCollapsed) {
-      userInputCardProgress.value = withTiming(1, USER_INPUT_TOGGLE_TIMING);
-      userInputInsetProgress.value = withTiming(1, USER_INPUT_TOGGLE_TIMING);
+      userInputCardProgress.set(withTiming(1, USER_INPUT_TOGGLE_TIMING));
+      userInputInsetProgress.set(withTiming(1, USER_INPUT_TOGGLE_TIMING));
       setCollapsedUserInputRequestId(null);
       scheduleOverlayRepin(USER_INPUT_TOGGLE_DURATION_MS + 50);
     } else {
       Keyboard.dismiss();
-      userInputCardProgress.value = withTiming(0, USER_INPUT_TOGGLE_TIMING);
+      userInputCardProgress.set(withTiming(0, USER_INPUT_TOGGLE_TIMING));
       // Instant: the sinking card still covers the strip being revealed, and
       // animating the inset downward is what drifted the short-content end
       // anchor.
-      userInputInsetProgress.value = 0;
+      userInputInsetProgress.set(0);
       setCollapsedUserInputRequestId(activeUserInputRequestId);
       scheduleOverlayRepin(60);
     }
-  }, [
-    activeUserInputRequestId,
-    scheduleOverlayRepin,
-    userInputCardProgress,
-    userInputCollapsed,
-    userInputInsetProgress,
-  ]);
+  };
   useEffect(() => {
-    userInputCardProgress.value = 1;
-    userInputInsetProgress.value = 1;
+    userInputCardProgress.set(1);
+    userInputInsetProgress.set(1);
   }, [activeUserInputRequestId, userInputCardProgress, userInputInsetProgress]);
   const showContent = props.showContent ?? true;
   const layoutVariant = props.layoutVariant ?? "compact";
@@ -806,14 +770,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   );
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const selectedProviderSkills = useMemo(() => {
+  const selectedProviderSkills = (() => {
     const provider = props.serverConfig?.providers.find(
       (candidate) => candidate.instanceId === selectedInstanceId,
     );
     return provider
       ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
       : [];
-  }, [props.projectWorkspaceRoot, props.serverConfig, props.threadCwd, selectedInstanceId]);
+  })();
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
@@ -873,6 +837,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setAnchorMessageId(null);
     setSubmittedMessageId(null);
     lastScrolledSubmittedMessageIdRef.current = null;
+    endFollowEnabledRef.current = true;
     setEndFollowEnabled(true);
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
@@ -935,98 +900,82 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     selectedThreadKey,
   ]);
 
-  const handleSendMessage = useCallback(
-    async (followUp?: ActiveTurnComposerAction) => {
-      const targetThreadKey = selectedThreadKey;
-      const hasUserMessage = selectedThreadFeed.some(
-        (entry) => entry.type === "message" && entry.message.role === "user",
-      );
-      const messageId = await props.onSendMessage(followUp);
-      if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
-        return messageId;
-      }
-
-      clearUsageLimitsFor(targetThreadKey);
-
-      setSubmittedMessageId(messageId);
-      setAnchorMessageId(
-        resolveThreadFeedSubmissionAnchor({
-          currentAnchorMessageId: anchorMessageId,
-          submittedMessageId: messageId,
-          hasStartedTurn: props.selectedThread.latestRun !== null,
-          hasUserMessage,
-          queuedMessageCount: props.selectedThreadQueueCount,
-        }),
-      );
-      composerEditorRef.current?.blur();
+  const handleSendMessage = async (followUp?: ActiveTurnComposerAction) => {
+    const targetThreadKey = selectedThreadKey;
+    const hasUserMessage = selectedThreadFeed.some(
+      (entry) => entry.type === "message" && entry.message.role === "user",
+    );
+    const messageId = await props.onSendMessage(followUp);
+    if (messageId === null || selectedThreadKeyRef.current !== targetThreadKey) {
       return messageId;
-    },
-    [
-      anchorMessageId,
-      clearUsageLimitsFor,
-      props.onSendMessage,
-      props.selectedThread.latestRun,
-      props.selectedThreadQueueCount,
-      selectedThreadFeed,
-      selectedThreadKey,
-    ],
-  );
+    }
 
-  const handleEditPendingMessage = useCallback(async (message: QueuedThreadMessage) => {
-    try {
-      if (
-        (await editPendingThreadMessage(message)) &&
-        selectedThreadKeyRef.current === scopedThreadKey(message.environmentId, message.threadId)
-      ) {
-        composerEditorRef.current?.focus();
-      }
-    } catch (error) {
+    clearUsageLimitsFor(targetThreadKey);
+
+    setSubmittedMessageId(messageId);
+    setAnchorMessageId(
+      resolveThreadFeedSubmissionAnchor({
+        currentAnchorMessageId: anchorMessageId,
+        submittedMessageId: messageId,
+        hasStartedTurn: props.selectedThread.latestRun !== null,
+        hasUserMessage,
+        queuedMessageCount: props.selectedThreadQueueCount,
+      }),
+    );
+    composerEditorRef.current?.blur();
+    return messageId;
+  };
+
+  const handleEditPendingMessage = async (message: QueuedThreadMessage) => {
+    const edited = await settlePromise(() => editPendingThreadMessage(message));
+    if (AsyncResult.isFailure(edited)) {
+      const error = squashAtomCommandFailure(edited);
       Dialog.alert(
         "Could not edit message",
         error instanceof Error ? error.message : "Please try again.",
       );
+      return;
     }
-  }, []);
+    if (
+      edited.value &&
+      selectedThreadKeyRef.current === scopedThreadKey(message.environmentId, message.threadId)
+    ) {
+      composerEditorRef.current?.focus();
+    }
+  };
 
-  const collapseComposer = useCallback(() => {
+  const collapseComposer = () => {
     composerEditorRef.current?.blur();
-  }, []);
+  };
 
-  const handleUseArtifactTemplate = useCallback(
-    (template: CodexArtifactTemplate) => {
-      const currentDraft = draftMessageRef.current;
-      const nextDraft = appendCodexArtifactTemplateUsePrompt(currentDraft, template);
-      if (nextDraft !== currentDraft) {
-        draftMessageRef.current = nextDraft;
-        props.onChangeDraftMessage(nextDraft);
-      }
-      requestAnimationFrame(() => {
-        composerEditorRef.current?.focus();
-        composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
-      });
-    },
-    [props.onChangeDraftMessage],
-  );
+  const handleUseArtifactTemplate = (template: CodexArtifactTemplate) => {
+    const nextDraft = appendCodexArtifactTemplateUsePrompt(props.draftMessage, template);
+    if (nextDraft !== props.draftMessage) props.onChangeDraftMessage(nextDraft);
+    requestAnimationFrame(() => {
+      composerEditorRef.current?.focus();
+      composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
+    });
+  };
 
-  const handleScrollToEnd = useCallback(() => {
+  const handleScrollToEnd = () => {
     void Haptics.selectionAsync();
     void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
       freeze.set(false);
     });
-  }, [freeze, scrollMessageToEnd]);
+  };
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
-  const handleFeedTouchStart = useCallback((event: GestureResponderEvent) => {
+  const handleFeedTouchStart = (event: GestureResponderEvent) => {
     feedTouchStartRef.current = {
       pageX: event.nativeEvent.pageX,
       pageY: event.nativeEvent.pageY,
     };
-  }, []);
+  };
 
-  const handleFeedTouchMove = useCallback((event: GestureResponderEvent) => {
+  const handleFeedTouchMove = (event: GestureResponderEvent) => {
     const start = feedTouchStartRef.current;
     if (!start) {
       return;
@@ -1036,18 +985,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     if (Math.hypot(deltaX, deltaY) > 8) {
       feedTouchStartRef.current = null;
     }
-  }, []);
+  };
 
-  const handleFeedTouchEnd = useCallback(() => {
+  const handleFeedTouchEnd = () => {
     if (feedTouchStartRef.current) {
       collapseComposer();
     }
     feedTouchStartRef.current = null;
-  }, [collapseComposer]);
+  };
 
-  const handleFeedTouchCancel = useCallback(() => {
+  const handleFeedTouchCancel = () => {
     feedTouchStartRef.current = null;
-  }, []);
+  };
 
   return (
     <View className="flex-1">
@@ -1114,7 +1063,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-              onEndFollowEnabledChange={setEndFollowEnabled}
+              onEndFollowEnabledChange={handleEndFollowEnabledChange}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
             />
@@ -1415,4 +1364,4 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ) : null}
     </View>
   );
-});
+};
