@@ -251,7 +251,10 @@ export const make = Effect.gen(function* () {
           },
           ForgejoStatus,
         );
-        return { state: forgejoChangeRequest(pr).state, checks: forgejoChecks(statuses.items) };
+        return {
+          state: forgejoChangeRequest(pr).state,
+          checks: forgejoChecks(statuses.items, pr.html_url),
+        };
       },
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
@@ -275,7 +278,7 @@ export const make = Effect.gen(function* () {
           const actor = forgejoActor(user);
           return actor ? [actor] : [];
         }),
-        checks: forgejoChecks(statuses.items),
+        checks: forgejoChecks(statuses.items, pr.html_url),
         baseComparison: !pr.merge_base
           ? "unknown"
           : pr.merge_base === pr.base.sha

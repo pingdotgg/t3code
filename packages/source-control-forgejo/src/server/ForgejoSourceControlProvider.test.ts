@@ -164,6 +164,68 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
   );
 });
 
+it.effect("opens Forgejo Actions check links on the pull request's server", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const read = provider.getChangeRequestChecks;
+    if (read === undefined) return yield* Effect.die("checks read missing");
+    const result = yield* read({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "forgejo.test",
+      number: 1,
+    });
+    assert.deepStrictEqual(
+      result.checks.map((check) => [check.name, check.url]),
+      [
+        ["actions", "https://forgejo.test/git/acme/web/actions/runs/7/jobs/2"],
+        ["external", "https://ci.example/build/9"],
+        ["none", null],
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const status = (context: string, target_url: string | null) => ({
+            context,
+            status: "success",
+            description: null,
+            target_url,
+            updated_at: "2026-10-11T00:00:00Z",
+          });
+          const body = input.path.endsWith("pulls/1")
+            ? {
+                number: 1,
+                title: "Checks",
+                body: "",
+                html_url: "https://forgejo.test/git/acme/web/pulls/1",
+                user: null,
+                state: "open",
+                merged: false,
+                head: { ref: "feature", sha: "head", repo: null },
+                base: { ref: "main", sha: "base", repo: null },
+                created_at: "2026-10-11T00:00:00Z",
+                updated_at: "2026-10-11T00:00:00Z",
+                closed_at: null,
+                merged_at: null,
+                labels: [],
+              }
+            : input.path.endsWith("page=1")
+              ? [
+                  // Forgejo includes any sub-path mount in the relative links it reports.
+                  status("actions", "/git/acme/web/actions/runs/7/jobs/2"),
+                  status("external", "https://ci.example/build/9"),
+                  status("none", null),
+                ]
+              : [];
+          return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  ),
+);
+
 it.effect.each([
   ["Ready", false, true, false, "mergeable"],
   ["Draft", true, false, true, "unknown"],
