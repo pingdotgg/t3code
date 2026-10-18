@@ -417,7 +417,10 @@ function messagesForBoundedProjection(
     (message) =>
       retainedMessageIds.has(String(message.id)) ||
       (message.runId !== null && retainedRunIds.has(String(message.runId))) ||
-      message.delegatedCompletion !== undefined,
+      message.delegatedCompletion !== undefined ||
+      // Clients open a workflow coordinator's thread from its script, however
+      // far back the history window starts. A thread has at most one.
+      message.workflowScript === true,
   );
 }
 

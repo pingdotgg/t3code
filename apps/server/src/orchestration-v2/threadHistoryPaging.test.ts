@@ -619,6 +619,35 @@ describe("threadHistoryPaging", () => {
     );
   });
 
+  it("keeps a workflow coordinator's script outside the bounded window", () => {
+    const projection = makeProjection(Array.from({ length: 120 }, (_, index) => makeRow(index)));
+    const message = (index: number, workflowScript?: boolean) => ({
+      id: MessageId.make(`message-${index}`),
+      threadId: THREAD,
+      runId: RunId.make(`old-run-${index}`),
+      nodeId: null,
+      role: "user" as const,
+      text: `message ${index}`,
+      attachments: [],
+      streaming: false,
+      createdBy: "agent" as const,
+      creationSource: "provider" as const,
+      createdAt: NOW,
+      updatedAt: NOW,
+      ...(workflowScript === undefined ? {} : { workflowScript }),
+    });
+    const full = {
+      ...projection,
+      messages: [message(0, true), message(1, false), message(2)],
+    } as typeof projection;
+
+    const bounded = buildBoundedThreadProjection({ projection: full, snapshotSequence: 9 });
+
+    expect(bounded.projection.messages.map((retained) => retained.id)).toEqual([
+      MessageId.make("message-0"),
+    ]);
+  });
+
   it("omits historical control details that remain available from history items", () => {
     const projection = makeProjection(Array.from({ length: 200 }, (_, index) => makeRow(index)));
     const populated = {
