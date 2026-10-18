@@ -107,6 +107,8 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
 
 function makeContext(onClose?: (context: BrowserContext) => void) {
   const events = new NodeEvents.EventEmitter();
+  const nativeFileChooser = vi.fn();
+  const setChooserFiles = vi.fn(async (_files: unknown) => {});
   const sessions: ReturnType<typeof makeSession>[] = [];
   let url = "about:blank";
   let viewport = { width: 1280, height: 800 };
@@ -117,6 +119,19 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     once: (name: string, callback: (...args: unknown[]) => void) => events.once(name, callback),
     off: (name: string, callback: (...args: unknown[]) => void) => events.off(name, callback),
     emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
+    nativeFileChooser,
+    setChooserFiles,
+    openFileChooser: () => {
+      if (
+        !events.emit("filechooser", {
+          isMultiple: () => false,
+          element: () => ({ getAttribute: async () => ".csv" }),
+          setFiles: setChooserFiles,
+        })
+      ) {
+        nativeFileChooser();
+      }
+    },
     emitAsync: (name: string, ...args: unknown[]) =>
       Promise.all(events.listeners(name).map((listener) => listener(...args))),
     setDefaultTimeout: vi.fn(),
@@ -1499,6 +1514,75 @@ it.live("drives the desktop's own page for a tab the desktop renders", () =>
       while (releasedDesktopTabs.length === 0) yield* Effect.yieldNow;
       expect(releasedDesktopTabs).toEqual([opened.tabId]);
       expect(page.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("desktop file pickers stay native outside agent actions and remote control", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      desktopRendersNext = true;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const tabId = PreviewTabId.make(opened.tabId);
+      const observer = yield* browser.attachViewer(viewerInput(tabId, false));
+      const page = desktopConnections[0]!.context.page;
+      page.openFileChooser();
+      expect(page.nativeFileChooser).toHaveBeenCalledTimes(1);
+
+      const status = () =>
+        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} });
+      expect((yield* status()).fileChooser).toBeNull();
+      const remote = yield* browser.attachViewer(viewerInput(tabId, true));
+      page.openFileChooser();
+      let offered = yield* Queue.take(remote.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(remote.output);
+      const file = { name: "a.csv", mimeType: "text/csv", buffer: Buffer.from("a,b") };
+      expect(
+        yield* browser.answerFileChooser({
+          threadId: scope.thread.threadId,
+          tabId,
+          chooserId: offered.id,
+          files: [file],
+        }),
+      ).toBe(true);
+      expect(page.setChooserFiles).toHaveBeenLastCalledWith([file]);
+      expect(page.nativeFileChooser).toHaveBeenCalledTimes(1);
+
+      yield* remote.input({ type: "releaseControl" });
+      page.openFileChooser();
+      expect(page.nativeFileChooser).toHaveBeenCalledTimes(2);
+
+      page.locator.mockReturnValue({
+        scrollIntoViewIfNeeded: async () => {},
+        boundingBox: async () => null,
+        click: async () => page.openFileChooser(),
+      } as never);
+      yield* broker.invoke({ scope, tabId, operation: "click", input: { locator: "input" } });
+      expect((yield* status()).fileChooser).toEqual({ multiple: false, accept: ".csv" });
+      yield* broker.invoke({ scope, tabId, operation: "upload", input: { paths: ["/tmp/a.csv"] } });
+      expect(page.setChooserFiles).toHaveBeenLastCalledWith(["/tmp/a.csv"], expect.anything());
+      expect((yield* status()).fileChooser).toBeNull();
+      page.openFileChooser();
+      expect(page.nativeFileChooser).toHaveBeenCalledTimes(3);
+      page.locator.mockReturnValue({
+        scrollIntoViewIfNeeded: async () => {
+          throw new Error("input disappeared");
+        },
+      } as never);
+      expect(
+        yield* Effect.flip(
+          broker.invoke<void>({ scope, tabId, operation: "click", input: { locator: "input" } }),
+        ),
+      ).toMatchObject({ _tag: "PreviewAutomationExecutionError" });
+      page.openFileChooser();
+      expect(page.nativeFileChooser).toHaveBeenCalledTimes(4);
+      expect(
+        (yield* Queue.clear(observer.output)).some((item) => item._tag === "fileChooser"),
+      ).toBe(false);
     }),
   ).pipe(Effect.provide(layer)),
 );

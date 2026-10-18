@@ -283,6 +283,9 @@ interface ServerTab {
   readonly networkEntries: Array<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: Array<PreviewAutomationActionEvent>;
   readonly control: SessionControl;
+  agentOperating: boolean;
+  fileChooserIntercepted: boolean;
+  readonly onFileChooser: (chooser: FileChooser) => void;
 
   readonly isolatedContext: boolean;
 
@@ -500,7 +503,18 @@ const make = Effect.gen(function* () {
         }
       : null;
 
+  const updateFileChooserInterception = (tab: ServerTab) => {
+    // Native desktop views use the OS picker. Only agents and streamed controllers
+    // have an uploader that can answer an intercepted request.
+    const intercept = !tab.desktop || tab.agentOperating || tab.control.controller !== null;
+    if (intercept === tab.fileChooserIntercepted) return;
+    tab.fileChooserIntercepted = intercept;
+    if (intercept) tab.page.on("filechooser", tab.onFileChooser);
+    else tab.page.off("filechooser", tab.onFileChooser);
+  };
+
   const broadcastControl = (tab: ServerTab) => {
+    updateFileChooserInterception(tab);
     for (const viewer of tab.viewers)
       viewer.push({
         _tag: "control",
@@ -743,6 +757,9 @@ const make = Effect.gen(function* () {
       networkEntries: [],
       actionTimeline: [],
       control,
+      agentOperating: false,
+      fileChooserIntercepted: false,
+      onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
@@ -851,7 +868,7 @@ const make = Effect.gen(function* () {
       broadcastControl(tab);
     });
     page.on("download", (download) => void saveDownload(tab, download));
-    page.on("filechooser", (chooser) => void offerFileChooser(tab, chooser));
+    updateFileChooserInterception(tab);
     // Popups become tabs and keep `window.opener`, so sign-in popups can report back.
     page.on("popup", (popup) => void adoptPopup(tab, popup));
     // Playwright cannot reload a crashed page, so it must leave the tab list.
@@ -1864,9 +1881,13 @@ const make = Effect.gen(function* () {
           "dialogPending",
         );
       const generation = tab.control.generation;
+      tab.agentOperating = !READ_OPERATIONS.has(request.operation);
+      updateFileChooserInterception(tab);
       try {
         return await executeTabOperation(tab, request);
       } finally {
+        tab.agentOperating = false;
+        updateFileChooserInterception(tab);
         if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
       }
     });
