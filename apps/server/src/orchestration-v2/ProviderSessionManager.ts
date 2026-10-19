@@ -1756,6 +1756,48 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        const withBusyTurn =
+          (
+            start: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"],
+          ): ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] =>
+          (input) =>
+            observeActivity(
+              providerSessionId,
+              ensureThreadAttached({
+                providerSessionId,
+                threadId: input.threadId,
+                providerInstanceId: runtime.instanceId,
+              }),
+            ).pipe(
+              // A start that fails or is stopped may never emit turn.terminal,
+              // so it clears its own turn or the session never goes idle.
+              Effect.andThen(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId: input.threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              Effect.andThen(
+                Effect.acquireUseRelease(
+                  observeActivity(
+                    providerSessionId,
+                    markBusy(
+                      providerSessionId,
+                      busyTurnKey(input.providerThread.id, input.runOrdinal),
+                    ),
+                  ),
+                  () => start(input),
+                  (_, exit) =>
+                    Exit.isFailure(exit)
+                      ? observeActivity(
+                          providerSessionId,
+                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                        )
+                      : Effect.void,
+                ),
+              ),
+            );
         return {
           ...runtime,
           subscribeEvents,
@@ -1860,45 +1902,12 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          startTurn: (input) =>
-            observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
-              // A start that fails or is stopped may never emit turn.terminal,
-              // so it clears its own turn or the session never goes idle.
-              Effect.andThen(
-                holdThreadLoaded({
-                  providerSessionId,
-                  threadId: input.threadId,
-                  providerThread: input.providerThread,
-                }),
-              ),
-              Effect.andThen(
-                Effect.acquireUseRelease(
-                  observeActivity(
-                    providerSessionId,
-                    markBusy(
-                      providerSessionId,
-                      busyTurnKey(input.providerThread.id, input.runOrdinal),
-                    ),
-                  ),
-                  () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
-                  (_, exit) =>
-                    Exit.isFailure(exit)
-                      ? observeActivity(
-                          providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
-                        )
-                      : Effect.void,
-                ),
-              ),
-            ),
+          startTurn: withBusyTurn((input) =>
+            runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+          ),
+          ...(runtime.compactThread === undefined
+            ? {}
+            : { compactThread: withBusyTurn(runtime.compactThread) }),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
