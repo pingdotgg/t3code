@@ -1740,9 +1740,14 @@ describe("retained v2 feed presentation", () => {
     expect(afterPresentation[1]).toBe(beforePresentation[1]);
   });
 
-  it.each(["running", "completed", "interrupted"] as const)(
-    "uses the compaction row as the live activity only while %s",
-    (status) => {
+  it.each([
+    { status: "running", summary: "Compacting context" },
+    { status: "completed", summary: "Context compacted 899K → 19K tokens" },
+    { status: "failed", summary: "Context compaction failed" },
+    { status: "interrupted", summary: "Context compaction stopped" },
+  ] as const)(
+    "uses the compaction row as the live activity only while $status",
+    ({ status, summary }) => {
       const compact = projected(
         {
           ...base("compacted", "2026-06-20T00:00:02.000Z", 1),
@@ -1769,16 +1774,7 @@ describe("retained v2 feed presentation", () => {
       );
       expect(rows.some((row) => row.type === "thinking")).toBe(status !== "running");
       expect(rows.find((row) => row.type === "activity-group")).toMatchObject({
-        activities: [
-          {
-            summary:
-              status === "running"
-                ? "Compacting context"
-                : status === "completed"
-                  ? "Context compacted 899K → 19K tokens"
-                  : "Context compacted",
-          },
-        ],
+        activities: [{ summary }],
       });
     },
   );
