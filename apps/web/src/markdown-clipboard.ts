@@ -324,6 +324,24 @@ export function serializeTableElementToMarkdown(table: Element): string {
   return serializeTable(table).trim();
 }
 
+// The wrapper MarkdownMath puts on every formula it renders. The sanitizer drops
+// the attribute from authored HTML.
+const MATH_SELECTOR = "[data-markdown-math]";
+
+export function mathWrapperOf(element: Element | null): Element | null {
+  return element?.closest(MATH_SELECTOR) ?? null;
+}
+
+/** A cell's text, with each formula as its TeX. */
+function csvCellText(cell: Element): string {
+  if (!cell.querySelector(MATH_SELECTOR)) return cell.textContent ?? "";
+  const copy = cell.cloneNode(true) as Element;
+  for (const wrapper of copy.querySelectorAll(MATH_SELECTOR)) {
+    wrapper.replaceWith(wrapper.getAttribute("data-markdown-copy")?.trim() ?? "");
+  }
+  return copy.textContent ?? "";
+}
+
 function csvCell(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return /[",\n]/.test(normalized) ? `"${normalized.replaceAll('"', '""')}"` : normalized;
@@ -337,12 +355,24 @@ export function serializeTableElementToCsv(table: Element): string {
       (cell) => cell.tagName === "TH" || cell.tagName === "TD",
     );
     if (cells.length === 0) continue;
-    lines.push(cells.map((cell) => csvCell(cell.textContent ?? "")).join(","));
+    lines.push(cells.map((cell) => csvCell(csvCellText(cell))).join(","));
   }
   return lines.join("\n");
 }
 
+function mathSourceElement(wrapper: Element): Element {
+  const code = document.createElement("code");
+  code.textContent = wrapper.getAttribute("data-markdown-copy")?.trim() ?? "";
+  if (wrapper.getAttribute("data-markdown-math") !== "display") return code;
+  const pre = document.createElement("pre");
+  pre.append(code);
+  return pre;
+}
+
 function sanitizedHtmlFrom(container: Element): string {
+  for (const wrapper of container.querySelectorAll(MATH_SELECTOR)) {
+    wrapper.replaceWith(mathSourceElement(wrapper));
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -371,6 +401,13 @@ export function chatMarkdownClipboardPayload(
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
+    // A range inside a formula would clone only KaTeX's glyphs, not the wrapper holding the TeX.
+    const math = mathWrapperOf(ancestorElement);
+    if (math) {
+      texts.push(math.getAttribute("data-markdown-copy")?.trim() ?? "");
+      htmls.push(`<meta charset="utf-8">${mathSourceElement(math).outerHTML}`);
+      continue;
+    }
     if (ancestorElement?.closest("pre")) {
       const text = range.toString();
       if (text) {

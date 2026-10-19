@@ -1,6 +1,8 @@
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -48,6 +50,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly colors: ReviewCommentColors;
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const markdownStyles = useMarkdownPreviewStyles();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
   const [NativeReviewDiffView] = useState(() => resolveNativeReviewDiffView());
@@ -166,9 +169,10 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
       </View>
       {props.comment.text.length > 0 ? (
         <View className="px-3 py-3">
-          <Text selectable className="text-base leading-snug" style={{ color: props.colors.text }}>
-            {props.comment.text}
-          </Text>
+          <SelectableMarkdownText
+            markdown={props.comment.text}
+            textStyle={markdownStyles.nativeTextStyle}
+          />
         </View>
       ) : null}
       {shouldRenderNativeDiff ? (

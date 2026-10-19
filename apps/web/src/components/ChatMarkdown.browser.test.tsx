@@ -5,6 +5,7 @@ import { AsyncResult } from "effect/reactivity";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
@@ -64,11 +65,25 @@ vi.mock(import("./chat/MermaidDiagram"), async (original) => {
   };
 });
 
+const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
+vi.mock(import("../hooks/useSettings"), async (original) => {
+  const actual = await original();
+  type Settings = ReturnType<typeof actual.getClientSettings>;
+  function useClientSettings<T = Settings>(select?: (settings: Settings) => T): T {
+    const settings = { ...actual.getClientSettings(), ...settingsOverrides };
+    return select ? select(settings) : (settings as T);
+  }
+  return { ...actual, useClientSettings };
+});
+
 import ChatMarkdown from "./ChatMarkdown";
+import { serializeTableElementToCsv, chatMarkdownClipboardPayload } from "../markdown-clipboard";
+import { captureAssistantTextSelection } from "../lib/assistantTextSelection";
 
 const roots: Root[] = [];
 
 beforeEach(() => {
+  settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
@@ -1128,4 +1143,169 @@ describe("ChatMarkdown thread find", () => {
       ).toBe(count);
     },
   );
+});
+
+describe("ChatMarkdown math", () => {
+  const renderMath = async (
+    text: string,
+    options: Partial<Parameters<typeof ChatMarkdown>[0]> = {},
+  ) => {
+    settingsOverrides.mathRenderingEnabled = true;
+    const { container: host } = await render(
+      <ChatMarkdown cwd="/tmp/project" text={text} {...options} />,
+    );
+    host.setAttribute("data-assistant-citation-source", "assistant");
+    await act(async () => {
+      await import("./chat/MathTypeset");
+    });
+    return { host };
+  };
+
+  it.each(["$x$", "$$x$$", "```math\nx\n```", "$\\notACommand{x}$"])(
+    "keeps keyboard focus on the parent control in compact previews of %s",
+    async (formula) => {
+      settingsOverrides.mathRenderingEnabled = true;
+      const { container } = await render(
+        <>
+          <button type="button">
+            Preview <ChatMarkdown inline text={formula} cwd={undefined} />
+          </button>
+          <button type="button">After preview</button>
+        </>,
+      );
+      await act(async () => {
+        await import("./chat/MathTypeset");
+      });
+      const [preview, after] = container.querySelectorAll("button");
+      preview!.focus();
+      await act(() => userEvent.tab());
+      expect(document.activeElement).toBe(after);
+      if (formula.includes("notACommand")) {
+        expect(page.getByRole("button", { name: /notACommand/ }).element()).toBe(preview);
+      }
+    },
+  );
+
+  it("keeps message formulas reachable by keyboard", async () => {
+    settingsOverrides.mathRenderingEnabled = true;
+    const { container } = await render(
+      <>
+        <button type="button">Before equation</button>
+        <ChatMarkdown text="$x$" cwd={undefined} />
+      </>,
+    );
+    container.querySelector("button")!.focus();
+    await act(() => userEvent.tab());
+    expect(document.activeElement).toBe(
+      container.querySelector('[aria-label="Scroll inline equation"]'),
+    );
+  });
+
+  it("renders table formulas and exports their TeX instead of duplicate glyph text", async () => {
+    const rendered = await renderMath(
+      "| Name | Formula |\n| --- | --- |\n| Norm | $|x|$ and \\(\\|y\\|\\) |\n| Price | $5 and $10 |",
+    );
+
+    const table = rendered.host.querySelector("table")!;
+    expect([...table.rows].map((row) => row.cells.length)).toEqual([2, 2, 2]);
+    expect(table.querySelectorAll(".katex")).toHaveLength(2);
+    const norm = table.querySelectorAll(".katex")[1]!;
+    expect([...norm.querySelectorAll(".katex-mathml mi")].map((node) => node.textContent)).toEqual([
+      "∥",
+      "y",
+      "∥",
+    ]);
+    expect(serializeTableElementToCsv(table)).toBe(
+      "Name,Formula\nNorm,\\(|x|\\) and \\(\\|y\\|\\)\nPrice,$5 and $10",
+    );
+    const glyph = table.querySelector(".katex-mathml mi")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(glyph, 0);
+    range.setEnd(glyph, 1);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const payload = chatMarkdownClipboardPayload(selection)!;
+    expect(payload.text).toBe("\\(|x|\\)");
+    expect(payload.html).toContain("\\(|x|\\)");
+    expect(payload.html).not.toContain("katex");
+    expect(captureAssistantTextSelection(rendered.host, selection)?.selector.text).toBe(
+      "\\(|x|\\)",
+    );
+  });
+
+  it("renders explicit math fences and keeps unfinished streamed fences readable", async () => {
+    const rendered = await renderMath("```math\nx_i^2\n```\n\n`$literal$`\n\n$unfinished");
+
+    expect(rendered.host.querySelectorAll(".katex")).toHaveLength(1);
+    expect(rendered.host.textContent).toContain("$literal$");
+    expect(rendered.host.textContent).toContain("$unfinished");
+
+    const streamed = await renderMath("```math\nx_i^2", { isStreaming: true });
+
+    expect(streamed.host.querySelector(".katex")).toBeNull();
+    expect(streamed.host.textContent).toContain("x_i^2");
+  });
+
+  it.each(["$$\nx^2\n", "\\[\nx^2\n"])(
+    "keeps unfinished display %s and following prose readable while streaming",
+    async (source) => {
+      for (const text of [source, `${source}\nFollowing prose.`]) {
+        const { host } = await renderMath(text, { isStreaming: true });
+        expect(host.querySelector(".katex")).toBeNull();
+        expect(host.querySelector("[data-markdown-math]")).toBeNull();
+        expect(host.textContent).toContain("x^2");
+        if (text.includes("Following prose."))
+          expect(host.textContent).toContain("Following prose.");
+      }
+    },
+  );
+
+  it.each(["$$x^2$$", "$$\nx^2\n$$", "\\[\nx^2\n\\]", "```math\nx^2\n```"])(
+    "renders completed %s while the response is streaming",
+    async (source) => {
+      const { host } = await renderMath(source, { isStreaming: true });
+      expect(host.querySelectorAll(".katex")).toHaveLength(1);
+      expect(host.querySelector('[data-markdown-math="display"]')).not.toBeNull();
+    },
+  );
+
+  it("shows unsupported TeX as source and keeps active TeX commands inert", async () => {
+    const rendered = await renderMath(
+      "\\(\\notACommand{x}\\) and \\(\\href{https://example.com}{x}\\)",
+    );
+
+    expect(rendered.host.textContent).toContain("\\(\\notACommand{x}\\)");
+    expect(rendered.host.querySelector('a[href="https://example.com"]')).toBeNull();
+  });
+
+  it("typesets only when enabled, keeping prices and task offsets intact", async () => {
+    const text = "Area $\\pi r^2$ costs $5 and $10.\n\n\\[\nE = mc^2\n\\]\n\n- [ ] check \\(x\\)";
+    const off = await renderText(text);
+    expect(off.querySelector("[data-markdown-math]")).toBeNull();
+    const html = await renderText('<code class="language-math math-inline">x</code>');
+    expect(html.querySelector("[data-markdown-math]")).toBeNull();
+    for (const parseRawHtml of [true, false]) {
+      let editedText = text;
+      const { host } = await renderMath(text, {
+        parseRawHtml,
+        onTaskListChange: ({ markerOffset, checked }) => {
+          editedText = setMarkdownTaskChecked(text, markerOffset, checked);
+        },
+      });
+      expect(
+        [...host.querySelectorAll("[data-markdown-math]")].map((node) =>
+          node.getAttribute("data-markdown-copy"),
+        ),
+      ).toEqual(["\\(\\pi r^2\\)", "\\[\nE = mc^2\n\\]\n\n", "\\(x\\)"]);
+      await act(() => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+      expect(editedText).toBe(text.replace("- [ ]", "- [x]"));
+    }
+    const { host } = await renderMath("-       intro\n\n        $$\n        x^2\n        $$");
+    expect(
+      [...host.querySelectorAll("[data-markdown-math]")].map((node) =>
+        node.getAttribute("data-markdown-copy"),
+      ),
+    ).toEqual(["\\[\nx^2\n\\]\n\n"]);
+  });
 });
