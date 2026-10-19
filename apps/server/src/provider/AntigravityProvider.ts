@@ -31,6 +31,7 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
+import { antigravitySessionModels } from "./acp/AntigravityAcpSupport.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -47,9 +48,9 @@ type SessionSetupResult = Pick<
 export function buildAntigravityModelsFromSession(
   setup: SessionSetupResult,
 ): ReadonlyArray<ServerProviderModel> {
-  const config = setup.configOptions?.find(
-    (option) => option.id === "model" || option.category === "model",
-  );
+  const config = antigravitySessionModels(setup)
+    ? undefined
+    : setup.configOptions?.find((option) => option.id === "model" || option.category === "model");
   const currentValue =
     config?.type === "select" ? config.currentValue : setup.models?.currentModelId;
   const entries =
@@ -115,6 +116,7 @@ function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupEr
 interface AntigravityProviderState {
   readonly draft: ServerProviderDraft;
   readonly authRevision: number;
+  readonly sessionModels: EffectAcpSchema.SessionModelState | null;
 }
 
 interface AntigravityProviderOptions {
@@ -159,6 +161,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const metadata = yield* SubscriptionRef.make<AntigravityProviderState>({
     draft: initialDraft,
     authRevision: 0,
+    sessionModels: null,
   });
   // Skills the driver discovered on disk per workspace. Session callbacks
   // rewrite the workspace entry with native commands and must keep these, or
@@ -289,6 +292,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       return {
         authRevision: state.authRevision + 1,
+        sessionModels: antigravitySessionModels(started.sessionSetupResult),
         draft: {
           ...draft,
           installed: true,
@@ -327,9 +331,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   ) {
-    const models = buildAntigravityModelsFromSession({ configOptions });
     yield* SubscriptionRef.update(metadata, (state) => {
       if (state.draft.auth.status !== "authenticated") return state;
+      const models = buildAntigravityModelsFromSession({
+        configOptions,
+        models: state.sessionModels,
+      });
       return { ...state, draft: { ...state.draft, models } };
     });
   });
@@ -378,6 +385,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       (state) =>
         ({
           authRevision: state.authRevision + 1,
+          sessionModels: null,
           draft: {
             ...state.draft,
             auth: { status: "unauthenticated" },

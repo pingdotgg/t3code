@@ -29,6 +29,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { antigravity140Session } from "./acp/antigravity140.fixture.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -235,6 +236,39 @@ describe("Antigravity model catalog", () => {
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {
+  it.effect("keeps concrete ACP 1.4 models when grouped config options are updated", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted({
+          ...started,
+          sessionSetupResult: antigravity140Session,
+        });
+        const snapshot = yield* harness.provider.snapshot.getSnapshot;
+        expect(snapshot.models.map((model) => [model.slug, model.name])).toEqual([
+          ["gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"],
+          ["gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"],
+          ["gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"],
+        ]);
+        expect(snapshot.models.find((model) => model.isDefault)?.slug).toBe(
+          "gemini-3.8-flash-high",
+        );
+        yield* harness.provider.onConfigOptionsUpdated(
+          antigravity140Session.configOptions.map((option) =>
+            option.id === "thinking_level" ? { ...option, currentValue: "low" } : option,
+          ),
+        );
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(snapshot.models);
+        yield* harness.provider.onSessionStarted(started);
+        yield* harness.provider.onConfigOptionsUpdated([
+          { ...modelConfig, options: modelOptions.slice(0, 1) },
+        ]);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toHaveLength(1);
+      }),
+    ),
+  );
+
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -40,7 +40,11 @@ function makeModelRuntime(
     selections.push(model);
   });
   return {
-    runtime: { getConfigOptions: Effect.succeed(configOptions), setModel },
+    runtime: {
+      getConfigOptions: Effect.succeed(configOptions),
+      setModel,
+      setSessionModel: () => Effect.die("ACP 1.3 selects models through config options"),
+    },
     selections,
   };
 }

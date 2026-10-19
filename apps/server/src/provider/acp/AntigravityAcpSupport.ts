@@ -100,18 +100,15 @@ function antigravityModelOptions(
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
 
-function resolveAntigravityModel(input: {
-  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-  readonly model: string | null | undefined;
-  readonly defaultModel?: string | undefined;
-}): string | undefined {
-  const modelConfig = input.configOptions.find((option) => option.id === "model");
-  const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
-  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
-  const options = antigravityModelOptions(input.configOptions);
-  return input.defaultModel && options.some((option) => option.value === input.defaultModel)
-    ? input.defaultModel
-    : current;
+export function antigravitySessionModels(setup: {
+  readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined;
+  readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
+}) {
+  // ACP 1.4 splits model families and thinking levels; only session models
+  // contain the concrete IDs accepted by session/set_model.
+  return setup.configOptions?.some((option) => option.id === "thinking_level")
+    ? (setup.models ?? null)
+    : null;
 }
 
 /** Never replace a saved selection with the default returned by a cold resume. */
@@ -119,23 +116,35 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
   function* <E>(input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      "getConfigOptions" | "setModel"
+      "getConfigOptions" | "setModel" | "setSessionModel"
     >;
+    readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
     readonly model: string | null | undefined;
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
     const configOptions = yield* input.runtime.getConfigOptions;
     const modelConfig = configOptions.find((option) => option.id === "model");
-    const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
-    const resolved = resolveAntigravityModel({
-      configOptions,
-      model: input.model,
-      defaultModel: input.defaultModel,
-    });
-    const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
-    if (resolved === undefined || (!explicit && resolved === current)) return current;
-    const options = antigravityModelOptions(configOptions);
+    const models = antigravitySessionModels({ configOptions, models: input.models });
+    const current = models
+      ? models.currentModelId
+      : modelConfig?.type === "select"
+        ? modelConfig.currentValue
+        : undefined;
+    const options = models
+      ? models.availableModels.map((model) => ({ value: model.modelId }))
+      : antigravityModelOptions(configOptions);
+    const explicitModel =
+      input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL ? input.model : undefined;
+    const resolved =
+      explicitModel ??
+      (input.defaultModel && options.some((option) => option.value === input.defaultModel)
+        ? input.defaultModel
+        : current);
+    // Session model state can predate a thinking-level change. Reapply concrete
+    // selections even when setup reports that model as current.
+    if (resolved === undefined || (!models && !explicitModel && resolved === current))
+      return current;
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
         input.mapError(
@@ -145,7 +154,9 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
         ),
       );
     }
-    yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+    yield* (
+      models ? input.runtime.setSessionModel(resolved) : input.runtime.setModel(resolved)
+    ).pipe(Effect.mapError(input.mapError));
     return resolved;
   },
 );
