@@ -15,6 +15,7 @@ const NativeControls = requireNativeModule<{
     uris: readonly string[],
     names: readonly string[],
     selectedIndex: number,
+    sourceIdentifiers: readonly string[],
     identifier: string,
   ): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
@@ -44,6 +45,7 @@ function NativeFilePreview(props: {
               0,
               gallery.findIndex((item) => item.uri === uri),
             ),
+            gallery.map((item) => item.sourceIdentifier ?? ""),
             identifier,
           )
         : NativeControls.presentFile(uri, name ?? "Preview", sourceIdentifier ?? "", identifier);

@@ -52,11 +52,14 @@ public final class T3NativeControlsModule: Module {
                            identifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
-    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, identifier: String, promise: Promise) in
-      guard !urls.isEmpty, urls.count == titles.count, urls.indices.contains(selectedIndex) else {
+    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
+      guard !urls.isEmpty, urls.count == titles.count, urls.count == sourceIdentifiers.count,
+        urls.indices.contains(selectedIndex)
+      else {
         throw URLError(.badURL)
       }
-      let file = try self.makeFilePresentation(sourceIdentifier: "", identifier: identifier, promise: promise)
+      let file = try self.makeFilePresentation(sourceIdentifiers: sourceIdentifiers, identifier: identifier,
+                                               promise: promise)
       guard let presenter = self.appContext?.utilities?.currentViewController() else {
         file.dismiss()
         return
@@ -241,13 +244,13 @@ public final class T3NativeControlsModule: Module {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
   }
 
-  private func makeFilePresentation(sourceIdentifier: String, identifier: String,
+  private func makeFilePresentation(sourceIdentifiers: [String], identifier: String,
                                     promise: Promise) throws -> T3NativeFilePresentation {
     guard filePresentation == nil, videoPresentation == nil,
       appContext?.utilities?.currentViewController() != nil
     else { throw URLError(.cannotLoadFromNetwork) }
     let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
-                                        sourceIdentifier: sourceIdentifier) { [weak self] error in
+                                        sourceIdentifiers: sourceIdentifiers) { [weak self] error in
       self?.filePresentation = nil
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }
@@ -257,7 +260,7 @@ public final class T3NativeControlsModule: Module {
 
   private func presentFile(url: URL, title: String, sourceIdentifier: String,
                            identifier: String, promise: Promise) throws {
-    let file = try makeFilePresentation(sourceIdentifier: sourceIdentifier, identifier: identifier, promise: promise)
+    let file = try makeFilePresentation(sourceIdentifiers: [sourceIdentifier], identifier: identifier, promise: promise)
     guard let presenter = appContext?.utilities?.currentViewController() else { file.dismiss(); return }
     file.present(url: url, title: title, from: presenter)
   }
