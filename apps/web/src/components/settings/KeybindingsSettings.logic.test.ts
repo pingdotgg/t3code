@@ -1,12 +1,19 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+  parseKeybindingShortcut,
+} from "@t3tools/shared/keybindings";
+
+import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
   buildKeybindingCommandOptions,
   buildWhenVariableOptions,
   commandLabel,
+  filterKeybindingRows,
   groupKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
@@ -19,7 +26,7 @@ import {
 
 describe("KeybindingsSettings.logic", () => {
   it("lists composer, provider, and pull request commands with editable defaults", () => {
-    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
     for (const command of [
       "composer.sendAlternate",
       "composer.sendBackground",
@@ -43,24 +50,34 @@ describe("KeybindingsSettings.logic", () => {
     }
   });
   it("finds the editable shortcut for sending the first queued message", () => {
-    expect(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "first queued")).toContainEqual(
+    expect(
+      filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), "first queued"),
+    ).toContainEqual(
       expect.objectContaining({
         command: "thread.steerQueuedMessage",
         key: "mod+shift+enter",
       }),
     );
   });
+  it("filtering keeps the row objects so unchanged rows skip rendering", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS);
+    const filtered = filterKeybindingRows(rows, "terminal");
+    expect(filtered.length).toBeGreaterThan(0);
+    expect(filtered.length).toBeLessThan(rows.length);
+    for (const row of filtered) expect(rows).toContain(row);
+    expect(filterKeybindingRows(rows, "  ")).toBe(rows);
+  });
   it.each(["pu", "pull request", "copy link", "thread id"])(
     "finds the copy link shortcut with %s",
     (query) => {
-      const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, query);
+      const rows = filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), query);
       expect(rows).toContainEqual(
         expect.objectContaining({ command: "thread.copyReference", key: "mod+shift+c" }),
       );
     },
   );
   it("groups rows by command area in page order and drops empty groups", () => {
-    const groups = groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, ""));
+    const groups = groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS));
     expect(groups.map((group) => group.title)).toEqual([
       "Navigation",
       "Threads",
@@ -74,9 +91,11 @@ describe("KeybindingsSettings.logic", () => {
     expect(composer?.rows.map((row) => row.command)).toEqual(
       expect.arrayContaining(["composer.host", "modelPicker.toggle"]),
     );
-    expect(groupKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "split"))).toEqual(
-      [expect.objectContaining({ id: "terminal" })],
-    );
+    expect(
+      groupKeybindingRows(
+        filterKeybindingRows(buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS), "split"),
+      ),
+    ).toEqual([expect.objectContaining({ id: "terminal" })]);
   });
   it("orders Usage bindings and command choices like the page", () => {
     const expected = [
@@ -89,21 +108,64 @@ describe("KeybindingsSettings.logic", () => {
       "usage.period.month",
       "usage.period.quarter",
     ];
-    // The order must not depend on the order of the configured bindings.
     for (const bindings of [
       DEFAULT_RESOLVED_KEYBINDINGS,
       DEFAULT_RESOLVED_KEYBINDINGS.toReversed(),
     ]) {
-      expect(buildKeybindingRows(bindings, "usage").map((row) => row.command)).toEqual(expected);
+      expect(
+        filterKeybindingRows(buildKeybindingRows(bindings), "usage").map((row) => row.command),
+      ).toEqual(expected);
       expect(
         buildKeybindingCommandOptions(bindings).filter((command) => command.startsWith("usage.")),
       ).toEqual(expected);
     }
   });
 
+  it("keeps sibling row identities when a saved binding moves to the end", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { command: "chat.new", key: "mod+n" },
+      { command: "terminal.toggle", key: "mod+j" },
+      { command: "terminal.toggle", key: "mod+k", when: "terminalFocus" },
+    ]);
+    const before = buildKeybindingRows(bindings);
+    const after = buildKeybindingRows([
+      ...bindings.slice(1),
+      ...compileResolvedKeybindingsConfig([{ command: "chat.new", key: "mod+shift+n" }]),
+    ]);
+
+    expect(after.filter((row) => row.command === "terminal.toggle").map((row) => row.id)).toEqual(
+      before.filter((row) => row.command === "terminal.toggle").map((row) => row.id),
+    );
+    expect(after.find((row) => row.command === "chat.new")?.id).not.toBe(
+      before.find((row) => row.command === "chat.new")?.id,
+    );
+  });
+
+  it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { command: "terminal.toggle", key: "mod+esc", when: "terminalFocus" },
+      { command: "terminal.toggle", key: "mod+escape", when: "(terminalFocus)" },
+      { command: "terminal.toggle", key: "mod+esc", when: "!terminalFocus" },
+      { command: "terminal.toggle", key: "mod+j", when: "terminalFocus" },
+      { command: "chat.new", key: "mod+esc", when: "terminalFocus" },
+    ]);
+    const rows = buildKeybindingRows(bindings);
+    expect(rows.map(({ command, key, when }) => ({ command, key, when }))).toEqual([
+      { command: "chat.new", key: "mod+esc", when: "terminalFocus" },
+      { command: "terminal.toggle", key: "mod+esc", when: "terminalFocus" },
+      { command: "terminal.toggle", key: "mod+esc", when: "!terminalFocus" },
+      { command: "terminal.toggle", key: "mod+j", when: "terminalFocus" },
+    ]);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(4);
+    expect(rows.find((row) => row.command === "chat.new")?.conflicts).toEqual(["Terminal: Toggle"]);
+    expect(buildKeybindingRows(bindings.slice(1)).map((row) => row.id)).toEqual(
+      rows.map((row) => row.id),
+    );
+  });
+
   it("builds searchable rows with readable key and when values", () => {
-    const rows = buildKeybindingRows(
-      [
+    const rows = filterKeybindingRows(
+      buildKeybindingRows([
         {
           command: "terminal.toggle",
           shortcut: {
@@ -119,7 +181,7 @@ describe("KeybindingsSettings.logic", () => {
             node: { type: "identifier", name: "terminalFocus" },
           },
         },
-      ] satisfies ResolvedKeybindingsConfig,
+      ] satisfies ResolvedKeybindingsConfig),
       "terminal",
     );
 
@@ -193,6 +255,73 @@ describe("KeybindingsSettings.logic", () => {
         "MacIntel",
       ),
     ).toBe(expected);
+  });
+
+  it("records layout punctuation while preserving physical Alt shortcuts; saved bindings still trigger", () => {
+    for (const { key, code, altKey = false, shiftKey, expected, defaultInput } of [
+      { key: "#", code: "Backslash", shiftKey: false, expected: "#", defaultInput: "\\" },
+      {
+        key: "'",
+        code: "Backslash",
+        shiftKey: true,
+        expected: "shift+'",
+        defaultInput: "shift+\\",
+      },
+      {
+        key: "¡",
+        code: "Digit1",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+1",
+        defaultInput: "alt+1",
+      },
+    ]) {
+      const pressed = {
+        key,
+        code,
+        metaKey: false,
+        ctrlKey: false,
+        altKey,
+        shiftKey,
+      };
+      expect(keybindingFromKeyboardEvent(pressed, "MacIntel")).toBe(defaultInput);
+      const input = keybindingFromKeyboardEvent(pressed, "MacIntel", { layoutCharacter: true });
+      expect(input).toBe(expected);
+      assert(input);
+      const shortcut = parseKeybindingShortcut(input);
+      assert(shortcut);
+      expect(
+        resolveShortcutCommand(pressed, [{ command: "chat.new", shortcut }], {
+          platform: "MacIntel",
+        }),
+      ).toBe("chat.new");
+    }
+  });
+
+  it("records an unshifted brace literally and a US shifted brace as Shift+[; both trigger the saved binding", () => {
+    for (const { shiftKey, expected } of [
+      { shiftKey: false, expected: "mod+{" },
+      { shiftKey: true, expected: "mod+shift+[" },
+    ]) {
+      const pressed = {
+        key: "{",
+        code: "BracketLeft",
+        metaKey: true,
+        ctrlKey: false,
+        altKey: false,
+        shiftKey,
+      };
+      const input = keybindingFromKeyboardEvent(pressed, "MacIntel", { layoutCharacter: true });
+      expect(input).toBe(expected);
+      assert(input);
+      const shortcut = parseKeybindingShortcut(input);
+      assert(shortcut);
+      expect(
+        resolveShortcutCommand(pressed, [{ command: "thread.previous", shortcut }], {
+          platform: "MacIntel",
+        }),
+      ).toBe("thread.previous");
+    }
   });
 
   it("captures Latin layout keys instead of their punctuation position", () => {
@@ -346,81 +475,75 @@ describe("KeybindingsSettings.logic", () => {
   });
 
   it("marks each default shortcut for multi-binding commands as default", () => {
-    const rows = buildKeybindingRows(
-      [
-        {
-          command: "chat.new",
-          shortcut: {
-            key: "n",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: false,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+    const rows = buildKeybindingRows([
+      {
+        command: "chat.new",
+        shortcut: {
+          key: "n",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
         },
-        {
-          command: "chat.new",
-          shortcut: {
-            key: "o",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: true,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
         },
-      ] satisfies ResolvedKeybindingsConfig,
-      "",
-    );
+      },
+      {
+        command: "chat.new",
+        shortcut: {
+          key: "o",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+    ] satisfies ResolvedKeybindingsConfig);
 
     expect(rows.map((row) => row.source)).toEqual(["Default", "Default"]);
   });
 
   it("reports conflicting shortcuts that share an active when context", () => {
-    const rows = buildKeybindingRows(
-      [
-        {
-          command: "chat.new",
-          shortcut: {
-            key: "n",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: false,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+    const rows = buildKeybindingRows([
+      {
+        command: "chat.new",
+        shortcut: {
+          key: "n",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
         },
-        {
-          command: "chat.newLocal",
-          shortcut: {
-            key: "n",
-            modKey: true,
-            metaKey: false,
-            ctrlKey: false,
-            altKey: false,
-            shiftKey: false,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
         },
-      ] satisfies ResolvedKeybindingsConfig,
-      "",
-    );
+      },
+      {
+        command: "chat.newLocal",
+        shortcut: {
+          key: "n",
+          modKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+    ] satisfies ResolvedKeybindingsConfig);
 
     expect(rows[0]?.conflicts).toEqual(["Chat: New Local"]);
     expect(

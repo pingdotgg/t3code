@@ -217,15 +217,12 @@ export const layer: Layer.Layer<
           }
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
-          // stops it or reports there is nothing left to stop. Background work
-          // the projection still shows is settled by the orchestrator after.
+          // stops it or reports there is nothing left to stop.
           yield* session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
           });
-          // Give native terminal ingestion time to finish before the Stop
-          // follow-up repairs a run whose provider no longer reports on it.
           // The wait is real time: ingestion runs on other fibers and never
           // advances a test clock, so a test clock would hold Stop forever.
           yield* Effect.gen(function* () {

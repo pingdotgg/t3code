@@ -24,10 +24,6 @@ const options: ReadonlyArray<{ value: GitHubRoutingPermission; label: string }> 
 
 const summaryLabels = { "read-write": "read and act", read: "read PRs" } as const;
 
-/**
- * Closed-header summary: the machines that share, grouped by permission.
- * Null when nothing is shared.
- */
 export function summarizeGitHubRouting(
   entries: ReadonlyArray<{ readonly label: string; readonly permission: GitHubRoutingPermission }>,
 ): string | null {
@@ -40,12 +36,6 @@ export function summarizeGitHubRouting(
   return groups.length === 0 ? null : groups.join(" · ");
 }
 
-/**
- * Folded section under the environments list. One row per switched-on machine
- * with how much of its GitHub access the other machines may use. The trust
- * warning is the first line of the body so it sits next to the control.
- * Rendered only when two or more machines are on.
- */
 export function GitHubRoutingSettings({
   environments,
 }: {

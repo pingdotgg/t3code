@@ -1,9 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -73,7 +74,7 @@ function fixture(
           request,
           Response.json({}, { status: options.cooldownStatus ?? 200 }),
         );
-      expect(path).toBe("/v0/management/api-call");
+      expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
       const upstream = options.upstream?.(body!) ?? {
         status: 200,
@@ -114,6 +115,114 @@ function fixture(
   };
 }
 
+/** A hub API whose every request fails the way `fail` says. */
+const unreachableHub = (
+  fail: (
+    request: Parameters<Parameters<typeof HttpClient.make>[0]>[0],
+  ) => HttpClientError.HttpClientError,
+) =>
+  makeCliproxyApi.pipe(
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => Effect.fail(fail(request))),
+    ),
+    Effect.provide(NodeCrypto.layer),
+  );
+
+describe("CLIProxyAPI hub failures", () => {
+  it.effect("names the TLS code when the hub's certificate is not trusted", () =>
+    Effect.gen(function* () {
+      const api = yield* unreachableHub(
+        (request) =>
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              // Node's fetch wraps the TLS error, which carries the code, in a generic TypeError.
+              cause: new TypeError("fetch failed", {
+                cause: Object.assign(new Error("unable to get local issuer certificate"), {
+                  code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+                }),
+              }),
+            }),
+          }),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toContain("UNABLE_TO_GET_ISSUER_CERT_LOCALLY");
+      expect(error.detail).toContain("NODE_EXTRA_CA_CERTS");
+    }),
+  );
+
+  it.effect("ignores a transport code that is not a short Node error code", () =>
+    Effect.gen(function* () {
+      const api = yield* unreachableHub(
+        (request) =>
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              cause: Object.assign(new Error("odd"), { code: "X".repeat(200) }),
+            }),
+          }),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toBe("The hub management request failed.");
+    }),
+  );
+
+  it.effect("names the status, not the body, when the hub rejects the request", () =>
+    Effect.gen(function* () {
+      const test = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ error: "management-secret is wrong" }, { status: 401 }),
+          ),
+        ),
+      );
+      const api = yield* makeCliproxyApi.pipe(
+        Effect.provideService(HttpClient.HttpClient, test),
+        Effect.provide(NodeCrypto.layer),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toContain("401");
+      expect(error.detail).not.toContain("management-secret");
+    }),
+  );
+
+  it.effect("says when the hub does not answer in time", () =>
+    Effect.gen(function* () {
+      const api = yield* makeCliproxyApi.pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.never),
+        ),
+        Effect.provide(NodeCrypto.layer),
+      );
+      const pending = yield* Effect.flip(api.readAccounts(config)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("15 seconds");
+      const error = yield* Fiber.join(pending);
+      expect(error.detail).toContain("did not answer within 15 seconds");
+    }),
+  );
+
+  it.effect("keeps a malformed account list generic", () =>
+    Effect.gen(function* () {
+      const test = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ nope: "hub-internal" })),
+        ),
+      );
+      const api = yield* makeCliproxyApi.pipe(
+        Effect.provideService(HttpClient.HttpClient, test),
+        Effect.provide(NodeCrypto.layer),
+      );
+      const error = yield* Effect.flip(api.readAccounts(config));
+      expect(error.detail).toBe("The hub could not list accounts.");
+    }),
+  );
+});
+
 describe("CLIProxyAPI built-in management API", () => {
   it.effect(
     "reads both accounts and their earliest unexpired credits without plugin endpoints",
@@ -143,6 +252,18 @@ describe("CLIProxyAPI built-in management API", () => {
           ],
         ).toBe("account-b");
       }),
+  );
+
+  it.effect("keeps the path of a hub served under a prefix", () =>
+    Effect.gen(function* () {
+      const test = fixture();
+      const api = yield* test.api;
+      yield* api.readAccounts({ ...config, url: "https://tools.test/cliproxy" });
+      expect(test.requests.length).toBeGreaterThan(0);
+      expect(
+        test.requests.every((request) => request.path.startsWith("/cliproxy/v0/management/")),
+      ).toBe(true);
+    }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>
@@ -226,7 +347,6 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(redemptions[0]?.body?.data).toBe(redemptions[1]?.body?.data);
       expect(redemptions[0]?.body?.data).toBe(
         encodeJson({
-          // UUIDv5 of "account-b:credit-b"; must stay stable so retries deduplicate.
           redeem_request_id: "519d5243-011a-5b7b-91f3-44d85f095705",
           credit_id: "credit-b",
         }),

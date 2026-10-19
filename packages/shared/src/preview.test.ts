@@ -6,9 +6,73 @@ import {
   normalizePreviewUrl,
   PreviewUrlNormalizationError,
   resolveAddressBarInput,
+  previewPdfAssetUrl,
+  resolveSearchUrlTemplate,
 } from "./preview.ts";
 
+describe("previewPdfAssetUrl", () => {
+  it.each([
+    "http://localhost:6497",
+    "https://host.tailnet.test",
+    "https://environment.tunnel.test",
+  ])("loads PDF bytes through the client's connection at %s", (base) => {
+    expect(
+      previewPdfAssetUrl(
+        "http://127.0.0.1:14537/api/assets/signed-token/Study%20guide.PDF?revision=2#page=8",
+        base,
+      ),
+    ).toBe(`${base}/api/assets/signed-token/Study%20guide.PDF?revision=2#page=8`);
+  });
+
+  it.each([
+    "http://localhost:6497/api/assets/token/index.html",
+    "https://example.com/paper.pdf",
+    "file:///api/assets/token/paper.pdf",
+    "javascript:alert(1)",
+    "invalid",
+  ])("leaves non-asset documents on their browser session: %s", (url) => {
+    expect(previewPdfAssetUrl(url, "https://environment.test")).toBeNull();
+  });
+
+  it("waits for the environment connection", () => {
+    expect(previewPdfAssetUrl("http://localhost/api/assets/token/paper.pdf", null)).toBeNull();
+  });
+
+  it.each(["another-environment.test", "127.0.0.2.example.com", "128.0.0.1"])(
+    "preserves matching PDF URLs on unrelated host %s",
+    (host) => {
+      const source = `https://${host}/api/assets/token/guide.pdf?revision=2#page=3`;
+      expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+    },
+  );
+
+  it("keeps URLs from the connected environment", () => {
+    const source = "https://environment.test/api/assets/token/guide.pdf#page=2";
+    expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+  });
+
+  it.each(["127.0.0.2", "127.255.255.254", "localhost.", "[::1]", "0.0.0.0"])(
+    "remaps local assets on %s through the client connection",
+    (host) => {
+      expect(
+        previewPdfAssetUrl(
+          `http://${host}:14537/api/assets/token/guide.pdf?revision=2#page=3`,
+          "https://remote.test",
+        ),
+      ).toBe("https://remote.test/api/assets/token/guide.pdf?revision=2#page=3");
+    },
+  );
+});
+
 describe("resolveAddressBarInput", () => {
+  it.each([
+    ["localhost:3000/?next=https://example.com", "http://localhost:3000/?next=https://example.com"],
+    ["127.0.0.1:3000/#https://example.com", "http://127.0.0.1:3000/#https://example.com"],
+    ["example.com/https://example.org", "https://example.com/https://example.org"],
+  ])("opens the outer address when it contains another URL: %s", (input, expected) => {
+    expect(resolveAddressBarInput(input)).toBe(expected);
+  });
+
   it("opens what users type as addresses", () => {
     expect(resolveAddressBarInput("localhost:5173")).toBe("http://localhost:5173/");
     expect(resolveAddressBarInput("127.0.0.1:3000/path")).toBe("http://127.0.0.1:3000/path");
@@ -49,11 +113,45 @@ describe("resolveAddressBarInput", () => {
     expect(() => resolveAddressBarInput("data:text/plain,hello")).toThrow(
       PreviewUrlNormalizationError,
     );
-    // A known scheme with a numeric payload is not a host and port.
     for (const input of ["ftp:21", "tel:5551234"]) {
       expect(() => resolveAddressBarInput(input)).toThrow(PreviewUrlNormalizationError);
     }
     expect(resolveAddressBarInput("devbox:8080")).toBe("https://devbox:8080/");
+  });
+
+  it("searches with the given template and still opens addresses directly", () => {
+    const google = resolveSearchUrlTemplate({
+      browserSearchEngine: "google",
+      browserCustomSearchUrl: "",
+    });
+    expect(resolveAddressBarInput("how to center a div", google)).toBe(
+      "https://www.google.com/search?q=how%20to%20center%20a%20div",
+    );
+    expect(resolveAddressBarInput("cnn.com", google)).toBe("https://cnn.com/");
+    expect(resolveAddressBarInput("a&b", "https://search.example/?q=%s&lang=en")).toBe(
+      "https://search.example/?q=a%26b&lang=en",
+    );
+  });
+});
+
+describe("resolveSearchUrlTemplate", () => {
+  it("uses a valid custom template and falls back to DuckDuckGo for an unusable one", () => {
+    expect(
+      resolveSearchUrlTemplate({
+        browserSearchEngine: "custom",
+        browserCustomSearchUrl: " https://search.example/?q=%s ",
+      }),
+    ).toBe("https://search.example/?q=%s");
+    for (const browserCustomSearchUrl of [
+      "https://search.example/?q=",
+      "javascript:alert('%s')",
+      "https://%s.example.com/",
+      "https://%s@search.example/?q=%s",
+    ]) {
+      expect(
+        resolveSearchUrlTemplate({ browserSearchEngine: "custom", browserCustomSearchUrl }),
+      ).toBe("https://duckduckgo.com/?q=%s");
+    }
   });
 });
 

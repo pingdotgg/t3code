@@ -1,6 +1,15 @@
-import { ProviderInstanceId, RunId } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  RunId,
+  type OrchestrationV2ThreadProjection,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveHandoffEndpoints, type HandoffTimelineRun } from "./handoff.ts";
+import {
+  resolveHandoffEndpoints,
+  resolvePendingHandoff,
+  type HandoffTimelineRun,
+} from "./handoff.ts";
 
 const from = ProviderInstanceId.make("codex_personal");
 const to = ProviderInstanceId.make("claudeAgent");
@@ -61,5 +70,54 @@ describe("handoff endpoints shared by web and mobile", () => {
     expect(
       resolveHandoffEndpoints(item, [run("target", 2, from, "wrong-model")]).to.model,
     ).toBeUndefined();
+  });
+});
+
+const projection = {
+  runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
+  visibleTurnItems: [{ item: { type: "user_message" } }],
+} as unknown as OrchestrationV2ThreadProjection;
+
+describe("pending context handoff", () => {
+  it("appears on selection, updates the destination, and disappears on returning", () => {
+    expect(resolvePendingHandoff(projection, { instanceId: to, model: "first" }, [])).toEqual({
+      from: [{ instanceId: from, model: "source" }],
+      to: { instanceId: to, model: "first" },
+    });
+    expect(
+      resolvePendingHandoff(projection, { instanceId: to, model: "second" }, [])?.to.model,
+    ).toBe("second");
+    expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
+    expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
+  });
+  it("stays hidden while the thread's timeline is empty", () => {
+    const empty = { ...projection, visibleTurnItems: [] };
+    expect(resolvePendingHandoff(empty, { instanceId: to, model: "first" }, [])).toBeNull();
+    // Paging can leave a window of only tool rows after the prompt.
+    const toolRowsOnly = {
+      ...projection,
+      visibleTurnItems: [{ item: { type: "command_execution" } }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(
+      resolvePendingHandoff(toolRowsOnly, { instanceId: to, model: "first" }, [])?.to.model,
+    ).toBe("first");
+  });
+  it("only previews a same-provider model change when it needs a fresh native thread", () => {
+    const providers = [
+      { instanceId: from, requiresNewThreadForModelChange: true },
+    ] as unknown as ServerProvider[];
+    expect(
+      resolvePendingHandoff(projection, { instanceId: from, model: "other" }, providers)?.to.model,
+    ).toBe("other");
+  });
+  it("resumes compatible account overlays without showing a handoff", () => {
+    const providers = [from, to].map((instanceId) => ({
+      instanceId,
+      driver: "codex",
+      continuation: { groupKey: "shared" },
+    })) as unknown as ServerProvider[];
+    expect(
+      resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers),
+    ).toBeNull();
   });
 });

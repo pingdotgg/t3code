@@ -1,14 +1,3 @@
-/**
- * In-memory PreviewManager implementation.
- *
- * Sessions are keyed by `(threadId, tabId)`; a single thread can host
- * multiple tabs (browser-style). `open` always creates a new tab — tab
- * lifecycle is owned by the renderer.
- *
- * Events are published via Effect's `PubSub`, so subscriber failures are
- * isolated from the publishing call (a closed WS subscriber queue cannot
- * fail an in-progress `navigate()`).
- */
 import {
   type PreviewCloseInput,
   type PreviewEvent,
@@ -64,11 +53,6 @@ export class PreviewManager extends Context.Service<
     readonly resize: (
       input: PreviewResizeInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
-    /**
-     * Records a server tab's appearance or zoom and publishes it; the server's
-     * browser applies it to the page. Any client may send it, as it changes how
-     * the page renders, not what it does.
-     */
     readonly adjust: (
       input: PreviewAdjustInput,
     ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
@@ -87,9 +71,7 @@ interface PreviewSessionState {
 }
 
 interface ManagerState {
-  /** All sessions across every thread, keyed by `${threadId}\u0000${tabId}`. */
   readonly sessions: ReadonlyMap<string, PreviewSessionState>;
-  /** Global monotonic revision establishing list/event ordering. */
   readonly revision: number;
 }
 
@@ -140,23 +122,14 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* PreviewManagerMake() {
   const crypto = yield* Crypto.Crypto;
-  const serverEpoch = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const serverEpoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
-  // Unbounded PubSub is fine here — events are tiny and we don't want to
-  // block publishers if a subscriber is slow. WS clients backpressure on
-  // their own queues downstream.
   const eventsPubSub = yield* PubSub.unbounded<PreviewEvent>();
   const events: Stream.Stream<PreviewEvent> = Stream.fromPubSub(eventsPubSub);
 
   /**
-   * Atomic read-modify-write over the session for `(threadId, tabId)`. The
-   * mutator runs under the SynchronizedRef so concurrent writers cannot
-   * interleave. Lookup failures travel through the modify result so both
-   * branches yield the same `[A, S]` shape `modifyEffect` requires.
-   *
-   * The event is published INSIDE the lock so observers see events in the
-   * same order as the underlying state transitions. Publishing an unbounded
-   * PubSub is non-blocking, so this is cheap.
+   * The event is published INSIDE the lock so observers see events in the same
+   * order as the underlying state transitions.
    */
   const mutateExistingSession = <R, E>(
     threadId: string,
@@ -342,8 +315,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
       return yield* mutateExistingSession(
         input.threadId,
         input.tabId,
-        // Any client may size a tab, as the desktop has always allowed; the
-        // server's browser follows the published setting for its own tabs.
         Effect.fn("PreviewManager.resizeSession")(function* (session) {
           const updatedAt = yield* currentIsoTimestamp;
           const snapshot: PreviewSessionSnapshot = {
@@ -380,7 +351,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
             ...(input.zoomFactor === undefined ? {} : { zoomFactor: input.zoomFactor }),
             updatedAt,
           };
-          // One-off requests ride on the event for the server's browser to act on.
           const request =
             input.hardReload || input.clear
               ? {
@@ -409,8 +379,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
 
   const refresh: PreviewManager["Service"]["refresh"] = Effect.fn("PreviewManager.refresh")(
     function* (input) {
-      // Verify the session exists; the desktop bridge handles the actual reload
-      // and will report progress back via `reportStatus`. No event emitted.
       yield* mutateExistingSession(input.threadId, input.tabId, (session) =>
         Effect.succeed({ next: session, emit: null, result: undefined as void }),
       );
@@ -479,7 +447,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
           ...session.snapshot,
           reveal: true,
           revealRequest: {
-            id: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+            id: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
             force: input.force,
           },
           updatedAt: yield* currentIsoTimestamp,

@@ -1,3 +1,4 @@
+import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,6 +11,32 @@ import {
 import { threadDragGapOffset } from "./threadDragGap";
 
 describe("threadQueueControlPresentation", () => {
+  it("shows an assistant quote as its quoted text", () => {
+    const href = formatAssistantCitationHref({
+      version: 1,
+      environmentId: "environment:test" as never,
+      threadId: "thread:test" as never,
+      messageId: "message:assistant" as never,
+      text: "Retry the sync after the lock clears.",
+      start: 0,
+      end: 37,
+      prefix: "",
+      suffix: "",
+    });
+    const controls = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canReorder: true,
+      index: 0,
+      queuedCount: 1,
+      text: `[Assistant quote](${href}) Can we add a backoff here?`,
+    });
+
+    expect(controls.displayText).toBe(
+      "Retry the sync after the lock clears. Can we add a backoff here?",
+    );
+  });
+
   it("preserves queue reorder and steer controls with removal", () => {
     const controls = resolveThreadQueueRowControls({
       busy: false,
@@ -68,7 +95,6 @@ describe("threadQueueControlPresentation", () => {
     expect(editing.isEditing).toBe(true);
     expect(editing.canEdit).toBe(false);
     expect(editing.canSteer).toBe(false);
-    // Reordering and removing a message stay available while it is edited.
     expect(editing.canMoveUp).toBe(true);
     expect(editing.canDismiss).toBe(true);
   });

@@ -9,7 +9,6 @@ import {
   mergeComposerDraftContent,
 } from "./use-composer-drafts";
 
-/** Move unsent setup edits into the restored task before reopening its editor. */
 export async function recoverFailedThreadDraft(message: QueuedThreadMessage): Promise<void> {
   const sourceKey = scopedThreadKey(message.environmentId, message.threadId);
   const targetKey = restoredNewTaskDraftKey(message.messageId);

@@ -27,9 +27,6 @@ describe("resolveBrowserProfiles", () => {
   });
 
   it("drops stored entries that collide with a built-in id", () => {
-    // Built-ins are synthesized rather than stored, so a hand-edited settings
-    // file must not be able to shadow Default with a persistent partition of
-    // its own — every tab already opened under Default would follow it.
     const resolved = resolveBrowserProfiles([
       { id: DEFAULT_BROWSER_PROFILE_ID, name: "Hijacked", kind: "persistent" },
       { id: INCOGNITO_BROWSER_PROFILE_ID, name: "Not incognito", kind: "persistent" },
@@ -48,8 +45,6 @@ describe("resolveBrowserProfiles", () => {
 
 describe("findBrowserProfile", () => {
   it("returns nothing for an id that no longer exists", () => {
-    // The settings UI relies on this to fall back rather than opening tabs
-    // into a partition with no profile behind it.
     expect(findBrowserProfile(resolveBrowserProfiles([]), work.id)).toBeUndefined();
     expect(findBrowserProfile(resolveBrowserProfiles([work]), undefined)).toBeUndefined();
   });
@@ -65,8 +60,6 @@ describe("isBuiltInBrowserProfileId", () => {
 
 describe("resolveBrowserProfiles normalization", () => {
   it("keeps only the first entry for a repeated id", () => {
-    // Both map to the same Electron partition, so presenting two would offer
-    // isolated identities that in fact share every cookie.
     const resolved = resolveBrowserProfiles([
       { id: "work", name: "Work", kind: "persistent" },
       { id: "work", name: "Work (old)", kind: "persistent" },
@@ -78,9 +71,6 @@ describe("resolveBrowserProfiles normalization", () => {
   });
 
   it("reports a custom incognito profile as persistent", () => {
-    // Partition persistence is keyed off the built-in incognito id alone, so
-    // a custom profile claiming that kind keeps its cookies across restarts.
-    // Labelling it ephemeral would be a promise the partition layer breaks.
     const resolved = resolveBrowserProfiles([
       { id: "throwaway", name: "Throwaway", kind: "incognito" },
     ]);
@@ -103,8 +93,6 @@ describe("resolveBrowserProfiles normalization", () => {
 
 describe("BrowserProfileId", () => {
   it("rejects control characters", () => {
-    // Ids are folded into delimiter-joined cache keys on the client, so one
-    // carrying the delimiter would resolve to another profile's partition.
     expect(Schema.is(BrowserProfileId)("profile-a\u0000b")).toBe(false);
     expect(Schema.is(BrowserProfileId)("profile-a")).toBe(true);
   });

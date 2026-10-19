@@ -23,10 +23,6 @@ export function useThreadDetail(target: ThreadDetailTarget) {
   return useEnvironmentThread(target.environmentId, target.threadId);
 }
 
-/**
- * The selection owns the subscription so it can hold it back while a queued
- * creation has not reached the server yet.
- */
 export function useSelectedThreadDetailState() {
   const { selectedThreadDetailRef } = useThreadSelection();
   return useEnvironmentThread(

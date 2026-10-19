@@ -296,7 +296,6 @@ describe("incoming native shares", () => {
       value: "content://shared/report",
       mimeType: "application/pdf",
     };
-    // The source claims 42 bytes but the stored copy measures 4200.
     const persistFile = vi.fn(async () => "file:///documents/report.pdf");
     const readSize = vi.fn(async (uri: string) => (uri.startsWith("content:") ? 42 : 4200));
 
@@ -358,9 +357,6 @@ describe("incoming native shares", () => {
       fileReader: {
         readBase64: async () => "unused",
         persistFile: async () => persistedUri,
-        // The source claims 42 bytes but the stored copy measures zero: the
-        // copy is what uploads, so its measured size wins and the empty file
-        // is rejected instead of shipped with a made-up size.
         readSize: async (uri) => (uri.startsWith("content:") ? 42 : 0),
         removeOwnedFile,
       },

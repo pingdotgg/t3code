@@ -34,7 +34,6 @@ class MediaFileStatError extends Schema.TaggedError<MediaFileStatError>()("Media
   }
 }
 
-/** Holds the file identity and descriptor for one HTTP request, never a copy of its bytes. */
 export interface OpenMediaFile {
   readonly handle: NodeFSP.FileHandle;
   readonly info: NodeFS.BigIntStats;
@@ -45,7 +44,6 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
-/** Opens a canonical media path once. Replacements cannot change the response's source. */
 export const openMediaFile = Effect.fn("openMediaFile")(function* (
   filePath: string,
   identity?: { readonly device: string; readonly inode: string },
@@ -98,7 +96,6 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
   );
 });
 
-/** Reads the leading bytes of an already-validated media file, never past the end. */
 export const readMediaFileHeader = (filePath: string, file: OpenMediaFile, byteCount: number) =>
   Effect.tryPromise({
     try: async () => {

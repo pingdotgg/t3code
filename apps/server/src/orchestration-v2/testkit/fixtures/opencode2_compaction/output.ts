@@ -44,10 +44,8 @@ export function assertOpenCode2CompactionOutput(
   assert.equal(compaction?.runId, compactRun?.id);
   assert.equal(compaction?.status, "completed");
   assert.equal(compaction?.title, "Context compacted");
-  // The summary OpenCode carries forward is `compaction.ended`'s full text.
   assert.include(compaction?.type === "compaction" ? compaction.summary : "", "PAPAYA");
   assert.include(compaction?.type === "compaction" ? compaction.summary : "", "## Objective");
-  // The `/compact` run shows no assistant reply; the recall run answers from the summary.
   assert.isUndefined(
     projection.turnItems.find(
       (item) => item.type === "assistant_message" && item.runId === compactRun?.id,

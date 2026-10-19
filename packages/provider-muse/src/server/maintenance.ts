@@ -17,25 +17,21 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 
 const DRIVER = ProviderDriverKind.make("muse");
-/** Mirrors the official launcher, which reads MUSE_CHANNEL and accepts only these two. */
 const MUSE_CHANNELS = new Set(["muse-stable", "muse-canary"]);
 const ChannelManifest = Schema.Struct({
   version: Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+-R\d+(?:\.\d+)?$/)),
 });
 
-/** Muse prints both a display version and a release revision; prefer the latter. */
 export function parseMuseVersion(output: string): string | null {
   return output.match(/\b\d+\.\d+\.\d+-R\d+(?:\.\d+)?\b/)?.[0] ?? parseGenericCliVersion(output);
 }
 
 function comparableMuseVersion(version: string): string {
-  // Make the release sequence numeric for semver comparison (R9 precedes R10).
   return version.replace(/-R(\d+)(?:\.(\d+))?$/, "-release.$1.$2").replace(/\.$/, ".0");
 }
 
 const MUSE_REVISION = /-R\d+(?:\.\d+)?$/;
 
-/** A version printed without a revision is compared by its release alone. */
 export const compareMuseVersions = (current: string, latest: string) =>
   MUSE_REVISION.test(current) === MUSE_REVISION.test(latest)
     ? compareSemverVersions(comparableMuseVersion(current), comparableMuseVersion(latest))
@@ -117,7 +113,6 @@ export const latestMuseVersion = Effect.fn("latestMuseVersion")(function* (
   );
 });
 
-/** Feed Muse's release channel into the same advisory and notification flow as other drivers. */
 export const enrichMuseSnapshot = Effect.fn("enrichMuseSnapshot")(function* (input: {
   readonly snapshot: ServerProvider;
   readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;

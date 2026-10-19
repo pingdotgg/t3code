@@ -1,36 +1,25 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-/**
- * Isolates long-lived agent and terminal processes from the server on Linux.
- *
- * Each wrapped command runs with a high `oom_score_adj`, so the kernel OOM
- * killer picks it before the server. Under a systemd user manager it also runs
- * in its own transient scope, so systemd-oomd (which kills whole leaf cgroups)
- * kills one agent instead of the server and every other agent.
- *
- * The server provides the real implementation. The default leaves commands
- * unchanged, which is also the behavior on macOS, Windows, and in tests.
- */
 export interface AgentScopeShape {
-  /**
-   * Wraps the command that starts an agent or terminal. `name` labels the
-   * scope unit, for example "claude" or "terminal". `env` is the environment
-   * the command will run with, used to resolve it on PATH. A command that does
-   * not resolve stays unwrapped, so a missing binary still fails at spawn.
-   */
   readonly wrap: (input: {
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly name: string;
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
+    /**
+     * Set for terminals, so a job the user detached (tmux, nohup) outlives a
+     * server restart. Agents leave it unset: the next server stops agents a
+     * killed server left running before it resumes their sessions.
+     */
+    readonly survivesRestart?: boolean | undefined;
+    /**
+     * Keep a shared process running after a tool OOM when supported.
+     * Falls back to ordinary scope behavior on older systemd.
+     */
+    readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
-  /**
-   * Whether the latest agent scope of this thread was killed because the
-   * machine or the agents slice ran out of memory. The answer holds until the
-   * thread launches its next agent, so a retried failure reads the same.
-   */
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**
    * Forgets the thread's scope. The session manager calls it before it opens
@@ -53,22 +42,13 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
   }),
 });
 
-/**
- * The thread an ACP runtime is spawned for. ACP runtimes are shared by several
- * provider flavors and do not take a thread id, so the ACP adapter provides it.
- */
 export const AgentScopeThreadId = Context.Reference<string | undefined>(
   "@t3tools/shared/AgentScope/ThreadId",
   { defaultValue: () => undefined },
 );
 
-/**
- * Agents get this `oom_score_adj` so the kernel kills them before the server.
- * An unprivileged process may raise its own score, never lower it.
- */
 export const AGENT_OOM_SCORE_ADJ = 800;
 
-/** Shell line that raises the score of the current process, ignoring failure. */
 export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/oom_score_adj; } 2>/dev/null`;
 
 const LAUNCH_SCRIPT = [RAISE_OOM_SCORE_LINE, 'exec "$@"'].join("\n");
@@ -88,15 +68,13 @@ export interface AgentSystemdScope {
   readonly slice: string;
   readonly unit: string;
   readonly runtimeDir: string;
-  /** Extra `systemd-run` options, such as `--property=OOMPolicy=stop`. */
   readonly options: ReadonlyArray<string>;
 }
 
 /**
- * Builds the Linux launch for an agent command. Every step `exec`s, so the
- * spawned PID, stdio, and signals all belong to the agent itself.
- * `systemd-run --scope` registers its own PID as the scope and then runs the
- * command, so the agent and all of its children start inside the scope.
+ * Every step `exec`s, so the spawned PID, stdio, and signals all belong to the agent itself.
+ * `systemd-run --scope` registers its own PID as the scope and then runs the command, so the
+ * agent and all of its children start inside the scope.
  */
 export function agentScopeCommand(input: {
   readonly command: string;

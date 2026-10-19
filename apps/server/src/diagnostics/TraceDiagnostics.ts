@@ -73,7 +73,6 @@ const DEFAULT_SLOW_SPAN_THRESHOLD_MS = 1_000;
 const TOP_LIMIT = 10;
 const RECENT_LIMIT = 20;
 
-/** The trace file and its rotated backups, oldest first. */
 export function toRotatedTracePaths(
   traceFilePath: string,
   maxFiles: number,
@@ -164,11 +163,6 @@ function isNotFoundError(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "NotFound";
 }
 
-/**
- * Adds `item` to `items`, which stays sorted by `order` and holds at most
- * `limit` entries. Same result as a stable sort and slice over every item, but
- * memory stays bounded however many items stream in.
- */
 function insertBounded<A>(
   items: A[],
   item: A,
@@ -201,10 +195,6 @@ const latestSeenFirst = (
   right: ServerTraceDiagnosticsLogEvent,
 ) => DateTime.toEpochMillis(right.seenAt) - DateTime.toEpochMillis(left.seenAt);
 
-/**
- * Folds trace NDJSON into diagnostics. Call `addLine` once per line as the
- * rotated files stream in, then `finish` for the result.
- */
 export function makeTraceDiagnosticsAggregator(
   slowSpanThresholdMs = DEFAULT_SLOW_SPAN_THRESHOLD_MS,
 ) {
@@ -387,8 +377,7 @@ export function makeTraceDiagnosticsAggregator(
 }
 
 /**
- * Feeds each line of one trace file to `onLine`, streaming so only one chunk of
- * text is in memory at a time. Succeeds with false when the file does not exist.
+ * Succeeds with false when the file does not exist.
  */
 export function streamTraceFileLines(
   fileSystem: FileSystem.FileSystem,
@@ -440,7 +429,6 @@ export const make = Effect.gen(function* () {
             ),
             Effect.result,
           ),
-        // Every file feeds one aggregator, so read them one at a time, oldest first.
         { concurrency: 1 },
       );
       const foundFile = results.some((result) => Result.isSuccess(result) && result.success);

@@ -6,10 +6,6 @@ import {
 
 const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 
-/**
- * Workspace setup is client bookkeeping; preparation failures have their own
- * error item. A retry cancels that item, which then has nothing left to say.
- */
 export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): boolean {
   return (
     (item.type === "command_execution" && item.input === WORKSPACE_PREPARATION_INPUT) ||
@@ -19,11 +15,6 @@ export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): b
   );
 }
 
-/**
- * Runs a Retry can prepare again: their workspace preparation failed and the
- * run still ended there. Older servers record no preparation on the run, so
- * they never offer it.
- */
 export function workspacePreparationRetryRunIds(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "workspacePreparation">>,
   items: ReadonlyArray<OrchestrationV2TurnItem>,

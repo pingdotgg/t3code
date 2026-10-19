@@ -1,5 +1,5 @@
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
-import { AppText as Text, AppTextInput } from "../../components/AppText";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -75,19 +75,16 @@ function ProjectOverviewContent(props: {
     if (!canSave) return;
     setIsSaving(true);
     void (async () => {
-      try {
-        const results = await Promise.all(
-          props.members.map((member) =>
-            updateProject({
-              environmentId: member.environmentId,
-              input: { projectId: member.id, title: nextName },
-            }),
-          ),
-        );
-        if (results.every((result) => result._tag !== "Failure")) setDraftName(null);
-      } finally {
-        setIsSaving(false);
-      }
+      const results = await Promise.all(
+        props.members.map((member) =>
+          updateProject({
+            environmentId: member.environmentId,
+            input: { projectId: member.id, title: nextName },
+          }),
+        ),
+      );
+      setIsSaving(false);
+      if (results.every((result) => result._tag !== "Failure")) setDraftName(null);
     })();
   };
 

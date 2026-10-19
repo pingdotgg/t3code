@@ -58,26 +58,64 @@ it.effect("waits out a concurrent writer instead of failing with SQLITE_BUSY", (
   );
 });
 
-it.effect("shrinks the WAL file back to the size limit after a large write", () => {
-  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-wal-"));
+it.effect("limits the WAL file size in the shared persistence setup", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly journal_size_limit: number }>`PRAGMA journal_size_limit`;
+    assert.equal(rows[0]?.journal_size_limit, WAL_SIZE_LIMIT_BYTES);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("drops planner statistics a database already has", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-stats-"));
   const dbPath = NodePath.join(tempDir, "state.sqlite");
-  const walFileSize = () => NodeFS.statSync(`${dbPath}-wal`).size;
-  // About 25% more 4 KB rows than the limit holds, in one transaction.
-  const rowCount = Math.ceil((WAL_SIZE_LIMIT_BYTES * 1.25) / 4000);
+  const persistence = () =>
+    SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer));
+
+  return Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE walk_probe(node_id TEXT PRIMARY KEY, parent_node_id TEXT)`;
+      yield* sql`INSERT INTO walk_probe VALUES ('node-1', NULL), ('node-2', 'node-1')`;
+      // Stats from a nearly empty table, as an older build collected on a new install.
+      yield* sql`ANALYZE walk_probe`;
+    }).pipe(Effect.provide(persistence()));
+
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const stats = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM sqlite_stat1
+      `;
+      assert.equal(stats[0]?.count, 0);
+      // A connection still using the old stats scans the table at each step.
+      const plan = yield* sql<{ readonly detail: string }>`
+        EXPLAIN QUERY PLAN
+        WITH RECURSIVE retained(node_id) AS (
+          SELECT 'node-2'
+          UNION
+          SELECT parent.parent_node_id FROM walk_probe AS parent
+          INNER JOIN retained ON parent.node_id = retained.node_id
+        )
+        SELECT node_id FROM retained
+      `;
+      assert.include(
+        plan.map((row) => row.detail),
+        "SEARCH parent USING INDEX sqlite_autoindex_walk_probe_1 (node_id=?)",
+      );
+    }).pipe(Effect.provide(persistence()));
+  }).pipe(
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("only fsyncs the database file at WAL checkpoints", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-sync-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
 
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`CREATE TABLE wal_probe(payload BLOB)`;
-    yield* sql`
-      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${rowCount})
-      INSERT INTO wal_probe(payload) SELECT randomblob(4000) FROM n
-    `;
-    assert.isAbove(walFileSize(), WAL_SIZE_LIMIT_BYTES);
-
-    // The auto-checkpoint after the large commit copied every frame into the
-    // database, so the next commit restarts the WAL and cuts the file back.
-    yield* sql`INSERT INTO wal_probe(payload) VALUES (x'00')`;
-    assert.isAtMost(walFileSize(), WAL_SIZE_LIMIT_BYTES);
+    const rows = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
+    assert.equal(rows[0]?.synchronous, 1);
   }).pipe(
     Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
@@ -89,5 +127,15 @@ it.effect("applies busy_timeout in the shared persistence setup", () =>
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
     assert.equal(rows[0]?.timeout, 5000);
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("enables checkpoint_fullfsync in the shared persistence setup", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{
+      readonly checkpoint_fullfsync: number;
+    }>`PRAGMA checkpoint_fullfsync`;
+    assert.equal(rows[0]?.checkpoint_fullfsync, 1);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

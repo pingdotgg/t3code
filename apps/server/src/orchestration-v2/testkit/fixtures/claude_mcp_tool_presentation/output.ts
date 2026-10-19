@@ -11,9 +11,6 @@ import {
 } from "../shared.ts";
 import { CLAUDE_MCP_TOOL_PRESENTATION_PROMPT } from "./input.ts";
 
-// The scrape frame carries Claude Code's `tool_use_meta` as recorded. The map
-// frame's entry was removed from the recording, so it stands in for an MCP
-// tool Claude Code sends no display metadata for.
 export function assertClaudeMcpToolPresentationOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

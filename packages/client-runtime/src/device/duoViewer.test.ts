@@ -246,7 +246,7 @@ it("keeps the chosen release view when an app locks orientation, freezes it duri
   expect(onOrientationRequested).toHaveBeenCalledOnce();
   const chosen = state.views.at(-1)!.quaternion.clone();
   expect(chosen.angleTo(initial)).toBeGreaterThan(1);
-  viewer.setScreen({ ...screen }); // Native config confirms the sensor command, even if the app stays portrait.
+  viewer.setScreen({ ...screen });
   draw();
   expect(state.views.at(-1)!.quaternion.angleTo(chosen)).toBeLessThan(1e-6);
   expect(pending.size).toBe(0);
@@ -335,7 +335,6 @@ it("faces a display handed off by native rotation without requesting another sen
 // position lets the cover report the inner display's orientation before handing
 // off. A button's pending angle reaches the viewer as a hinge preview first.
 it("presents fold buttons centered on the hinge: book, tablet, and an upright closed phone", async () => {
-  // Configurations arrive while the view is still easing; time only advances to settle.
   let now = 0;
   vi.stubGlobal("performance", { now: () => now });
   const { viewer, draw, state, onOrientationRequested } = fixture(false);
@@ -356,7 +355,6 @@ it("presents fold buttons centered on the hinge: book, tablet, and an upright cl
         ...config,
         hingeAngle: angle,
       });
-      // The command reply follows the first configuration.
       if (index === 0) viewer.setHingePreview(null);
       draw();
     });
@@ -388,12 +386,10 @@ it("presents fold buttons centered on the hinge: book, tablet, and an upright cl
     { screenId: 1, orientation: "portrait" },
     { screenId: 1, orientation: "landscape_left" },
     { screenId: 3, orientation: "landscape_left" },
-    // Election can flap back to the cover once before settling.
     { screenId: 1, orientation: "landscape_left" },
     { screenId: 3, orientation: "landscape_left" },
   ]);
   expectInnerFacing(0.45);
-  // Opening the book flat faces the whole tablet; folding back centers the book again.
   press(180, [{ screenId: 3, orientation: "landscape_left" }]);
   expectInnerFacing(0.99);
   press(90, [{ screenId: 3, orientation: "landscape_left" }]);
@@ -603,7 +599,6 @@ it.each([true, false])(
     if (!configurationFirst) viewer.setScreen(tent);
     draw();
     draw();
-    // Each leaf runs from the hinge down to the surface it rests on.
     for (const [name, outward] of [
       ["left-half", -1],
       ["right-half", 1],
@@ -645,7 +640,7 @@ it("lets standalone rotation leave Laptop and Tent and stand a closed device upr
     });
     viewer.setHingePreview(null);
     draw();
-    viewer.cancelInput(); // Explicit toolbar rotation ends folding ownership.
+    viewer.cancelInput();
     viewer.setScreen({
       width: 1398,
       height: 2034,
@@ -695,7 +690,7 @@ it("snaps onto the opposite screen, requests native handoff once and retains the
   expect(onOrientationRequested).not.toHaveBeenCalled();
   expect(viewer.screenPoint(0.5, 0.5)).toBeNull();
   const chosen = state.views.at(-1)!.quaternion.clone();
-  viewer.setScreen({ ...inner, hingePose: null }); // Command acknowledgement precedes sensor readback.
+  viewer.setScreen({ ...inner, hingePose: null });
   draw();
   expect(state.views.at(-1)!.quaternion.angleTo(chosen)).toBeLessThan(1e-6);
   viewer.setScreen({ ...inner, width: 1398, height: 2034, screenId: 1 });
@@ -822,10 +817,10 @@ it.each(["left", "right"] as const)(
       viewer.setScreen(next);
       viewer.setHingePreview(null, true);
       draw();
-      viewer.setScreen({ ...next }); // Late native readback cannot change the view.
+      viewer.setScreen({ ...next });
       draw();
       expect(leaf.getWorldQuaternion(new Rotation()).angleTo(orientation)).toBeLessThan(1e-6);
-      expect(viewer.screenPoint(0.5, 0.5)).toBeNull(); // No fresh native frame yet.
+      expect(viewer.screenPoint(0.5, 0.5)).toBeNull();
       if (value === 0) {
         const cover = loaded.getObjectByName("cover-display") as Mesh;
         const center = cover.geometry.boundingBox!.getCenter(new Vector3());

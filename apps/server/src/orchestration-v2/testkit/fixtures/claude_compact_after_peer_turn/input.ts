@@ -13,16 +13,12 @@ export function claudeCompactAfterPeerTurnInput(): OrchestratorFixtureInput {
     steps: [
       { type: "message", text: CLAUDE_COMPACT_FIRST_PROMPT },
       { type: "message", text: "/compact" },
-      // The peer turn's reply, which the continuation worker queues behind
-      // `/compact`, runs on the same live process.
       { type: "await_run_status", targetRunIndex: 3, status: "completed" },
       { type: "release_replay_gate", label: CLAUDE_COMPACT_LAST_FRAME_LABEL },
     ],
   };
 }
 
-// The same scenario on a CLI that never echoes: nothing marks the peer
-// turn as another turn's, so no continuation follows.
 export function claudeCompactAfterPeerTurnNoEchoInput(): OrchestratorFixtureInput {
   return {
     steps: [

@@ -24,6 +24,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as EventStore from "./orchestration-v2/EventStore.ts";
+import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
@@ -77,7 +80,6 @@ it.effect("does not block server config when editor discovery never resolves", (
   }),
 );
 
-// Only the fields the late-editor fold reads or rewrites.
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
 
@@ -95,7 +97,6 @@ it.effect("resends late editors without rolling back updates already sent", () =
       Stream.make(settingsUpdated({ enableProviderUpdateChecks: false })),
       {
         resolveAvailableEditors: () => Effect.succeed(["file-manager"]),
-        // Holds the late snapshot until the settings change has gone out.
         resolveFileManagerRevealKind: () =>
           Deferred.await(settingsSent).pipe(Effect.as("file-explorer" as const)),
       },
@@ -153,8 +154,6 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
   }),
 );
 
-// The real launcher on Windows over a filesystem whose probes park until
-// released, like a host too busy to finish discovery inside the snapshot timeout.
 const makeParkedWindowsLauncher = Effect.gen(function* () {
   const parkedProbes = yield* Queue.unbounded<void>();
   const release = yield* Deferred.make<void>();
@@ -228,7 +227,6 @@ it.effect("recovers a reveal kind whose real probe outlasts the config timeout",
   Effect.gen(function* () {
     const { editors, probeParked, releaseProbes } = yield* makeParkedWindowsLauncher;
 
-    // The snapshot's bounded probe timed out: file manager, but no reveal kind.
     const lateFiber = yield* withLateEditorConfig(
       snapshotConfig({ availableEditors: ["file-manager"] }),
       Stream.empty,
@@ -363,4 +361,96 @@ it.live.each(["thread", "shell"] as const)(
         [after!.sequence, liveSequence],
       );
     }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
+);
+
+// Compaction keeps the oldest and newest event per message, so a cursor older
+// than the deleted rows still replays each message where the client would
+// first have seen it (reducers append on first sight) and reaches the same
+// final state. No snapshot fallback is needed.
+it.effect("thread resume across compacted history keeps message order and final state", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const now = "2026-10-13T00:00:00.000Z";
+    const threadId = ThreadId.make("thread:compacted");
+    const insertMessage = (version: number, id: string, text: string) => sql<{
+      sequence: number;
+    }>`
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type,
+        occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+      ) VALUES (
+        ${`compacted:${version}`}, 'thread', ${threadId}, ${version}, 'message.updated',
+        ${now}, 'server', ${JSON.stringify({
+          createdBy: "user",
+          creationSource: "web",
+          id,
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        })}, '{}', 2
+      ) RETURNING sequence
+    `;
+    const [first] = yield* insertMessage(0, "message:a", "a created");
+    const [second] = yield* insertMessage(1, "message:b", "b created");
+    yield* insertMessage(2, "message:a", "a superseded");
+    const [head] = yield* insertMessage(3, "message:a", "a final");
+    // thread.deleted is never superseded: clients switch on the event type.
+    for (const version of [0, 1]) {
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type,
+          occurred_at, actor_kind, payload_json, metadata_json, application_event_version
+        ) VALUES (
+          ${`deleted:${version}`}, 'thread', 'thread:deleted-twice', ${version}, 'thread.deleted',
+          ${now}, 'server', '{}', '{}', 2
+        )
+      `;
+    }
+    // Only the event between a's first and newest is deleted.
+    assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 1);
+
+    const items = yield* subscribeOrchestrationV2Thread({
+      threadId,
+      afterSequence: first!.sequence - 1,
+      requestCompletionMarker: true,
+    }).pipe(
+      Effect.flatMap((stream) =>
+        stream.pipe(
+          Stream.takeUntil((item) => item.kind === "synchronized"),
+          Stream.runCollect,
+        ),
+      ),
+      Effect.provideService(ThreadManagement.ThreadManagementService, {
+        ensureLegacyTranscript: () => Effect.void,
+        streamStoredEventsFrom: () => Stream.never,
+      } as unknown as ThreadManagement.ThreadManagementService["Service"]),
+    );
+    assert.deepEqual(
+      Array.from(items, (item) =>
+        item.kind === "event"
+          ? [item.sequence, item.event.type === "message.updated" ? item.event.payload.text : null]
+          : [item.kind],
+      ),
+      [
+        [first!.sequence, "a created"],
+        [second!.sequence, "b created"],
+        [head!.sequence, "a final"],
+        ["synchronized"],
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      ProjectionMaintenance.layer.pipe(
+        Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
+        Layer.provideMerge(ReplayTestLayer),
+      ),
+    ),
+  ),
 );

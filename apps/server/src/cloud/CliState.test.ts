@@ -10,6 +10,7 @@ import * as CliState from "./CliState.ts";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
   PUBLISH_AGENT_ACTIVITY_SECRET,
@@ -59,6 +60,37 @@ it.layer(NodeServices.layer)("CliState", (it) => {
     }).pipe(Effect.provide(layerTest())),
   );
 
+  it.effect("drops only a revoked link, keeping the sign-in and preferences", () =>
+    Effect.gen(function* () {
+      const secrets = yield* ServerSecretStore.ServerSecretStore;
+      const dropped = [
+        CLOUD_LINKED_USER_ID,
+        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+        CLOUD_MINT_PUBLIC_KEY,
+        CLOUD_ENDPOINT_RUNTIME_CONFIG,
+        CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
+      ];
+      const kept = [RELAY_URL_SECRET, PUBLISH_AGENT_ACTIVITY_SECRET];
+      for (const name of [...dropped, ...kept]) {
+        yield* secrets.set(name, new TextEncoder().encode(name));
+      }
+      yield* CliState.setCliDesiredCloudLink(true);
+
+      assert.isFalse(yield* CliState.dropRevokedCloudLink);
+      assert.isTrue(Option.isSome(yield* secrets.get(CLOUD_LINKED_USER_ID)));
+
+      yield* secrets.set(CLOUD_LINK_REVOKED, new TextEncoder().encode("true"));
+      assert.isTrue(yield* CliState.dropRevokedCloudLink);
+      for (const name of [...dropped, CLOUD_LINK_REVOKED]) {
+        assert.isTrue(Option.isNone(yield* secrets.get(name)));
+      }
+      for (const name of kept) {
+        assert.isTrue(Option.isSome(yield* secrets.get(name)));
+      }
+      assert.isTrue(yield* CliState.readCliDesiredCloudLink);
+    }).pipe(Effect.provide(layerTest())),
+  );
+
   it.effect("round-trips the desired link mode and defaults legacy links to managed", () =>
     Effect.gen(function* () {
       const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -72,7 +104,6 @@ it.layer(NodeServices.layer)("CliState", (it) => {
       yield* CliState.setCliDesiredCloudLink(true, "managed");
       assert.equal(yield* CliState.readCliDesiredLinkMode, "managed");
 
-      // A pre-existing link persisted the literal "true"; treat it as managed.
       yield* secrets.set(CliState.CLOUD_CLI_DESIRED_LINK_SECRET, new TextEncoder().encode("true"));
       assert.isTrue(yield* CliState.readCliDesiredCloudLink);
       assert.equal(yield* CliState.readCliDesiredLinkMode, "managed");

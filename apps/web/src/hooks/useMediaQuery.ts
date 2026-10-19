@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 const BREAKPOINTS = {
   "2xl": 1536,
@@ -57,27 +57,23 @@ function getServerSnapshot(): boolean {
 export type MediaQueryInput = {
   min?: Breakpoint | number;
   max?: Breakpoint | number;
-  /** Touch-like input (finger). Use "fine" for mouse/trackpad. */
   pointer?: "coarse" | "fine";
 };
 
 export function useMediaQuery(query: BreakpointQuery | MediaQueryInput | (string & {})): boolean {
   const mediaQuery = parseQuery(query);
 
-  const subscribe = useCallback(
-    (callback: () => void) => {
-      if (typeof window === "undefined") return () => {};
-      const mql = window.matchMedia(mediaQuery);
-      mql.addEventListener("change", callback);
-      return () => mql.removeEventListener("change", callback);
-    },
-    [mediaQuery],
-  );
+  const subscribe = (callback: () => void) => {
+    if (typeof window === "undefined") return () => {};
+    const mql = window.matchMedia(mediaQuery);
+    mql.addEventListener("change", callback);
+    return () => mql.removeEventListener("change", callback);
+  };
 
-  const getSnapshot = useCallback(() => {
+  const getSnapshot = () => {
     if (typeof window === "undefined") return false;
     return window.matchMedia(mediaQuery).matches;
-  }, [mediaQuery]);
+  };
 
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

@@ -1,31 +1,47 @@
 import type { PullRequestCheck } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
-/** ISO-8601 timestamps in UTC compare correctly as plain text, which is all the ordering needs. */
+const zonedDateTimePattern =
+  /^(?:\d{4}|[+-]\d{6})-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?|24:00(?::00(?:\.0+)?)?)(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i;
+
+// Parse whole seconds separately so sub-millisecond fractions keep their precision.
+function timestampParts(value: string) {
+  if (!zonedDateTimePattern.test(value)) return { time: Number.NaN, fraction: "" };
+  const fraction = /\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)/i.exec(value);
+  // Date can normalize impossible days. Check the calendar date before applying the offset.
+  const datePart = value.split(/[Tt]/, 1)[0] ?? "";
+  const date = DateTime.make(`${datePart}T00:00:00Z`);
+  const parts = Option.isSome(date) ? DateTime.toPartsUtc(date.value) : null;
+  const validDate =
+    parts !== null &&
+    parts.month === Number(datePart.slice(-5, -3)) &&
+    parts.day === Number(datePart.slice(-2));
+  return {
+    time: validDate ? Date.parse(fraction ? value.replace(fraction[0], "") : value) : Number.NaN,
+    fraction: fraction?.[1] ?? "",
+  };
+}
+
 function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean {
   if (candidate === null) return kept === null;
-  return kept === null || candidate >= kept;
+  if (kept === null) return true;
+  const candidateParts = timestampParts(candidate);
+  const keptParts = timestampParts(kept);
+  if (Number.isNaN(candidateParts.time) || Number.isNaN(keptParts.time)) return candidate >= kept;
+  if (candidateParts.time !== keptParts.time) return candidateParts.time > keptParts.time;
+  const precision = Math.max(candidateParts.fraction.length, keptParts.fraction.length);
+  return (
+    candidateParts.fraction.padEnd(precision, "0") >= keptParts.fraction.padEnd(precision, "0")
+  );
 }
 
 /**
- * One row per check rather than one per run of it.
- *
  * A host's rollup is a list of runs, not a list of checks: while a workflow is being re-run — or
  * while a second run of it is already live — the same check arrives twice, and both copies reach
  * the reader as what looks like a duplicate. Nothing in a check carries an id, so the name is what
  * identifies it, qualified by the workflow it belongs to since two workflows are free to name a
  * job the same thing.
- *
- * Within a group the newest run is the one worth showing: a re-run is the answer that replaces the
- * one before it, and a run that never said when it happened loses to one that did. A tie goes to
- * whichever came last, because a host lists a re-run after the run it repeats.
- *
- * The order is the host's own, held at the place each check first appeared, so a re-run landing
- * mid-read replaces a row where it stands instead of reshuffling the list under the reader.
- *
- * Two checks that survive under the same name are then genuinely different ones, since they came
- * from different workflows — each is shown as `workflow / name`, the way GitHub writes it itself.
- * A survivor whose workflow the host did not name keeps its bare name rather than being qualified
- * with nothing.
  */
 export function dedupeChecks(
   entries: ReadonlyArray<{
@@ -36,9 +52,8 @@ export function dedupeChecks(
 ): ReadonlyArray<PullRequestCheck> {
   const newestByCheck = new Map<string, (typeof entries)[number]>();
   for (const entry of entries) {
-    const key = `${entry.workflowName ?? ""} ${entry.check.name}`;
+    const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
     const kept = newestByCheck.get(key);
-    // Re-setting a key a Map already holds keeps its first position, which is the order wanted.
     if (kept === undefined || isAtLeastAsNew(entry.at, kept.at)) newestByCheck.set(key, entry);
   }
   const survivors = [...newestByCheck.values()];

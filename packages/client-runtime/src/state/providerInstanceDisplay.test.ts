@@ -91,14 +91,14 @@ describe("normalizeProviderAccentColor", () => {
 
 describe("shouldShowInstanceBadge", () => {
   it("hides badges for distinct ACP agents sharing the registry driver", () => {
-    const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe" };
-    const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin" };
+    const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe", enabled: true };
+    const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin", enabled: true };
     expect(shouldShowInstanceBadge(mistral, [mistral, devin])).toBe(false);
     expect(shouldShowInstanceBadge(devin, [mistral, devin])).toBe(false);
   });
 
   it("shows badges for multiple instances of the same ACP agent", () => {
-    const first = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe" };
+    const first = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe", enabled: true };
     const second = { ...first };
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
@@ -108,29 +108,40 @@ describe("shouldShowInstanceBadge", () => {
       driverKind: acpRegistry,
       acpRegistryAgentId: "mistral-vibe",
       accentColor: "#ff8800",
+      enabled: true,
     };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
   it("distinguishes registry instances whose agent identity is unavailable", () => {
-    const entry = { driverKind: acpRegistry };
+    const entry = { driverKind: acpRegistry, enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry, { ...entry }])).toBe(true);
   });
 
   it("shows the badge when the entry has an accent color", () => {
-    const entry = { driverKind: codex, accentColor: "#ff8800" };
+    const entry = { driverKind: codex, accentColor: "#ff8800", enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
   it("shows the badge when two entries share a driver, even without an accent", () => {
-    const first = { driverKind: codex, accentColor: undefined };
-    const second = { driverKind: codex, accentColor: undefined };
+    const first = { driverKind: codex, accentColor: undefined, enabled: true };
+    const second = { driverKind: codex, accentColor: undefined, enabled: true };
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
 
+  it("ignores disabled siblings for enabled instances while distinguishing historical owners", () => {
+    const enabled = { driverKind: codex, enabled: true };
+    const disabled = { driverKind: codex, enabled: false };
+
+    expect(shouldShowInstanceBadge(enabled, [enabled, disabled])).toBe(false);
+    expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
+    expect(shouldShowInstanceBadge(disabled, [disabled, { ...disabled }])).toBe(true);
+    expect(shouldShowInstanceBadge(disabled, [disabled])).toBe(false);
+  });
+
   it("hides the badge for a single instance of a driver with no accent", () => {
-    const entry = { driverKind: codex, accentColor: undefined };
-    const other = { driverKind: claude, accentColor: undefined };
+    const entry = { driverKind: codex, accentColor: undefined, enabled: true };
+    const other = { driverKind: claude, accentColor: undefined, enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry, other])).toBe(false);
   });
 });

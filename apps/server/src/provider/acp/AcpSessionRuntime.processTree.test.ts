@@ -113,7 +113,6 @@ describe("terminatePosixOwnedProcessTree", () => {
         return path;
       };
       const deadPid = 2_147_483_646;
-      // Synthetic live foreign pid (not this process, still reported alive by the probe).
       const liveForeignPid = 2_147_483_645;
       const staleEmpty = writeSibling(`t3-acp-${deadPid}-aaaa`, "0");
       const currentPidSibling = writeSibling(`t3-acp-${process.pid}-bbbb`, "0");
@@ -135,7 +134,6 @@ describe("terminatePosixOwnedProcessTree", () => {
         expect(NodeFS.existsSync(liveForeignSibling)).toBe(true);
         expect(NodeFS.existsSync(stalePopulated)).toBe(true);
         expect(NodeFS.existsSync(unrelated)).toBe(true);
-        // Missing populated state must not remove a sibling.
         writeSibling(`t3-acp-${deadPid}-eeee`, null);
         AcpSessionRuntime.sweepStaleLinuxCgroupSiblings(parent, {
           isProcessAlive,
@@ -308,6 +306,15 @@ describe("terminatePosixOwnedProcessTree", () => {
         },
       );
       expect(missingTargetResult.status, missingTargetResult.stderr).toBe(125);
+      // CI's /bin/sh is dash, which runs the EXIT trap after a failed exec. Bash does not,
+      // so run the same wrapper under bash too.
+      const missingTargetBash = NodeChildProcess.spawnSync("bash", missingTarget.args, {
+        encoding: "utf8",
+      });
+      if ((missingTargetBash.error as NodeJS.ErrnoException | undefined)?.code !== "ENOENT") {
+        expect(missingTargetBash.status, missingTargetBash.stderr).toBe(125);
+        expect(missingTargetBash.stderr).toContain("/nonexistent-t3-probe");
+      }
     } finally {
       packagedExecPath.mockRestore();
       NodeFS.rmSync(scratch, { recursive: true, force: true });
@@ -377,9 +384,7 @@ describe("terminatePosixOwnedProcessTree", () => {
             try {
               const pid = Number(NodeFS.readFileSync(childPath, "utf8"));
               if (Number.isSafeInteger(pid) && pid > 1) return pid;
-            } catch {
-              // The TERM-time launcher has not published its child yet.
-            }
+            } catch {}
             yield* Effect.sleep("10 millis");
           }
         }).pipe(Effect.timeout("2 seconds"));
@@ -402,20 +407,14 @@ describe("terminatePosixOwnedProcessTree", () => {
         yield* AcpSessionRuntime.terminateLinuxCgroupLease(lease).pipe(Effect.ignore);
         try {
           process.kill(-provider.pid!, "SIGKILL");
-        } catch {
-          // The contained provider already exited.
-        }
+        } catch {}
         try {
           process.kill(-sentinel.pid!, "SIGKILL");
-        } catch {
-          // The unrelated sentinel already exited.
-        }
+        } catch {}
         if (detachedChildPid !== undefined && processExists(detachedChildPid)) {
           try {
             process.kill(detachedChildPid, "SIGKILL");
-          } catch {
-            // The detached child already exited.
-          }
+          } catch {}
         }
         NodeFS.rmSync(scratch, { recursive: true, force: true });
       }
@@ -558,9 +557,7 @@ describe("terminatePosixOwnedProcessTree", () => {
             try {
               const ids = NodeFS.readFileSync(pidPath, "utf8").trim().split(/\s+/).map(Number);
               if (ids.length === 2 && ids.every(Number.isSafeInteger)) return ids;
-            } catch {
-              // The worker has not published its TID and child yet.
-            }
+            } catch {}
             yield* Effect.sleep("10 millis");
           }
         }).pipe(Effect.timeout("2 seconds"));
@@ -572,9 +569,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       } finally {
         try {
           process.kill(-helper.pid!, "SIGKILL");
-        } catch {
-          // The isolated fixture already exited.
-        }
+        } catch {}
         NodeFS.rmSync(scratch, { recursive: true, force: true });
       }
     }),
@@ -904,8 +899,6 @@ describe("terminatePosixOwnedProcessTree", () => {
         }),
       );
 
-      // PID 110 morphs to a new identity under the owned root and never exits, so
-      // teardown fails closed after re-admitting and re-signalling the live child.
       expect(Exit.isFailure(result)).toBe(true);
       expect(fixture.processes.get(110)).toEqual(reused);
       expect(
@@ -976,7 +969,6 @@ describe("terminatePosixOwnedProcessTree", () => {
       processes: [server(), root],
     }).controller;
 
-    // First capture: PID 200 is free, so the dead reservation is dropped.
     AcpSessionRuntime.capturePosixOwnershipLedger({
       controller,
       ledger,
@@ -985,7 +977,6 @@ describe("terminatePosixOwnedProcessTree", () => {
     });
     expect([...ledger.values()].some((entry) => entry.pid === 200)).toBe(false);
 
-    // Second capture: a new process reuses PID 200 under the owned parent.
     AcpSessionRuntime.capturePosixOwnershipLedger({
       controller: makeController({ processes: [server(), root, liveChild] }).controller,
       ledger,
@@ -1038,8 +1029,6 @@ describe("terminatePosixOwnedProcessTree", () => {
           identity(111, 110, 111, 111),
         ],
         onProcess: (processes, pid) => {
-          // Bottom-up: signal 111 first while 110 is still live, then fork 112
-          // under 110 so the same pass must enqueue and signal 112.
           if (pid === 111 && !forked) {
             forked = true;
             processes.set(112, identity(112, 110, 112, 112));
@@ -1066,8 +1055,6 @@ describe("terminatePosixOwnedProcessTree", () => {
       const fixture = makeController({
         processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
         onProcess: (processes, pid) => {
-          // Leave the descendant parent alive through teardown so it can fork
-          // immediately after the last signal pass.
           if (pid !== 110) processes.delete(pid);
         },
       });
@@ -1076,8 +1063,6 @@ describe("terminatePosixOwnedProcessTree", () => {
         ...fixture.controller,
         snapshot: () => {
           snapshotCalls += 1;
-          // Two TERM discovery passes, the root TERM pass, and two KILL passes
-          // precede the final survivor snapshot.
           if (snapshotCalls === 6) fixture.processes.set(lateChild.pid, lateChild);
           return fixture.controller.snapshot();
         },

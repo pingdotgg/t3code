@@ -1,3 +1,5 @@
+import { US_SHIFTED_TO_UNSHIFTED_KEYS } from "@t3tools/shared/keybindings";
+
 // This order mirrors GhosttyKey in ghostty/vt/key/event.h. The values are
 // intentionally derived from the official W3C-aligned enum instead of
 // maintaining a second keyboard protocol.
@@ -188,33 +190,14 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
+  // Android browsers can omit the physical code for keys such as Backspace.
+  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+}
+
 export interface GhosttyKeyboardLayoutMap {
   get(code: string): string | undefined;
 }
-
-const shiftedToUnshiftedCharacter = new Map<string, string>([
-  ["!", "1"],
-  ["@", "2"],
-  ["#", "3"],
-  ["$", "4"],
-  ["%", "5"],
-  ["^", "6"],
-  ["&", "7"],
-  ["*", "8"],
-  ["(", "9"],
-  [")", "0"],
-  ["~", "`"],
-  ["_", "-"],
-  ["+", "="],
-  ["{", "["],
-  ["}", "]"],
-  ["|", "\\"],
-  [":", ";"],
-  ['"', "'"],
-  ["<", ","],
-  [">", "."],
-  ["?", "/"],
-]);
 
 let keyboardLayoutMapPromise: Promise<GhosttyKeyboardLayoutMap | undefined> | undefined;
 
@@ -253,7 +236,7 @@ export function ghosttyUnshiftedCodepoint(
   }
   if (/^[A-Z]$/u.test(event.key)) return event.key.charCodeAt(0) + 32;
   if (event.shiftKey) {
-    const unshiftedCharacter = shiftedToUnshiftedCharacter.get(event.key);
+    const unshiftedCharacter = US_SHIFTED_TO_UNSHIFTED_KEYS.get(event.key);
     if (unshiftedCharacter) return unshiftedCharacter.codePointAt(0) ?? 0;
     const lowercase = event.key.toLowerCase();
     if (lowercase !== event.key && [...lowercase].length === 1) {

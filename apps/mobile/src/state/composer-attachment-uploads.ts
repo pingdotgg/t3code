@@ -1,6 +1,7 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { useEffect, useRef } from "react";
 
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -18,7 +19,9 @@ import { useServerConfigs } from "./entities";
 import { flattenQueuedThreadMessages, threadOutboxManager } from "./thread-outbox";
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 import {
+  ComposerDraftPersistenceError,
   composerDraftsAtom,
+  composerDraftUploadSourcesAtom,
   ensureComposerDraftsLoaded,
   flushComposerDrafts,
   setComposerDraftAttachmentUpload,
@@ -53,9 +56,8 @@ export function retryComposerAttachmentUpload(environmentId: EnvironmentId, atta
   uploadQueue?.retry(environmentId, attachmentId);
 }
 
-/** Runs outside mounted composers so a transfer can finish after navigation. */
 export function useComposerAttachmentUploadWorker() {
-  const drafts = useAtomValue(composerDraftsAtom);
+  const drafts = useAtomValue(composerDraftUploadSourcesAtom);
   const queuedMessages = useThreadOutboxMessages();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -73,8 +75,8 @@ export function useComposerAttachmentUploadWorker() {
         const release = isFileBackedComposerAttachment(attachment)
           ? retainComposerAttachmentFileForPreview(attachment)
           : undefined;
-        try {
-          const result = await prepareTurnAttachments({
+        const prepared = await settlePromise(() =>
+          prepareTurnAttachments({
             environmentId,
             attachments: [attachment],
             supportsImageUploads: true,
@@ -95,14 +97,21 @@ export function useComposerAttachmentUploadWorker() {
                 }
               }
               if (!retained) return "abandon";
-              await flushComposerDrafts();
+              // The reference is already in the in-memory draft, and Send copies it into the
+              // outbox, which saves on its own. A failed draft save only costs a re-upload after
+              // a restart, so it must not fail an upload the server already accepted.
+              await flushComposerDrafts().catch((error: unknown) => {
+                if (!(error instanceof ComposerDraftPersistenceError)) throw error;
+                console.warn("[composer-attachments] could not save the uploaded reference", error);
+              });
               return "persisted";
             },
-          });
-          return result.status === "ready";
-        } finally {
-          release?.();
-        }
+          }),
+        );
+        release?.();
+        // The upload queue owns retry and failure reporting, so a failed upload rethrows to it.
+        if (AsyncResult.isFailure(prepared)) throw squashAtomCommandFailure(prepared);
+        return prepared.value.status === "ready";
       },
     });
     queueRef.current = queue;

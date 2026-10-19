@@ -6,8 +6,7 @@ import {
   type ProjectIconColor,
   type ProjectIconOverride,
 } from "@t3tools/contracts";
-import { DynamicIcon, type IconName } from "lucide-react/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -16,6 +15,7 @@ import {
   projectIconColorClassName,
 } from "../../projectIconOptions";
 import { cn } from "~/lib/utils";
+import { lucideIconByName } from "../../lib/lucideIconByName";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -30,8 +30,13 @@ import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
-const DEFAULT_ICON: IconName = "folder-code";
+const DEFAULT_ICON = "folder-code";
 const isMonogramText = Schema.is(ProjectMonogramText);
+
+function PickerIcon({ name }: { name: string }) {
+  const icon = lucideIconByName(name);
+  return icon ? createElement(icon, { className: "size-5" }) : null;
+}
 
 function iconLabel(name: string): string {
   return name
@@ -55,8 +60,8 @@ export function ProjectIconPickerDialog({
 }) {
   const automatic = deriveProjectIdentity(projectName);
   const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
-  const [iconName, setIconName] = useState<IconName>(
-    current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON,
+  const [iconName, setIconName] = useState<string>(
+    current?.kind === "lucide" ? current.name : DEFAULT_ICON,
   );
   const [color, setColor] = useState<ProjectIconColor>(
     current && current.kind !== "emoji" ? current.color : automatic.color,
@@ -72,7 +77,7 @@ export function ProjectIconPickerDialog({
   useEffect(() => {
     if (open && !previousOpenRef.current) {
       setMode(current?.kind ?? "lucide");
-      setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
+      setIconName(current?.kind === "lucide" ? current.name : DEFAULT_ICON);
       setColor(current && current.kind !== "emoji" ? current.color : automatic.color);
       setLetters(current?.kind === "monogram" ? current.text : automatic.monogram);
       setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
@@ -82,7 +87,7 @@ export function ProjectIconPickerDialog({
     previousOpenRef.current = open;
   }, [current, open, automatic.color, automatic.monogram]);
 
-  const icons = useMemo(() => filterProjectIconNames(query), [query]);
+  const icons = filterProjectIconNames(query);
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
   const validMonogram = isMonogramText(monogram);
@@ -167,7 +172,7 @@ export function ProjectIconPickerDialog({
                       )}
                       onClick={() => setIconName(name)}
                     >
-                      <DynamicIcon name={name} className="size-5" />
+                      <PickerIcon name={name} />
                     </button>
                   ))}
                 </div>

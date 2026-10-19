@@ -161,12 +161,6 @@ describe("server config forward compatibility", () => {
     expect(parsed).toEqual(["zed", "vscode"]);
   });
 
-  // A provider status this build has never seen (a new ServerProviderState,
-  // ServerProviderAuthStatus, etc. member) previously failed the whole
-  // `providers` array, taking every other provider down with it and, since
-  // `providers` sits inside `ServerConfig`, failing the whole config decode —
-  // an older client would drop its connection over one provider it can't
-  // render. Dropping just that element keeps every other provider working.
   it("drops providers this build cannot decode instead of failing the whole array", () => {
     const decodedBase = decodeServerProvider(baseProviderSnapshot);
 

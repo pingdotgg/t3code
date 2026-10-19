@@ -1,5 +1,5 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
-import { SymbolView, type AppSymbolName } from "./AppSymbol";
+import { SymbolView, type AppSymbolName } from "./ui/AppSymbol";
 
 export const ENVIRONMENT_MACHINE_SYMBOLS = {
   server: "server.rack",
@@ -21,7 +21,6 @@ export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, str
   "mac-studio": "Workstation",
 };
 
-/** The glyph an environment wears in lists; SF Symbols on iOS, Tabler on Android. */
 export function EnvironmentMachineSymbol(props: {
   readonly kind: EnvironmentMachineKind;
   readonly size: number;

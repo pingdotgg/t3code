@@ -7,8 +7,6 @@ import { use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 import type { ColorValue } from "react-native";
 
-export { NativeHeaderToolbar } from "./NativeHeaderToolbar";
-
 export {
   nativeHeaderScrollEdgeEffects,
   nativeTopScrollEdgeEffect,
@@ -20,7 +18,6 @@ export type AppNativeStackNavigationOptions = Omit<
   NativeStackNavigationOptions,
   "headerTintColor" | "unstable_headerLeftItems" | "unstable_headerRightItems"
 > & {
-  /** Nested navigator leaves apply their own horizontal safe area. */
   readonly nativeContentInsetHorizontally?: boolean;
   readonly headerTintColor?: string | ColorValue;
   readonly unstable_headerCenterItems?: unknown;
@@ -170,8 +167,6 @@ export function NativeStackScreenOptions(props: {
       return;
     }
     const signature = optionsSignature([stableOptions, props.optionsVersion]);
-    // Avoid re-entering navigation state when semantically equal options are
-    // reapplied every layout (common when callers pass unstable object literals).
     if (lastAppliedOptionsSignatureRef.current === signature) {
       return;
     }

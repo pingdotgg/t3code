@@ -100,8 +100,6 @@ describe("relay request tracing boundary", () => {
         new Request("https://environment.example.test/api/orchestration/threads/thread-1"),
       );
 
-      // Shaped like a real handler: an Effect.fn span whose service call runs
-      // on the local tracer.
       const handler = Effect.fn("environment.orchestration.threadSnapshot")(function* () {
         yield* Effect.void.pipe(
           Effect.withSpan("sql.execute"),

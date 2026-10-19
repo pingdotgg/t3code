@@ -77,7 +77,6 @@ async function setupThemeSync(mode: "dark" | "system" = "dark") {
     published = themes;
     useEnvironmentThemeSync();
     flushEffects();
-    // A changed store snapshot also runs the consumer's passive theme effect.
     const theme = useTheme();
     flushEffects();
     return theme;

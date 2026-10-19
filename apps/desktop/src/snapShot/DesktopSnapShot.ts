@@ -30,6 +30,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -187,7 +188,6 @@ export class DesktopSnapShot extends Context.Service<
       shortcut: SnapShotShortcut,
     ) => Effect.Effect<DesktopSnapShotShortcutAvailability>;
     readonly setShortcutSuppressed: (suppressed: boolean) => Effect.Effect<void>;
-    /** Capture the foreground window in place, including T3 Code itself. */
     readonly capture: Effect.Effect<void, DesktopSnapShotError>;
     readonly listPending: Effect.Effect<
       ReadonlyArray<DesktopPendingSnapShot>,
@@ -211,10 +211,36 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
       Schema.Literals(["preview-config", "apply-config"]),
     ]),
     reason: Schema.Literals(["unsupported-session", "setup-failed", "shortcut-permissions"]),
+    /** The part of the macOS test capture that failed, and how. */
+    step: Schema.optional(Schema.Literals(["find-window", "capture-window"])),
+    status: Schema.optional(Schema.Literals(["missing", "timed-out", "exited", "failed"])),
+    exitCode: Schema.optional(Schema.Number),
+    /** The running app, as macOS lists it under Privacy & Security. */
+    appName: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.action === "test-mac-capture") {
+      if (this.reason === "unsupported-session") return "Test capture requires macOS.";
+      const summary = "Could not capture a test snapshot.";
+      if (this.step === undefined) return summary;
+      if (this.status === "missing") return `${summary} No window is available to capture.`;
+      const [task, command] =
+        this.step === "find-window"
+          ? ["Finding the front window", "osascript"]
+          : ["Capturing the window", "screencapture"];
+      const failure =
+        this.status === "timed-out"
+          ? `${task} timed out.`
+          : this.status === "exited" && this.exitCode !== undefined
+            ? `${task} failed: ${command} exited with code ${this.exitCode}.`
+            : `${task} failed.`;
+      // macOS can report both permissions as allowed while they belong to another install.
+      return this.appName === undefined
+        ? `${summary} ${failure}`
+        : `${summary} ${failure} macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "${this.appName}" is allowed for both.`;
+    }
     if (this.action === "preview-config" || this.action === "apply-config") {
       if (this.reason === "unsupported-session")
         return "Config setup requires a Niri or Hyprland session.";
@@ -238,6 +264,18 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
         ? "Could not set up KDE capture."
         : "Could not set up the GNOME extension.";
   }
+}
+
+/**
+ * How a macOS capture command ended, read from the child process error's own fields.
+ * What the command printed stays in the error's `cause`.
+ */
+function macCommandFailure(cause: unknown) {
+  const failure = Predicate.isObject(cause) ? cause : {};
+  if ("killed" in failure && failure.killed === true) return { status: "timed-out" } as const;
+  return "code" in failure && typeof failure.code === "number"
+    ? ({ status: "exited", exitCode: failure.code } as const)
+    : ({ status: "failed" } as const);
 }
 
 type SnapShotSystemAnimationSettings = Pick<
@@ -770,7 +808,6 @@ export const make = Effect.gen(function* () {
     path.join(__dirname, "snapShot", "RegionSnapShotWorker.cjs"),
   );
   let registeredAccelerator: string | undefined;
-  // False until the first applySettings; the first pass must always register.
   let initialized = false;
   let portalShortcut: PortalCaptureShortcut | undefined;
   let shortcutGeneration = 0;
@@ -858,7 +895,7 @@ export const make = Effect.gen(function* () {
   const prepareCapture = Effect.fn("desktop.snapShot.prepareCapture")(function* (
     settings: ClientSettings,
   ) {
-    const id = yield* crypto.randomUUIDv4.pipe(Effect.mapError((cause) => captureFailure(cause)));
+    const id = yield* crypto.randomUUIDv4().pipe(Effect.mapError((cause) => captureFailure(cause)));
     const mode = captureMode(environment.platform);
     if (mode === "unavailable") {
       return yield* new DesktopSnapShotError({ operation: "unsupported", captureId: id });
@@ -925,7 +962,6 @@ export const make = Effect.gen(function* () {
       const appIconDataUrl = yield* Effect.promise(() =>
         iconDataUrl(source, active, environment.platform),
       );
-      // Native labels are unbounded; keep a valid screenshot when its metadata is too long.
       const appIdentifier = boundedSnapShotString(
         active?.platform === "macos" ? active.owner.bundleId : linuxWindow?.appIdentifier,
         255,
@@ -971,8 +1007,6 @@ export const make = Effect.gen(function* () {
     if (!settings.snapShotEnabled) {
       return yield* new DesktopSnapShotError({ operation: "disabled" });
     }
-    // Only source acquisition and the initial handoff require exclusive access.
-    // Each captured image can finish its own accessibility read and persistence.
     const prepared = yield* prepareCapture(settings).pipe(
       Effect.tapError((error) =>
         (error.captureId ? discardCapture(error.captureId) : Effect.void).pipe(
@@ -999,7 +1033,9 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.snapShot.capture"));
 
   const captureFromShortcut = Effect.gen(function* () {
-    if (shortcutSuppressed) return;
+    // Repeated shortcuts must not tear down a moving capture and start another
+    // renderer. Drop them while the flight runs, just as during pixel acquisition.
+    if (shortcutSuppressed || transition.isAnimating) return;
     shortcutVerified = true;
     const now = yield* Clock.currentTimeNanos;
     if (lastShortcutAt !== undefined && now - lastShortcutAt < SHORTCUT_COOLDOWN_NS) return;
@@ -1328,27 +1364,52 @@ export const make = Effect.gen(function* () {
     if (action === "test-mac-capture") {
       if (environment.platform !== "darwin")
         return yield* new DesktopSnapShotSetupError({ action, reason: "unsupported-session" });
-      // Exercise the real capture path during setup without attaching a snapshot
-      // or running capture feedback. The temporary image is discarded on failure too.
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const directory = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-snapshot-test-",
-          });
-          yield* Effect.tryPromise(async () => {
-            const active = await activeWindow("darwin");
-            if (!active) throw new Error("No window is available to test capture.");
-            await captureMacWindowSnapshot(
-              active,
-              path.join(directory, "test.png"),
-              snapShotThumbnailSize(active),
+          const directory = yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3-snapshot-test-" })
+            .pipe(
+              Effect.mapError(
+                (cause) => new DesktopSnapShotSetupError({ action, reason: "setup-failed", cause }),
+              ),
             );
+          const active = yield* Effect.tryPromise({
+            try: () => activeWindow("darwin"),
+            catch: (cause) =>
+              new DesktopSnapShotSetupError({
+                action,
+                reason: "setup-failed",
+                step: "find-window",
+                ...macCommandFailure(cause),
+                appName: environment.displayName,
+                cause,
+              }),
+          });
+          if (!active)
+            return yield* new DesktopSnapShotSetupError({
+              action,
+              reason: "setup-failed",
+              step: "find-window",
+              status: "missing",
+            });
+          yield* Effect.tryPromise({
+            try: () =>
+              captureMacWindowSnapshot(
+                active,
+                path.join(directory, "test.png"),
+                snapShotThumbnailSize(active),
+              ),
+            catch: (cause) =>
+              new DesktopSnapShotSetupError({
+                action,
+                reason: "setup-failed",
+                step: "capture-window",
+                ...macCommandFailure(cause),
+                appName: environment.displayName,
+                cause,
+              }),
           });
         }),
-      ).pipe(
-        Effect.mapError(
-          (cause) => new DesktopSnapShotSetupError({ action, reason: "setup-failed", cause }),
-        ),
       );
       return;
     } else if (action === "install-kde-helper" || action === "remove-kde-helper") {
@@ -1540,9 +1601,6 @@ export const make = Effect.gen(function* () {
             )
           : environment.platform === "darwin"
             ? Effect.gen(function* () {
-                // Permissions can change in System Settings at any time. Surface a
-                // revocation on every read, and re-register the shortcut once a
-                // previously missing permission is granted again.
                 const settings = yield* Ref.get(settingsRef);
                 const macPermissions = currentMacPermissions();
                 const message = settings.snapShotEnabled
@@ -1564,7 +1622,6 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((state) =>
         Effect.gen(function* () {
-          // Keep the session identity available even when its capability probe fails.
           const linuxDesktop =
             state.mode === "portal"
               ? process.env.XDG_CURRENT_DESKTOP?.toLowerCase()

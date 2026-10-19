@@ -3,7 +3,6 @@ const THREAD_SIDEBAR_DEFAULT_WIDTH = 16 * 16;
 export const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 export const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
-// The brand's measured width can raise the minimum so "T3 Code" never clips.
 export function resolveThreadSidebarMinimumWidth(brandWidth: number): number {
   return Math.max(THREAD_SIDEBAR_MIN_WIDTH, Math.ceil(brandWidth));
 }

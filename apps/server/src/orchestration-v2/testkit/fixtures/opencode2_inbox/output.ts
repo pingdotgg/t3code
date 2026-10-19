@@ -16,12 +16,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * The steer goes out as `delivery: "steer"` into the running turn, which the
- * shell call's step boundary delivers: one provider turn answers both, and it
- * ends with its execution. T3 keeps the queue, so the queued message is a
- * second turn and the cancelled one never reaches OpenCode.
- */
 export function assertOpenCode2InboxOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -30,7 +24,6 @@ export function assertOpenCode2InboxOutput(
     result,
     transcript,
     runCount: 3,
-    // The cancelled run never started a provider turn.
     providerTurnCountAtLeast: 2,
     runStatuses: ["completed", "completed", "cancelled"],
   });
@@ -50,7 +43,6 @@ export function assertOpenCode2InboxOutput(
     OPENCODE2_CANCELLED_PROMPT,
   );
 
-  // The steer joined the first run's turn; the queued message got its own.
   const [first, queued] = projection.runs.toSorted((left, right) => left.ordinal - right.ordinal);
   const turnOf = (run: typeof first) =>
     projection.providerTurns.filter((turn) => turn.runAttemptId === run?.activeAttemptId);
@@ -65,7 +57,6 @@ export function assertOpenCode2InboxOutput(
   const shell = projection.turnItems.find((item) => item.type === "command_execution");
   assert.deepEqual([shell?.status, shell?.runId], ["completed", first?.id]);
 
-  // Each turn remembers the user message it prompted with: fork and rollback cut there.
   for (const turn of [...turnOf(first), ...turnOf(queued)]) {
     assert.match(turn.nativeTurnRef?.nativeId ?? "", /^msg_t3_turn_/);
   }

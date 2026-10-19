@@ -10,8 +10,6 @@ export const CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT = [
   "3) When its completion is reported later, reply with exactly WAKE_DONE and stop.",
 ].join("\n");
 
-// Same shape as claude_background_task_wake: the monitor's one event ends it,
-// and that end wakes Claude after the root turn settled.
 export function claudeBackgroundMonitorWakeInput(): OrchestratorFixtureInput {
   return {
     steps: [

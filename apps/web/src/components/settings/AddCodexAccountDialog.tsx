@@ -45,7 +45,6 @@ export function AddCodexAccountDialog({
   const connected = usesChatGptSharing(provider);
   const closeAfterConnection = useEffectEvent(onClose);
   useEffect(() => {
-    // The destination snapshot confirms remote transfer as well as local sign-in.
     if (connected) closeAfterConnection();
   }, [connected]);
 

@@ -43,9 +43,6 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "@t3tools/provider-testing/replayTranscript";
 
-// These recorded 0.137 rollouts predate injection. Preserve their native fork
-// and turn exchanges, and assert the new history delivery at the adapter boundary.
-// Exact thread/inject_items frames are covered by CodexAdapterV2.test.ts.
 const CodexHistoryReplayHarness: typeof CodexOrchestratorReplayHarness = {
   ...CodexOrchestratorReplayHarness,
   makeProviderAdapterRegistryLayer: (transcript, options) =>

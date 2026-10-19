@@ -4,6 +4,7 @@ import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   encodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
+import { useStableCallback } from "./useStableCallback";
 
 export class ClipboardApiUnavailableError extends Schema.TaggedError<ClipboardApiUnavailableError>()(
   "ClipboardApiUnavailableError",
@@ -51,7 +52,6 @@ export class ClipboardReadError extends Schema.TaggedError<ClipboardReadError>()
   }
 }
 
-/** Copy fallback for remote web pages served over plain HTTP. */
 function writeTextWithExecCommand(
   value: string,
   extraFlavors?: Readonly<Record<string, string>>,
@@ -116,7 +116,6 @@ export async function writeTextToClipboard(
   if (contextFragment)
     extraFlavors = {
       ...extraFlavors,
-      // A caller that already built rich HTML keeps it; the escaped `<pre>` is only a fallback.
       "text/html": encodeComposerContextClipboardHtml(
         value,
         contextFragment,
@@ -132,8 +131,6 @@ export async function writeTextToClipboard(
   }
 
   try {
-    // Custom flavors need ClipboardItem; when it is missing or refuses the type, plain text
-    // still lands so the copy never silently fails.
     if (extraFlavors && typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
       try {
         await navigator.clipboard.write([
@@ -160,9 +157,7 @@ export async function writeTextToClipboard(
               }),
             ]);
             return true;
-          } catch {
-            // Plain text still makes unavailable references visible to the receiver.
-          }
+          } catch {}
         }
       }
     }
@@ -212,20 +207,9 @@ export function useCopyToClipboard<TContext = void>({
 } = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
-  const onCopyRef = React.useRef(onCopy);
-  const onErrorRef = React.useRef(onError);
-  const targetRef = React.useRef(target);
-  const timeoutRef = React.useRef(timeout);
-
-  onCopyRef.current = onCopy;
-  onErrorRef.current = onError;
-  const extraFlavorsRef = React.useRef(extraFlavors);
-  targetRef.current = target;
-  timeoutRef.current = timeout;
-  extraFlavorsRef.current = extraFlavors;
-
-  const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
+  // Callers pass inline onCopy/onError but key callbacks and effects on this function.
+  const copyToClipboard = useStableCallback((value: string, ctx: TContext): void => {
+    void writeTextToClipboard(value, target, extraFlavors).then(
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {
@@ -233,23 +217,22 @@ export function useCopyToClipboard<TContext = void>({
         }
         setIsCopied(true);
 
-        onCopyRef.current?.(ctx);
+        onCopy?.(ctx);
 
-        if (timeoutRef.current !== 0) {
+        if (timeout !== 0) {
           timeoutIdRef.current = setTimeout(() => {
             setIsCopied(false);
             timeoutIdRef.current = null;
-          }, timeoutRef.current);
+          }, timeout);
         }
       },
       (error) => {
         console.error(error);
-        onErrorRef.current?.(error, ctx);
+        onError?.(error, ctx);
       },
     );
-  }, []);
+  });
 
-  // Cleanup timeout on unmount
   React.useEffect(() => {
     return (): void => {
       if (timeoutIdRef.current) {

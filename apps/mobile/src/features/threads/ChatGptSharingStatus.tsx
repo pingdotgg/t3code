@@ -1,7 +1,8 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type { ServerProvider } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL, usesChatGptSharing } from "@t3tools/shared/usageLimits";
-import { Alert, Linking, Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
+import { Linking, Pressable, View } from "react-native";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 
 export function ChatGptSharingStatus({ provider }: { provider: ServerProvider | null }) {
@@ -13,7 +14,7 @@ export function ChatGptSharingStatus({ provider }: { provider: ServerProvider | 
         accessibilityLabel="ChatGPT token sharing is active"
         className="min-h-11 flex-row items-center gap-2"
         onPress={() => {
-          Alert.alert(
+          Dialog.alert(
             "ChatGPT sharing is on",
             [
               provider?.auth.email,

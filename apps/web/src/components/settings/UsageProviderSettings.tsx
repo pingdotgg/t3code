@@ -21,7 +21,6 @@ import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-/** Hub management follows the selected device and access rules of provider settings. */
 export function UsageProviderSettings({
   environmentId,
   environmentLabel,
@@ -50,17 +49,14 @@ export function UsageProviderSettings({
 
   const setCursorUsageEnabled = async (enabled: boolean) => {
     setUpdatingCursor(true);
-    try {
-      const result = await updateCursorSettings({
-        environmentId,
-        input: { patch: { cursorKeychainUsageEnabled: enabled } },
-      });
-      if (result._tag === "Success") {
-        await refreshProviders({ environmentId, input: {} });
-      }
-    } finally {
-      setUpdatingCursor(false);
+    const result = await updateCursorSettings({
+      environmentId,
+      input: { patch: { cursorKeychainUsageEnabled: enabled } },
+    });
+    if (result._tag === "Success") {
+      await refreshProviders({ environmentId, input: {} });
     }
+    setUpdatingCursor(false);
   };
 
   return (
@@ -131,7 +127,6 @@ export function UsageProviderSettings({
   );
 }
 
-/** Removing a hub deletes its stored management key, so it requires confirmation. */
 function RemoveUsageProviderButton({
   label,
   onConfirm,

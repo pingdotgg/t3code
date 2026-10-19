@@ -1,5 +1,6 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
 import type { DevicePlatform } from "@t3tools/contracts";
+import type { PlatformOSType } from "react-native";
 
 export interface DeviceStreamConfiguration {
   readonly access: DeviceHubAccess;
@@ -15,8 +16,20 @@ export interface DeviceStreamConfiguration {
   };
 }
 
+export function deviceStreamBaseUrl(
+  viewerPlatform: PlatformOSType,
+  devicePlatform: DevicePlatform,
+  httpBase: string,
+) {
+  if (viewerPlatform !== "android") return "file:///";
+  // Android targets stream through WebCodecs, which needs a secure context. iOS targets
+  // stream an MJPEG image from the environment, which a synthetic https document blocks as
+  // mixed content on plain-http environments even with mixedContentMode="always".
+  if (devicePlatform === "android") return "https://localhost/";
+  return `${new URL(httpBase).origin}/`;
+}
+
 export function deviceStreamDocument(configuration: string, script: string) {
-  // Tickets and device names are data, including any HTML delimiter characters.
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
   const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:"Device viewer stopped unexpectedly."}));`;
@@ -52,8 +65,6 @@ export function deviceStreamMessage(data: string) {
           "detail" in message && typeof message.detail === "string" ? message.detail : undefined,
       } as const;
     }
-  } catch {
-    // Ignore messages that are not part of the stream bridge.
-  }
+  } catch {}
   return null;
 }

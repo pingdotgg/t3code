@@ -142,6 +142,80 @@ function desktopSnapshot(sampledAtUnixMs: number): DesktopHostTelemetrySnapshot 
 }
 
 describe("ResourceTelemetry", () => {
+  it.effect("replays churning history and retains baselines for returning processes", () =>
+    Effect.gen(function* () {
+      const readAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const sampleCount = 100;
+      const samples = Array.from({ length: sampleCount }, (_, index) => {
+        const sample = nativeSnapshot({
+          sequence: index + 1,
+          sampledAtUnixMs: readAtMs - (sampleCount - index) * 1_000,
+          childCpuTimeMs: index * 10,
+          childWriteBytes: index * 100,
+        });
+        const processes = sample.processes
+          .filter((entry) => entry.pid === process.pid || entry.pid === 4_242)
+          .map((entry) =>
+            entry.pid === 4_242
+              ? { ...entry, startTimeMs: index }
+              : { ...entry, ioWriteBytes: index * 100 },
+          );
+        if (index === 0 || index === 2) {
+          processes.push(
+            processSample({
+              pid: 4_243,
+              ppid: process.pid,
+              startTimeMs: 500,
+              cpuTimeMs: index === 0 ? 100 : 350,
+              ioWriteBytes: index === 0 ? 1_000 : 5_000,
+            }),
+          );
+        }
+        return { ...sample, processes };
+      });
+      const layerTelemetry = ResourceTelemetry.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NativeTelemetryClient.layerTest({ readHistory: () => Effect.succeed(samples) }),
+            DesktopTelemetryReceiver.layerTest(),
+            ResourceAttribution.layer,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const telemetry = yield* ResourceTelemetry.ResourceTelemetry;
+        const history = yield* telemetry.readHistory({
+          windowMs: sampleCount * 1_000,
+          bucketMs: 10_000,
+        });
+
+        expect(history.topProcesses).toHaveLength(sampleCount + 2);
+        expect(
+          history.topProcesses.find((entry) => entry.identity.pid === process.pid),
+        ).toMatchObject({
+          sampleCount,
+          cpuTimeMs: (sampleCount - 1) * 10,
+          ioWriteBytes: (sampleCount - 1) * 100,
+        });
+        const children = history.topProcesses.filter((entry) => entry.identity.pid === 4_242);
+        expect(children).toHaveLength(sampleCount);
+        for (const child of children) {
+          expect(child).toMatchObject({ sampleCount: 1, cpuTimeMs: 0, ioWriteBytes: 0 });
+        }
+        expect(history.topProcesses.find((entry) => entry.identity.pid === 4_243)).toMatchObject({
+          sampleCount: 2,
+          cpuTimeMs: 250,
+          ioWriteBytes: 4_000,
+        });
+        expect(Math.max(...history.buckets.map((bucket) => bucket.maxProcessCount))).toBe(3);
+        expect(history.buckets.reduce((total, bucket) => total + bucket.ioWriteBytes, 0)).toBe(
+          (sampleCount - 1) * 100 + 4_000,
+        );
+      }).pipe(Effect.provide(layerTelemetry));
+    }),
+  );
+
   it.effect("enables live native and Electron collection only while changes are retained", () =>
     Effect.gen(function* () {
       const sampledAtUnixMs = DateTime.toEpochMillis(yield* DateTime.now);

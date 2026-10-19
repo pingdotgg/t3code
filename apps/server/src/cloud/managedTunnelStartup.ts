@@ -3,8 +3,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
+// "revoked" leads to no action: relinking a deregistered environment is the
+// user's call, so startup neither retries nor relinks it.
 export type ManagedTunnelRegistrationResult =
-  | { readonly status: "not_linked" | "ready" | "unavailable" | "superseded" }
+  | { readonly status: "not_linked" | "ready" | "unavailable" | "superseded" | "revoked" }
   | {
       readonly status: "recovery_required";
       readonly config: RelayManagedEndpointRuntimeConfig;
@@ -34,8 +36,6 @@ export function managedTunnelStartupAction(input: {
   return { action: "none" };
 }
 
-// After this window the host can start its stored connector config while
-// registration keeps retrying to reconcile the origin when the relay returns.
 const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 
 export const retryManagedTunnelRegistration = <A, E, R>(
@@ -67,9 +67,8 @@ export const retryManagedTunnelRegistration = <A, E, R>(
   );
 };
 
-// A host asks the relay for a replacement tunnel at most this often. Every
-// managed host shares one relay, so a host stuck in a bad loop must not turn
-// into a fleet-wide request storm.
+// Every managed host shares one relay, so a host stuck in a bad loop must not
+// turn into a fleet-wide request storm.
 export const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
 
 // Existing hosts register on their first boot after an upgrade, and desktop

@@ -123,8 +123,6 @@ export const makeApnsJwt = Effect.fn("relay.apns.make_jwt")(function* (input: Ap
   });
 });
 
-// PEM parsing is pure and the key set is static per deployment; memoize the
-// extracted P-256 scalar so signing never re-parses the PKCS8 document.
 const signingScalarCache = new Map<string, Uint8Array>();
 
 function apnsSigningScalar(privateKeyPem: string): Uint8Array {
@@ -146,8 +144,6 @@ function apnsSigningScalar(privateKeyPem: string): Uint8Array {
   return scalar;
 }
 
-// Fingerprint the key material so rotated credentials never reuse a JWT
-// signed by the previous key.
 export function apnsProviderTokenCacheKey(input: {
   readonly teamId: string;
   readonly keyId: string;

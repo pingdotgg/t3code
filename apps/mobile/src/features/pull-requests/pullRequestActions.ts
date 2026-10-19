@@ -5,7 +5,8 @@ import type {
   PullRequestMergeMethod,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import type { AppSymbolName } from "../../components/AppSymbol";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<
   PullRequestDetail,
@@ -13,7 +14,7 @@ type ActionDetail = Pick<
 > & {
   readonly capabilities: Pick<
     PullRequestDetail["capabilities"],
-    "actions" | "mergeMethods" | "updateMethods"
+    "actions" | "mergeMethods" | "updateMethods" | "deleteBranch"
   >;
   readonly viewerPermissions: Pick<
     PullRequestDetail["viewerPermissions"],
@@ -41,11 +42,12 @@ export const PR_ACTION_LABELS = {
   "enable-auto-merge": "Enable auto-merge",
   "disable-auto-merge": "Disable auto-merge",
   revert: "Create revert pull request",
+  "delete-branch": "Delete branch",
   "approve-workflows": "Approve workflows",
 } as const satisfies Record<PullRequestAction, string>;
 
 export const PR_ACTION_ICONS = {
-  merge: "arrow.triangle.merge",
+  merge: PullRequestGlyph.merged,
   ready: "checkmark.circle",
   draft: "pencil",
   close: "xmark",
@@ -54,6 +56,7 @@ export const PR_ACTION_ICONS = {
   "enable-auto-merge": "clock",
   "disable-auto-merge": "xmark",
   revert: "arrow.uturn.backward",
+  "delete-branch": "trash",
   "approve-workflows": "checkmark",
 } as const satisfies Record<PullRequestAction, AppSymbolName>;
 
@@ -68,6 +71,7 @@ export const ALL_PR_ACTIONS: readonly PullRequestAction[] = [
   "close",
   "reopen",
   "revert",
+  "delete-branch",
 ];
 
 export function allowedMergeMethods(pr: ActionDetail) {
@@ -80,12 +84,13 @@ export function allowedUpdateMethods(pr: ActionDetail) {
   );
 }
 
-/** Provider support, account permissions, and the PR's state all narrow the offered actions. */
 export function canPerformPullRequestAction(pr: ActionDetail, action: PullRequestAction) {
   if (!pr.capabilities.actions.includes(action) || !pr.viewerPermissions.actions.includes(action))
     return false;
   if (action === "reopen") return pr.state === "closed";
   if (action === "revert") return pr.state === "merged";
+  if (action === "delete-branch")
+    return pr.state !== "open" && pr.capabilities.deleteBranch === true;
   if (pr.state !== "open") return false;
   switch (action) {
     case "update-branch":

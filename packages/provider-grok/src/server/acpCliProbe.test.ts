@@ -1,13 +1,3 @@
-/**
- * Optional integration check against a real `grok agent stdio` install.
- * Enable with: T3_GROK_ACP_PROBE=1 vp test run GrokAcpCliProbe
- * Set T3_GROK_LIVE_TURN=1 to also send a small prompt to the real model.
- *
- * The probe assumes either `XAI_API_KEY` is set in the environment or
- * the user has previously run `grok login`. Without credentials the
- * agent's `authenticate` request will fail and the test will surface
- * the error.
- */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";

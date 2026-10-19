@@ -48,9 +48,6 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
           }`,
       )
       .join("\n");
-    // Repeated failures can accumulate many recovery markers. Keep a single
-    // thread-level entry point when detailed coverage would crowd out history;
-    // its activity includes the original handoff/fork source references.
     if (historyCost([], coverage) > Math.min(4_000, budget / 2)) {
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover history with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. Follow fork/handoff source references in activity. For long items use itemId and textOffset=nextTextOffset until null.`;
@@ -63,8 +60,6 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         seen.add(message.itemId);
         return true;
       });
-    // Old preview handoffs remain readable. Their preformatted context is included
-    // as a whole when it fits, otherwise the coverage marker points to retrieval.
     const oldContext = pending
       .filter((handoff) => handoff.history === undefined)
       .map((handoff) => handoff.summaryText)
@@ -134,7 +129,6 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         return { context: "", delivered: Effect.void, unsent: Effect.void };
       }
     } else {
-      // Text-only delivery can also be accepted before a connection drops.
       yield* persist("pending");
     }
     if (input.deferInline) {

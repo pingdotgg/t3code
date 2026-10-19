@@ -44,11 +44,9 @@ function makeHarness(options?: {
   const preventDefault = vi.fn();
   const send = async (input: QuitHoldKeyInput) => {
     handler({ preventDefault }, input);
-    // Let the getMode promise settle.
     await Promise.resolve();
     await Promise.resolve();
   };
-  // Simulates the OS auto-repeating the held shortcut every `intervalMs`.
   const holdFor = async (
     durationMs: number,
     repeatOverrides: Partial<QuitHoldKeyInput> = {},
@@ -80,7 +78,6 @@ describe("makeQuitShortcutHandler", () => {
 
     vi.advanceTimersByTime(QUIT_HOLD_DURATION_MS + QUIT_HOLD_RELEASE_GRACE_MS);
     expect(harness.quit).not.toHaveBeenCalled();
-    // The watchdog dismisses the hint once the press is clearly over.
     expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
   });
 
@@ -128,8 +125,6 @@ describe("makeQuitShortcutHandler", () => {
     await harness.send(makeInput({}));
     await harness.holdFor(QUIT_HOLD_DURATION_MS + QUIT_HOLD_RELEASE_GRACE_MS * 2);
 
-    // If neither keyUp reaches the handler, continued repeats must keep the
-    // app alive. Once they stop, the quiet period is the release signal.
     expect(harness.quit).not.toHaveBeenCalled();
     vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
 
@@ -178,8 +173,6 @@ describe("makeQuitShortcutHandler", () => {
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
     await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
     harness.preventDefault.mockClear();
-    // Repeats without the modifier prove Q is still down, so they hold the
-    // quit back for as long as they keep arriving.
     await harness.holdFor(QUIT_HOLD_RELEASE_GRACE_MS * 2, { meta: false });
     expect(harness.preventDefault).toHaveBeenCalled();
     expect(harness.quit).not.toHaveBeenCalled();
@@ -199,7 +192,6 @@ describe("makeQuitShortcutHandler", () => {
     vi.advanceTimersByTime(QUIT_HOLD_RELEASE_GRACE_MS);
     expect(harness.quit).toHaveBeenCalledTimes(1);
 
-    // A lone Cmd tap afterwards must not quit a second time.
     harness.quit.mockClear();
     await harness.send(makeInput({ key: "Meta" }));
     await harness.send(makeInput({ type: "keyUp", key: "Meta", meta: false }));
@@ -300,26 +292,21 @@ describe("makeQuitShortcutHandler", () => {
   );
 
   it("discards a stale mode resolution from a superseded press", async () => {
-    // Press #1's mode is still pending when the user releases and
-    // presses again; its late resolution must not act for press #2.
     const resolvers: Array<(mode: QuitConfirmationMode) => void> = [];
     const harness = makeHarness({
       getMode: () => new Promise((resolve) => resolvers.push(resolve)),
     });
     await harness.send(makeInput({}));
     await harness.send(makeInput({ type: "keyUp" }));
-    // Outside the double-press window, so the second press starts a new hold.
     vi.advanceTimersByTime(QUIT_DOUBLE_PRESS_MS + 100);
     await harness.send(makeInput({}));
     expect(resolvers).toHaveLength(2);
 
-    // Press #1 resolves late with "direct". It must not quit press #2.
     resolvers[0]?.("direct");
     await Promise.resolve();
     await Promise.resolve();
     expect(harness.quit).not.toHaveBeenCalled();
 
-    // Press #2 resolves to hold and completes the gesture.
     resolvers[1]?.("hold");
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200);
     await harness.send(makeInput({ type: "keyUp" }));
@@ -442,10 +429,8 @@ describe("makeQuitShortcutHandler", () => {
     const harness = makeHarness();
     await harness.send(makeInput({}));
     await harness.holdFor(500);
-    // Shift pressed mid-hold breaks the gesture...
     await harness.send(makeInput({ shift: true }));
     expect(harness.notifications).toEqual([HOLD_DOWN, UP]);
-    // ...so later repeats past the threshold must not quit.
     await harness.holdFor(QUIT_HOLD_DURATION_MS);
     expect(harness.quit).not.toHaveBeenCalled();
   });
@@ -454,7 +439,6 @@ describe("makeQuitShortcutHandler", () => {
     const harness = makeHarness({ mode: "double-click" });
     await harness.send(makeInput({}));
     await harness.send(makeInput({ shift: true }));
-    // A fresh press right after the interruption starts a new attempt.
     await harness.send(makeInput({}));
     expect(harness.quit).not.toHaveBeenCalled();
     expect(harness.notifications).toEqual([DOUBLE_CLICK_DOWN, UP, DOUBLE_CLICK_DOWN]);

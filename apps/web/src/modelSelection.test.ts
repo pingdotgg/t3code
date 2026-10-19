@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  DEFAULT_TEXT_GENERATION_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -184,6 +185,39 @@ describe("instance-scoped model selection", () => {
     expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
       "grok-test-custom-model",
     );
+  });
+
+  it("offers and resolves every saved custom model, past the first 32", () => {
+    const providers = [
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claude_openrouter",
+      }),
+    ];
+    const customModels = Array.from({ length: 40 }, (_, index) => `proxy/model-${index + 1}`);
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      providerInstances: {
+        ...settingsWithProviderInstances().providerInstances,
+        [ProviderInstanceId.make("claude_openrouter")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          config: { customModels },
+        },
+      },
+    };
+    const openrouter = deriveProviderInstanceEntries(providers)[0]!;
+
+    expect(
+      getAppModelOptionsForInstance(settings, openrouter).map((option) => option.slug),
+    ).toEqual(customModels);
+    expect(
+      resolveAppModelSelectionForInstance(
+        ProviderInstanceId.make("claude_openrouter"),
+        settings,
+        providers,
+        "proxy/model-40",
+      ),
+    ).toBe("proxy/model-40");
   });
 
   it("does not inject an unknown selected slug into the stock instance list", () => {
@@ -835,6 +869,24 @@ describe("instance-scoped model selection", () => {
       ProviderInstanceId.make("codex"),
     );
   });
+  it("falls back to the text generation default, not the chat default, for a removed model", () => {
+    const codex = provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-luna"] });
+    const providers = [
+      { ...codex, models: codex.models.map((m, i) => (i === 0 ? { ...m, isDefault: true } : m)) },
+    ];
+    const settings: UnifiedSettings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.6-luna",
+      ),
+    };
+
+    expect(resolveAppModelSelectionState(settings, providers).model).toBe(
+      DEFAULT_TEXT_GENERATION_MODEL,
+    );
+  });
+
   it("does not select a provider that cannot generate system text", () => {
     const instanceId = ProviderInstanceId.make("antigravity");
     const unsupported = {

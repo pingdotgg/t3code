@@ -35,7 +35,6 @@ function modelAlias(target: UsagePriceTarget, model: string) {
   return target.aliases && Object.hasOwn(target.aliases, model) ? target.aliases[model] : undefined;
 }
 
-/** The "Map to" cell across the selected environments, read like a price cell. */
 export function usageAliasCell(targets: readonly UsagePriceTarget[], model: string) {
   if (targets.some((target) => target.aliases === null))
     return { value: "", placeholder: "Unavailable" };
@@ -62,7 +61,6 @@ export function usagePriceCell(
   };
 }
 
-/** Only edited cells replace rates; untouched cells retain each environment's own values. */
 export function usagePriceTableChanges(
   target: UsagePriceTarget,
   drafts: readonly UsagePriceDraft[],
@@ -78,7 +76,6 @@ export function usagePriceTableChanges(
       if (currentAlias !== undefined) changes.push({ model, alias: null });
       continue;
     }
-    // A mapped model is priced as its target, so mapping it drops its own price.
     const alias = (draft.alias ?? currentAlias ?? "").trim();
     if (alias !== "") {
       if (model === "") errors.set(draft.id, "Enter a model ID.");
@@ -91,7 +88,6 @@ export function usagePriceTableChanges(
     }
     if (currentAlias !== undefined) {
       changes.push({ model, alias: null });
-      // Clearing a mapping without entering prices returns to automatic pricing.
       if (
         !modelPrice(target, model) &&
         Object.values(draft.values).every((value) => value.trim() === "")
@@ -122,7 +118,6 @@ export function usagePriceTableChanges(
   return { changes, errors };
 }
 
-/** Unavailable destinations report a save failure without blocking writable environments. */
 export function usagePriceTableErrors(
   targets: readonly UsagePriceTarget[],
   drafts: readonly UsagePriceDraft[],

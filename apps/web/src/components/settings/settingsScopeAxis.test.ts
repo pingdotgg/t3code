@@ -1,9 +1,11 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   environmentAxisValue,
   projectAxisValue,
+  projectScopeMenuGroups,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
@@ -25,10 +27,7 @@ describe("settings scope environment labels", () => {
     const environments = [first, second];
     expect(
       environments.map((environment) => settingsScopeEnvironmentLabel(environment, environments)),
-    ).toEqual([
-      "Development · https://first.example.com",
-      "Development · https://second.example.com",
-    ]);
+    ).toEqual(["Development · first.example.com", "Development · second.example.com"]);
   });
 
   it("falls back to environment IDs when duplicate names have no display URL", () => {
@@ -84,5 +83,56 @@ describe("environmentAxisValue", () => {
     expect(environmentAxisValue({ project: "p", checkout: "c" }, "laptop")).toBe("laptop");
     expect(environmentAxisValue({ project: "p" }, null)).toBe("all");
     expect(environmentAxisValue({ machine: "desk" }, "laptop")).toBe("desk");
+  });
+});
+
+describe("settings project picker", () => {
+  function group(
+    projectKey: string,
+    environmentIds: readonly [EnvironmentId, ...EnvironmentId[]],
+  ): SidebarProjectSnapshot {
+    const members = environmentIds.map((environmentId) => ({
+      id: ProjectId.make(`${projectKey}-${environmentId}`),
+      environmentId,
+      title: projectKey,
+      workspaceRoot: `/repos/${projectKey}`,
+      physicalProjectKey: `${environmentId}:/repos/${projectKey}`,
+      environmentLabel: null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-10-19T00:00:00.000Z",
+      updatedAt: "2026-10-19T00:00:00.000Z",
+    }));
+    return {
+      ...members[0]!,
+      projectKey,
+      displayName: projectKey,
+      memberProjects: members,
+      memberProjectRefs: members.map((member) => ({
+        environmentId: member.environmentId,
+        projectId: member.id,
+      })),
+      groupedProjectCount: members.length,
+      environmentPresence: environmentIds.length > 1 ? "mixed" : "local-only",
+      allRemoteMembersAreDesktopLocal: false,
+      allRemoteMembersAreWsl: false,
+      remoteEnvironmentLabels: [],
+    };
+  }
+
+  it("offers groups with any checkout on the chosen environment, or all groups without one", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const server = EnvironmentId.make("server");
+    const local = group("local", [laptop]);
+    const shared = group("shared", [laptop, server]);
+    const remote = group("remote", [server]);
+    const groups = [local, shared, remote];
+
+    expect(projectScopeMenuGroups(groups, { machine: server })).toEqual([shared, remote]);
+    expect(projectScopeMenuGroups(groups, { machine: laptop })).toEqual([local, shared]);
+    expect(projectScopeMenuGroups(groups, { machine: "unknown" })).toEqual([]);
+    expect(projectScopeMenuGroups(groups, {})).toEqual(groups);
+    expect(projectScopeMenuGroups([], { machine: server })).toEqual([]);
+    expect(projectScopeMenuGroups([], {})).toEqual([]);
   });
 });

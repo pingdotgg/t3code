@@ -13,12 +13,6 @@ function field(value: unknown, key: string): unknown {
   return typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
 }
 
-/**
- * `/compact` reaches Pi as the RPC `compact` command, never as a prompt, with
- * any trailing text as custom instructions. A compaction Pi refuses still
- * settles its run and shows a failed compaction row; a successful one carries
- * Pi's own summary and token counts, and the next turn recalls the marker.
- */
 export function assertPiCompactionOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

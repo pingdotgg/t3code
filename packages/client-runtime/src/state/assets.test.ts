@@ -438,7 +438,6 @@ describe("project favicon URL cache", () => {
 
   function mountClonedProjectFavicon(initialClones: ReadonlyArray<ProjectCloneSnapshot>) {
     const registry = AtomRegistry.make();
-    // Stands in for the server, which reports the icon missing until the clone lands.
     const server = { lookups: 0, landed: false };
     const result = Atom.make(() => {
       server.lookups += 1;
@@ -475,7 +474,6 @@ describe("project favicon URL cache", () => {
       expect(registry.get(favicon)).toBe(
         "https://remote.test/api/assets/token-a/project-favicon-missing",
       );
-      // Progress, and another folder's clone landing, do not ask again.
       registry.set(clones, [
         { ...cloning, percent: 80, sequence: 2 },
         {

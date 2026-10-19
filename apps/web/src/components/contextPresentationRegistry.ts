@@ -91,11 +91,6 @@ export interface ContextPresentationRegistry<TRecord, TRenderContext, TResult> {
   render(kind: string, record: TRecord | undefined, context: TRenderContext): TResult;
 }
 
-/**
- * Creates one checked dispatcher for a rendering surface. Definitions are shared; renderers stay
- * surface-specific so web composer and transcript presentation can differ without drifting on
- * capability semantics.
- */
 export function createContextPresentationRegistry<TRecord, TRenderContext, TResult>(options: {
   handlers: ReadonlyArray<ContextPresentationHandler<TRecord, TRenderContext, TResult>>;
   requiredKinds?: ReadonlyArray<KnownComposerContextKind>;

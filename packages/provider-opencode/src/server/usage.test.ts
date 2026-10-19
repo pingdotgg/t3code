@@ -11,7 +11,6 @@ import { vi } from "vite-plus/test";
 
 import { readOpenCodeUsage } from "./usage.ts";
 
-/** A writable connection that stays open until the test's scope closes. */
 const openDatabase = (filename: string) =>
   Layer.build(NodeSqliteClient.layer({ filename })).pipe(
     Effect.map(Context.get(SqlClient.SqlClient)),
@@ -33,7 +32,6 @@ describe("readOpenCodeUsage", () => {
         modelID: "claude-sonnet-4-5",
         time: { created: sinceMs },
         tokens: { input: 100, output: 20 },
-        // Transcript bodies are irrelevant to usage, but can be very large.
         body: "x".repeat(64 * 1024),
       };
       const data = JSON.stringify(message);
@@ -42,7 +40,6 @@ describe("readOpenCodeUsage", () => {
           "INSERT INTO message (rowid, id, session_id, data, time_created) VALUES (?, ?, ?, ?, ?)",
           [rowId, id, "session-1", payload, created],
         );
-      // Sparse IDs, including negative rowids, must not skip records at page boundaries.
       for (let index = 0; index < 130; index++) {
         yield* insert(index * 2 - 10, `msg-${index}`, data);
       }
@@ -81,9 +78,63 @@ describe("readOpenCodeUsage", () => {
         records.reduce((total, record) => total + record.totals.uncachedInputTokens, 0),
         13000,
       );
-      // The fixture exceeds 8 MiB. No query may retain its complete bodies.
       assert.isAbove(largestRawResult, 0);
       assert.isBelow(largestRawResult, 6 * 1024 * 1024);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reads at most 64 OpenCode rowids per statement however much history is older", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const db = yield* openDatabase(path.join(dir, "opencode.db"));
+      yield* db.unsafe(
+        "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT, time_created INTEGER)",
+      );
+      const sinceMs = 1780000000000;
+      const data = JSON.stringify({
+        role: "assistant",
+        modelID: "claude-sonnet-4-5",
+        tokens: { input: 100, output: 20 },
+      });
+      yield* db.unsafe("BEGIN");
+      for (let index = 0; index < 305; index++) {
+        yield* db.unsafe("INSERT INTO message VALUES (?, ?, ?, ?)", [
+          `msg-${index}`,
+          "session-1",
+          data,
+          sinceMs + index - 300,
+        ]);
+      }
+      yield* db.unsafe("COMMIT");
+
+      const spans: number[] = [];
+      const originalAll = NodeSqlite.StatementSync.prototype.all;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+            this: NodeSqlite.StatementSync,
+            ...params
+          ) {
+            const rows = originalAll.apply(this, params);
+            if (this.sourceSQL.includes("FROM message WHERE")) {
+              const range = /rowid > (-?[\d.]+) AND rowid <= (-?[\d.]+)/.exec(this.expandedSQL);
+              spans.push(range ? Number(range[2]) - Number(range[1]) : Infinity);
+            }
+            return rows;
+          }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+      const result = yield* readOpenCodeUsage(dir, sinceMs);
+      assert.isFalse(result.error);
+      assert.deepStrictEqual(
+        result.files.flatMap((file) => file.records).map((record) => record.dedupeKey),
+        Array.from({ length: 5 }, (_, index) => `opencode:msg-${index + 300}`),
+      );
+      assert.isNotEmpty(spans);
+      assert.isAtMost(Math.max(...spans), 64);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -155,7 +206,6 @@ describe("readOpenCodeUsage", () => {
             sessionID: "session-1",
             role: "assistant",
             modelID: "claude-sonnet-4-5",
-            // In range, so an old file that was read would produce a record.
             time: { created: sinceMs + 1000 },
             tokens: { input: 100, output: 20 },
           }),
@@ -218,7 +268,6 @@ describe("readOpenCodeUsage", () => {
       yield* fileSystem.symlink(path.join(outside, "gone.json"), path.join(session, "gone.json"));
       yield* fileSystem.symlink(path.join(session, "loop.json"), path.join(session, "loop.json"));
 
-      // Links alone are not a store, even when one points at a stale message.
       const linksOnly = yield* readOpenCodeUsage(dir, sinceMs);
       assert.deepStrictEqual(linksOnly, { files: [], missing: true, error: false });
 
@@ -244,7 +293,6 @@ describe("readOpenCodeUsage", () => {
       const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
       const session = path.join(dir, "storage", "message", "session-1");
       yield* fileSystem.makeDirectory(session, { recursive: true });
-      // More entries than the walk stats at once.
       yield* Effect.forEach(
         Array.from({ length: 600 }, (_, index) => `msg-${index}`),
         (id) =>

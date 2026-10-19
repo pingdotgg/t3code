@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffectEvent, useState } from "react";
 import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
-import { SymbolView } from "../../../components/AppSymbol";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 
-/** Pan recognition wins over the settings scroll view only inside the handle. */
 export function SettingsDragHandle(props: {
   readonly title: string;
   readonly canMoveUp: boolean;
@@ -14,28 +13,29 @@ export function SettingsDragHandle(props: {
   readonly onEnd: (translation: number, cancelled: boolean) => void;
   readonly onStep: (direction: "up" | "down") => void;
 }) {
-  const latest = useRef(props);
-  useEffect(() => {
-    latest.current = props;
-  });
-  const translation = useRef(0);
-  const gesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .minDistance(0)
-        .shouldCancelWhenOutside(false)
-        .runOnJS(true)
-        .onStart(() => {
-          translation.current = 0;
-          latest.current.onStart();
-        })
-        .onUpdate((event) => {
-          translation.current = event.translationY;
-          latest.current.onMove(event.translationY);
-        })
-        .onFinalize((_, success) => latest.current.onEnd(translation.current, !success)),
-    [],
+  // Gesture callbacks fire outside render, so effect events give them the
+  // latest props while the gesture object itself stays stable.
+  const onStart = useEffectEvent(() => props.onStart());
+  const onMove = useEffectEvent((translation: number) => props.onMove(translation));
+  const onEnd = useEffectEvent((translation: number, cancelled: boolean) =>
+    props.onEnd(translation, cancelled),
   );
+  const [gesture] = useState(() => {
+    let translation = 0;
+    return Gesture.Pan()
+      .minDistance(0)
+      .shouldCancelWhenOutside(false)
+      .runOnJS(true)
+      .onStart(() => {
+        translation = 0;
+        onStart();
+      })
+      .onUpdate((event) => {
+        translation = event.translationY;
+        onMove(event.translationY);
+      })
+      .onFinalize((_, success) => onEnd(translation, !success));
+  });
   return (
     <GestureDetector gesture={gesture}>
       <View

@@ -1,11 +1,14 @@
 import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Cause from "effect/Cause";
 import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
 import { ChevronRightIcon, DownloadIcon, Trash2Icon, WrapTextIcon, XIcon } from "lucide-react";
 import { Check, Code2, Copy, Eye, Table2 } from "lucide";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -13,7 +16,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { AudioPreview } from "./AudioPreview";
@@ -29,10 +32,8 @@ import {
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
-/** Signed asset URLs live for an hour; treat anything older than this as worth re-minting. */
 const STALE_URL_MS = 5 * 60_000;
 
-/** Highlighted read-only source, loaded on demand so message rendering never waits on the highlighter. */
 export function ReadOnlySourcePreview(props: { name: string; text: string }) {
   return (
     <Suspense fallback={<FileSurfaceLoading className="p-4" />}>
@@ -47,21 +48,14 @@ function renderedToggleLabel(mode: "markdown" | "html" | "table", rendered: bool
   return rendered ? "Show HTML source" : "Show rendered page";
 }
 
-/**
- * A captured attachment shown with the same chrome as a workspace file: one
- * header row with crumbs and icon actions, then the document. Captured bytes
- * are viewed independently of similarly named files in the workspace.
- */
 export function AttachmentFilePreview(props: {
   name: string;
   mimeType: string;
-  /** Zero when unknown. */
   sizeBytes: number;
   file?: Blob | null;
   asset?: { environmentId: EnvironmentId; attachmentId: string };
-  /** An agent's HTML render, shown in the app theme. */
   htmlRender?: boolean;
-  /** First crumb: where the file comes from. */
+  threadRef?: ScopedThreadRef;
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
@@ -72,26 +66,20 @@ export function AttachmentFilePreview(props: {
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
   const attachmentId = props.asset?.attachmentId;
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: props.name });
-  const resource = useMemo(
-    () =>
-      attachmentId
-        ? {
-            _tag: "attachment" as const,
-            attachmentId,
-            fileName: props.name,
-            mimeType: props.mimeType,
-            disposition: "inline" as const,
-          }
-        : null,
-    [attachmentId, props.name, props.mimeType],
-  );
+  // useAssetUrlRefresh keys its callback on these objects, so they must stay cached.
+  const resource = attachmentId
+    ? {
+        _tag: "attachment" as const,
+        attachmentId,
+        fileName: props.name,
+        mimeType: props.mimeType,
+        disposition: "inline" as const,
+      }
+    : null;
+  const downloadResource = resource ? { ...resource, disposition: "attachment" as const } : null;
   const refresh = useAssetUrlRefresh(
     props.file ? null : (props.asset?.environmentId ?? null),
     props.file ? null : resource,
-  );
-  const downloadResource = useMemo(
-    () => (resource ? { ...resource, disposition: "attachment" as const } : null),
-    [resource],
   );
   const prepareDownload = useAssetUrlRefresh(props.asset?.environmentId ?? null, downloadResource);
   const [saving, setSaving] = useState(false);
@@ -101,8 +89,6 @@ export function AttachmentFilePreview(props: {
   const [revision, setRevision] = useState(0);
   const [content, setContent] = useState<{ text: string; truncated: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Reading source is a separate failure from loading the file: a rendered HTML page can be
-  // fine while its bytes are not UTF-8, and switching back to the page must not stay stuck.
   const [contentError, setContentError] = useState<string | null>(null);
   const authorizedAt = useRef(0);
   useEffect(() => {
@@ -115,7 +101,6 @@ export function AttachmentFilePreview(props: {
   useEffect(() => {
     if (props.file) return;
     let cancelled = false;
-    // Await a fresh signed URL: cached links can expire while the client is suspended.
     // oxlint-disable-next-line react/set-state-in-effect -- A new preview request clears its previous URL and error.
     setRemoteUrl(null);
     setError(null);
@@ -145,8 +130,6 @@ export function AttachmentFilePreview(props: {
     setContentError(null);
     const file = props.file;
     void (async () => {
-      // A signed URL minted when the file opened may have expired by the time the user
-      // switches to source. Publish its replacement so later mode switches use it too.
       if (!file && Date.now() - authorizedAt.current > STALE_URL_MS) {
         const target = await refresh();
         if (controller.signal.aborted) return;
@@ -154,7 +137,6 @@ export function AttachmentFilePreview(props: {
         authorizedAt.current = Date.now();
         if (target !== url) {
           setRemoteUrl(target);
-          // The URL change restarts this effect; fetch once with the new authorization.
           return;
         }
       }
@@ -177,9 +159,6 @@ export function AttachmentFilePreview(props: {
   }, [url, needsText, revision, props.sizeBytes, props.file, refresh]);
   const failure = error ?? (needsText ? contentError : null);
   const wordWrap = useClientSettings((settings) => settings.wordWrap);
-  const updateClientSettings = useUpdateClientSettings();
-  // Only the raw-text body honours word wrap. A rendered table or Markdown lays itself out,
-  // so offering the toggle there would be a control that visibly does nothing.
   const showsRawText =
     failure === null &&
     needsText &&
@@ -189,45 +168,41 @@ export function AttachmentFilePreview(props: {
 
   const save = () => {
     setSaving(true);
-    void (async () => {
-      try {
-        let file = props.file;
-        if (!file) {
-          const target = await prepareDownload();
-          if (!target) throw new Error("Reconnect to the environment and try again.");
-          const response = await fetch(target);
-          if (!response.ok) throw new Error("The file could not be loaded. Try again.");
-          file = await response.blob();
-        }
-        // A Blob keeps cross-origin downloads inside the desktop client instead of
-        // navigating its custom app scheme to an external browser.
-        const downloadUrl = URL.createObjectURL(file);
-        try {
-          const anchor = document.createElement("a");
-          anchor.href = downloadUrl;
-          anchor.download = props.name;
-          anchor.click();
-        } finally {
-          setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-        }
-      } catch (cause) {
+    void settlePromise(async () => {
+      let file = props.file;
+      if (!file) {
+        const target = await prepareDownload();
+        if (!target) throw new Error("Reconnect to the environment and try again.");
+        const response = await fetch(target);
+        if (!response.ok) throw new Error("The file could not be loaded. Try again.");
+        file = await response.blob();
+      }
+      // A Blob keeps cross-origin downloads inside the desktop client instead of
+      // navigating its custom app scheme to an external browser.
+      const downloadUrl = URL.createObjectURL(file);
+      // Scheduled before the click so the URL is revoked even if the click throws.
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = props.name;
+      anchor.click();
+    }).then((result) => {
+      if (!AsyncResult.isSuccess(result)) {
+        const cause = Cause.squash(result.cause);
         toastManager.add({
           type: "error",
           title: "Could not save file",
           description: cause instanceof Error ? cause.message : "Please try again.",
         });
-      } finally {
-        setSaving(false);
       }
-    })();
+      setSaving(false);
+    });
   };
 
   const body = failure ? (
     <FileSurfaceFailure
       message={failure}
       onRetry={() => {
-        // Clearing first lets a local Blob preview remount: its URL never changes, so the
-        // revision bump alone would re-render the same failed element.
         setError(null);
         setRevision((value) => value + 1);
       }}
@@ -250,6 +225,7 @@ export function AttachmentFilePreview(props: {
       title={props.name}
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
+      threadRef={props.threadRef}
     />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />

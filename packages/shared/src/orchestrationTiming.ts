@@ -1,6 +1,5 @@
 import { isOrchestrationV2WorkActive, type OrchestrationV2Subagent } from "@t3tools/contracts";
 
-/** Unknown settled timing must not turn a task's age into its work duration. */
 export function deriveSubagentElapsedMs(
   agent: {
     readonly status: OrchestrationV2Subagent["status"];
@@ -22,7 +21,6 @@ export function deriveSubagentElapsedMs(
 
 type LatestRunTiming = {
   readonly runId: string | null;
-  /** Set when the turn is created; `startedAt` waits for the provider. */
   readonly requestedAt?: string | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
@@ -40,8 +38,9 @@ export function formatDuration(durationMs: number): string {
     const tenths = Math.round(durationMs / 100) / 10;
     return tenths >= 10 ? "10s" : `${tenths.toFixed(1)}s`;
   }
-  if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
   const totalSeconds = Math.round(durationMs / 1_000);
+  // Choose the unit after rounding so 59.5 seconds never renders as "60s".
+  if (totalSeconds < 60) return `${totalSeconds}s`;
   const hours = Math.floor(totalSeconds / 3_600);
   const minutes = Math.floor((totalSeconds % 3_600) / 60);
   const seconds = totalSeconds % 60;
@@ -64,14 +63,10 @@ function isLatestRunSettled(
 }
 
 /**
- * When the working indicator should be counting, and from when.
- *
- * `requestedAt` is the floor for an unsettled turn. The projector only stamps
- * `startedAt` in the same update that moves the session to "running", so while
- * the provider spins up (session "starting") a requested turn has no
- * `startedAt` at all — and returning null there blinks the indicator out for
- * the whole spin-up. A settled turn still falls through to `sendStartedAt`, so
- * this cannot leave the indicator counting after the work is done.
+ * The projector only stamps `startedAt` in the same update that moves the
+ * session to "running", so while the provider spins up (session "starting") a
+ * requested turn has no `startedAt` at all — and returning null there blinks
+ * the indicator out for the whole spin-up.
  */
 export function deriveActiveWorkStartedAt(
   latestRun: LatestRunTiming | null,

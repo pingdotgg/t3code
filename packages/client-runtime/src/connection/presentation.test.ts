@@ -106,7 +106,6 @@ describe("connection presentation", () => {
     expect(environmentMcpUrl({ entry, connectedTarget: tailnet.target })).toBe(
       "http://100.115.1.44:3773/mcp",
     );
-    // Not connected: the preferred route, plain http or not.
     expect(environmentMcpUrl({ entry })).toBe("http://192.168.4.53:3773/mcp");
   });
 
@@ -122,7 +121,6 @@ describe("connection presentation", () => {
       alternateRoutes: [{ target: ENTRY.target, profile: ENTRY.profile }],
     };
 
-    // Relay discovery has not reported the tunnel address yet.
     expect(environmentMcpUrl({ entry, connectedTarget: relay })).toBe(
       "https://environment.example.test/mcp",
     );

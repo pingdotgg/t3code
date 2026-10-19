@@ -100,11 +100,6 @@ function normalizePiBuiltInEqualsArguments(args: ReadonlyArray<string>): Readonl
   });
 }
 
-/**
- * Pi launch arguments may configure resources, models, tools, trust, and
- * storage. T3 owns RPC mode and session identity, so arguments that select a
- * different execution mode or native session are rejected before spawn.
- */
 export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution {
   // Pi parses equals-form tokens only as extension flags, even when their name
   // matches a built-in option. Split known built-ins while leaving arbitrary
@@ -161,9 +156,6 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
       message: `Pi launch arguments cannot include positional prompt '${arg}'.`,
     };
   }
-  // Pi 1.0 exits at startup on `--provider` without `--model`; older versions
-  // silently ran another provider's default model. Rejecting it here makes
-  // every spawn site report the reason instead of a bare exit code.
   if (hasProvider && !hasModel) {
     return { ok: false, message: "Pi launch argument '--provider' requires '--model'." };
   }

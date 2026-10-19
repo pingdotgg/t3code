@@ -44,7 +44,6 @@ export interface AcquiredDesktopTab {
   readonly release: () => void;
 }
 
-/** `serverTab` names the server tab this desktop tab renders, so the server can drive it. */
 export function acquireDesktopTab(
   tabId: string,
   serverTab?: { readonly threadId: string; readonly tabId: string },

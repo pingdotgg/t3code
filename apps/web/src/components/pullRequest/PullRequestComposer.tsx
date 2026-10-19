@@ -1,14 +1,4 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-/**
- * The single floating control over a pull request. Commenting on the change and submitting the
- * review that carries the Code tab's line comments used to float as two buttons that crowded
- * each other and read as the same offer twice; they are two modes of one composer now.
- *
- * Opening picks the mode with work waiting in it, so a reader who has collected line comments
- * lands on the review and everyone else lands on the comment box. Either mode's draft survives
- * the toggle: they are separate texts going to separate places, and merging them would send a
- * summary as a comment or the reverse.
- */
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -44,10 +34,6 @@ export function PullRequestComposer({
   ) => Promise<{ readonly commentPosted: boolean }>;
   onCommented: () => void;
   onReviewSubmitted: () => void;
-  /**
-   * Opens the composer on the review, each time the number changes. The guide's last stop asks
-   * for it, so finishing the tour lands on the comments it collected and the verdict.
-   */
   openReviewRequest?: number | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -71,9 +57,6 @@ export function PullRequestComposer({
     setOpen(true);
   }
 
-  // What is offered is the intersection of two different questions: what this host can do at
-  // all, and what this account may do on this repository. Either one saying no means a control
-  // that would only ever end in a refusal.
   const canComment = detail.capabilities.comment && detail.viewerPermissions.comment;
   const verdicts = detail.capabilities.review.verdicts.filter((verdict) =>
     detail.viewerPermissions.verdicts.includes(verdict),
@@ -92,8 +75,6 @@ export function PullRequestComposer({
     >
       <PopoverTrigger
         render={<Button size="icon" variant="glass" />}
-        // The only label this control has, so the pending count belongs in it: the badge beside
-        // the icon is decorative and a reader who cannot see it still needs the number.
         aria-label={
           pendingComments.length > 0
             ? `Review pull request, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`

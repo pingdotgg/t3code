@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { parseDiffFileRevisions } from "./diffFileRevisions.ts";
+import { parseDiffFilePaths, parseDiffFileRevisions } from "./diffFileRevisions.ts";
 
 function patchOf(...lines: ReadonlyArray<string>): string {
   return `${lines.join("\n")}\n`;
@@ -70,6 +70,20 @@ describe("parseDiffFileRevisions", () => {
     );
 
     assert.deepStrictEqual([...revisions], [["new.ts", "2222222"]]);
+  });
+
+  it("keeps a leading U+FEFF in a quoted rename's revision key", () => {
+    const revisions = parseDiffFileRevisions(
+      patchOf(
+        'diff --git a/old.txt "b/\\357\\273\\277note.txt"',
+        "similarity index 100%",
+        "rename from old.txt",
+        'rename to "\\357\\273\\277note.txt"',
+        "index 2222222..2222222 100644",
+      ),
+    );
+
+    assert.deepStrictEqual([...revisions], [["\uFEFFnote.txt", "2222222"]]);
   });
 
   it("leaves out a file Bitbucket excluded, which it gives no index line for", () => {
@@ -276,5 +290,38 @@ describe("parseDiffFileRevisions", () => {
     );
 
     assert.deepStrictEqual([...revisions], [["one two", "eeeeeee"]]);
+  });
+});
+
+describe("parseDiffFilePaths", () => {
+  it("names both sides of each file, with no side for an added or deleted one", () => {
+    const paths = parseDiffFilePaths(
+      [
+        "diff --git a/src/a.ts b/src/a.ts",
+        "--- a/src/a.ts",
+        "+++ b/src/a.ts",
+        "@@ -1 +1 @@",
+        "--- a/not/a/header.ts",
+        "diff --git a/added.md b/added.md",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/added.md",
+        "diff --git a/gone.md b/gone.md",
+        "deleted file mode 100644",
+        "--- a/gone.md",
+        "+++ /dev/null",
+        'diff --git "a/tab\\tname" b/moved.ts',
+        'rename from "tab\\tname"',
+        "rename to moved.ts",
+        "",
+      ].join("\n"),
+    );
+
+    assert.deepStrictEqual(paths, [
+      { oldPath: "src/a.ts", newPath: "src/a.ts" },
+      { oldPath: null, newPath: "added.md" },
+      { oldPath: "gone.md", newPath: null },
+      { oldPath: "tab\tname", newPath: "moved.ts" },
+    ]);
   });
 });

@@ -510,7 +510,6 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: refs.toCheckpointRef });
         expect(yield* checkpointStore.listAuthoredPaths(refs)).toBeNull();
 
-        // The turn merges upstream, fixes the conflict by taking upstream, and edits one more file.
         yield* git(tmp, ["merge", "upstream", "--no-edit"], { allowNonZeroExit: true });
         yield* writeTextFile(NodePath.join(tmp, "shared.txt"), "upstream\n");
         yield* git(tmp, ["commit", "-am", "merge upstream"]);

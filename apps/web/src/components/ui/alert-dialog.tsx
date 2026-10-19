@@ -115,9 +115,6 @@ function AlertDialogDescription({ className, ...props }: AlertDialogPrimitive.De
   return (
     <AlertDialogPrimitive.Description
       className={cn(
-        // A long description (say, the arguments of a tool call awaiting
-        // approval) scrolls in place instead of pushing the actions out of
-        // the popup, which the viewport already caps.
         "wrap-anywhere max-h-[min(24rem,60dvh)] min-h-0 overflow-y-auto overscroll-contain text-muted-foreground text-sm select-text",
         className,
       )}

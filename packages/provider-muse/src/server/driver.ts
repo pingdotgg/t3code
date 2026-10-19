@@ -119,7 +119,16 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
           return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
         });
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
-        resolveMaintenance,
+        // Status refresh respects update checks; explicit updates use the resolver below.
+        resolveMaintenance: (options) =>
+          host.settings.get.pipe(
+            Effect.orDie,
+            Effect.flatMap((settings) =>
+              settings.enableProviderUpdateChecks
+                ? resolveMaintenance(options)
+                : resolveInstallation(options),
+            ),
+          ),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -176,7 +185,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         displayName,
         accentColor,
         enabled,
-        snapshot,
+        snapshot: { ...snapshot, resolveMaintenance },
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;

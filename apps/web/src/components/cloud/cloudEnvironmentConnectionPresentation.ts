@@ -9,11 +9,6 @@ export interface SavedCloudEnvironmentConnectionPresentation {
   readonly tone: "connected" | "connecting" | "error" | "idle";
 }
 
-/**
- * Present the live supervisor state for an environment that is already in the
- * connection catalog. Catalog membership only means the environment is saved;
- * it does not mean the connection attempt succeeded.
- */
 export function presentSavedCloudEnvironmentConnection(
   connection: EnvironmentConnectionPresentation,
 ): SavedCloudEnvironmentConnectionPresentation {
@@ -36,7 +31,6 @@ export function presentSavedCloudEnvironmentConnection(
         statusText: connectionStatusText(connection),
         tone: "connecting",
       };
-    // Not a failure: the machine is fine, this build just cannot talk to it.
     case "unsupported":
       return {
         buttonLabel: "Client not supported",

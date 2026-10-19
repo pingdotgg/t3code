@@ -28,7 +28,6 @@ vi.mock("@shikijs/core", async (importOriginal) => {
   };
 });
 
-// Exercise the native entry path without requiring an iOS or Android runtime.
 vi.mock("react-native-shiki-engine", async () => {
   const { createJavaScriptRegexEngine } = await import("@shikijs/engine-javascript");
   return { isNativeEngineAvailable: () => true, createNativeEngine: createJavaScriptRegexEngine };

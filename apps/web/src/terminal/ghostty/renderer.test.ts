@@ -71,6 +71,78 @@ describe("ghosttyTextRunEnd", () => {
 });
 
 describe("renderGhosttySnapshot", () => {
+  it("draws solid Powerline separators to their cell edges instead of as text", () => {
+    const paths: number[][][] = [];
+    let path: number[][] = [];
+    const fillTextCalls: unknown[][] = [];
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {
+        path = [];
+      },
+      clip: () => {},
+      closePath: () => {},
+      fill: () => paths.push(path),
+      fillRect: () => {},
+      fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      lineTo: (x: number, y: number) => path.push([x, y]),
+      moveTo: (x: number, y: number) => path.push([x, y]),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: -1,
+      cursorY: -1,
+      cursorVisible: false,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [cell("a"), cell("\ue0b0"), cell("\ue0b2")],
+          text: "a\ue0b0\ue0b2",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 10, height: 20, baseline: 15 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: false,
+    });
+
+    expect(fillTextCalls).toEqual([["a", 4, 19, 10]]);
+    expect(paths).toEqual([
+      [
+        [14, 4],
+        [24, 14],
+        [14, 24],
+      ],
+      [
+        [34, 4],
+        [24, 14],
+        [34, 24],
+      ],
+    ]);
+  });
+
   it("underlines every cell in a hovered wrapped link", () => {
     const fillRectCalls: number[][] = [];
     const context = {
@@ -225,8 +297,6 @@ describe("renderGhosttySnapshot", () => {
       cursorOn: false,
     });
 
-    // The cursor row still repaints so the block disappears, but the inverted
-    // glyph the on phase draws over the cell is gone.
     expect(fillTextCalls).toEqual([["abx", 4, 15, 21.6]]);
   });
 

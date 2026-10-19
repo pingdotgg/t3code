@@ -15,15 +15,9 @@ import { toastManager } from "../../ui/toast";
 import { readPullRequestListPreferences } from "../pullRequestListPreferences";
 import { useGuideRunStore, type GuideRunWatch } from "./guideRunStore";
 
-/** How often a watched run is re-read. A run takes minutes, not seconds. */
 const RUN_POLL_MS = 5_000;
-/** A run never seen running after this long was dropped before the first read. */
 const UNSEEN_RUN_MS = 60_000;
 
-/**
- * Watches the guide runs this tab is waiting on and says when each ends, so the reader can leave
- * the Guide tab, or the pull request page, while one is written.
- */
 export function PullRequestGuideRunCoordinator() {
   const watches = useGuideRunStore((state) => state.watches);
   return Object.entries(watches).map(([key, watch]) => (
@@ -59,8 +53,6 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
         : null;
     const written =
       failure === null && data.guide !== null && data.guide.generatedAt !== watch.previousGuideAt;
-    // A read from before the run started says nothing yet; a run the server dropped, say on a
-    // restart, ends with nothing to say.
     if (failure === null && !written) {
       if (sawRunning.current || Date.now() - watch.since > UNSEEN_RUN_MS) {
         useGuideRunStore.getState().settle(runKey);

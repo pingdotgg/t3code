@@ -1,15 +1,13 @@
-import { type PointerEvent, useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { type PointerEvent, useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 interface ResizeSession {
   width: number;
   edge: "left" | "right";
   resize: (width: number) => number;
   finish: (width: number, moved: boolean) => void;
-  /** Runs on every end; `committed` is false when the drag was abandoned without `finish`. */
   cleanup?: (committed: boolean) => void;
 }
 
-/** Shared pointer lifecycle for side panels, including interrupted and sub-frame drags. */
 export function useResizeDrag<T extends HTMLElement>(
   start: (event: PointerEvent<T>) => ResizeSession | null,
   resetKey?: string,
@@ -25,53 +23,51 @@ export function useResizeDrag<T extends HTMLElement>(
     frame: number | null;
   } | null>(null);
 
-  const flush = useCallback(() => {
+  const flush = () => {
     const active = drag.current;
     if (!active) return;
     const delta = (active.pendingX - active.startX) * (active.session.edge === "left" ? -1 : 1);
-    active.moved ||= Math.abs(delta) > 2;
+    if (Math.abs(delta) > 2) active.moved = true;
     active.width = active.session.resize(active.session.width + delta);
-  }, []);
+  };
 
-  const finish = useCallback(
-    (commit = true) => {
-      const active = drag.current;
-      if (!active) return;
-      if (active.frame !== null) cancelAnimationFrame(active.frame);
-      if (commit) flush();
-      // Release can synchronously dispatch lostpointercapture.
-      drag.current = null;
-      try {
-        if (active.target.hasPointerCapture(active.pointerId)) {
-          active.target.releasePointerCapture(active.pointerId);
-        }
-      } catch {
-        // Capture may already have been released by the browser.
+  const finish = (commit = true) => {
+    const active = drag.current;
+    if (!active) return;
+    if (active.frame !== null) cancelAnimationFrame(active.frame);
+    if (commit) flush();
+    // Release can synchronously dispatch lostpointercapture.
+    drag.current = null;
+    try {
+      if (active.target.hasPointerCapture(active.pointerId)) {
+        active.target.releasePointerCapture(active.pointerId);
       }
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-      active.session.cleanup?.(commit);
-      if (commit) active.session.finish(active.width, active.moved);
-    },
-    [flush],
-  );
+    } catch {}
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+    active.session.cleanup?.(commit);
+    if (commit) active.session.finish(active.width, active.moved);
+  };
+
+  // The effects must not rerun while a drag is live: their cleanup cancels it.
+  const finishDrag = useEffectEvent((commit: boolean) => finish(commit));
 
   const previousResetKey = useRef(resetKey);
   useLayoutEffect(() => {
     if (previousResetKey.current !== resetKey) {
-      finish(false);
+      finishDrag(false);
       previousResetKey.current = resetKey;
     }
-  }, [finish, resetKey]);
+  }, [resetKey]);
 
   useEffect(() => {
-    const onBlur = () => finish();
+    const onBlur = () => finishDrag(true);
     window.addEventListener("blur", onBlur);
     return () => {
       window.removeEventListener("blur", onBlur);
-      finish(false);
+      finishDrag(false);
     };
-  }, [finish]);
+  }, []);
 
   const end = (event: PointerEvent<T>, usePosition: boolean) => {
     const active = drag.current;
@@ -82,7 +78,6 @@ export function useResizeDrag<T extends HTMLElement>(
   };
 
   return {
-    /** Re-applies the pointer position to an active drag, e.g. after its bounds change. */
     refresh: flush,
     onPointerDown(event: PointerEvent<T>) {
       if (event.button !== 0 || drag.current) return;
@@ -114,7 +109,7 @@ export function useResizeDrag<T extends HTMLElement>(
       if (!active || active.pointerId !== event.pointerId) return;
       event.preventDefault();
       active.pendingX = event.clientX;
-      active.moved ||= Math.abs(event.clientX - active.startX) > 2;
+      if (Math.abs(event.clientX - active.startX) > 2) active.moved = true;
       if (active.frame !== null) return;
       active.frame = requestAnimationFrame(() => {
         active.frame = null;

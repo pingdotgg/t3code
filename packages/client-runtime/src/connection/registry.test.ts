@@ -159,12 +159,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly checkRoute?: (route: ConnectionRoute) => RouteCheck;
     readonly prepareRoute?: (target: ConnectionTarget) => ConnectionBlockedError | undefined;
-    /** Runs before preparing a route; may suspend to hold an attempt in flight. */
     readonly beforePrepareRoute?: (
       target: ConnectionTarget,
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
-    /** Direct addresses the connected server reports. */
     readonly directEndpoints?: ServerConfig["directEndpoints"];
   },
 ) {
@@ -218,6 +216,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
           case "RelayConnectionRegistration":
             return;
           case "BearerConnectionRegistration":
+          case "SshConnectionRegistration":
             yield* Ref.update(storedProfiles, (current) => {
               const next = new Map(current);
               next.set(registration.profile.connectionId, registration.profile);
@@ -229,12 +228,6 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               return next;
             });
             return;
-          case "SshConnectionRegistration":
-            yield* Ref.update(storedProfiles, (current) => {
-              const next = new Map(current);
-              next.set(registration.profile.connectionId, registration.profile);
-              return next;
-            });
         }
       }),
     setRoutes: (environmentId, routes) =>
@@ -637,6 +630,28 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("does not expose a persisted environment as disconnected while it starts", () =>
+    Effect.gen(function* () {
+      const connectionStarted = yield* Deferred.make<void>();
+      const finishConnection = yield* Deferred.make<void>();
+      const harness = yield* makeHarness([TARGET], [], [], {
+        beforeSessionConnect: () =>
+          Deferred.succeed(connectionStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishConnection)),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connecting");
+
+        yield* Deferred.await(connectionStarted);
+        expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connecting");
+        yield* Deferred.succeed(finishConnection, undefined);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("exposes the current RPC generation to late query subscribers", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness([TARGET]);
@@ -980,39 +995,49 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
-  it.effect("discovery keeps unsupported environments off until compatibility changes", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
-        initialDisabled: [RELAY_TARGET.environmentId],
-      });
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        yield* registry.start;
-        const error = new ConnectionBlockedError({
-          reason: "unsupported",
-          detail: "Use a compatible client.",
+  it.effect.each([false, true])(
+    "discovery keeps unsupported environments off (learned route: %s)",
+    (learned) =>
+      Effect.gen(function* () {
+        const environmentId = BEARER_TARGET.environmentId;
+        const relay = new RelayConnectionTarget({ ...RELAY_TARGET, environmentId });
+        const profile = new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          learned: true,
+          authorization: "t3-connect",
         });
-        yield* registry.setCompatibility(RELAY_TARGET.environmentId, error);
-        const entry = (yield* SubscriptionRef.get(registry.entries)).get(
-          RELAY_TARGET.environmentId,
+        const harness = yield* makeHarness(
+          learned ? [relay, BEARER_TARGET] : [relay],
+          learned ? [profile] : [],
+          [],
+          { initialDisabled: [environmentId] },
         );
-        expect(entry).toMatchObject({ enabled: false, unsupportedReason: error.message });
-        expect(
-          yield* Effect.flip(registry.setEnabled(RELAY_TARGET.environmentId, true)),
-        ).toMatchObject({ reason: "unsupported" });
-        expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
-        yield* registry.setCompatibility(RELAY_TARGET.environmentId, null);
-        expect(
-          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId)?.enabled,
-        ).toBe(false);
-        yield* registry.setEnabled(RELAY_TARGET.environmentId, true);
-        yield* awaitConnectionState(
-          registry,
-          RELAY_TARGET.environmentId,
-          (state) => state.phase === "connected",
-        );
-      }).pipe(Effect.provide(harness.layer));
-    }),
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          const error = new ConnectionBlockedError({
+            reason: "unsupported",
+            detail: "Use a compatible client.",
+          });
+          yield* registry.setCompatibility(environmentId, error);
+          const entry = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+          expect(entry).toMatchObject({ enabled: false, unsupportedReason: error.message });
+          expect(yield* Effect.flip(registry.setEnabled(environmentId, true))).toMatchObject({
+            reason: "unsupported",
+          });
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+          yield* registry.setCompatibility(environmentId, null);
+          expect((yield* SubscriptionRef.get(registry.entries)).get(environmentId)?.enabled).toBe(
+            false,
+          );
+          yield* registry.setEnabled(environmentId, true);
+          yield* awaitConnectionState(
+            registry,
+            environmentId,
+            (state) => state.phase === "connected",
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }),
   );
 
   it.effect("a socket preflight rejection persists the connection as switched off", () =>
@@ -1036,6 +1061,87 @@ describe("EnvironmentRegistry", () => {
             ?.unsupportedReason,
         ).toBe(error.message);
         expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect.each([
+    { outcome: "connects after a server update", compatible: true, relayFirst: false },
+    { outcome: "connects with a preferred relay route", compatible: true, relayFirst: true },
+    { outcome: "blocks again if still incompatible", compatible: false, relayFirst: false },
+  ])("retrying an unsupported saved URL $outcome", ({ compatible, relayFirst }) =>
+    Effect.gen(function* () {
+      const environmentId = BEARER_TARGET.environmentId;
+      const error = new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: "Update the server to use this client.",
+        serverUpdateRequired: true,
+      });
+      const relay = new RelayConnectionTarget({
+        environmentId,
+        label: "Relay route",
+      });
+      const attempts = yield* Ref.make(0);
+      const retryStarted = yield* Deferred.make<void>();
+      const retryResult = yield* Deferred.make<ConnectionBlockedError | undefined>();
+      const harness = yield* makeHarness(
+        relayFirst ? [relay, BEARER_TARGET] : [BEARER_TARGET],
+        [BEARER_PROFILE],
+        [[BEARER_TARGET.connectionId, BEARER_CREDENTIAL]],
+        {
+          beforePrepareRoute: () =>
+            Effect.gen(function* () {
+              if ((yield* Ref.updateAndGet(attempts, (count) => count + 1)) === 1) return error;
+              yield* Deferred.succeed(retryStarted, undefined);
+              return yield* Deferred.await(retryResult);
+            }),
+        },
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        const awaitDisabled = SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter((entries) => entries.get(environmentId)?.enabled === false),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        yield* awaitDisabled;
+        expect((yield* Ref.get(harness.storedDisabled)).has(environmentId)).toBe(true);
+        expect((yield* SubscriptionRef.get(registry.entries)).get(environmentId)).toMatchObject({
+          target: relayFirst ? relay : BEARER_TARGET,
+          enabled: false,
+          unsupportedReason: error.message,
+          serverUpdateRequired: true,
+        });
+        expect(yield* Ref.get(attempts)).toBe(1);
+
+        yield* registry.setEnabled(environmentId, true);
+        yield* Deferred.await(retryStarted);
+        const retrying = (yield* SubscriptionRef.get(registry.entries)).get(environmentId);
+        expect(retrying?.enabled).toBe(true);
+        expect(retrying?.unsupportedReason).toBeUndefined();
+        expect(retrying?.serverUpdateRequired).toBeUndefined();
+        expect((yield* Ref.get(harness.storedDisabled)).has(environmentId)).toBe(false);
+
+        yield* Deferred.succeed(retryResult, compatible ? undefined : error);
+        if (compatible) {
+          yield* awaitConnectionState(
+            registry,
+            environmentId,
+            (state) => state.phase === "connected",
+          );
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        } else {
+          yield* awaitDisabled;
+          expect((yield* SubscriptionRef.get(registry.entries)).get(environmentId)).toMatchObject({
+            enabled: false,
+            unsupportedReason: error.message,
+            serverUpdateRequired: true,
+          });
+          expect((yield* Ref.get(harness.storedDisabled)).has(environmentId)).toBe(true);
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+        }
+        expect(yield* Ref.get(attempts)).toBe(2);
       }).pipe(Effect.provide(harness.layer));
     }),
   );
@@ -1369,8 +1475,6 @@ describe("EnvironmentRegistry", () => {
     Effect.gen(function* () {
       let storedCredentials: Ref.Ref<Map<string, ConnectionCredential>> | undefined;
       const harness = yield* makeHarness([], [], [], {
-        // Authentication fails while the old bearer is stored, as the server
-        // would answer once that session was revoked.
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
             ? Effect.succeed(undefined)
@@ -1410,14 +1514,51 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("a replaced platform bearer reaches a connected session's HTTP requests", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([]);
+
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        const registration = (token: string) =>
+          new BearerConnectionRegistration({
+            target: BEARER_TARGET,
+            profile: BEARER_PROFILE,
+            credential: new BearerConnectionCredential({ token }),
+          });
+        const preparedToken = registry.run(
+          BEARER_TARGET.environmentId,
+          EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+            Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.prepared)),
+            Effect.map((prepared) =>
+              Option.isSome(prepared) && prepared.value.httpAuthorization?._tag === "Bearer"
+                ? prepared.value.httpAuthorization.token
+                : null,
+            ),
+          ),
+        );
+        yield* registry.reconcilePlatform([registration("old-bearer")]);
+        yield* awaitConnectionState(
+          registry,
+          BEARER_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+        expect(yield* preparedToken).toBe("old-bearer");
+
+        yield* registry.reconcilePlatform([registration("new-bearer")]);
+
+        expect(yield* preparedToken).toBe("new-bearer");
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
   it.effect("a bearer replaced while an attempt is in flight retries with the new one", () =>
     Effect.gen(function* () {
       const attemptStarted = yield* Deferred.make<void>();
       const releaseFirstAttempt = yield* Deferred.make<void>();
       const attempts = yield* Ref.make(0);
       const harness = yield* makeHarness([], [], [], {
-        // The first attempt read the old bearer; it stalls, then fails
-        // authentication after the bearer has already been replaced.
         beforePrepareRoute: (target) =>
           target._tag !== "BearerConnectionTarget"
             ? Effect.succeed(undefined)
@@ -1449,8 +1590,6 @@ describe("EnvironmentRegistry", () => {
         yield* registry.reconcilePlatform([registration("old-bearer")]);
         yield* Deferred.await(attemptStarted).pipe(Effect.timeout("1 second"));
 
-        // A live state subscription, as the UI holds, keeps the runtime in place
-        // so the stalled attempt's failure lands on the same supervisor.
         yield* registry
           .stateChanges(BEARER_TARGET.environmentId)
           .pipe(Stream.runDrain, Effect.forkScoped({ startImmediately: true }));
@@ -1709,7 +1848,6 @@ describe("EnvironmentRegistry", () => {
           (state) => state.phase === "connected",
         );
 
-        // Platform polls and explicit retries reach a healthy connection at once.
         yield* Effect.all(
           [
             ...Array.from({ length: 5 }, () => registry.registerPlatform(registration)),
@@ -1833,7 +1971,6 @@ describe("EnvironmentRegistry", () => {
 });
 
 describe("EnvironmentRegistry routes", () => {
-  // The relay environment, reachable on the LAN as well.
   const LAN_TARGET = new BearerConnectionTarget({
     environmentId: RELAY_TARGET.environmentId,
     label: RELAY_TARGET.label,
@@ -1912,6 +2049,7 @@ describe("EnvironmentRegistry routes", () => {
               connectionId: other.connectionId,
               target: { ...SSH_TARGET, alias: "other", hostname: "other.example.test" },
             }),
+            credential: BEARER_CREDENTIAL,
           }),
         );
 
@@ -1940,6 +2078,7 @@ describe("EnvironmentRegistry routes", () => {
                 ...SSH_PROFILE,
                 connectionId: again.connectionId,
               }),
+              credential: BEARER_CREDENTIAL,
             }),
           );
 
@@ -1964,7 +2103,6 @@ describe("EnvironmentRegistry routes", () => {
         const targets = yield* Ref.get(harness.storedTargets);
         expect(routesOf(targets, LAN_TARGET.environmentId)).toEqual([LAN_TARGET]);
         expect(hasRoutes(targets, SECOND_RELAY_TARGET.environmentId)).toBe(false);
-        // Only the environment that lost its last route is forgotten.
         expect(yield* Ref.get(harness.cacheClears)).toEqual([SECOND_RELAY_TARGET.environmentId]);
         expect(
           (yield* SubscriptionRef.get(registry.entries)).get(LAN_TARGET.environmentId)?.target,
@@ -2078,7 +2216,6 @@ describe("EnvironmentRegistry routes", () => {
       const httpBaseUrl = "http://100.101.102.103:3773/";
       const learnedId = `learned:${LAN_TARGET.environmentId}:http://100.101.102.103:3773@${LAN_TARGET.connectionId}`;
       const learned = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId });
-      // Learned by an earlier build, which saved no network.
       const learnedProfile = new BearerConnectionProfile({
         connectionId: learnedId,
         environmentId: LAN_TARGET.environmentId,
@@ -2119,7 +2256,6 @@ describe("EnvironmentRegistry routes", () => {
     Effect.gen(function* () {
       const learnedId = `learned:${LAN_TARGET.environmentId}:100.64.0.9:3773@${LAN_TARGET.connectionId}`;
       const learned = new BearerConnectionTarget({ ...LAN_TARGET, connectionId: learnedId });
-      // An earlier build saved the learned target twice and never its profile.
       const harness = yield* makeHarness(
         [LAN_TARGET, learned, learned],
         [LAN_PROFILE],

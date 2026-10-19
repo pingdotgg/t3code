@@ -19,7 +19,9 @@ import {
   mergeLearnedRoutes,
   removedWithRelay,
   routesAfterRemoving,
+  sendsTokenInClear,
   upsertRoute,
+  usableRoutes,
 } from "./routes.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
@@ -51,6 +53,15 @@ const LAN = direct("lan", "http://192.168.1.10:3773/");
 const TAILNET = direct("tailnet", "https://desk.tail1234.ts.net/");
 const PUBLIC = direct("public", "https://desk.example.com/");
 
+function learned(id: string, httpBaseUrl: string): ConnectionRoute {
+  const route = direct(id, httpBaseUrl);
+  const profile = Option.getOrThrow(route.profile) as BearerConnectionProfile;
+  return {
+    target: route.target,
+    profile: Option.some(new BearerConnectionProfile({ ...profile, learned: true })),
+  };
+}
+
 describe("connection routes", () => {
   it("classifies direct routes by address", () => {
     expect(connectionRouteKind(LAN)).toBe("lan");
@@ -73,7 +84,6 @@ describe("connection routes", () => {
   });
 
   it("keeps a user's order when a saved route is replaced", () => {
-    // The user preferred T3 Connect over the LAN; re-pairing the LAN keeps that.
     const repaired = direct("lan", "http://192.168.1.11:3773/");
     expect(upsertRoute([RELAY, LAN], repaired)).toEqual([RELAY, repaired]);
   });
@@ -134,7 +144,6 @@ describe("learned routes", () => {
       reported: [lan],
       allowInsecure: true,
     })!;
-    // The user prefers T3 Connect over the learned LAN address.
     const reordered = entryWithRoutes(relayOnly, [first[1]!, first[0]!]);
     expect(
       mergeLearnedRoutes({
@@ -144,7 +153,6 @@ describe("learned routes", () => {
         allowInsecure: true,
       }),
     ).toBeNull();
-    // A newly reported address is still placed by speed.
     const next = mergeLearnedRoutes({
       entry: reordered,
       activeRoute: RELAY,
@@ -169,7 +177,6 @@ describe("learned routes", () => {
     })!;
     expect(first.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "T3 Connect"]);
 
-    // The server later finds the address is not on its Tailscale interface.
     const corrected = mergeLearnedRoutes({
       entry: entryWithRoutes(relayOnly, first),
       activeRoute: RELAY,
@@ -199,7 +206,6 @@ describe("learned routes", () => {
       reported: [{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }],
       allowInsecure: true,
     })!;
-    // Same routes in the same order; only the label of the confirmed one changes.
     expect(ids(confirmed)).toEqual(["paired", "other", "relay"]);
     expect(confirmed.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "T3 Connect"]);
   });
@@ -219,7 +225,6 @@ describe("learned routes", () => {
         allowInsecure: true,
       }),
     ).toBeNull();
-    // The server stops reporting the LAN address; the paired route stays.
     expect(
       mergeLearnedRoutes({ entry, activeRoute: RELAY, reported: [], allowInsecure: true }),
     ).toBeNull();
@@ -240,6 +245,87 @@ describe("learned routes", () => {
     const learned = routes.find((route) => connectionRouteKind(route) === "tailnet")!;
     expect(profileOf(learned)).not.toHaveProperty("authorization");
     expect(credentialConnectionId(connectionRouteId(learned.target))).toBe("lan");
+  });
+
+  it("keeps a token paired over HTTPS off plain HTTP addresses outside the tailnet", () => {
+    const entry = entryWithRoutes(relayOnly, [PUBLIC, RELAY]);
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: PUBLIC,
+      reported: [
+        { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+        { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+        { kind: "tailnet", httpBaseUrl: "https://desk.tail1234.ts.net/" },
+      ],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual([
+      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@public`,
+      `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net@public`,
+      "public",
+      "relay",
+    ]);
+  });
+
+  it("drops a plain HTTP LAN route learned earlier over an HTTPS-paired token", () => {
+    const lanOrigin = "http://192.168.1.10:3773";
+    const stale = direct(`learned:${ENVIRONMENT_ID}:${lanOrigin}@public`, `${lanOrigin}/`);
+    const staleProfile = profileOf(stale) as BearerConnectionProfile;
+    const learnedStale: ConnectionRoute = {
+      target: stale.target,
+      profile: Option.some(new BearerConnectionProfile({ ...staleProfile, learned: true })),
+    };
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [learnedStale, PUBLIC, RELAY]),
+      activeRoute: PUBLIC,
+      reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual(["public", "relay"]);
+  });
+
+  it("drops a stale plain HTTP route borrowing an HTTPS-paired token while another route is active", () => {
+    const lanOrigin = "http://10.0.0.42:3773";
+    const stale = learned(`learned:${ENVIRONMENT_ID}:${lanOrigin}@public`, `${lanOrigin}/`);
+    const entry = entryWithRoutes(relayOnly, [stale, PUBLIC, RELAY]);
+    expect(sendsTokenInClear([stale, PUBLIC, RELAY], stale)).toBe(true);
+    expect(ids(usableRoutes(entry))).toEqual(["public", "relay"]);
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: RELAY,
+      reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
+      allowInsecure: true,
+    });
+    // The stale route is gone; the address is learned again with T3 Connect's credential.
+    expect(ids(routes)).toEqual([`learned:${ENVIRONMENT_ID}:${lanOrigin}`, "public", "relay"]);
+    expect(profileOf(routes![0]!)).toMatchObject({ authorization: "t3-connect" });
+  });
+
+  it("keeps plain HTTP routes that don't borrow the active HTTPS-paired token", () => {
+    const lanOrigin = "http://10.0.0.42:3773";
+    const overLan = learned(`learned:${ENVIRONMENT_ID}:${lanOrigin}@lan`, `${lanOrigin}/`);
+    const routes = mergeLearnedRoutes({
+      entry: entryWithRoutes(relayOnly, [overLan, LAN, PUBLIC, RELAY]),
+      activeRoute: PUBLIC,
+      reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
+      allowInsecure: true,
+    });
+    expect(routes).toBeNull();
+  });
+
+  it("learns plain HTTP LAN addresses over a token paired over plain HTTP", () => {
+    const entry = entryWithRoutes(relayOnly, [LAN, RELAY]);
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: LAN,
+      reported: [{ kind: "lan", httpBaseUrl: "http://10.0.0.42:3773/" }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual([
+      "lan",
+      `learned:${ENVIRONMENT_ID}:http://10.0.0.42:3773@lan`,
+      "relay",
+    ]);
   });
 
   it("skips plain HTTP from an HTTPS page and never learns loopback", () => {
@@ -278,7 +364,6 @@ describe("learned routes", () => {
       allowInsecure: true,
     })!;
     expect(ids(routesAfterRemoving(overLan, "lan"))).toEqual(["relay"]);
-    // Removing T3 Connect keeps the paired LAN and what it learned.
     expect(ids(routesAfterRemoving(overLan, "relay"))).toHaveLength(2);
   });
 

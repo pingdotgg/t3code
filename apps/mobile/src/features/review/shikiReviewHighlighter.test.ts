@@ -28,7 +28,6 @@ describe("highlightSourceFile", () => {
   });
 
   it("keeps colors for a block comment that spans highlight batches", async () => {
-    // Long enough that the comment body crosses at least one batch boundary.
     const body = Array.from({ length: 400 }, (_, index) => `const insideComment${index} = 1;`);
     const highlighted = await highlightSourceFile({
       path: "example.ts",

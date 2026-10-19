@@ -27,7 +27,6 @@ export class NodeRuntimeUnavailableError extends Schema.TaggedError<NodeRuntimeU
 }
 
 export interface SelfInvocation {
-  /** The binary to spawn: Node, Electron (with `ELECTRON_RUN_AS_NODE`), or the packaged T3. */
   readonly command: string;
   /**
    * The absolute entrypoint script to place before the subcommand, or
@@ -38,11 +37,9 @@ export interface SelfInvocation {
 }
 
 /**
- * How another process runs this T3 install's CLI, for hidden subcommands the
- * server hands to children such as `acp-mcp-bridge`. `process.execPath` plus
- * `argv[1]` only works for a script run by Node; the single-executable has no
- * entrypoint script (Node repeats the binary at argv[1]), so callers must not
- * assemble the pair themselves.
+ * `process.execPath` plus `argv[1]` only works for a script run by Node; the
+ * single-executable has no entrypoint script (Node repeats the binary at
+ * argv[1]), so callers must not assemble the pair themselves.
  */
 export const resolveSelfInvocation = Effect.fn("nodeRuntime.resolveSelfInvocation")(function* () {
   const command = yield* HostProcess.ExecutablePath;
@@ -57,14 +54,12 @@ export const resolveSelfInvocation = Effect.fn("nodeRuntime.resolveSelfInvocatio
   } satisfies SelfInvocation;
 });
 
-/** `[entrypoint?, ...args]`: the argv that runs `args` against this T3 install. */
 export const selfInvocationArgs = (
   invocation: SelfInvocation,
   args: ReadonlyArray<string>,
 ): ReadonlyArray<string> =>
   invocation.entrypoint === undefined ? args : [invocation.entrypoint, ...args];
 
-/** A standalone T3 binary runs its embedded CLI, regardless of script arguments. */
 export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutable")(function* (
   feature: typeof NodeRuntimeFeature.Type,
   environment?: NodeJS.ProcessEnv,
@@ -77,15 +72,10 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
   const platform = yield* HostProcess.Platform;
   const env = environment ?? (yield* HostProcess.Environment);
   const resolvedNodePath = yield* resolveCommandPath(platform === "win32" ? "node.exe" : "node", {
-    // Batch wrappers require a shell; helper callers launch the runtime directly.
     env: platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env,
-  }).pipe(
-    // Refresh immediately after the user installs Node and retries setup.
-    Effect.provideService(CommandResolutionCache, new Map()),
-  );
+  }).pipe(Effect.provideService(CommandResolutionCache, new Map()));
   if (resolvedNodePath === null) return yield* new NodeRuntimeUnavailableError({ feature });
   const nodePath = path.resolve(resolvedNodePath);
-  // A launcher or symlink named node must not point back at the standalone app.
   const resolvedPath = yield* fs
     .realPath(nodePath)
     .pipe(Effect.mapError((cause) => new NodeRuntimeUnavailableError({ feature, cause })));
@@ -100,8 +90,7 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
     hostInfo.value.dev === nodeInfo.value.dev &&
     Option.isSome(hostInfo.value.ino) &&
     Option.isSome(nodeInfo.value.ino) &&
-    Number.isSafeInteger(hostInfo.value.ino.value) &&
-    hostInfo.value.ino.value > 0 &&
+    hostInfo.value.ino.value > 0n &&
     hostInfo.value.ino.value === nodeInfo.value.ino.value
   ) {
     return yield* new NodeRuntimeUnavailableError({ feature });

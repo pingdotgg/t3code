@@ -52,7 +52,6 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           enabled: true,
         },
       ]);
-      // A project rooted at the home directory sees ~/.agents/skills as its own.
       assert.deepEqual(
         (yield* discoverAntigravitySkills({ ...input, cwd: input.userHome })).map((skill) => [
           skill.name,

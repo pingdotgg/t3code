@@ -15,7 +15,6 @@ const CONTEXT_ICONS: Readonly<Record<string, MarkdownFileIcon>> = {
   doc: "default",
 };
 
-/** Context identity comes from the URL, even when different chips share a label. */
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
@@ -34,7 +33,6 @@ export function enrichedLinkVariantPattern(url: string) {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-/** Conservative recognition for Enriched's whole-span inline-code link hook. */
 export const ENRICHED_INLINE_FILE_LINK_REGEX =
   /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[A-Za-z0-9._-]+[\\/])+[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}|[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+)?)$/;
 

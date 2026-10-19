@@ -1,8 +1,10 @@
-import type { RunResult } from "@cursor/sdk";
+import type { RunResult, SdkCredentialStore, StoredSdkCredentials } from "@cursor/sdk";
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -11,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
 
+import { makeCursorAuth } from "./auth.ts";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 
@@ -19,6 +22,8 @@ const cursorSdkMock = vi.hoisted(() => ({
   send: vi.fn<(prompt: string) => Promise<unknown>>(),
   close: vi.fn(),
   cancel: vi.fn(async () => {}),
+  storeOpen: vi.fn<(options: unknown) => Promise<unknown>>(),
+  storeDispose: vi.fn(async () => {}),
   prompt: vi.fn<(prompt: string, options: unknown) => Promise<RunResult>>(async () => ({
     id: "run-cursor-text-generation-test",
     status: "finished",
@@ -30,6 +35,7 @@ const cursorSdkMock = vi.hoisted(() => ({
 vi.mock("./sdk.ts", () => ({
   Agent: { create: cursorSdkMock.create },
   createAgentPlatform: vi.fn(),
+  SqliteLocalAgentStore: { open: cursorSdkMock.storeOpen },
 }));
 
 let hasCustomPolicy = false;
@@ -62,6 +68,9 @@ beforeEach(() => {
   });
   cursorSdkMock.close.mockClear();
   cursorSdkMock.cancel.mockClear();
+  cursorSdkMock.storeDispose.mockClear();
+  cursorSdkMock.storeOpen.mockReset();
+  cursorSdkMock.storeOpen.mockResolvedValue({ dispose: cursorSdkMock.storeDispose });
   cursorSdkMock.prompt.mockReset();
   cursorSdkMock.prompt.mockResolvedValue({
     id: "run-cursor-text-generation-test",
@@ -139,6 +148,7 @@ describe("CursorTextGeneration", () => {
         },
         local: {
           cwd: "/isolated-text-generation",
+          store: { dispose: cursorSdkMock.storeDispose },
           autoReview: false,
           sandboxOptions: { enabled: true },
           settingSources: [],
@@ -146,6 +156,93 @@ describe("CursorTextGeneration", () => {
         },
       });
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("disposes the agent store after the agent, whether the run succeeds or fails", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const input = {
+        cwd: process.cwd(),
+        branch: "feature/cursor-store",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2"),
+      };
+
+      yield* textGeneration.generateCommitMessage(input);
+      expect(cursorSdkMock.storeOpen).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceRef: "/isolated-text-generation" }),
+      );
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledTimes(1);
+      expect(cursorSdkMock.close.mock.invocationCallOrder[0]).toBeLessThan(
+        cursorSdkMock.storeDispose.mock.invocationCallOrder[0]!,
+      );
+
+      cursorSdkMock.prompt.mockResolvedValueOnce({
+        id: "run-cursor-text-generation-test",
+        status: "error",
+      });
+      yield* Effect.flip(textGeneration.generateCommitMessage(input));
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("closes the agent before its store when sign-out interrupts a run", () =>
+    Effect.gen(function* () {
+      let credentials: StoredSdkCredentials | undefined = {
+        version: 1,
+        backendUrl: "https://api2.cursor.sh",
+        apiKey: "browser-key",
+        createdAtMs: 0,
+      };
+      const store: SdkCredentialStore = {
+        load: async () => credentials,
+        save: async (next) => {
+          credentials = next;
+        },
+        clear: async () => {
+          credentials = undefined;
+        },
+      };
+      const auth = yield* makeCursorAuth({
+        instanceId: ProviderInstanceId.make("cursor"),
+        displayName: "Cursor",
+        enabled: true,
+        store,
+        onChanged: () => Effect.void,
+      });
+      const started = Promise.withResolvers<void>();
+      cursorSdkMock.prompt.mockImplementationOnce(() => {
+        started.resolve();
+        return new Promise(() => {});
+      });
+      const generation = yield* makeCursorTextGeneration(
+        cursorSettings,
+        {},
+        auth.requireApiKey,
+        auth.withAccess,
+      );
+      const request = yield* generation
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/cursor-sign-out",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2"),
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+
+      yield* auth.controller.logout(Effect.void);
+
+      expect(Exit.isFailure(yield* Fiber.await(request))).toBe(true);
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledTimes(1);
+      expect(cursorSdkMock.close.mock.invocationCallOrder[0]).toBeLessThan(
+        cursorSdkMock.storeDispose.mock.invocationCallOrder[0]!,
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerTest, NodeCrypto.layer))),
   );
 
   it.effect("continues in the temp directory when the SDK cannot sandbox", () =>
@@ -175,6 +272,7 @@ describe("CursorTextGeneration", () => {
       expect(cursorSdkMock.create.mock.calls[1]?.[0]).toMatchObject({
         local: {
           cwd: "/isolated-text-generation",
+          store: { dispose: cursorSdkMock.storeDispose },
           autoReview: false,
           sandboxOptions: { enabled: false },
           settingSources: [],

@@ -18,6 +18,10 @@ function NativeHeaderToolbarMenuAction(
   return null;
 }
 
+function NativeHeaderToolbarCustom(_props: Parameters<typeof IosNativeHeaderToolbar.Custom>[0]) {
+  return null;
+}
+
 function NativeHeaderToolbarLabel(_props: Parameters<typeof IosNativeHeaderToolbar.Label>[0]) {
   return null;
 }
@@ -33,6 +37,7 @@ function NativeHeaderToolbarSearchBarSlot() {
 // Native header item factories are iOS-only; Android owns its in-flow header.
 export const NativeHeaderToolbar = Object.assign(NativeHeaderToolbarRoot, {
   Button: NativeHeaderToolbarButton,
+  Custom: NativeHeaderToolbarCustom,
   Label: NativeHeaderToolbarLabel,
   Menu: Object.assign(NativeHeaderToolbarMenu, {
     Action: NativeHeaderToolbarMenuAction,

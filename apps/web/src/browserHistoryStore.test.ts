@@ -389,7 +389,6 @@ describe("pendingVisitsByThreadKey", () => {
 
     const entries = useBrowserHistoryStore.getState().byProjectKey["proj-a"];
     expect(entries?.map((e) => e.url)).toEqual(["http://newer.test/", "http://older.test/"]);
-    // `entries[0]` being the most recent is the invariant `evictExcessProjects` relies on.
     expect(entries?.[0]?.lastVisitedAt).toBe(2000);
   });
 });

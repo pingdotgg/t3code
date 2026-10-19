@@ -52,8 +52,6 @@ describe("resolveProjectSettings", () => {
   });
 
   it("treats a null project like an absent one before the shell snapshot arrives", () => {
-    // The mobile new-task flow resolves settings while its selected project is
-    // still null; reading the aggregate's legacy fields off null crashed launch.
     expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null, null).settings).toBe(
       DEFAULT_SERVER_SETTINGS,
     );
@@ -111,7 +109,6 @@ describe("resolveProjectSettings", () => {
     expect(unfolded.settings.defaultModelSelection).toEqual(aggregateModel);
     expect(unfolded.settings.defaultThreadEnvMode).toBe("local");
     expect(unfolded.sources.defaultModelSelection).toBe("project");
-    // A stored override still beats the aggregate before the fold.
     const overridden = resolveProjectSettings(
       {
         ...DEFAULT_SERVER_SETTINGS,
@@ -122,7 +119,6 @@ describe("resolveProjectSettings", () => {
       project,
     );
     expect(overridden.settings.defaultThreadEnvMode).toBe("worktree");
-    // After the fold a reset in the record wins over the stale aggregate.
     const folded = resolveProjectSettings(
       { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true },
       projectId,
@@ -218,8 +214,6 @@ describe("resolveProjectSettings with a t3.json", () => {
     const builtIn = resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, null);
     expect(builtIn.settings.defaultThreadEnvMode).toBe("local");
     expect(builtIn.sources.defaultThreadEnvMode).toBe("environment");
-    // A stored null override defers like an unset one and is not reported
-    // as the project's value.
     const nullOverride = resolveProjectSettings(
       {
         ...DEFAULT_SERVER_SETTINGS,
@@ -231,7 +225,6 @@ describe("resolveProjectSettings with a t3.json", () => {
     );
     expect(nullOverride.settings.defaultThreadEnvMode).toBe("worktree");
     expect(nullOverride.sources.defaultThreadEnvMode).toBe("t3.json");
-    // A file that does not mention the key leaves the source alone too.
     expect(
       resolveProjectSettings(DEFAULT_SERVER_SETTINGS, projectId, null, {}).sources
         .defaultThreadEnvMode,
@@ -381,8 +374,6 @@ describe("projectSettingsOverrides patches", () => {
     const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
     });
-    // The canonical entry omits defaultAutoPull to clear it; the stale legacy
-    // map in the same patch must not put it back.
     const next = applyServerSettingsPatch(current, {
       projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "local" } },
       projectAutoPullOverrides: { [projectId]: true, [otherProjectId]: false },
@@ -422,9 +413,19 @@ describe("projectSettingsOverrides patches", () => {
 describe("resolveWorktreeCleanup", () => {
   it("inherits machine rules, disables one project and keeps custom rules isolated", () => {
     const machine = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true, logsAfterDays: 3 },
+      storageCleanup: {
+        worktreeAfterDays: 8,
+        worktreeSettledAfterDays: 2,
+        worktreeKeepWhen: "any-local-files",
+        worktreeOnDelete: true,
+        logsAfterDays: 3,
+      },
     });
     const inherited = resolveWorktreeCleanup(machine, projectId);
+    expect(inherited).toMatchObject({
+      worktreeSettledAfterDays: 2,
+      worktreeKeepWhen: "any-local-files",
+    });
     const off = applyServerSettingsPatch(machine, {
       projectSettingsOverrides: {
         [projectId]: { worktreeCleanup: { mode: "off" } },
@@ -432,20 +433,26 @@ describe("resolveWorktreeCleanup", () => {
     });
     expect(resolveWorktreeCleanup(off, projectId)).toEqual({
       worktreeAfterDays: null,
+      worktreeSettledAfterDays: null,
       worktreeOnDelete: false,
       worktreeOnMerge: false,
       worktreeUnchanged: false,
-      worktreeKeepWhen: "uncommitted-changes",
+      worktreeKeepWhen: "any-local-files",
     });
     expect(resolveWorktreeCleanup(off, otherProjectId)).toEqual(inherited);
     const custom = applyServerSettingsPatch(off, {
       projectSettingsOverrides: {
         [projectId]: {
-          worktreeCleanup: { mode: "custom", rules: { ...inherited, worktreeAfterDays: 15 } },
+          worktreeCleanup: {
+            mode: "custom",
+            rules: { ...inherited, worktreeAfterDays: 15, worktreeSettledAfterDays: 0 },
+          },
         },
       },
     });
     expect(resolveWorktreeCleanup(custom, projectId).worktreeAfterDays).toBe(15);
+    expect(resolveWorktreeCleanup(custom, projectId).worktreeSettledAfterDays).toBe(0);
+    expect(resolveWorktreeCleanup(custom, otherProjectId)).toEqual(inherited);
     expect(custom.storageCleanup.logsAfterDays).toBe(3);
     const reset = applyServerSettingsPatch(custom, {
       projectSettingsOverrides: {
@@ -456,7 +463,7 @@ describe("resolveWorktreeCleanup", () => {
   });
   it("completes partial machine custom rules and preserves them across edits", () => {
     const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true },
+      storageCleanup: { worktreeAfterDays: 8, worktreeSettledAfterDays: 0, worktreeOnDelete: true },
     });
     const custom = applyServerSettingsPatch(initial, {
       worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
@@ -466,6 +473,7 @@ describe("resolveWorktreeCleanup", () => {
     });
     expect(resolveWorktreeCleanup(edited, null)).toEqual({
       worktreeAfterDays: 15,
+      worktreeSettledAfterDays: 0,
       worktreeOnDelete: true,
       worktreeOnMerge: true,
       worktreeUnchanged: false,

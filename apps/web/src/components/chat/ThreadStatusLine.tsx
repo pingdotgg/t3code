@@ -2,17 +2,14 @@ import type { ReactNode } from "react";
 
 import { InlineButton } from "../ui/button";
 
-/**
- * One quiet line after the last message for thread state that does not change
- * what Enter does: settled, snoozed, or just woke. Sending a message clears each of
- * them, so the action is only the explicit way out.
- */
 export function ThreadStatusLine(props: {
   readonly icon: ReactNode;
   readonly label: string;
   readonly actionLabel: string;
   readonly actionDisabled?: boolean;
   readonly onAction: () => void;
+  // Set when the label reads the clock, so the line updates as time passes.
+  readonly clockMinute?: string;
 }) {
   return (
     <div

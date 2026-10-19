@@ -1,8 +1,3 @@
-/**
- * The built-in transcript formats by provider, for engine and cache tests.
- *
- * @module usageTestFormats
- */
 import type { UsageProviderKind } from "@t3tools/contracts";
 import type { TranscriptUsageFormat } from "@t3tools/provider-core/server/usage";
 import { piUsageFormat } from "@t3tools/provider-pi/server/usage";

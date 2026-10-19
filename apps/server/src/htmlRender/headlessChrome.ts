@@ -17,12 +17,19 @@ export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowser
   {
     reason: Schema.String,
     cause: Schema.optional(Schema.Defect()),
-    /** The end of the browser's stderr when it exited, for diagnosing host setup. */
     output: Schema.optional(Schema.String),
+    exitCode: Schema.optional(Schema.Number),
+    signal: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Headless Chrome could not render the page: ${this.reason}.`;
+    const exit =
+      this.exitCode !== undefined
+        ? ` (exit code ${this.exitCode})`
+        : this.signal !== undefined
+          ? ` (signal ${this.signal})`
+          : "";
+    return `Headless Chrome could not render the page: ${this.reason}${exit}.`;
   }
 }
 
@@ -38,27 +45,23 @@ const MAX_CONSOLE_TEXT_CHARS = 500;
 const VIEWPORT_HEIGHT = 800;
 const MAX_CAPTURE_HEIGHT = 4_000;
 const CAPTURE_TIMEOUT = "20 seconds";
-// Pages load from this made-up web origin, never from a file. Chrome refuses
-// local files to every web page, frame, worker, and popup, so a page cannot
-// read files the agent's provider withholds; local images reach it already
-// inlined as data URIs. `.localhost` keeps it a secure context that may still
-// load plain-http resources, and the request never leaves the browser.
+// Chrome refuses local files to every web page, frame, worker, and popup, so a
+// page cannot read files the agent's provider withholds; local images reach it
+// already inlined as data URIs. `.localhost` keeps it a secure context that may
+// still load plain-http resources, and the request never leaves the browser.
 // All of the browser's traffic goes through `publicProxy`, which only reaches
 // public addresses, so a page cannot reach this machine's local network. The
 // main frame also stays on the page and the browser opens no popups, so a
 // capture always shows the page itself.
 const PAGE_ORIGIN = "http://t3-page.localhost";
 const PAGE_URL = `${PAGE_ORIGIN}/page.html`;
-// Stack traces and load errors name the page this way instead of its URL.
 const PAGE_NAME = "page.html";
-// Each measuring load reads its own copy of the page off the pipe.
 const MEASURE_CONCURRENCY = 3;
 
 const textEncoder = new TextEncoder();
 
 /**
- * A page as the base64 bytes `PAGE_URL` serves, encoded once however often it
- * loads. Node's encoder, since pages run to 25 MiB.
+ * Node's encoder, since pages run to 25 MiB.
  */
 const pageBody = (html: string) =>
   Buffer.from(Buffer.from(html, "utf8").toString("base64"), "latin1");
@@ -127,7 +130,6 @@ const CONSOLE_LEVELS: Readonly<Record<string, ConsoleMessage["level"]>> = {
   assert: "error",
 };
 
-/** Everything the page logs, uncaught exceptions, and the browser's own load errors. */
 const consoleMessageFromEvent = (method: string, params: unknown): ConsoleMessage | undefined => {
   if (method === "Runtime.consoleAPICalled") {
     const event = Option.getOrUndefined(decodeConsoleApiCalled(params));
@@ -161,10 +163,11 @@ const Ignored = Schema.Unknown;
 const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
+// Effect's spawner names the signal that ended a child only in its error message.
+const EXIT_SIGNAL = /signal: '(SIG[A-Z0-9]+)'/;
+
 interface PageEvents {
-  /** The page's main frame, which only ever shows `PAGE_URL`. */
   readonly mainFrameId: string;
-  /** The page served for `PAGE_URL`, from `pageBody`. */
   body: Uint8Array | undefined;
   loaded: Deferred.Deferred<void, BrowserFailure> | undefined;
   readonly consoleMessages: Array<ConsoleMessage>;
@@ -173,9 +176,7 @@ interface PageEvents {
 
 /**
  * Starts the headless shell for the life of the scope, speaking CDP over
- * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON). Scope
- * close kills the process group. Each page is its own target, so pages load
- * in parallel.
+ * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON).
  */
 const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly executable: string;
@@ -250,7 +251,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   let disconnected: BrowserFailure | undefined;
   let nextId = 0;
 
-  // A command whose reply nobody awaits; `receive` drops replies without a waiter.
   const post = (method: string, params: Record<string, unknown>, sessionId: string) =>
     Queue.offer(
       outgoing,
@@ -334,9 +334,20 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   // sandbox, says why on stderr, which may still be draining, so give it a moment.
   const disconnect = Effect.gen(function* () {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
+    const exit = yield* child.exitCode.pipe(
+      Effect.map((code): { exitCode?: number; signal?: string; cause?: unknown } => ({
+        exitCode: code,
+      })),
+      Effect.catch((error) => {
+        const signal = EXIT_SIGNAL.exec(String(error.cause))?.[1];
+        return Effect.succeed(signal === undefined ? { cause: error } : { signal, cause: error });
+      }),
+      Effect.timeoutOption("1 second"),
+    );
     const error = new HtmlRenderBrowserError({
       reason: "the browser exited unexpectedly",
       output: stderrTail,
+      ...Option.getOrElse(exit, () => ({})),
     });
     disconnected = error;
     const waiters = [...pending.values()];
@@ -366,7 +377,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       return Effect.forEach(complete, receive, { discard: true });
     }),
     Effect.ignore,
-    // Interruption means the scope is closing on purpose; only an exit disconnects.
     Effect.andThen(disconnect),
     Effect.forkScoped,
   );
@@ -397,7 +407,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       );
     });
 
-  /** A fresh page at `width`; each `load` navigates it and measures the settled layout. */
   const openPage = Effect.fnUntraced(function* (width: number) {
     const { targetId } = yield* send(
       "Target.createTarget",
@@ -452,7 +461,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       sessionId,
     );
 
-    /** Loads a page from `pageBody`, so callers loading it often encode it once. */
     const load = Effect.fnUntraced(function* (body: Uint8Array, urlFragment: string) {
       const loaded = yield* Deferred.make<void, BrowserFailure>();
       events.body = body;
@@ -505,7 +513,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
             },
           ];
 
-    // Frees the page in the browser once it is no longer needed.
     const close = send("Target.closeTarget", { targetId }, Ignored).pipe(
       Effect.ensuring(Effect.sync(() => pages.delete(sessionId))),
       Effect.ignore,
@@ -517,7 +524,6 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   return { openPage };
 });
 
-/** A temporary directory for the browser profile, removed with the scope. */
 const scratchDirectory = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* Effect.acquireRelease(
@@ -531,7 +537,6 @@ const scratchDirectory = Effect.gen(function* () {
   );
 });
 
-/** Loads `html` at `width` and returns a PNG of the top of the page. */
 export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreenshot")(
   function* (input: {
     readonly executable: string;
@@ -567,8 +572,7 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
 
 /**
  * Content heights of the page at each width, each from a fresh load, since
- * pages often lay themselves out from the width once at load. One browser,
- * a few widths at a time.
+ * pages often lay themselves out from the width once at load.
  */
 export const measureHtmlHeights = Effect.fn("headlessChrome.measureHtmlHeights")(function* (input: {
   readonly executable: string;

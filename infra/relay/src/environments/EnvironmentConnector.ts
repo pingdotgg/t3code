@@ -163,10 +163,6 @@ const isEnvironmentHealthError = Schema.is(
   ]),
 );
 
-/**
- * Cleanup deleted this environment's tunnel and nothing has recorded a new
- * one, so the host is unreachable until it updates and requests recovery.
- */
 function offlineReasonFor(
   allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null,
 ): { readonly offlineReason?: "tunnel_released" } {
@@ -305,14 +301,9 @@ export interface ManagedEndpointValidationFailure {
     RelayEnvironmentConnectNotAuthorizedReason,
     "client_proof_key_thumbprint_missing" | "environment_link_not_found"
   >;
-  /** Diagnostic span attributes; never contains secrets. */
   readonly attributes?: Record<string, string | boolean>;
 }
 
-/**
- * Checks that a link's relay-managed endpoint is backed by a ready allocation
- * on the configured base domain and still matches what the link recorded.
- */
 export function validateManagedEndpoint(input: {
   readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
   readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
@@ -449,7 +440,7 @@ const make = Effect.gen(function* () {
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
-      const nonce = yield* crypto.randomUUIDv4.pipe(
+      const nonce = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
           (cause) =>
             new EnvironmentMintRequestFailed({
@@ -463,7 +454,7 @@ const make = Effect.gen(function* () {
         iss: relayIssuer,
         aud: `t3-env:${link.environmentId}`,
         sub: input.userId,
-        jti: yield* crypto.randomUUIDv4.pipe(
+        jti: yield* crypto.randomUUIDv4().pipe(
           Effect.mapError(
             (cause) =>
               new EnvironmentMintRequestFailed({
@@ -606,7 +597,7 @@ const make = Effect.gen(function* () {
       });
       const now = yield* DateTime.now;
       const expiresAt = DateTime.add(now, { minutes: 2 });
-      const nonce = yield* crypto.randomUUIDv4.pipe(
+      const nonce = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
           (cause) =>
             new EnvironmentMintRequestFailed({
@@ -620,7 +611,7 @@ const make = Effect.gen(function* () {
         iss: relayIssuer,
         aud: `t3-env:${link.environmentId}`,
         sub: input.userId,
-        jti: yield* crypto.randomUUIDv4.pipe(
+        jti: yield* crypto.randomUUIDv4().pipe(
           Effect.mapError(
             (cause) =>
               new EnvironmentMintRequestFailed({

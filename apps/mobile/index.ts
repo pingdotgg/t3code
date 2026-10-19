@@ -1,3 +1,5 @@
+// Must stay first: the render counter wraps the DevTools hook before any React commit.
+import "./src/features/development/render-counter-entry";
 import { registerRootComponent } from "expo";
 import "react-native-gesture-handler";
 import { LogBox } from "react-native";

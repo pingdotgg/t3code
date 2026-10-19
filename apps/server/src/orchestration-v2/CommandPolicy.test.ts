@@ -1,11 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -19,6 +21,8 @@ import * as CommandPolicy from "./CommandPolicy.ts";
 const commandId = CommandId.make("command-policy-test");
 const threadId = ThreadId.make("command-policy-thread");
 const activeRunId = RunId.make("command-policy-active-run");
+const activeAttemptId = RunAttemptId.make("command-policy-active-attempt");
+const userMessageId = MessageId.make("command-policy-user-message");
 
 const baseCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 
@@ -37,13 +41,26 @@ function dispatchProjection(
     runs:
       sessionCapabilities === undefined
         ? []
-        : [{ id: activeRunId, status: "running", providerThreadId }],
+        : [
+            {
+              id: activeRunId,
+              status: "running",
+              providerThreadId,
+              activeAttemptId,
+              userMessageId,
+            },
+          ],
+    messages: [{ id: userMessageId, text: "first", attachments: [] }],
     providerThreads:
       sessionCapabilities === undefined ? [] : [{ id: providerThreadId, providerSessionId }],
     providerSessions:
       sessionCapabilities === undefined
         ? []
         : [{ id: providerSessionId, capabilities: sessionCapabilities }],
+    providerTurns:
+      sessionCapabilities === undefined
+        ? []
+        : [{ runAttemptId: activeAttemptId, status: "running" }],
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
@@ -117,6 +134,37 @@ it.each(["preparing", "starting"] as const)(
   },
 );
 
+it.each([
+  ["has not started", []],
+  ["is pending", [{ runAttemptId: activeAttemptId, status: "pending" }]],
+  ["has completed", [{ runAttemptId: activeAttemptId, status: "completed" }]],
+  [
+    "belongs to a previous attempt",
+    [{ runAttemptId: RunAttemptId.make("previous-attempt"), status: "running" }],
+  ],
+])("queues only automatic delivery when the active run's provider turn %s", (_, providerTurns) => {
+  const projection = {
+    ...dispatchProjection(baseCapabilities),
+    providerTurns,
+  } as unknown as OrchestrationV2ThreadProjection;
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "auto"),
+    { type: "queue_after_active" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(projection, { type: "start_immediately" }, "steer"),
+    { type: "steer_active", targetRunId: activeRunId },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      projection,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
+  );
+});
+
 it("targets the latest active run for explicit steer and restart intent", () => {
   const projection = dispatchProjection(baseCapabilities);
   assert.deepEqual(
@@ -138,6 +186,39 @@ it("targets the latest active run for explicit steer and restart intent", () => 
       "steer",
     ),
     { type: "start_immediately" },
+  );
+});
+
+it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
+  const projection = dispatchProjection(baseCapabilities);
+  const maintenance = {
+    ...projection,
+    messages: [{ id: userMessageId, text, attachments: [] }],
+  } as unknown as OrchestrationV2ThreadProjection;
+  for (const deliveryIntent of ["auto", "steer"] as const) {
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatchIntent(
+        maintenance,
+        { type: "start_immediately" },
+        deliveryIntent,
+      ),
+      { type: "queue_after_active" },
+    );
+  }
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(maintenance, {
+      type: "steer_active",
+      targetRunId: activeRunId,
+    }),
+    { type: "queue_after_active" },
+  );
+  assert.deepEqual(
+    CommandPolicy.resolveMessageDispatchIntent(
+      maintenance,
+      { type: "start_immediately" },
+      "restart",
+    ),
+    { type: "restart_active", targetRunId: activeRunId },
   );
 });
 
@@ -235,7 +316,6 @@ layer("CommandPolicyV2", (it) => {
               readonly detail: string;
             };
       }> = [
-        // Ordinary steering prefers direct active steering whenever available.
         {
           forceRestart: false,
           supportsActiveSteering: true,
@@ -264,8 +344,6 @@ layer("CommandPolicyV2", (it) => {
           supportsSteeringByInterruptRestart: true,
           expected: { type: "policy", value: "active_steering" },
         },
-        // Ordinary steering falls back to interrupt-and-restart, then to a
-        // typed error naming the capability that is actually missing.
         {
           forceRestart: false,
           supportsActiveSteering: false,
@@ -298,9 +376,6 @@ layer("CommandPolicyV2", (it) => {
           supportsSteeringByInterruptRestart: false,
           expected: { type: "error", capability: "active_steering", detail: fallbackDetail },
         },
-        // A forced restart skips direct steering and only succeeds via
-        // interrupt-and-restart; every other combination must report that
-        // capability instead of claiming live steering is unsupported.
         {
           forceRestart: true,
           supportsActiveSteering: true,

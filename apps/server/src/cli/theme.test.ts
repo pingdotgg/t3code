@@ -56,8 +56,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // A provisioning command runs against settings written by whatever version
-  // happens to be installed, so it must not drop what it cannot interpret.
   it.effect("preserves settings it does not recognise", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -89,8 +87,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // Publishing a file and pointing at it are one step, so an integration
-  // (a desktop's theme hook) needs no knowledge of the themes directory.
   it.effect("publishes a theme file under its filename and sets it", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -102,7 +98,6 @@ describe("t3 theme", () => {
       const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
       assert.equal(NodeFS.existsSync(published), true);
       assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
-      // No rollback or staging residue after a successful set.
       const residue = NodeFS.readdirSync(NodePath.dirname(published)).filter(
         (entry) => !entry.endsWith(".json"),
       );
@@ -142,9 +137,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // Publish and set are one command, so a settings file the set step cannot
-  // use must fail it before the themes directory is mutated -- not after,
-  // with a half-applied publish left behind.
   it.effect("publishes nothing when the settings file cannot be used", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -162,10 +154,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // set means set: a publish that rode along with a failed default write is
-  // rolled back rather than left mutating the environment's theme set. The
-  // userdata directory is made read-only while themes stays writable, so the
-  // failure lands after the publish -- the case the rollback exists for.
   it.effect.skipIf(windowsHost)("rolls back a publish when the default cannot be written", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -189,8 +177,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // A symlink is a normal way to hand this command a theme -- desktop hooks
-  // symlink the current palette -- so the source is resolved, not refused.
   it.effect.skipIf(!symlinksSupported)(
     "publishes a theme file through a symlinked source path",
     () =>
@@ -211,8 +197,6 @@ describe("t3 theme", () => {
       }),
   );
 
-  // The staging entry is created fresh with O_EXCL, so a symlink planted at
-  // its predictable name is cleared, never followed and written through.
   it.effect.skipIf(!symlinksSupported)("never writes through a symlink at the staging path", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -231,9 +215,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // Rollback moves the previous directory entry aside and back, so even an
-  // entry the watcher would never publish -- here a symlink -- comes back
-  // exactly as it was when the set fails.
   it.effect.skipIf(!symlinksSupported || windowsHost)(
     "restores a non-theme destination entry when the set fails",
     () =>
@@ -284,8 +265,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // A typo'd id written as the theme would silently never resolve anywhere;
-  // the id branch is as strict as the filename rule.
   it.effect("rejects an id no client could resolve", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -311,8 +290,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // File-ness is decided by existence, not extension, so a generated file
-  // named for its target app still publishes.
   it.effect("publishes an extensionless file", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -355,8 +332,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // An unreadable settings file must never read as "no settings": writing a
-  // fresh sparse file over it would discard every key the user had.
   it.effect.skipIf(windowsHost)("refuses to write when the settings file cannot be read", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -374,8 +349,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // A typo is syntactically a valid id, so shape validation alone would write
-  // a theme no client can resolve and report success.
   it.effect("rejects an id that names no theme", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -394,15 +367,12 @@ describe("t3 theme", () => {
       NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
       yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
 
-      // Now resolvable by bare id, because the file published it.
       yield* runCli(["theme", "clear", "--base-dir", baseDir]);
       yield* runCli(["theme", "set", "nightfall", "--base-dir", baseDir]);
       assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
     }),
   );
 
-  // The watcher skips files it cannot use, so accepting their filename would
-  // set a theme no client ever receives.
   it.effect("rejects an id whose published file the watcher would skip", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -417,8 +387,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // Web and desktop cannot resolve the mobile default, and mobile does not
-  // follow this setting, so naming it would be a silent no-op.
   it.effect("rejects the mobile default theme id", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -429,8 +397,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // Deciding on existence alone would publish ./ocean instead of selecting the
-  // built-in, purely because of what happens to be in the working directory.
   it.effect("treats a bare id as an id even when a file shares its name", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -453,8 +419,6 @@ describe("t3 theme", () => {
     }),
   );
 
-  // The watcher would skip an oversized file, so publishing one must not
-  // report success for a theme no client receives.
   it.effect("rejects a theme file larger than the watcher will read", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();

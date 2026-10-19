@@ -112,6 +112,19 @@ describe("mobile pull request actions", () => {
     expect(mergeSummary(unknown, true)).toBe("Squash");
   });
 
+  it("offers deleting the source branch only once merged or closed on a host that supports it", () => {
+    const capabilities = { ...detail().capabilities, deleteBranch: true };
+    expect(canPerformPullRequestAction(detail({ capabilities }), "delete-branch")).toBe(false);
+    for (const state of ["merged", "closed"] as const) {
+      expect(canPerformPullRequestAction(detail({ state, capabilities }), "delete-branch")).toBe(
+        true,
+      );
+      expect(canPerformPullRequestAction(detail({ state }), "delete-branch")).toBe(false);
+    }
+    const refused = detail({ state: "merged", capabilities, viewerPermissions: { actions: [] } });
+    expect(canPerformPullRequestAction(refused, "delete-branch")).toBe(false);
+  });
+
   it("cannot merge when the repository has disabled every offered strategy", () => {
     const pr = detail({ mergeCapabilities: { merge: false, squash: false, rebase: false } });
     expect(canPerformPullRequestAction(pr, "merge")).toBe(false);

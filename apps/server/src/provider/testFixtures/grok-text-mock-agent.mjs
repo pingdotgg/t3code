@@ -1,4 +1,3 @@
-// Native Grok's v1 model-selection wire contract, kept independent of the v2 mock.
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 

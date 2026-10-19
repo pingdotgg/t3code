@@ -1,16 +1,3 @@
-/**
- * UsageLimitSources — quota from places this environment cannot run turns
- * on, today a CLIProxyAPI hub pooling several subscription accounts.
- *
- * Each configured `settings.usageLimitSources` entry is polled on the
- * provider health-check interval and on every settings change, then
- * published as one snapshot per source over `subscribeServerConfig`. A source
- * that fails keeps its row with `error` set so the user can see it is
- * configured but unreachable. Nothing is persisted: like provider status,
- * this is live state that re-derives on boot.
- *
- * @module usage/UsageLimitSources
- */
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
@@ -41,9 +28,7 @@ export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
   {
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** The current set followed by every change, with repeats dropped. */
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
-    /** Re-read every source now. Never fails; failures land on the snapshot. */
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
@@ -53,10 +38,11 @@ export class UsageLimitSources extends Context.Service<
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
+  const fallback = id.trim() || "Usage limit source";
   try {
-    return new URL(config.url).host;
+    return new URL(config.url).host || fallback;
   } catch {
-    return id;
+    return fallback;
   }
 }
 
@@ -136,8 +122,6 @@ export const make = Effect.gen(function* () {
       return result;
     }).pipe(refreshLock.withPermits(1));
 
-  // Settings edits re-read straight away so a new hub shows up without
-  // waiting for the interval, and a removed one leaves the list.
   yield* settingsService.streamChanges.pipe(
     Stream.map((settings) => settings.usageLimitSources),
     Stream.changes,

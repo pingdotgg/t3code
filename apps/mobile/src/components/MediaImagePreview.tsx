@@ -1,11 +1,11 @@
-import { createContext, useContext, useState, useMemo } from "react";
+import { createContext, useContext, useState } from "react";
 import { Pressable, View } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useMediaActions } from "../state/mediaActions";
-import { AppText } from "./AppText";
-import { SymbolView } from "./AppSymbol";
+import { AppText } from "./ui/AppText";
+import { SymbolView } from "./ui/AppSymbol";
 import type { ResolvedFilePreviewSource } from "./FilePreviewModal.types";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { MediaSourceCaption } from "./MediaSourceCaption";
@@ -17,15 +17,16 @@ type MediaImagePreviewProps = {
 
 const ImagePreviewContext = createContext<MediaImagePreviewProps | null>(null);
 
-function ImagePreviewHeader() {
+function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   const props = useContext(ImagePreviewContext)!;
+  const source = props.source.gallery?.[header.imageIndex] ?? props.source;
   const insets = useSafeAreaInsets();
-  const mediaActions = useMediaActions(props.source.actionsSource, props.onRequestClose);
+  const mediaActions = useMediaActions(source.actionsSource, props.onRequestClose);
   return (
     <View className="bg-black/70" style={{ paddingTop: insets.top }}>
       <View className="flex-row items-center gap-2 px-3">
         <AppText className="flex-1 text-base text-white" numberOfLines={2}>
-          {props.source.name ?? "Image"}
+          {source.name ?? "Image"}
         </AppText>
         <MediaActionsMenu media={mediaActions} inModal />
         <Pressable
@@ -42,23 +43,22 @@ function ImagePreviewHeader() {
   );
 }
 
-/** Android keeps media actions in its in-app image viewer. iOS uses Quick Look. */
 export function MediaImagePreview(props: MediaImagePreviewProps) {
   const gallery = props.source.gallery ?? [props.source];
-  const [index, setIndex] = useState(() =>
+  // react-native-image-viewing keys its whole Modal by imageIndex, so changing it remounts the
+  // viewer and replays the Android fade over the screen behind. Keep the opening index; the
+  // header follows paging through the index the library passes it.
+  const [initialIndex] = useState(() =>
     Math.max(
       0,
       gallery.findIndex((item) => item.uri === props.source.uri),
     ),
   );
-  const selected = gallery[index] ?? props.source;
-  const context = useMemo(() => ({ ...props, source: selected }), [props, selected]);
   return (
-    <ImagePreviewContext value={context}>
+    <ImagePreviewContext value={props}>
       <ImageViewing
         images={gallery.map((item) => ({ uri: item.uri }))}
-        imageIndex={index}
-        onImageIndexChange={setIndex}
+        imageIndex={initialIndex}
         visible
         presentationStyle="fullScreen"
         onRequestClose={props.onRequestClose}

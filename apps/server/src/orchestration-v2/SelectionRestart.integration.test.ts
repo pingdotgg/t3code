@@ -518,8 +518,6 @@ it.live("retries a failed selection restart session open before completing", () 
       assert.equal(projection.runs.at(-1)?.modelSelection.model, replacementSelection.model);
       assert.equal(projection.runs.at(-1)?.status, "completed");
       assert.isTrue(captured.failedReplacementOpen);
-      // The old pooled process remains available to its other threads; this
-      // thread moved to a freshly allocated replacement session.
       assert.equal(captured.closedSessionCount, 0);
       assert.deepEqual(
         captured.opened.map((open) => [open.model, open.cwd]),
@@ -562,8 +560,6 @@ it.live.each(["stopped", "error"] as const)(
           opened: [],
           started: [],
           closedSessionCount: 0,
-          // The dead record is seeded directly, so the adapter's one-shot
-          // simulated replacement-open failure is skipped.
           failedReplacementOpen: true,
         });
         const layerRegistry = ProviderAdapterRegistry.layerSingle(
@@ -621,9 +617,6 @@ it.live.each(["stopped", "error"] as const)(
           );
           assert.isDefined(liveSession);
 
-          // Dead session records stay bound in the projection until
-          // detachment. A stale stopped/error record written after the
-          // live session attached must not hide it.
           const deadAt = yield* DateTime.now;
           const deadSession: OrchestrationV2ProviderSession = {
             id: ProviderSessionId.make(`session:${name}:dead`),
@@ -694,8 +687,6 @@ it.live.each(["stopped", "error"] as const)(
         const { projection, captured } = result;
         assert.lengthOf(projection.runs, 2);
         assert.equal(projection.runs[1]?.modelSelection.model, replacementSelection.model);
-        // The exact released session is the older live one, never the newer
-        // dead record.
         assert.deepEqual(result.detachedSessionIds, [result.liveSessionId]);
         assert.equal(captured.closedSessionCount, 1);
         assert.deepEqual(

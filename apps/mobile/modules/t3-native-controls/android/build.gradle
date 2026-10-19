@@ -27,4 +27,5 @@ dependencies {
   implementation project(':expo-modules-core')
   implementation 'androidx.compose.ui:ui-android:1.10.6'
   implementation 'androidx.compose.material3:material3-android:1.5.0-alpha17'
+  implementation 'androidx.window:window:1.5.1'
 }

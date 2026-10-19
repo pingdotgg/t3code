@@ -34,7 +34,7 @@ describe("managedTunnelStartupAction", () => {
     ).toEqual({ action: "reconcile_link" });
   });
 
-  it.each(["ready", "unavailable"] as const)(
+  it.each(["ready", "unavailable", "revoked"] as const)(
     "does not provision after a %s registration result",
     (status) => {
       expect(
@@ -83,7 +83,6 @@ describe("retryManagedTunnelRegistration", () => {
       );
       yield* TestClock.adjust("15 minutes");
       expect(yield* Fiber.join(fiber)).toBe("relay unavailable");
-      // Capped at 30 seconds between attempts, ten minutes allows a bounded run.
       expect(attempts).toBeGreaterThan(5);
       expect(attempts).toBeLessThan(60);
     }),

@@ -1,13 +1,3 @@
-/**
- * KeyedCoalescingWorker - A keyed worker that keeps only the latest value per key.
- *
- * Enqueues for an active or already-queued key are merged atomically instead of
- * creating duplicate queued items. Each batch yields to other queued keys before
- * processing newer updates. `drainKey()` resolves only when that key has no
- * queued, pending, or active work left.
- *
- * @module KeyedCoalescingWorker
- */
 import * as Scope from "effect/Scope";
 import * as Effect from "effect/Effect";
 import * as TxQueue from "effect/TxQueue";
@@ -36,8 +26,6 @@ export const makeKeyedCoalescingWorker = <K, V, E, R>(options: {
       activeKeys: new Set(),
     });
 
-    // Return dirty keys to the tail on success or failure. Keep pending values
-    // available for merging until the next batch starts.
     const completeKey = (key: K): Effect.Effect<void> =>
       TxRef.modify(stateRef, (state) => {
         const activeKeys = new Set(state.activeKeys);

@@ -1,4 +1,3 @@
-/** Requests an initial frame without playing or replacing the video's streaming source. */
 export function prepareVideoFirstFrame(
   video: Pick<
     HTMLVideoElement,

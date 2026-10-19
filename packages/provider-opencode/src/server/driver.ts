@@ -1,17 +1,3 @@
-/**
- * OpenCodeDriver — `ProviderDriver` for the OpenCode runtime.
- *
- * Mirrors the Codex / Claude drivers: a plain value whose `create()`
- * bundles `snapshot` / `adapter` / `textGeneration` closures over the
- * per-instance `OpenCodeSettings`.
- *
- * Two instances with different `serverUrl`s therefore talk to independent
- * OpenCode servers; when no `serverUrl` is set, the adapter + text-generation
- * shares spin up their own scoped child processes, and those child
- * processes are released when the registry scope closes.
- *
- * @module provider/Drivers/OpenCodeDriver
- */
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Crypto from "effect/Crypto";
@@ -108,7 +94,6 @@ type OpenCodeRuntimeProbe = Effect.Success<
   ReturnType<typeof makeOpenCodeRuntimeProbe<OpenCodeRuntime.OpenCodeRuntimeError>>
 >;
 
-/** Runs `v2` for a 2.x instance and `v1` otherwise; a failed probe keeps 1.x, whose checks report it. */
 function byOpenCodeRuntime<A, E, R, PE>(
   probed: Effect.Effect<ProbedOpenCode | undefined, PE>,
   paths: { readonly v1: Effect.Effect<A, E, R>; readonly v2: Effect.Effect<A, E, R> },
@@ -120,9 +105,9 @@ function byOpenCodeRuntime<A, E, R, PE>(
 }
 
 /**
- * Routes each adapter call to the runtime the instance's probe detected. Capability and selection
- * reads are hot, so they use the last successful probe (1.x before one lands) and never wait on a
- * slow server. Opening a session waits for a probe, so each server is spoken to in its own protocol.
+ * Capability and selection reads are hot, so they use the last successful probe (1.x before one
+ * lands) and never wait on a slow server. Opening a session waits for a probe, so each server is
+ * spoken to in its own protocol.
  */
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
@@ -143,7 +128,6 @@ function selectOpenCodeRuntimeAdapter(input: {
   };
 }
 
-/** Text generation runs on the server the instance's probe detected, each in its own protocol. */
 function selectOpenCodeRuntimeTextGeneration(
   probe: OpenCodeRuntimeProbe,
   v1: ProviderTextGeneration,
@@ -231,10 +215,6 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
         ),
       );
-      // Updates follow the installed package, which the version probe names. An
-      // unknown version offers no package update, since a guess could move a
-      // 2.x install onto 1.x's package or the reverse. A disabled instance never
-      // runs its binary, so it has no version and offers no update.
       const noUpdate = makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
         packageName: null,
@@ -258,8 +238,6 @@ export const OpenCodeDriver: ProviderDriver<
       const cachedMaintenance = yield* makeCachedProviderMaintenanceResolution(
         maintenanceFor(runtimeProbe.get),
       );
-      // A fresh read (an update about to run, or a manual refresh) re-probes, so
-      // a binary replaced by the other major version gets its own package.
       const resolveMaintenance = (options?: { readonly fresh?: boolean }) =>
         !effectiveConfig.enabled
           ? Effect.succeed(noUpdate)
@@ -287,7 +265,6 @@ export const OpenCodeDriver: ProviderDriver<
             }),
         ),
       );
-      // One OpenCode 2 server per instance, spawned on first use or reached at `serverUrl`.
       const openCode2Server = yield* OpenCode2Server.make({
         binaryPath: effectiveConfig.binaryPath,
         serverUrl: effectiveConfig.serverUrl,
@@ -315,9 +292,6 @@ export const OpenCodeDriver: ProviderDriver<
           loadOpenCode2Catalog(client, host.paths.cwd),
         ),
       );
-      // A 2.x server lists skills and commands per directory, so one server
-      // answers every workspace. Its event stream says when a directory it had
-      // not served yet finished scanning.
       const listOpenCode2Workspace = (cwd: string) =>
         openCode2Server.withConnection(({ client, events }) =>
           Effect.gen(function* () {
@@ -394,14 +368,10 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       );
-      // NOTE: the local branch intentionally uses the shared SDK server
-      // instead of `opencode debug skill` (loadSkillsFromCli). The CLI writes
-      // its full JSON inventory to stdout, but the Bun-compiled binary does
-      // not flush more than one 64KB pipe buffer to a non-TTY stdout, so the
-      // piped output arrives truncated and unparseable — which degrades to an
-      // empty skill list and poisons the workspace snapshot the `$` picker
-      // reads. The SDK `app.skills` endpoint honors the per-request directory
-      // and returns complete results regardless of size.
+      // The CLI writes its full JSON inventory to stdout, but the Bun-compiled binary does not
+      // flush more than one 64KB pipe buffer to a non-TTY stdout, so the piped output arrives
+      // truncated and unparseable — which degrades to an empty skill list and poisons the workspace
+      // snapshot the `$` picker reads.
       const loadWorkspaceInventory = (
         client: Parameters<typeof OpenCodeRuntime.loadOpenCodeCommands>[0],
       ) =>
@@ -410,10 +380,18 @@ export const OpenCodeDriver: ProviderDriver<
             skills: openCodeRuntime.loadOpenCodeSkills(client),
             commands: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
               Effect.timeout("10 seconds"),
-              Effect.orElseSucceed(() => []),
+              Effect.option,
             ),
           },
           { concurrency: "unbounded" },
+        ).pipe(
+          // Only a finished lookup is reported as complete. A failed one leaves
+          // the flag unset, so the registry decides from the provider's health.
+          Effect.map(({ skills, commands }) => ({
+            skills,
+            commands: Option.getOrElse(commands, () => []),
+            slashCommandsPending: Option.isSome(commands) ? false : undefined,
+          })),
         );
       const loadWorkspaceForCwd = (cwd: string) =>
         effectiveConfig.serverUrl.trim().length > 0
@@ -517,16 +495,20 @@ export const OpenCodeDriver: ProviderDriver<
                     ...machineSnapshot,
                     skills: openCode2SkillsToServerProviderSkills(skills),
                     slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                    // A finished scan lists at least the built-ins. None means it
+                    // timed out, so the registry decides from the provider's health.
+                    slashCommandsPending: commands.length > 0 ? false : undefined,
                   })),
                 ),
                 v1: Effect.all([
                   snapshot.getSnapshot,
                   loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
                 ]).pipe(
-                  Effect.map(([machineSnapshot, { skills, commands }]) => ({
+                  Effect.map(([machineSnapshot, { skills, commands, slashCommandsPending }]) => ({
                     ...machineSnapshot,
                     skills: openCodeSkillsToServerProviderSkills(skills),
                     slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
+                    slashCommandsPending,
                   })),
                   Effect.mapError(
                     (cause) =>

@@ -26,10 +26,6 @@ const cookie = {
   sameSite: "lax" as const,
 };
 
-/**
- * Dies if the import reaches session work: every case here covers a request
- * that must be rejected before a cookie is read or written.
- */
 const layerRejectedBeforeSession = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
@@ -41,10 +37,6 @@ const layerRejectedBeforeSession = Layer.succeed(
   }),
 );
 
-/**
- * Builds the service against a scratch home containing an installed, closed
- * copy of the source browser.
- */
 const withImporter = Effect.fnUntraced(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-import-" });
@@ -80,8 +72,6 @@ describe("BrowserImport.importCookies", () => {
       const fileSystem = yield* FileSystem.FileSystem;
       const { importer, home } = yield* withImporter();
 
-      // A cookie database reachable on disk but outside the browser's
-      // user-data directory — the payoff a traversal would be after.
       yield* fileSystem.makeDirectory(`${home}/secrets`, { recursive: true });
       yield* fileSystem.writeFileString(`${home}/secrets/Cookies`, "not-a-db");
 
@@ -151,7 +141,6 @@ describe("BrowserImport.writeCookies", () => {
         skipped: 1,
         skippedDomains: ["rejected.example"],
       });
-      // Nothing landed, so there is nothing to persist.
       assert.equal(flushes, 0);
     }),
   );
@@ -175,8 +164,6 @@ describe("BrowserImport.writeCookies", () => {
         { cookies: [cookie, cookie], undecryptable: 0, undecryptableHosts: [] },
       );
 
-      // One flush after every write, not one per cookie; the cookies are in
-      // the session either way, so a failed flush is not a failed import.
       assert.deepEqual(events, ["set", "set", "flush"]);
       assert.deepEqual(result, { imported: 2, skipped: 0, skippedDomains: [] });
     }),

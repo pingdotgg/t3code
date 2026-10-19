@@ -7,6 +7,9 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { Atom, AtomRegistry } from "effect/reactivity";
+
+import { createThreadListEnvironmentsAtom } from "../../state/thread-list-environments";
 
 import {
   createThreadRowProviderInstanceResolver,
@@ -21,7 +24,11 @@ function makeConfig(
     readonly accentColor?: string;
   }>,
 ): ServerConfig {
-  return { providers } as unknown as ServerConfig;
+  return {
+    providers: providers.map((provider) => ({ enabled: true, ...provider })),
+    environment: { capabilities: {}, platform: { machine: "laptop" } },
+    settings: {},
+  } as unknown as ServerConfig;
 }
 
 function makeThread(environmentId: EnvironmentId, instanceId: string): EnvironmentThreadShell {
@@ -147,6 +154,58 @@ describe("resolveThreadProviderInstance", () => {
 });
 
 describe("createThreadRowProviderInstanceResolver", () => {
+  it("updates thread badges through the environment projection when a sibling is disabled and re-enabled", () => {
+    const environmentId = EnvironmentId.make("environment-a");
+    const personal = makeThread(environmentId, "codex");
+    const work = makeThread(environmentId, "codex_work");
+    const config = makeConfig([
+      { instanceId: "codex", driver: "codex" },
+      { instanceId: "codex_work", driver: "codex" },
+    ]);
+    const configs = Atom.make<ReadonlyMap<EnvironmentId, ServerConfig>>(
+      new Map([[environmentId, config]]),
+    );
+    const environments = createThreadListEnvironmentsAtom(configs);
+    const registry = AtomRegistry.make();
+    registry.mount(environments);
+    try {
+      const before = createThreadRowProviderInstanceResolver(
+        registry.get(environments).providersByEnvironmentId,
+      );
+      expect(before(personal)?.showBadge).toBe(true);
+      expect(before(work)?.showBadge).toBe(true);
+
+      registry.set(
+        configs,
+        new Map([
+          [
+            environmentId,
+            {
+              ...config,
+              providers: config.providers.map((provider) =>
+                provider.instanceId === "codex_work" ? { ...provider, enabled: false } : provider,
+              ),
+            },
+          ],
+        ]),
+      );
+      const disabled = createThreadRowProviderInstanceResolver(
+        registry.get(environments).providersByEnvironmentId,
+      );
+      expect(disabled(personal)?.showBadge).toBe(false);
+      expect(disabled(work)?.showBadge).toBe(true);
+
+      registry.set(configs, new Map([[environmentId, config]]));
+      const restored = createThreadRowProviderInstanceResolver(
+        registry.get(environments).providersByEnvironmentId,
+      );
+      expect(restored(personal)?.showBadge).toBe(true);
+      expect(restored(work)?.showBadge).toBe(true);
+    } finally {
+      registry.dispose();
+    }
+  });
+
   const environmentId = EnvironmentId.make("environment-a");
   const serverConfigs = new Map<EnvironmentId, ServerConfig>([
     [
@@ -164,8 +223,6 @@ describe("createThreadRowProviderInstanceResolver", () => {
     );
     const first = resolve(makeThread(environmentId, "codex"));
     const second = resolve(makeThread(environmentId, "codex"));
-    // Memoized rows compare props by reference: a fresh object per call would
-    // re-render every row on every parent render (minute tick included).
     expect(first).not.toBeNull();
     expect(second).toBe(first);
   });

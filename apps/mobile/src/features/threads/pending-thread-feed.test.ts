@@ -59,7 +59,6 @@ describe("pending timeline messages", () => {
     const optimistic = appendPendingThreadMessages([], [], [queued])[0]!;
     const delivered = { ...optimistic, pendingMessage: undefined };
     expect(appendPendingThreadMessages([delivered], [delivered], [queued])).toEqual([delivered]);
-    // Folded messages still count as delivered even when absent from the presented rows.
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
   });
 });

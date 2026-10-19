@@ -1,4 +1,5 @@
 import type {
+  OrchestrationV2AppThread,
   RepositoryIdentity,
   SourceControlProviderKind,
   ThreadLinkedPullRequest,
@@ -15,7 +16,6 @@ type ThreadPullRequestKeySource = ThreadPullRequestKey & {
   readonly url?: string;
 };
 
-/** Normalize stored links, recovering Forgejo HTTP ports from old links' URLs. */
 export function normalizeThreadPullRequestKey(
   key: ThreadPullRequestKeySource,
 ): ThreadPullRequestKey {
@@ -36,7 +36,6 @@ export function normalizeThreadPullRequestKey(
   };
 }
 
-/** Legacy Azure selectors omit the organization and project; recover those from the PR URL. */
 export function legacyThreadPullRequestKey(
   linked: Pick<ThreadLinkedPullRequest, "repository" | "number" | "url">,
   fallbackHost?: string,
@@ -63,7 +62,6 @@ export function legacyThreadPullRequestKey(
   };
 }
 
-/** Identity comparison for links: host-level, case-insensitive on host and repository. */
 export function threadPullRequestKeysEqual(
   left: ThreadPullRequestKeySource,
   right: ThreadPullRequestKeySource,
@@ -71,12 +69,25 @@ export function threadPullRequestKeysEqual(
   return threadPullRequestKeyOf(left) === threadPullRequestKeyOf(right);
 }
 
+// Clients re-derive chains for every link on each render, and normalizing parses the
+// link's URL. Links are immutable and keep their identity until they change.
+const normalizedKeys = new WeakMap<ThreadPullRequestKeySource, ThreadPullRequestKey>();
+
+function normalizedKeyOf(key: ThreadPullRequestKeySource): ThreadPullRequestKey {
+  let normalized = normalizedKeys.get(key);
+  if (normalized === undefined) {
+    normalized = normalizeThreadPullRequestKey(key);
+    normalizedKeys.set(key, normalized);
+  }
+  return normalized;
+}
+
 export function threadPullRequestKeyOf(key: ThreadPullRequestKeySource): string {
-  const normalized = normalizeThreadPullRequestKey(key);
+  const normalized = normalizedKeyOf(key);
   return `${normalized.host}/${normalized.repository}#${normalized.number}`;
 }
 
-/** Links a user should see. Tombstoned stack members stay in the array only so the
+/** Tombstoned stack members stay in the array only so the
  * sync reactor does not re-add them. */
 export function visibleThreadPullRequests(
   links: ReadonlyArray<ThreadPullRequestLink>,
@@ -85,8 +96,6 @@ export function visibleThreadPullRequests(
 }
 
 function isOpen(link: ThreadPullRequestLink): boolean {
-  // Unsynced links are treated as open: they were just linked, and hiding them
-  // behind a terminal PR until the first sync would make the link look lost.
   return link.snapshot === null || link.snapshot.state === "open";
 }
 
@@ -96,20 +105,23 @@ function latestUpdatedAt(link: ThreadPullRequestLink): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
-/** The single pull request a one-slot surface (sidebar badge, tab icon, copy link) shows. */
 export type ThreadCurrentPullRequest =
   | { readonly kind: "single"; readonly link: ThreadPullRequestLink }
   | {
       readonly kind: "stack";
       readonly open: ReadonlyArray<ThreadPullRequestLink>;
-      /** Highest layer of the open set; the one "View PR" and copy-link target. */
       readonly top: ThreadPullRequestLink;
     };
 
-/**
- * Prefer open work and the highest open layer within a chain. A completed chain still
- * points at its top; unrelated terminal links use the most recently updated request.
- */
+function layersFromTop(chain: ThreadPullRequestChain): Array<ThreadPullRequestLink> {
+  // `.sort()` on a fresh array, not `.toSorted()`: this runs on Hermes, which has no ES2023
+  // array methods, and a TypeError here is fatal on every mobile launch that renders a stack.
+  return chain.layers
+    .map((link, index) => ({ link, index, depth: chain.depths[index]! }))
+    .sort((left, right) => right.depth - left.depth || right.index - left.index)
+    .map((entry) => entry.link);
+}
+
 export function resolveThreadCurrentPullRequest(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ThreadCurrentPullRequest | null {
@@ -119,10 +131,8 @@ export function resolveThreadCurrentPullRequest(
   if (open.length === 1) return { kind: "single", link: open[0]! };
   const chains = resolveThreadPullRequestChains(visible);
   if (open.length > 1) {
-    // `.reverse()` on a copy, not `.toReversed()`: this runs on Hermes, which has no ES2023
-    // array methods, and a TypeError here is fatal on every mobile launch that renders a stack.
     const openChains = chains
-      .map((chain) => [...chain.layers].reverse().filter(isOpen))
+      .map((chain) => layersFromTop(chain).filter(isOpen))
       .filter((layers) => layers.length > 0)
       .sort(
         (left, right) =>
@@ -133,7 +143,7 @@ export function resolveThreadCurrentPullRequest(
     return { kind: "stack", open: ordered, top: ordered[0]! };
   }
   if (chains.length === 1) {
-    return { kind: "single", link: chains[0]!.layers.at(-1)! };
+    return { kind: "single", link: layersFromTop(chains[0]!)[0]! };
   }
   const terminal = [...visible].sort(
     (left, right) => latestUpdatedAt(right) - latestUpdatedAt(left),
@@ -141,7 +151,6 @@ export function resolveThreadCurrentPullRequest(
   return { kind: "single", link: terminal[0]! };
 }
 
-/** The one link a legacy `linkedPullRequest` consumer should see, or null. */
 export function resolveThreadCurrentPullRequestLink(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ThreadPullRequestLink | null {
@@ -150,14 +159,12 @@ export function resolveThreadCurrentPullRequestLink(
   return current.kind === "single" ? current.link : current.top;
 }
 
-/** Legacy clients can only route links belonging to the thread's own repository. */
 export function legacyLinkedPullRequestOf(
   links: ReadonlyArray<ThreadPullRequestLink>,
   projectId: ThreadLinkedPullRequest["projectId"],
   identity: RepositoryIdentity | null | undefined,
 ): ThreadLinkedPullRequest | null {
   if (!identity) return null;
-  // A local-path remote has no host segment and no provider, so there is no host to match.
   const host = pullRequestHostOf(identity, identity.provider as SourceControlProviderKind);
   if (typeof host !== "string") return null;
   const repository = sourceControlRepositorySelector(identity);
@@ -181,9 +188,7 @@ export function legacyLinkedPullRequestOf(
               parsed.authority === remote.host && parsed.repository === repository.toLowerCase()
             );
           }
-        } catch {
-          // SSH web ports are resolved by the provider's configured login.
-        }
+        } catch {}
         return parsed.host === host && parsed.repository === repository.toLowerCase();
       }
       return (
@@ -203,15 +208,11 @@ export function legacyLinkedPullRequestOf(
 
 export interface ThreadPullRequestChain {
   readonly kind: "native" | "derived";
-  /** Bottom to top. */
   readonly layers: ReadonlyArray<ThreadPullRequestLink>;
+  /** One per layer: 0 for the base, parent's depth + 1 above it. Siblings share a depth. */
+  readonly depths: ReadonlyArray<number>;
 }
 
-/**
- * Groups a thread's links into stacks. Native stacks come from the host and win; the rest
- * are chained by matching one link's base branch to another's head branch within the same
- * repository. A link that chains to nothing is a one-layer chain.
- */
 export function resolveThreadPullRequestChains(
   links: ReadonlyArray<ThreadPullRequestLink>,
 ): ReadonlyArray<ThreadPullRequestChain> {
@@ -222,7 +223,7 @@ export function resolveThreadPullRequestChains(
   const nativeStacks = new Map<string, Array<ThreadPullRequestLink>>();
   for (const link of visible) {
     if (link.stack === null) continue;
-    const key = normalizeThreadPullRequestKey(link);
+    const key = normalizedKeyOf(link);
     const stackKey = `${key.host}/${key.repository}#stack:${link.stack.id}`;
     const members = nativeStacks.get(stackKey) ?? [];
     members.push(link);
@@ -232,46 +233,58 @@ export function resolveThreadPullRequestChains(
     const order = new Map(members[0]!.stack!.layers.map((layer, index) => [layer.number, index]));
     members.sort((left, right) => (order.get(left.number) ?? 0) - (order.get(right.number) ?? 0));
     for (const member of members) placed.add(threadPullRequestKeyOf(member));
-    chains.push({ kind: "native", layers: members });
+    chains.push({ kind: "native", layers: members, depths: members.map((_, index) => index) });
   }
 
   const remaining = visible.filter((link) => !placed.has(threadPullRequestKeyOf(link)));
   const branchKey = (link: ThreadPullRequestLink, branch: string) => {
-    const key = normalizeThreadPullRequestKey(link);
+    const key = normalizedKeyOf(link);
     return `${key.host}/${key.repository}:${branch}`;
   };
-  // Reused head names cannot identify a parent unambiguously.
   const byHead = new Map<string, ThreadPullRequestLink | null>();
   for (const link of remaining) {
     if (link.snapshot === null) continue;
     const key = branchKey(link, link.snapshot.headBranch);
     byHead.set(key, byHead.has(key) ? null : link);
   }
-  const hasChild = new Set<string>();
-  for (const link of remaining) {
-    if (link.snapshot === null) continue;
+  const parentOf = (link: ThreadPullRequestLink) => {
+    if (link.snapshot === null) return undefined;
     const parent = byHead.get(branchKey(link, link.snapshot.baseBranch));
-    if (parent != null && parent !== link) hasChild.add(threadPullRequestKeyOf(parent));
+    return parent == null || parent === link ? undefined : parent;
+  };
+  const children = new Map<string, Array<ThreadPullRequestLink>>();
+  for (const link of remaining) {
+    const parent = parentOf(link);
+    if (parent === undefined) continue;
+    const key = threadPullRequestKeyOf(parent);
+    const siblings = children.get(key) ?? [];
+    siblings.push(link);
+    children.set(key, siblings);
   }
-  // Walk from each top (a link nothing builds on) down its base chain.
-  for (const top of remaining) {
-    if (hasChild.has(threadPullRequestKeyOf(top))) continue;
+  for (const base of remaining) {
+    if (parentOf(base) !== undefined) continue;
     const layers: Array<ThreadPullRequestLink> = [];
-    let cursor: ThreadPullRequestLink | undefined = top;
-    while (cursor !== undefined && !placed.has(threadPullRequestKeyOf(cursor))) {
-      placed.add(threadPullRequestKeyOf(cursor));
-      layers.unshift(cursor);
-      cursor =
-        cursor.snapshot === null
-          ? undefined
-          : (byHead.get(branchKey(cursor, cursor.snapshot.baseBranch)) ?? undefined);
+    const depths: Array<number> = [];
+    const pending: Array<{ readonly link: ThreadPullRequestLink; readonly depth: number }> = [
+      { link: base, depth: 0 },
+    ];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      const key = threadPullRequestKeyOf(next.link);
+      // Two links with one identity would otherwise share a child list and expand forever.
+      if (placed.has(key)) continue;
+      placed.add(key);
+      layers.push(next.link);
+      depths.push(next.depth);
+      const below = children.get(key) ?? [];
+      for (let index = below.length - 1; index >= 0; index -= 1) {
+        pending.push({ link: below[index]!, depth: next.depth + 1 });
+      }
     }
-    if (layers.length > 0) chains.push({ kind: "derived", layers });
+    if (layers.length > 0) chains.push({ kind: "derived", layers, depths });
   }
-  // Cycles have no top. Keep those links visible without inventing a stack order.
   for (const link of remaining) {
     if (!placed.has(threadPullRequestKeyOf(link))) {
-      chains.push({ kind: "derived", layers: [link] });
+      chains.push({ kind: "derived", layers: [link], depths: [0] });
     }
   }
   return chains;
@@ -287,7 +300,6 @@ export type ThreadPullRequestBadge = {
   | { readonly kind: "pull-request"; readonly others: number }
 );
 
-/** Aggregate visible links' state for both stacks and unrelated linked counts. */
 export function resolveThreadPullRequestBadge(
   pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
 ): ThreadPullRequestBadge | null {
@@ -308,7 +320,6 @@ export function resolveThreadPullRequestBadge(
   return { kind: "pull-request", others: visible.length - 1, state };
 }
 
-/** Search terms for visible PR links, the legacy projection, and the branch PR. */
 export function threadPullRequestSearchTerms(thread: {
   readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
@@ -353,4 +364,50 @@ export function threadPullRequestsOf(thread: {
           stack: null,
         },
       ];
+}
+
+export function applyThreadPullRequestLinkUpdate(
+  thread: OrchestrationV2AppThread,
+  updated: ThreadPullRequestLink,
+): OrchestrationV2AppThread {
+  return {
+    ...thread,
+    pullRequests: threadPullRequestsOf(thread).map((link) =>
+      threadPullRequestKeysEqual(link, updated) ? updated : link,
+    ),
+  };
+}
+
+export interface PullRequestListLine {
+  readonly link: ThreadPullRequestLink;
+  readonly depth: number;
+  readonly chainKey: string;
+  readonly stack: { readonly kind: ThreadPullRequestChain["kind"]; readonly size: number } | null;
+}
+
+function chainKeyOf(chain: ThreadPullRequestChain): string {
+  const bottom = chain.layers[0]!;
+  return `${bottom.host}/${bottom.repository}#${bottom.number}`;
+}
+
+export function pullRequestListLines(
+  chains: ReadonlyArray<ThreadPullRequestChain>,
+): ReadonlyArray<PullRequestListLine> {
+  const ordered = [...chains].sort(
+    (left, right) =>
+      Math.max(...right.layers.map(latestUpdatedAt)) -
+      Math.max(...left.layers.map(latestUpdatedAt)),
+  );
+  return ordered.flatMap((chain) => {
+    const chainKey = chainKeyOf(chain);
+    return chain.layers.map((link, index) => ({
+      link,
+      depth: chain.depths[index]!,
+      chainKey,
+      stack:
+        index === 0 && chain.layers.length > 1
+          ? { kind: chain.kind, size: chain.layers.length }
+          : null,
+    }));
+  });
 }

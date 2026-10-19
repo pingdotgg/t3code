@@ -26,7 +26,6 @@ export class OpenCodeServerOwner extends Context.Service<
   }
 >()("@t3tools/provider-opencode/server/OpenCodeServerOwner") {}
 
-/** Owns the lazy local OpenCode server shared by one provider instance. */
 export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   readonly binaryPath: string;
   readonly directory: string;

@@ -12,7 +12,6 @@ const MAX_MESSAGE = 2_000;
 const OMITTED = "[Earlier content truncated]\n\n";
 const TRUNCATED = "\n[Content truncated]\n";
 
-/** Keep the request and its final constraints when a message is too long. */
 export function limitTitleMessage(text: string, budget: number): string {
   if (text.length <= budget) return text;
   if (budget <= TRUNCATED.length) return "";
@@ -22,7 +21,6 @@ export function limitTitleMessage(text: string, budget: number): string {
   return `${text.slice(0, head)}${TRUNCATED}${tail > 0 ? text.slice(-tail) : ""}`;
 }
 
-/** Reserve space for user intent before adding assistant findings, in conversation order. */
 export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMessage>) {
   const sections = messages.flatMap((message, index) => {
     // Thinking traces are working notes, not what the thread is about, and they
@@ -62,7 +60,6 @@ export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMess
 
   const firstUser = sections.find((section) => section.message.role === "user");
   if (firstUser) add(firstUser, MAX_MESSAGE);
-  // Up to 6,000 characters go to user messages. Assistant output cannot evict them.
   for (const section of sections.toReversed()) {
     if (section.message.role === "user") {
       add(section, Math.min(MAX_MESSAGE, remaining - 2_000));
@@ -71,7 +68,6 @@ export function formatThreadTitleContext(messages: ReadonlyArray<ThreadTitleMess
   for (const section of sections.toReversed()) {
     if (section.message.role === "assistant") add(section, MAX_MESSAGE);
   }
-  // Use spare space when the conversation has only a few messages.
   for (const role of ["user", "assistant"] as const) {
     for (const section of sections.toReversed()) {
       const previous = selected.get(section.index);

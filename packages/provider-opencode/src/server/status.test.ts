@@ -3,6 +3,7 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -80,7 +81,6 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
     NodeAssert.equal(limits.unavailable, undefined);
     NodeAssert.equal(
       limits.credentialFingerprint,
-      // SHA-256 of "opencode-go\0instance-key".
       "aba48e85c981a8edc1c9fb4575121accc7235fa55d0f8689f66f153de5566a37",
     );
     NodeAssert.deepEqual(
@@ -157,19 +157,11 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
   }),
 );
 
-/**
- * The legacy `OpenCodeProviderLive` Layer + `OpenCodeProvider` service tag
- * are deleted. The snapshot-producing logic they wrapped now lives in the
- * standalone `checkOpenCodeProviderStatus(settings, cwd)` Effect, which
- * drivers call directly when building their per-instance snapshot
- * `ManagedServerProvider`. Tests mirror that shape: build a settings payload,
- * invoke the check, assert on the returned snapshot.
- */
-
 const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
     runVersionPending: false,
+    runVersionDelay: null as Duration.Input | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
@@ -189,6 +181,7 @@ const runtimeMock = {
   reset() {
     this.state.runVersionError = null;
     this.state.runVersionPending = false;
+    this.state.runVersionDelay = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
@@ -261,7 +254,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
               cause: runtimeMock.state.runVersionError,
             }),
           )
-        : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+        : runtimeMock.state.runVersionDelay
+          ? Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }).pipe(
+              Effect.delay(runtimeMock.state.runVersionDelay),
+            )
+          : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<
@@ -389,15 +386,30 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
       const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
 
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("4 seconds");
+      yield* TestClock.adjust("10 seconds");
       const snapshot = yield* Fiber.join(probeFiber);
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.installed, true);
       NodeAssert.equal(
         snapshot.message,
-        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
+        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 10 seconds.",
       );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits for a slow but healthy local CLI version probe", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.runVersionDelay = "6 seconds";
+      const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("6 seconds");
+      const snapshot = yield* Fiber.join(probeFiber);
+
+      NodeAssert.notEqual(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(snapshot.version, "1.14.19");
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -566,7 +578,6 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         "auto",
         "full-access",
       ]);
-      // Plan mode runs as OpenCode's plan agent, and every session can compact.
       NodeAssert.equal(snapshot.showInteractionModeToggle, true);
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
@@ -604,7 +615,6 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
 
       NodeAssert.equal(snapshot.status, "error");
       NodeAssert.equal(snapshot.message, "OpenCode could not load its model list.");
-      // A failed catalog read still leaves the session able to compact.
       NodeAssert.deepEqual(
         snapshot.slashCommands.map((command) => command.name),
         ["compact"],
@@ -702,8 +712,6 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
 
   it.effect("labels each model with the sub-provider that listed it", () =>
     Effect.gen(function* () {
-      // Names come from the server's provider list; see openCode2Catalog.test.ts
-      // for reading that list itself.
       const snapshot = yield* checkProvider(
         makeOpenCodeSettings({
           serverUrl: "http://127.0.0.1:9999",
@@ -734,9 +742,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
       const subProviderFor = (slug: string) =>
         snapshot.models.find((model) => model.slug === slug)?.subProvider;
       NodeAssert.equal(subProviderFor("openai/gpt-5.4"), "OpenAI");
-      // A provider called plain "OpenCode" would repeat the instance name.
       NodeAssert.equal(subProviderFor("custom/m1"), undefined);
-      // The id stands in until the server names its providers.
       NodeAssert.equal(subProviderFor("anthropic/claude"), "anthropic");
     }),
   );
@@ -824,7 +830,6 @@ const bigPickle: OpenCode2Model = {
 
 it.effect("waits for a fresh OpenCode 2 server to list its models", () =>
   Effect.gen(function* () {
-    // A fresh server lists nothing until its catalog loads.
     const replies: Array<ReadonlyArray<OpenCode2Model>> = [[], [], [bigPickle]];
     const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [bigPickle]));
     const fiber = yield* load.pipe(Effect.forkChild);
@@ -837,7 +842,9 @@ it.effect("keeps the last OpenCode 2 model list while a fresh server's stays emp
   Effect.gen(function* () {
     let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
     const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => listed));
-    NodeAssert.deepEqual(yield* load, [bigPickle]);
+    const first = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(first), [bigPickle]);
     listed = [];
     const fiber = yield* load.pipe(Effect.forkChild);
     yield* TestClock.adjust("6 seconds");
@@ -845,7 +852,135 @@ it.effect("keeps the last OpenCode 2 model list while a fresh server's stays emp
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-// What 2.0.18 lists for a directory once it has scanned it (live, 2026-09-29).
+it.effect("waits for a growing OpenCode 2 catalog to settle before caching it", () =>
+  Effect.gen(function* () {
+    const first: OpenCode2Model = {
+      providerID: "opencode",
+      id: "first",
+      name: "First",
+      variants: [],
+    };
+    const second: OpenCode2Model = {
+      providerID: "opencode",
+      id: "second",
+      name: "Second",
+      variants: [],
+    };
+    const replies: Array<ReadonlyArray<OpenCode2Model>> = [
+      [first],
+      [first, second],
+      [first, second],
+    ];
+    const load = yield* makeOpenCode2ModelLoader(
+      Effect.sync(() => replies.shift() ?? [first, second]),
+    );
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.ok(fiber.pollUnsafe(), "A settled catalog should finish before the load deadline");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [first, second]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("waits for OpenCode 2 model names, provider labels, and variants to settle", () =>
+  Effect.gen(function* () {
+    const renamed = { ...bigPickle, name: "Bigger Pickle" };
+    const labeled = { ...renamed, providerName: "OpenCode Zen" };
+    const withVariants = { ...labeled, variants: [{ id: "low" }] };
+    const complete = { ...labeled, variants: [{ id: "high" }, { id: "medium" }] };
+    const reordered = { ...complete, variants: [{ id: "medium" }, { id: "high" }] };
+    const replies = [[bigPickle], [renamed], [labeled], [withVariants], [complete], [reordered]];
+    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [complete]));
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1500 millis");
+    NodeAssert.ok(
+      fiber.pollUnsafe(),
+      "Equivalent variant orders should settle before the deadline",
+    );
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [reordered]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("bounds an unsettled OpenCode 2 catalog and keeps its latest nonempty observation", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    let latest: ReadonlyArray<OpenCode2Model> = [];
+    const changing = () => {
+      latest = [{ ...bigPickle, name: `Pickle ${++reads}` }];
+      return latest;
+    };
+    let list = changing;
+    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => list()));
+    const cold = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.ok(cold.pollUnsafe());
+    NodeAssert.ok(reads > 1);
+    NodeAssert.deepEqual(yield* Fiber.join(cold), latest);
+
+    list = () => [];
+    const empty = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.ok(empty.pollUnsafe());
+    NodeAssert.deepEqual(yield* Fiber.join(empty), latest);
+
+    list = () => [bigPickle];
+    const settled = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(settled), [bigPickle]);
+
+    reads = 0;
+    list = () => (reads++ === 0 ? [bigPickle] : changing());
+    const fresh = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.ok(fresh.pollUnsafe());
+    NodeAssert.ok(reads > 1);
+    NodeAssert.deepEqual(yield* Fiber.join(fresh), latest);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect(
+  "refreshes a warm OpenCode 2 catalog when slow reads cannot settle before the deadline",
+  () =>
+    Effect.gen(function* () {
+      let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
+      let slow = false;
+      const load = yield* makeOpenCode2ModelLoader(
+        Effect.gen(function* () {
+          if (slow) yield* Effect.sleep("3 seconds");
+          return listed;
+        }),
+      );
+      const warm = yield* load.pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      NodeAssert.deepEqual(yield* Fiber.join(warm), [bigPickle]);
+
+      listed = [{ ...bigPickle, name: "Fresh Pickle" }];
+      slow = true;
+      const fresh = yield* load.pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      NodeAssert.ok(fresh.pollUnsafe());
+      NodeAssert.deepEqual(yield* Fiber.join(fresh), listed);
+    }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect(
+  "keeps a fresh OpenCode 2 observation if confirmation fails but propagates an initial failure",
+  () =>
+    Effect.gen(function* () {
+      const error = new OpenCodeRuntime.OpenCodeRuntimeError({
+        operation: "model.list",
+        detail: "Model list failed",
+      });
+      let reads = 0;
+      const load = yield* makeOpenCode2ModelLoader(
+        Effect.suspend(() => (reads++ === 0 ? Effect.succeed([bigPickle]) : Effect.fail(error))),
+      );
+      const fresh = yield* load.pipe(Effect.forkChild);
+      yield* TestClock.adjust("250 millis");
+      NodeAssert.deepEqual(yield* Fiber.join(fresh), [bigPickle]);
+      NodeAssert.equal(yield* load.pipe(Effect.flip), error);
+    }).pipe(Effect.provide(TestClock.layer())),
+);
+
 const builtinCommands = [
   { name: "init", description: "guided AGENTS.md setup" },
   { name: "review", description: "review changes [commit|branch|pr], defaults to uncommitted" },
@@ -869,7 +1004,6 @@ const scanned: OpenCode2Workspace = {
 
 it.effect("reads a fresh OpenCode 2 directory again once its scan has ended", () =>
   Effect.gen(function* () {
-    // A directory the server has not served yet lists no commands until its scan ends.
     const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
     const scanEnded = yield* Deferred.make<void>();
     const load = yield* loadOpenCode2Workspace(

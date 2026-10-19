@@ -12,10 +12,6 @@ const EMPTY_CLONE_ATOM = Atom.make<ProjectCloneSnapshot | null>(null).pipe(
   Atom.withLabel("web-project-clone:empty"),
 );
 
-/**
- * Latest clone list an environment has streamed; empty until the subscription
- * delivers, and never subscribed on servers that predate clone tracking.
- */
 export const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<ProjectCloneSnapshot> => {
     const supported =
@@ -36,11 +32,6 @@ const projectCloneAtom = Atom.family((key: string) => {
   }).pipe(Atom.withLabel(`web-project-clone:${key}`));
 });
 
-/**
- * The tracked clone for a project, or null once it finished (or never
- * existed). Subscribing here opens the environment's clone stream, which is
- * cheap: the server sends an empty list and stays quiet until a clone starts.
- */
 export function useProjectClone(ref: ScopedProjectRef | null): ProjectCloneSnapshot | null {
   return useAtomValue(ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(scopedProjectKey(ref)));
 }

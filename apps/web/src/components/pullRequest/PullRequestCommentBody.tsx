@@ -5,7 +5,6 @@ import { Button } from "../ui/button";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { observeResize } from "~/lib/observeResize";
 
-/** Keep the complete markdown intact while limiting long reports to a readable preview. */
 export function PullRequestCommentBody({
   className,
   ...props

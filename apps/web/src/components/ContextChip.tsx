@@ -5,23 +5,6 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-/**
- * The inline pill for one piece of chat context. It lives with the chat components rather than
- * in components/ui because it is one feature's look, not a generic primitive.
- *
- * An inline pill for one piece of context (a file, mention, terminal excerpt, pull request,
- * skill…) that sits in running text, both in the composer and in sent messages.
- *
- * Metrics are in em so the chip scales with the text around it (the composer honors the
- * prompt font-size preference). Each kind keeps one restrained color identity: every accent
- * shares a lightness so no kind reads heavier than another, and only hue carries identity.
- * A consumer may override `--context-chip-accent` through `style` for a color that comes
- * from content, such as an image's average color.
- *
- * Renders a span by default. Render it as a button, link or popover/tooltip trigger to make it
- * interactive; the hover tint follows from that, not from a prop. Anything focusable (including a
- * span with tabIndex for a tooltip) gets the focus outline.
- */
 const contextChipVariants = cva(
   "inline-flex h-[1.41em] max-w-full items-center gap-[0.33em] rounded-[0.5em] border px-[0.5em] align-middle font-medium text-[0.86em] leading-none [&_svg]:block [&_svg]:size-[1.17em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer [button&,a&]:transition-colors [button&,a&]:motion-reduce:transition-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground disabled:cursor-default",
   {
@@ -46,7 +29,6 @@ const contextChipVariants = cva(
         thread: "[--context-chip-accent:oklch(0.62_0.12_190)]",
         citation: "[--context-chip-accent:oklch(0.62_0.16_259)]",
       },
-      // Colors live in compoundVariants below so they come after the kind colors.
       state: {
         unresolved: "border-dashed",
         invalid: "",
@@ -75,7 +57,6 @@ const contextChipVariants = cva(
         className:
           "[--context-chip-border:color-mix(in_oklab,var(--context-chip-accent)_34%,var(--contrast-border))] [--context-chip-border-hover:color-mix(in_oklab,var(--context-chip-accent)_48%,var(--contrast-border))] [--context-chip-foreground:color-mix(in_oklab,var(--context-chip-accent)_22%,var(--contrast-foreground))] border-(--context-chip-border) bg-(--context-chip-accent)/11 text-(--context-chip-foreground) [button:enabled&,a&]:hover:border-(--context-chip-border-hover) [button:enabled&,a&]:hover:bg-(--context-chip-accent)/17",
       },
-      // State colors win over any kind.
       { state: "unresolved", className: "text-foreground" },
       { state: "invalid", className: "border-destructive/35 bg-destructive/8 text-destructive" },
     ],
@@ -102,7 +83,6 @@ function ContextChip({ className, kind, state, render, ...props }: ContextChipPr
   });
 }
 
-/** The chip's text. Truncates to the chip's width. */
 function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
@@ -113,7 +93,6 @@ function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">)
   );
 }
 
-/** An icon action inside a chip, such as editing a citation's comment. Tints with the chip's kind. */
 function ContextChipAction({ className, render, ...props }: useRender.ComponentProps<"button">) {
   const defaultProps = {
     className: cn(

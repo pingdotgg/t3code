@@ -23,33 +23,28 @@ const PROFILE_PARTITION_MARKER = "profile-";
 
 export type BrowserSessionPartitionNamespace = "profile";
 
-// Permissions granted to preview web content. `clipboard-sanitized-write` is the
-// Electron permission behind `navigator.clipboard.writeText()` — note it is NOT
-// `clipboard-write`, which is not a valid Electron permission name. Async
-// clipboard writes are gated by the permission *check* handler (not only the
-// request handler), so both handlers must allow it; otherwise built-in "Copy"
-// buttons — e.g. the Next.js / Vercel error overlay — fail with
-// `Failed to execute 'writeText' on 'Clipboard': Write permission denied`.
+// `clipboard-sanitized-write` is the Electron permission behind
+// `navigator.clipboard.writeText()` — note it is NOT `clipboard-write`, which
+// is not a valid Electron permission name. Async clipboard writes are gated by
+// the permission *check* handler (not only the request handler), so both
+// handlers must allow it; otherwise built-in "Copy" buttons — e.g. the Next.js
+// / Vercel error overlay — fail with `Failed to execute 'writeText' on
+// 'Clipboard': Write permission denied`.
 const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   "clipboard-read",
   "clipboard-sanitized-write",
-  "notifications",
   "geolocation",
-  // The Fullscreen API. `DesktopWindow` disables HTML fullscreen window resizing
-  // for the app window and every preview guest, so a page that goes fullscreen
-  // fills its own webview instead of taking over the whole T3 window.
+  // `DesktopWindow` disables HTML fullscreen window resizing for the app window
+  // and every preview guest, so a page that goes fullscreen fills its own
+  // webview instead of taking over the whole T3 window.
   "fullscreen",
   // Deliberately NOT local-fonts: preview sessions run untrusted web content,
   // and silently granting it would hand every page the user's installed-font
-  // fingerprint (and font file bytes via FontData.blob()). The app's own font
-  // picker runs in the main window session, which is unaffected by this list.
+  // fingerprint (and font file bytes via FontData.blob()).
+  // Deliberately NOT notifications: a page could post OS notifications branded
+  // as T3 Code. T3's own come from the app window on the default session.
 ]);
 
-/**
- * Schemes a preview page may never hand to the OS, even with the user's
- * consent: they read local files, run script, or are web pages that belong in
- * the preview itself.
- */
 const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "about:",
   "blob:",
@@ -64,10 +59,6 @@ const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "view-source:",
 ]);
 
-/**
- * The URL to offer the user when a preview page navigates to a custom scheme
- * such as `slack://` or `zoom://`, or `null` when it must stay denied.
- */
 const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null => {
   if (!rawUrl) return null;
   try {
@@ -167,11 +158,6 @@ export class BrowserSession extends Context.Service<
   }
 >()("@t3tools/desktop/preview/BrowserSession") {}
 
-/**
- * Restricts a clear to the given partitions. Omitting them keeps the historical
- * "every partition" behaviour, which callers now only use for an explicit
- * "all profiles" action — a per-profile clear must never reach across profiles.
- */
 const selectSessions = (
   sessions: ReadonlyMap<string, Session>,
   partitions: ReadonlyArray<string> | undefined,
@@ -181,14 +167,10 @@ const selectSessions = (
   );
 
 /**
- * Scope bytes for the partition digest.
- *
  * `TextEncoder` replaces a lone UTF-16 surrogate with U+FFFD, so `"p\ud800"`
  * and `"p\ufffd"` would hash to the same partition and share cookies. Those
  * are distinct, supported ids, so lone surrogates are escaped to `\uXXXX`
  * first — and a literal backslash is doubled so the escape cannot be forged.
- * Every well-formed scope passes through byte-for-byte unchanged, which keeps
- * existing partitions (and the logins in them) where they are.
  */
 const encodeScopeForDigest = (scope: string): Uint8Array =>
   new TextEncoder().encode(
@@ -201,8 +183,8 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
   );
 
 /**
- * The window showing a preview guest. A `<webview>` guest has no window of its
- * own, so look it up through the page that embeds it.
+ * A `<webview>` guest has no window of its own, so look it up through the page
+ * that embeds it.
  */
 const previewHostWindow = (guest: WebContents | null): BrowserWindow | undefined => {
   if (guest === null || guest.isDestroyed()) return undefined;
@@ -279,9 +261,6 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       ),
     );
     const prefix = persistent ? PREVIEW_PARTITION_PREFIX : PREVIEW_EPHEMERAL_PARTITION_PREFIX;
-    // Legacy/default partitions are prefix + hex digest. The non-hex profile
-    // marker creates a disjoint namespace while leaving every legacy default
-    // partition byte-for-byte unchanged.
     return `${prefix}${namespace === "profile" ? PROFILE_PARTITION_MARKER : ""}${Hex.encode(digest).slice(0, 20)}`;
   });
 
@@ -301,8 +280,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           // form — even variants that keep the Electron token — makes Cloudflare
           // Turnstile fail its integrity check with error 600010 and recreate
           // the challenge every few seconds, so logins behind it never complete
-          // (#5002). Re-setting the unchanged native string is harmless, so it
-          // is the rewritten string itself that trips the check.
+          // (#5002).
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
               if (permission === "openExternal") {

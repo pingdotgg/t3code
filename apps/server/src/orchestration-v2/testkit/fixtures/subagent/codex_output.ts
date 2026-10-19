@@ -45,7 +45,6 @@ export function assertSubagentOutput(
     projection.subagents.map((subagent) => subagent.status),
     ["completed", "completed"],
   );
-  // Each child was handed one file and reported contents only that file holds.
   assert.isTrue(
     projection.subagents.some(
       (subagent) =>

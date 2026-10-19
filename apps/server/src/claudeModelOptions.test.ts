@@ -49,6 +49,25 @@ describe("compileClaudeModelSelection", () => {
     ).toMatchObject({ effort: "high", promptEffort: "ultrathink" });
   });
 
+  it("keeps explicit effort for models missing from the local catalog", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-pool-model-not-in-catalog", [{ id: "effort", value: "max" }]),
+      ).effort,
+    ).toBe("max");
+    expect(
+      compileClaudeModelSelection(selection("claude-pool-model-not-in-catalog", [])).effort,
+    ).toBeUndefined();
+  });
+
+  it("omits unsupported effort for models missing from the local catalog", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-pool-model-not-in-catalog", [{ id: "effort", value: "brutal" }]),
+      ).effort,
+    ).toBeUndefined();
+  });
+
   it("compiles the thinking toggle for models that expose it", () => {
     expect(
       compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "thinking", value: false }]))

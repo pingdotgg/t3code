@@ -24,7 +24,6 @@ import {
 
 const { logInfo, logError } = DesktopObservability.makeComponentLogger("desktop-remote-updates");
 
-/** Pause before retrying an action the updater refused for a held reservation. */
 const ACTION_RETRY_DELAY = Duration.millis(250);
 const PREPARED_UPDATE_TTL = Duration.minutes(5);
 
@@ -42,11 +41,6 @@ type CommitClaim =
   | { readonly _tag: "committing" }
   | { readonly _tag: "claimed"; readonly prepared: PreparedUpdate };
 
-/**
- * Server-triggered desktop updates. Mirrors updater state, prepares downloads,
- * cancels abandoned preparations, and commits installs after the remote client
- * confirms that it received the preparation token.
- */
 export const listen: Effect.Effect<
   void,
   never,
@@ -181,12 +175,11 @@ export const listen: Effect.Effect<
         const { latest, changes } = yield* updates.subscribe;
         const disabledReason = Option.getOrNull(yield* updates.disabledReason);
         let attempts: RemoteDesktopUpdateAttempts = { checks: 0, downloads: 0 };
-        // The updater admits one action at a time. A state event can land
-        // while the action that produced it still holds the reservation
-        // (e.g. "available" before the check releases), so a forked action
-        // can be refused with no later state event to retry on. Rejected
-        // actions re-enqueue their state here after a short pause so the
-        // step runs again once the reservation is free.
+        // A state event can land while the action that produced it still holds
+        // the reservation (e.g. "available" before the check releases), so a
+        // forked action can be refused with no later state event to retry on.
+        // Rejected actions re-enqueue their state here after a short pause so
+        // the step runs again once the reservation is free.
         const retries = yield* Queue.unbounded<DesktopUpdateState>();
         const retryLater = (state: DesktopUpdateState) =>
           Effect.sleep(ACTION_RETRY_DELAY).pipe(
@@ -195,16 +188,12 @@ export const listen: Effect.Effect<
             Effect.forkScoped,
           );
 
-        // Returns true when the run reached a terminal outcome.
         const step = (state: DesktopUpdateState): Effect.Effect<boolean, never, Scope.Scope> =>
           Effect.gen(function* () {
             const next = nextRemoteDesktopUpdateStep(state, attempts, disabledReason);
             switch (next.action) {
               case "wait":
                 return false;
-              // Counters increment before the action so the state event the
-              // action produces already sees it; a refusal for a held
-              // reservation rolls the count back, since it was not a try.
               case "check":
                 attempts = { ...attempts, checks: attempts.checks + 1 };
                 yield* updates.check("remote-update").pipe(
@@ -315,8 +304,6 @@ export const listen: Effect.Effect<
       ),
     );
 
-  // Sequential by construction: a second remote request queued mid-run is
-  // handled after the current one, when the state machine resolves it fast.
   yield* Stream.runForEach(publisher.updateRequests, handleRequest).pipe(Effect.forkScoped);
 
   yield* Stream.runForEach(publisher.updateCancellations, (cancellation) =>

@@ -8,7 +8,6 @@ import { languageOfInfoString } from "~/composer-code-languages";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 interface HighlightedBlock {
-  /** Guards against repainting a block whose text and language are unchanged. */
   readonly signature: string;
   readonly decorations: ReadonlyArray<{ from: number; to: number; color: string }>;
 }
@@ -16,11 +15,9 @@ interface HighlightedBlock {
 const composerCodeBlockHighlightKey = new PluginKey<DecorationSet>("composerCodeBlockHighlight");
 
 /**
- * Past this many characters a fence is left plain. Any edit changes a block's
- * signature, so each keystroke re-tokenizes the whole block synchronously on
- * the main thread: a few milliseconds for a couple of hundred lines, but ~80ms
- * at a thousand, which stalls typing. 20k characters is roughly 400–500 lines
- * of ordinary code; a fence that shrinks back under it is highlighted again.
+ * Any edit changes a block's signature, so each keystroke re-tokenizes the
+ * whole block synchronously on the main thread: a few milliseconds for a couple
+ * of hundred lines, but ~80ms at a thousand, which stalls typing.
  */
 export const MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH = 20_000;
 
@@ -28,7 +25,6 @@ export function shouldHighlightCodeBlock(code: string): boolean {
   return code.length <= MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH;
 }
 function blockSignature(node: ProseMirrorNode, theme: DiffThemeName): string {
-  // A separator that cannot occur in a language name keeps the parts distinct.
   return [theme, String(node.attrs.language ?? ""), node.textContent].join("\u0000");
 }
 
@@ -45,14 +41,6 @@ function collectCodeBlocks(state: EditorState): Array<{ node: ProseMirrorNode; p
   return blocks;
 }
 
-/**
- * Highlights composer code blocks with the same Shiki instance the chat view
- * uses, painted as inline decorations so the text nodes stay editable.
- *
- * Highlighting is asynchronous and per block: a keystroke re-tokenizes only the
- * block that changed, and only after its highlighter has resolved. Blocks whose
- * text and language are unchanged reuse their previous decorations.
- */
 export function composerCodeBlockHighlight(options: {
   resolveTheme: () => DiffThemeName;
 }): Extension {
@@ -94,7 +82,6 @@ export function composerCodeBlockHighlight(options: {
             let scannedDoc: ProseMirrorNode | null = null;
 
             /**
-             * Tokenizes any block missing from the cache, then repaints once.
              * Returning early when nothing is pending is what stops the
              * dispatch below from re-triggering this on its own update.
              */
@@ -117,16 +104,12 @@ export function composerCodeBlockHighlight(options: {
                   !cache.has(blockSignature(node, theme)),
               );
               if (pending.length === 0) {
-                // A theme switch keeps every signature but changes which one
-                // applies, so the painted decorations still have to be rebuilt.
                 if (themeChanged) {
                   view.dispatch(view.state.tr.setMeta(composerCodeBlockHighlightKey, true));
                 }
                 return;
               }
 
-              // Settled rather than all: a block whose highlighter fails to
-              // load stays plain, and the others are still painted.
               void Promise.allSettled(
                 pending.map(async ({ node }) => {
                   // The stored info string keeps everything after the language
@@ -171,7 +154,6 @@ export function composerCodeBlockHighlight(options: {
 
 type Highlighter = Awaited<ReturnType<typeof getSyntaxHighlighterPromise>>;
 
-/** Flattens Shiki's line/token structure into offsets within the block's text. */
 export function tokenizeBlock(
   highlighter: Highlighter,
   code: string,
@@ -182,7 +164,6 @@ export function tokenizeBlock(
   try {
     tokens = highlighter.codeToTokens(code, { lang: language, theme }).tokens;
   } catch {
-    // An unsupported language should read as plain text, not break the editor.
     return [];
   }
 
@@ -217,7 +198,6 @@ function buildDecorations(
     // unmarked text node, so `content.size === textContent.length`. Allowing
     // marks or hard breaks in the code block would desync these silently.
     if (node.content.size !== node.textContent.length) continue;
-    // +1 steps past the code block's opening token into its text.
     const start = pos + 1;
     for (const decoration of highlighted.decorations) {
       decorations.push(

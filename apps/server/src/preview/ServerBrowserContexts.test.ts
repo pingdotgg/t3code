@@ -150,7 +150,6 @@ describe("ServerBrowserContexts", () => {
       await removed.promise;
       deleted = true;
     });
-    // Launching starts by resolving the executable; record whether storage was gone by then.
     const launchedAfterDelete: Array<boolean> = [];
     configuration.executable.mockImplementation(async () => {
       launchedAfterDelete.push(deleted);

@@ -10,6 +10,7 @@ import {
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -70,6 +71,18 @@ const isUsableLanIpv4Address = (address: string): boolean =>
   !address.startsWith("169.254.") &&
   !isTailscaleIpv4Address(address);
 
+/**
+ * Bridges, tunnels and VM adapters whose private address other devices on the
+ * LAN usually cannot reach: macOS's Thunderbolt Bridge (`bridge0`, which can
+ * keep a manual address while nothing is plugged in) and Internet Sharing
+ * bridges, VPN tunnels, and container or VM networks. Their addresses are only
+ * advertised when no other interface has one. Host bridges such as `br0`,
+ * Proxmox's `vmbr0` and Hyper-V's `vEthernet` external switches often carry
+ * the LAN address, so they are not listed.
+ */
+const HOST_ONLY_INTERFACE =
+  /^(bridge\d|utun|ipsec|ppp|tun|tap|wg|docker|br-|veth|virbr|vmnet|vboxnet|VirtualBox|VMware)/;
+
 const isHttpsEndpointUrl = (value: string): boolean => {
   try {
     return new URL(value).protocol === "https:";
@@ -87,18 +100,17 @@ const resolveLanAdvertisedHost = (
     return normalizedExplicitHost;
   }
 
-  for (const interfaceAddresses of Object.values(networkInterfaces)) {
-    if (!interfaceAddresses) continue;
-
-    for (const address of interfaceAddresses) {
-      if (address.internal) continue;
-      if (address.family !== "IPv4") continue;
-      if (!isUsableLanIpv4Address(address.address)) continue;
-      return address.address;
-    }
-  }
-
-  return null;
+  const lanAddresses = Object.entries(networkInterfaces).flatMap(([name, addresses]) =>
+    (addresses ?? [])
+      .filter(
+        (address) =>
+          !address.internal && address.family === "IPv4" && isUsableLanIpv4Address(address.address),
+      )
+      .map((address) => ({ name, address: address.address })),
+  );
+  const preferred =
+    lanAddresses.find(({ name }) => !HOST_ONLY_INTERFACE.test(name)) ?? lanAddresses[0];
+  return preferred?.address ?? null;
 };
 
 const resolveDesktopServerExposure = (input: {
@@ -198,9 +210,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
             : "User-configured endpoint for this desktop backend.",
         }),
       );
-    } catch {
-      // Ignore malformed user-configured endpoints without dropping valid endpoints.
-    }
+    } catch {}
   }
 
   return endpoints;
@@ -407,6 +417,25 @@ function resolveRuntimeState(input: {
   };
 }
 
+const tailscaleIpv4AddressKey = (
+  networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
+): string =>
+  [
+    ...new Set(
+      Object.values(networkInterfaces)
+        .flatMap((addresses) => addresses ?? [])
+        .filter(
+          (address) =>
+            !address.internal &&
+            address.family === "IPv4" &&
+            isTailscaleIpv4Address(address.address),
+        )
+        .map((address) => address.address),
+    ),
+  ]
+    .toSorted()
+    .join(",");
+
 const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): boolean =>
   previous.port !== next.port ||
   previous.bindHost !== next.bindHost ||
@@ -425,17 +454,17 @@ export const make = Effect.gen(function* () {
   // with values it read before that change persisted.
   const changePermit = yield* Semaphore.make(1);
 
-  // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
-  // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
-  // spawn re-triggers the "Other apps" TCC prompt.
-  const cachedReadMagicDnsName = yield* Effect.cachedWithTTL(
-    readTailscaleStatus.pipe(
-      Effect.map((status) => status.magicDnsName),
-      Effect.orElseSucceed(() => null),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-    ),
-    TAILSCALE_STATUS_CACHE_TTL,
-  );
+  // Key status by interface addresses so network changes bypass stale DNS and
+  // identity. Cache unchanged addresses to avoid repeated macOS TCC prompts.
+  const tailscaleStatusCache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: TAILSCALE_STATUS_CACHE_TTL,
+    lookup: (_addresses: string) =>
+      readTailscaleStatus.pipe(
+        Effect.orElseSucceed(() => null),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      ),
+  });
 
   const readNetworkInterfaces = networkInterfaces.read;
 
@@ -556,7 +585,10 @@ export const make = Effect.gen(function* () {
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
-      readMagicDnsName: cachedReadMagicDnsName,
+      readStatus: Cache.get(
+        tailscaleStatusCache,
+        tailscaleIpv4AddressKey(currentNetworkInterfaces),
+      ),
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),

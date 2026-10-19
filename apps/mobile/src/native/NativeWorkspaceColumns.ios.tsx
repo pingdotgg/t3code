@@ -17,8 +17,6 @@ const NATIVE_METRICS_TIMEOUT_MS = 1000;
 export function useNativeWorkspaceColumnsReady() {
   const metrics = useNativeLayoutMetrics();
   const [timedOut, setTimedOut] = useState(false);
-  // Choose the phone's native host before attaching any screens. Older clients
-  // without the observer can immediately use the compact navigator.
   const waiting =
     !(Platform.OS === "ios" && Platform.isPad) &&
     !!nativeControls?.ViewPrototypes?.T3NativeControls_LayoutMetrics &&

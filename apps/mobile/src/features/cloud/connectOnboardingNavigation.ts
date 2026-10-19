@@ -11,9 +11,8 @@ import { isConnectOnboardingOptedOut } from "./connectOnboardingOptOut";
 const PRESENT_ONBOARDING_DELAY_MS = 600;
 
 /**
- * Consumes the onboarding request inside the navigation tree (RootStackLayout)
- * and presents the onboarding formSheet. Lives apart from connectOnboarding.ts
- * so non-navigation consumers (CloudAuthProvider) do not pull
+ * Lives apart from connectOnboarding.ts so non-navigation consumers
+ * (CloudAuthProvider) do not pull
  * @react-navigation into their module graph.
  */
 export function useConnectOnboardingNavigation(): void {
@@ -27,7 +26,6 @@ export function useConnectOnboardingNavigation(): void {
     let cancelled = false;
     const timer = setTimeout(() => {
       void (async () => {
-        // A failed preference read prefers showing the sheet.
         const optedOut = await isConnectOnboardingOptedOut(requestedAccountId).catch(() => false);
         // The cancelled flag covers effect re-runs, but a sign-out can clear
         // the request atom moments before this render commits — re-check the

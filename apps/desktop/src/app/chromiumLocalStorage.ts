@@ -5,8 +5,6 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 /**
- * Read-only decoder for a Chromium profile's `Local Storage/leveldb`.
- *
  * It reads the database files directly and never takes LevelDB's lock, so it
  * works while another app version has the profile open. Live files come from
  * the MANIFEST that CURRENT names, and the newest sequence number wins, which
@@ -97,7 +95,6 @@ function crc32c(bytes: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** LevelDB stores CRCs masked so a CRC of data containing CRCs stays well distributed. */
 const unmaskCrc = (masked: number) => {
   const rotated = (masked - 0xa282ead8) >>> 0;
   return ((rotated >>> 17) | (rotated << 15)) >>> 0;
@@ -149,10 +146,9 @@ function decompressSnappy(input: Uint8Array): Uint8Array {
 }
 
 /**
- * Splits a LevelDB log (write-ahead log or MANIFEST) into its records. Like
- * LevelDB's own reader, a corrupt record or zero padding skips the rest of its
- * block, since a reused log keeps appending after a torn write, and a record
- * cut off by the end of the file ends the log.
+ * Like LevelDB's own reader, a corrupt record or zero padding skips the rest of
+ * its block, since a reused log keeps appending after a torn write, and a
+ * record cut off by the end of the file ends the log.
  */
 function readLogRecords(bytes: Uint8Array): Uint8Array[] {
   const records: Uint8Array[] = [];
@@ -212,7 +208,6 @@ interface LiveFiles {
   readonly previousLogNumber: number;
 }
 
-/** Replays MANIFEST version edits to find the live table files and log. */
 function readManifest(bytes: Uint8Array): LiveFiles {
   const tables = new Set<number>();
   let logNumber = 0;
@@ -225,21 +220,21 @@ function readManifest(bytes: Uint8Array): LiveFiles {
       const tag = reader.varint();
       required.delete(tag);
       switch (tag) {
-        case 1: // comparator
+        case 1:
           reader.lengthPrefixed();
           break;
         case 2:
           logNumber = reader.varint();
           break;
-        case 3: // next file number
-        case 4: // last sequence
+        case 3:
+        case 4:
           reader.varint();
           break;
-        case 5: // compaction pointer
+        case 5:
           reader.varint();
           reader.lengthPrefixed();
           break;
-        case 6: // deleted file
+        case 6:
           reader.varint();
           tables.delete(reader.varint());
           break;
@@ -265,7 +260,6 @@ function readManifest(bytes: Uint8Array): LiveFiles {
 
 interface VersionedEntry {
   readonly sequence: number;
-  /** `null` marks a deletion. */
   readonly value: Uint8Array | null;
 }
 
@@ -279,10 +273,8 @@ function record(entries: EntryMap, key: Uint8Array, entry: VersionedEntry) {
   if (!existing || existing.entry.sequence < entry.sequence) entries.set(id, { key, entry });
 }
 
-/** Applies one write-ahead log record (a WriteBatch). */
 function readWriteBatch(entries: EntryMap, batch: Uint8Array) {
   if (batch.length < 12) fail("write batch too short");
-  // The sequence is a little-endian uint64; real values stay far below 2^53.
   const sequence = readUint32(batch, 0) + readUint32(batch, 4) * 0x100000000;
   const count = readUint32(batch, 8);
   const reader = new Reader(batch, 12);
@@ -332,7 +324,6 @@ function* blockEntries(block: Uint8Array): Generator<[Uint8Array, Uint8Array]> {
   }
 }
 
-/** Applies every entry in one sorted table (`.ldb`/`.sst`) file. */
 function readTable(entries: EntryMap, table: Uint8Array) {
   if (table.length < TABLE_FOOTER_SIZE) fail("table too short");
   const footer = new Reader(table, table.length - TABLE_FOOTER_SIZE);
@@ -376,10 +367,6 @@ export class ChromiumLocalStorageReadError extends Schema.TaggedError<ChromiumLo
   }
 }
 
-/**
- * Returns the localStorage items one origin (for example `t3code://app`) had
- * in the profile, or an empty map when the profile never stored any.
- */
 export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.read")(function* (
   directory: string,
   origin: string,
@@ -409,7 +396,6 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
   const live = yield* decode(() => readManifest(manifest)).pipe(wrap);
   const logs = (yield* fs.readDirectory(directory).pipe(wrap))
     .map((name) => /^(\d+)\.log$/.exec(name))
-    // The logs LevelDB's own recovery replays.
     .filter((match) => {
       const number = Number(match?.[1]);
       return number >= live.logNumber || number === live.previousLogNumber;

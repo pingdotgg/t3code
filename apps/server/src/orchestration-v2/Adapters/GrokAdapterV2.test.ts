@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProjectId,
+  MessageId,
+  NodeId,
+  RunAttemptId,
+  RunId,
+  type OrchestrationV2UserInputQuestion,
+  type OrchestrationV2RuntimeRequest,
   ProviderInstanceId,
   ProviderSessionId,
   type RuntimeMode,
@@ -14,6 +20,10 @@ import { xAiRateLimitedErrorCode } from "@t3tools/provider-grok/testing";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -27,6 +37,8 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
@@ -40,7 +52,11 @@ import {
   makeGrokAcpAdapterFlavor,
   makeGrokAdapterV2,
   GrokProviderCapabilitiesV2,
+  GROK_PROVIDER,
+  GROK_ACP_INITIALIZE_META,
 } from "@t3tools/provider-grok/testing";
+
+import { makeAcpReplayRuntime, type AcpReplayTranscript } from "./AcpAdapterV2.testkit.ts";
 
 const LAUNCH_TEST_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({
   binaryPath: "grok-launch-test",
@@ -138,8 +154,6 @@ describe("GrokAdapterV2 capabilities", () => {
     // stops the work.
     assert.isTrue(flavor.restartRuntimeAfterInterrupt);
     assert.isTrue(flavor.terminateRuntimeProcessGroupOnInterrupt);
-    // Non-Stop interrupts (steering, restart_active) reuse the process and
-    // session; the cancelled work backgrounds and the model decides its fate.
     assert.isUndefined(flavor.restartRuntimeOnEveryInterrupt);
     assert.isTrue(flavor.preserveRuntimeOnSettledInterrupt);
   });
@@ -198,13 +212,11 @@ describe("GrokAdapterV2 capabilities", () => {
   });
 
   it("overrides ACP image capability false so screenshot attachments can prompt", () => {
-    // Handshake alone would refuse attachments (Grok advertises image:false).
     assert.isFalse(
       acpSupportsImagePrompts({
         negotiatedImage: false,
       }),
     );
-    // Flavor override unblocks image content blocks for Grok.
     assert.isTrue(
       acpSupportsImagePrompts({
         flavorSupportsImagePrompts: true,
@@ -300,8 +312,6 @@ describe("Grok permission prompts", () => {
     "/home/ada",
   ).permissionDisposition;
 
-  // grok_auto_blocked_command replays Auto end to end. When an explicit policy
-  // launches Grok asking instead, T3's policy still answers its prompts.
   it("leaves Auto prompts to the user unless an explicit policy launched Grok asking", () => {
     assert.equal(
       disposition?.(runtimePolicy({ runtimeMode: "auto" }), permissionRequest("read")),
@@ -320,6 +330,94 @@ describe("Grok permission prompts", () => {
   });
 });
 
+describe("Grok model context windows", () => {
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
+
+  it.effect("budgets handoffs with the selected Grok model's window", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("grok-window-test");
+      const threadId = ThreadId.make("grok-window-test");
+      const modelSelection = { instanceId, model: "grok-build" };
+      const policy = runtimePolicy({ runtimeMode: "full-access" });
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "linux",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          Effect.gen(function* () {
+            const context = yield* Layer.build(
+              AcpSessionRuntime.layer({
+                ...input,
+                spawn: {
+                  command: process.execPath,
+                  args: [mockAgentPath],
+                  cwd: process.cwd(),
+                  env: {
+                    T3_ACP_SESSION_LIFECYCLE: "1",
+                    T3_ACP_GROK_MODEL: "grok-4.7",
+                    T3_ACP_GROK_CONTEXT_TOKENS: "256000",
+                  },
+                },
+                authMethodId: "test",
+              }),
+            );
+            return yield* AcpSessionRuntime.AcpSessionRuntime.pipe(Effect.provide(context));
+          }),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-window-test"),
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const budgetInput = {
+        tokenCap: 16_000,
+        userText: "Continue",
+        attachments: [],
+        providerThread,
+        nativeContextEstimate: 160_684,
+      };
+      assert.isNull(providerThread.contextUsage);
+      assert.equal(handoffBudget(budgetInput), 0);
+      assert.equal(
+        handoffBudget({
+          ...budgetInput,
+          modelContextWindow: runtime.getModelContextWindow?.({ instanceId, model: "grok-4.7" }),
+        }),
+        16_000,
+      );
+      assert.equal(runtime.getModelContextWindow?.({ instanceId, model: "grok-4.7" }), 256_000);
+      assert.equal(runtime.getModelContextWindow?.({ instanceId, model: " grok-4.7 " }), 256_000);
+      for (const model of ["custom-model", "grok-build", "toString"]) {
+        assert.isUndefined(runtime.getModelContextWindow?.({ instanceId, model }));
+      }
+      assert.isUndefined(
+        runtime.getModelContextWindow?.({
+          instanceId: ProviderInstanceId.make("another-grok"),
+          model: "grok-4.7",
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+});
+
 describe("Grok launch permission mode", () => {
   const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
   const layerTest = Layer.mergeAll(
@@ -329,9 +427,6 @@ describe("Grok launch permission mode", () => {
     layerHost,
   );
 
-  // Opens a session through the adapter's own Grok runtime factory and returns
-  // the argv it tried to launch. The spawn fails after recording, so no
-  // process starts.
   const launchArgs = (runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
     Effect.gen(function* () {
       const launches: Array<ReadonlyArray<string>> = [];
@@ -362,11 +457,7 @@ describe("Grok launch permission mode", () => {
         })
         .pipe(Effect.scoped, Effect.ignore);
       return launches;
-    }).pipe(
-      // Keep the launch argv unwrapped by the Linux cgroup shim.
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provide(layerTest),
-    );
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin"), Effect.provide(layerTest));
 
   const policy = (
     runtimeMode: RuntimeMode,
@@ -395,7 +486,6 @@ describe("Grok launch permission mode", () => {
 
   it.effect("launches a thread stored as Auto-accept edits asking", () =>
     Effect.gen(function* () {
-      // The policy the orchestrator resolves from Grok's own provider snapshot.
       const snapshot = yield* buildInitialGrokProviderSnapshot(LAUNCH_TEST_GROK_SETTINGS);
       const instanceId = ProviderInstanceId.make("grok-launch-test");
       const now = yield* DateTime.now;
@@ -472,5 +562,237 @@ describe("Grok launch permission mode", () => {
         asking,
       );
     }),
+  );
+});
+
+describe("Grok native questions", () => {
+  const layerHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
+  const layerTest = Layer.mergeAll(
+    NodeServices.layer,
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    layerHost,
+  );
+
+  it.live("keeps x.ai multi-select questions live and returns all selected answers", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "grok-multi-select-" });
+      const questionText = "Which changes should be included?";
+      const transcript: AcpReplayTranscript = {
+        provider: GROK_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario: "grok-multi-select",
+        entries: [
+          {
+            type: "expect_outbound",
+            label: "initialize",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            label: "initialized",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentCapabilities: { loadSession: true, promptCapabilities: { image: false } },
+                authMethods: [{ id: "replay", name: "Replay" }],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "session.new",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            label: "session.created",
+            frame: {
+              kind: "response",
+              method: "session/new",
+              result: {
+                sessionId: "grok-multi-select-session",
+                models: {
+                  currentModelId: "grok-build",
+                  availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
+                },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "prompt",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            label: "question",
+            frame: {
+              kind: "request",
+              method: "_x.ai/ask_user_question",
+              params: {
+                method: "x.ai/ask_user_question",
+                params: {
+                  sessionId: "grok-multi-select-session",
+                  toolCallId: "grok-question",
+                  mode: "default",
+                  questions: [
+                    {
+                      id: "changes",
+                      question: questionText,
+                      multiSelect: true,
+                      options: [
+                        { label: "Tests", description: "Cover behavior" },
+                        { label: "Docs", description: "Explain usage" },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "selected answers",
+            frame: {
+              kind: "response",
+              method: "_x.ai/ask_user_question",
+              result: { outcome: "accepted", answers: { [questionText]: ["Tests", "Docs"] } },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+        ],
+      };
+      const statusPath = path.join(workspace, "status.json");
+      const scriptPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("grok-multi-select");
+      const threadId = ThreadId.make("grok-multi-select-thread");
+      const adapter = yield* makeGrokAdapterV2({
+        instanceId,
+        settings: LAUNCH_TEST_GROK_SETTINGS,
+        environment: {},
+        hostPlatform: "darwin",
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath,
+          scriptPath,
+          childProcessSpawner,
+          fileSystem: fs,
+          initializeMeta: GROK_ACP_INITIALIZE_META,
+        }),
+      });
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const modelSelection = { instanceId, model: "grok-build" };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("grok-multi-select-session"),
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      const question = yield* Deferred.make<OrchestrationV2UserInputQuestion>();
+      const request = yield* Deferred.make<OrchestrationV2RuntimeRequest>();
+      const terminal = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.questions[0]
+          )
+            return Deferred.succeed(question, event.turnItem.questions[0]);
+          if (event.type === "runtime_request.updated")
+            return Deferred.succeed(request, event.runtimeRequest);
+          if (event.type === "turn.terminal") return Deferred.succeed(terminal, undefined);
+          return Effect.void;
+        }),
+        Effect.forkScoped,
+      );
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("grok-multi-select-project"),
+          title: "Grok multi-select",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspace,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("grok-multi-select-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("grok-multi-select-attempt"),
+        rootNodeId: NodeId.make("grok-multi-select-root"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("grok-multi-select-message"),
+          text: "Ask which changes to include.",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy: policy,
+      });
+      assert.deepEqual(yield* Deferred.await(question), {
+        id: "changes",
+        header: "Question",
+        question: questionText,
+        multiSelect: true,
+        options: [
+          { label: "Tests", description: "Cover behavior" },
+          { label: "Docs", description: "Explain usage" },
+        ],
+      });
+      const pending = yield* Deferred.await(request);
+      assert.equal(pending.kind, "user_input");
+      assert.equal(pending.responseCapability.type, "live");
+      yield* runtime.respondToRuntimeRequest({
+        requestId: pending.id,
+        answers: { changes: ["Tests", "Docs"] },
+      });
+      yield* Deferred.await(terminal);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 });

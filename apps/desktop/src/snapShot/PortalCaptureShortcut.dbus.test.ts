@@ -90,7 +90,6 @@ it.runIf(NodeChildProcess.spawnSync("dbus-daemon", ["--version"]).status === 0)(
             ];
             results = { shortcuts: new Variant("a(sa{sv})", bound) };
           }
-          // Exercise the fast-portal race: Response is delivered before the method's handle reply.
           const response = Message.newSignal(
             handle,
             "org.freedesktop.portal.Request",

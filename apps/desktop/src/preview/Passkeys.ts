@@ -37,31 +37,13 @@ export class PreviewPasskeysConfigureError extends Schema.TaggedError<PreviewPas
   }
 }
 
-/**
- * Passkeys for in-app browser pages on macOS, where Electron has no WebAuthn UI
- * of its own. Signed builds record which entitlements their provisioning
- * profile granted (scripts/build-desktop-artifact.ts), and each path turns on
- * only when its entitlement is present:
- *
- * - Touch ID: Electron's built-in platform authenticator. Passkeys it creates
- *   stay on this Mac, in T3 Code's keychain group.
- * - Browser passkeys: Apple's managed browser entitlement lets the system sheet
- *   (iCloud Keychain, password managers, phones, security keys) serve any
- *   site. The guest preload hands each ceremony to this process, which pins
- *   the requesting frame's real origin.
- *
- * Windows needs neither: Chromium already uses Windows Hello there.
- */
 export class PreviewPasskeys extends Context.Service<
   PreviewPasskeys,
   {
-    /** Whether preview pages route WebAuthn through the system passkey sheet. */
     readonly bridgeEnabled: boolean;
-    /** Turns on Touch ID passkeys when this build is entitled to them. Runs after app ready. */
+    /** Runs after app ready. */
     readonly configure: Effect.Effect<void>;
-    /** Lets the user choose between several passkeys for one site. Idempotent. */
     readonly installSessionHandlers: (session: Session) => void;
-    /** Serves a preview guest's passkey ceremonies. Returns the detach function. */
     readonly attachGuest: (guest: WebContents) => () => void;
   }
 >()("@t3tools/desktop/preview/Passkeys/PreviewPasskeys") {}
@@ -131,8 +113,7 @@ const isTrustworthyOrigin = (origin: string) => {
 };
 
 /**
- * The platform that serves preview pages' passkey ceremonies, or none. Windows
- * needs none: Chromium already hands WebAuthn to Windows Hello there.
+ * Windows needs none: Chromium already hands WebAuthn to Windows Hello there.
  */
 const backendFor = (platform: NodeJS.Platform): PasskeyBackend | undefined =>
   platform === "darwin" ? macPasskeyBackend : undefined;
@@ -191,7 +172,6 @@ const make = Effect.gen(function* () {
         // be trusted for the origin. Read the committed origin before any await:
         // the frame object outlives a navigation.
         const origin = frame.origin;
-        // Like Chromium, only a focused page may open the sheet, one at a time.
         if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
           return notAllowed;
         }
@@ -224,8 +204,6 @@ const make = Effect.gen(function* () {
         guest.ipc.removeHandler(PASSKEY_GET_CHANNEL);
       };
       detach();
-      // Option shapes are the page's to get wrong: the native layer validates
-      // them and answers with a TypeError.
       guest.ipc.handle(
         PASSKEY_CREATE_CHANNEL,
         (event, publicKey: PublicKeyCredentialCreationOptions) =>

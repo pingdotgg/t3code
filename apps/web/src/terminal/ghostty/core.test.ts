@@ -28,9 +28,6 @@ function codepointView(codepoints: ReadonlyArray<number>): DataView {
 
 describe("ghosttyCellText", () => {
   it("converts oversized grapheme clusters without hitting engine spread limits", () => {
-    // A program printing one base character followed by a huge run of
-    // combining marks packs the whole cluster into one cell; spreading that
-    // many arguments into String.fromCodePoint once overflows the call stack.
     const graphemeLength = 130_000;
     const view = new DataView(new ArrayBuffer(graphemeLength * 4));
     for (let index = 0; index < graphemeLength; index += 1) {
@@ -109,6 +106,30 @@ describe("GhosttyTerminalCore snapshots", () => {
     for (const core of cores) core.dispose();
     cores.clear();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { code: "", key: "Backspace", expected: "\x7f" },
+    { code: "Unidentified", key: "Backspace", expected: "\x7f" },
+    { code: "Backspace", key: "Backspace", expected: "\x7f" },
+    { code: "Delete", key: "Backspace", expected: "\x1b[3~" },
+    { code: "", key: "a", expected: "a" },
+    { code: "", key: "Unidentified", expected: "" },
+  ])("encodes key $key with physical code '$code'", async ({ code, key, expected }) => {
+    const core = await createCore();
+    const event = {
+      code,
+      key,
+      repeat: false,
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      getModifierState: () => false,
+    } as unknown as KeyboardEvent;
+
+    expect(core.encodeKey(event)).toBe(expected);
   });
 
   it("preserves styles, wide cells, and selection after shared memory grows", async () => {

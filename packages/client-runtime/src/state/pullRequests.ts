@@ -54,7 +54,6 @@ export class EnvironmentHttpConnectionNotReadyError extends Data.TaggedError(
 
 const LINKED_PULL_REQUEST_IDLE_TTL_MS = 5_000;
 
-/** Keep confirmed edits on the same cached reference regardless of input property order. */
 function writableQueryFamily<A, E>(
   family: (target: {
     readonly environmentId: EnvironmentId;
@@ -115,7 +114,6 @@ function createPullRequestRefreshAtomFamily<R, E>(
   });
 }
 
-/** Refresh only the live fields a linked thread renders. */
 export function createLinkedPullRequestSummaryAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
@@ -129,10 +127,10 @@ export function createLinkedPullRequestSummaryAtomFamily<R, E>(
     refreshIntervalMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    isFinal: (summary) => summary.state === "merged",
   });
 }
 
-/** The host-native stack a pull request belongs to; null where it is not stacked. */
 export function createPullRequestStackAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
@@ -163,11 +161,6 @@ export function pullRequestDetailToVcsStatus(
   };
 }
 
-/**
- * Reopening a PR within a minute reuses detail and activity. Explicit refreshes and
- * turn notifications still revalidate. Mutations run serially per environment: actions on the same
- * pull request are order-sensitive. Confirmed label and reviewer edits update cached state.
- */
 export function createPullRequestEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry | PullRequestDiffLoader.PullRequestDiffLoader | R,
@@ -219,7 +212,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
     }),
   );
-  // The stored guide only changes when somebody generates one, which refreshes it below.
   const reviewGuide = writableQueryFamily(
     createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:review-guide",
@@ -257,10 +249,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
     }),
     /**
-     * The line counts for rows the listing has already handed over. Its own query because the
-     * listing is quicker without them — measured over twelve repositories, ~4.0s against ~7.1s —
-     * so the rows arrive first and their stats a moment later. Kept longer than the listing:
-     * a change request's size only moves when somebody pushes to it.
+     * Its own query because the listing is quicker without them — measured over twelve
+     * repositories, ~4.0s against ~7.1s — so the rows arrive first and their stats a moment
+     * later.
      */
     listStats: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:list-stats",
@@ -451,12 +442,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
-    /**
-     * Its own query rather than part of the detail: the people who may be asked are only wanted
-     * once somebody opens the reviewer menu, so this atom is read then and not before. Kept fresh
-     * for a minute, because who has access to a repository changes far more slowly than the
-     * change request it is being read for.
-     */
     reviewerCandidates,
     requestReviewers: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:request-reviewers",
@@ -534,19 +519,15 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }),
     }),
     reviewGuide,
-    /** Runs a model on the environment; never fired without the reader asking for it. */
     generateReviewGuide: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:generate-review-guide",
       tag: WS_METHODS.pullRequestsGenerateReviewGuide,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsGenerateReviewGuide, input),
       onSuccess: (target, registry, result) =>
         Effect.sync(() => {
-          // The command returns the accepted run. Publish it before starting ends so readers
-          // never fall back to the empty/failed state while the follow-up query is in flight.
           updateCached(registry, reviewGuide(target), () => result, true);
         }),
     }),
-    /** Read when the label menu opens, and kept for a minute, like the reviewer candidates. */
     labelCandidates,
     setLabels: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:set-labels",
@@ -599,9 +580,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       concurrency: serialPerEnvironment,
     }),
     /**
-     * Explicit refresh: forget the server's cached answers, then re-run the reads. A separate
-     * request rather than a flag on a read, so only a person's refresh spends host requests
-     * while every silent re-read shares the cache.
+     * A separate request rather than a flag on a read, so only a person's refresh spends
+     * host requests while every silent re-read shares the cache.
      */
     invalidate: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:invalidate",

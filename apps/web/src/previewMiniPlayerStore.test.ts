@@ -104,7 +104,6 @@ describe("previewMiniPlayerStore", () => {
     expect(
       selectThreadPreviewMiniPlayerTabId(usePreviewMiniPlayerStore.getState().byThreadKey, refA),
     ).toBeNull();
-    // The same device under a new label is still the same floating source.
     usePreviewMiniPlayerStore.getState().open(refA, { ...pixel, name: "Renamed" });
     expect(
       selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, refA),

@@ -293,8 +293,6 @@ describe("Open VSX themes", () => {
   it("downloads a verified VSIX, reads JSONC includes, and pairs contributed variants", async () => {
     const zip = new JSZip();
     zip.file("extension/.gitkeep", "");
-    // Theme extensions sometimes publish their development dependencies too.
-    // Those unused files should not prevent importing the small theme payload.
     for (let index = 0; index < 3_000; index += 1) {
       zip.file(`extension/node_modules/package-${index}.js`, "");
     }
@@ -371,8 +369,6 @@ describe("Open VSX themes", () => {
         .join("");
     };
     await rebuildPackage();
-    // The public manifest is only a preflight hint. Imports must use the manifest
-    // inside the checksummed VSIX rather than this inconsistent contribution.
     const manifest = {
       contributes: { themes: [{ label: "Wrong", path: "./themes/missing.json" }] },
     };

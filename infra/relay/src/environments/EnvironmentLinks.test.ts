@@ -150,8 +150,6 @@ describe("EnvironmentLinks", () => {
         endpoint: { httpBaseUrl: "https://a.example", wsBaseUrl: "wss://a.example" } as never,
       });
       const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
-      // An environment id is public: another account linking it with its own
-      // key must not switch the opt-in on for this one.
       expect(query.sql).toContain("environment_public_key");
       expect(query.params).toEqual(["env-1", "public-key-1"]);
     }).pipe(

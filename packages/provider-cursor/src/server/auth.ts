@@ -48,7 +48,6 @@ export interface CursorAuthOptions {
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
 }
 
-/** Each instance owns its browser credential; explicit API keys always take precedence. */
 export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: CursorAuthOptions) {
   const scope = yield* Scope.Scope;
   const crypto = yield* Crypto.Crypto;
@@ -111,7 +110,6 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     return apiKey;
   });
 
-  // Keep SDK sessions and one-shot text generation inside instance-owned scopes.
   // Closing admission before draining these scopes prevents cached credentials surviving sign-out.
   const withAccess: CursorAuth["withAccess"] = (task) =>
     Effect.uninterruptibleMask((restore) =>
@@ -320,7 +318,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
                 operation: "start",
                 detail: "Cursor setup is already in progress.",
               });
-            const id = yield* crypto.randomUUIDv4.pipe(
+            const id = yield* crypto.randomUUIDv4().pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderSetupError({

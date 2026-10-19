@@ -1,13 +1,11 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface FileRevealHandle {
   getInstance(): object | undefined;
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
-// Wait for a mounted viewer and expanded rows, then apply each tree click once.
-// Keep scope stable until the diff or external file selection changes.
 export function useCodeViewFileReveal<TScope>(
   viewer: FileRevealHandle | null,
   scope: TScope,
@@ -29,5 +27,5 @@ export function useCodeViewFileReveal<TScope>(
     handledRequest.current = request;
   }, [request, scope, viewer, readyFileKeys]);
 
-  return useCallback((fileKey: string) => setRequest({ fileKey, scope }), [scope]);
+  return (fileKey: string) => setRequest({ fileKey, scope });
 }

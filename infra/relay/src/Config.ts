@@ -13,7 +13,6 @@ export type ManagedEndpointCleanupMode = typeof ManagedEndpointCleanupMode.Type;
 const decodeManagedEndpointCleanupMode = Schema.decodeUnknownEffect(ManagedEndpointCleanupMode);
 
 const RELAY_TUNNEL_CLEANUP_MODE = "RELAY_TUNNEL_CLEANUP_MODE";
-/** Separate switch for tunnels whose host never registered recovery. */
 const RELAY_LEGACY_TUNNEL_CLEANUP_MODE = "RELAY_LEGACY_TUNNEL_CLEANUP_MODE";
 
 const cleanupModeConfig = (name: string) =>
@@ -32,14 +31,8 @@ export const legacyManagedEndpointCleanupModeConfig = cleanupModeConfig(
   RELAY_LEGACY_TUNNEL_CLEANUP_MODE,
 );
 
-/**
- * Overrides the 7-day legacy grace period, in minutes, so the disposable
- * canary stage can exercise legacy cleanup. Ignored on the prod stage.
- */
 const RELAY_LEGACY_TUNNEL_GRACE_MINUTES = "RELAY_LEGACY_TUNNEL_GRACE_MINUTES";
 
-// A zero or negative override would be ignored at runtime, silently leaving
-// the canary on the 7-day grace period, so reject it when the deploy reads it.
 export const legacyTunnelGraceMinutesConfig = Config.option(
   Config.schema(
     Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThan(0))),
@@ -71,7 +64,6 @@ export class RelayConfiguration extends Context.Service<
     readonly managedEndpointNamespace: string | undefined;
     readonly managedEndpointCleanupMode?: ManagedEndpointCleanupMode;
     readonly legacyManagedEndpointCleanupMode?: ManagedEndpointCleanupMode;
-    /** Canary-only override of the legacy grace period; ignored on prod. */
     readonly legacyTunnelGraceMinutes?: number;
   }
 >()("t3code-relay/Config/RelayConfiguration") {}

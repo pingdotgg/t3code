@@ -6,32 +6,15 @@ name: Mobile EAS Production
 # fingerprint (platform-specific deps + pnpm version) and errors. On this Linux
 # runner, with corepack pinning pnpm 10.24 in eas.json, local == build.
 #
-# Every merge to main that touches the mobile app reconciles, per platform:
-#   1. Store builds: when no production build matches the current native
-#      fingerprint, or the latest build's version differs from app.config.ts,
-#      cut a new build and submit it (TestFlight + Play internal track). Native
-#      changes therefore ship a binary on merge, and bumping `version` is all
-#      it takes to start the next release train — the first build of a version enters
-#      external-TestFlight beta review immediately, and later builds of the
-#      same version auto-approve until that version is released. After App
-#      Store approval, Apple closes the release train and `version` must be
-#      bumped before another iOS build can be submitted. Releasing to the App
-#      Store stays a manual App Store Connect step.
-#   2. OTA: publish a production-channel update for each platform where at
-#      least one finished production build matches the current native
-#      fingerprint. Older binaries of the same major version with a matching
-#      fingerprint receive it too; the major version is part of the
-#      fingerprint (apps/mobile/fingerprint.config.js), so a new major never
-#      reaches the previous major's store binaries over the air. Until a
-#      build for the new fingerprint finishes, the OTA is skipped rather than
-#      published into the void.
+# Every merge reconciles native fingerprints and publishes matching OTAs.
+# iOS prereleases use the testflight profile (3.0.0); App Store binaries use
+# production and the committed app version, built manually. Both receive OTAs
+# for their own major version. Android continues using production automatically.
+# TestFlight beta review may still be required for subsequent builds.
 # Hold native-change PRs (the "📱 Native Change" label) and merge them as a
 # batch to avoid a store build per PR.
 # workflow_dispatch remains as a manual override for both modes (e.g. to
 # retry an errored build or force an OTA).
-# Manual v2-preview builds keep the production app identity and disable OTA.
-# They auto-submit to TestFlight and the Google Play closed testing track v2.
-# Select the v2 branch when dispatching a preview build.
 on:
   workflow_dispatch:
     inputs:
@@ -44,13 +27,13 @@ on:
           - build
           - update
       profile:
-        description: "Store build profile (v2-preview: TestFlight + Play closed track v2; build only)"
+        description: "production: store release; testflight: iOS 3.0.0 beta"
         required: true
         type: choice
         default: production
         options:
           - production
-          - v2-preview
+          - testflight
       platform:
         description: "Target platform"
         required: true
@@ -61,7 +44,7 @@ on:
           - android
           - all
       version:
-        description: "Optional build version override (blank uses app.config.ts; an override is committed before building)"
+        description: "Optional build version override (blank uses profile default; store overrides are committed)"
         required: false
         type: string
       message:
@@ -92,6 +75,7 @@ concurrency:
 jobs:
   production:
     name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
+    if: github.repository == 'pingdotgg/t3code'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -99,11 +83,16 @@ jobs:
       APP_VARIANT: production
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
-      - name: Reject preview OTA updates
-        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview' && inputs.mode == 'update'
+      - name: Validate TestFlight inputs
+        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'testflight'
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          VERSION: ${{ inputs.version }}
         run: |
-          echo "::error::V2 previews use store builds only. Select mode=build."
-          exit 1
+          if [ "$PLATFORM" != "ios" ] || [ -n "$VERSION" ]; then
+            echo "::error::TestFlight uses platform=ios and its fixed version. Use production for a committed store version."
+            exit 1
+          fi
 
       - id: expo-token
         name: Check for EXPO_TOKEN
@@ -119,7 +108,7 @@ jobs:
 
       - id: version_app_token
         name: Mint release app token for version override
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != ''
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != '' && inputs.profile != 'testflight'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
@@ -146,16 +135,6 @@ jobs:
           run-install: |
             args:
               - --filter=@t3tools/mobile...
-
-      - name: Verify v2 preview source
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview'
-        run: |
-          node --input-type=module -e '
-            import * as environment from "./packages/contracts/src/environment.ts";
-            if (environment.ORCHESTRATION_PROTOCOL_VERSION !== 2) {
-              throw new Error("V2 previews require a v2 source branch. Select the v2 branch when running this workflow.");
-            }
-          '
 
       - name: Expose pnpm
         if: steps.expo-token.outputs.present == 'true'
@@ -204,10 +183,10 @@ jobs:
             const path = "apps/mobile/app.config.ts";
             const source = fs.readFileSync(path, "utf8");
             const next = source.replace(
-              /^(  version: ")[^"]+(".*)$/m,
+              /^(  version: repoEnv\.T3CODE_MOBILE_VERSION \?\? ")[^"]+(".*)$/m,
               `$1${process.env.RELEASE_VERSION}$2`,
             );
-            if (next === source && !source.includes(`  version: "${process.env.RELEASE_VERSION}"`)) {
+            if (next === source && !source.includes(`  version: repoEnv.T3CODE_MOBILE_VERSION ?? "${process.env.RELEASE_VERSION}"`)) {
               throw new Error("Could not update app version");
             }
             fs.writeFileSync(path, next);
@@ -234,6 +213,10 @@ jobs:
         env:
           MOBILE_BUILD_PROFILE: ${{ inputs.profile || 'production' }}
         run: |
+          if [ "$MOBILE_BUILD_PROFILE" = "testflight" ]; then
+            T3CODE_MOBILE_VERSION="$(node -p 'require("./eas.json").build.testflight.env.T3CODE_MOBILE_VERSION')"
+            export T3CODE_MOBILE_VERSION
+          fi
           version="$(npx expo config --json --type public | jq -r '.version')"
           {
             echo "## Manual $MOBILE_BUILD_PROFILE build"
@@ -252,28 +235,51 @@ jobs:
           MOBILE_BUILD_PROFILE: ${{ inputs.profile || 'production' }}
         run: eas build --platform ${{ inputs.platform }} --profile "$MOBILE_BUILD_PROFILE" --auto-submit --non-interactive --no-wait
 
+      # @expo/fingerprint swallows autolinking errors and returns no Expo module
+      # sources, so native changes stop moving the hash and OTAs reach binaries
+      # that lack them. Refuse to publish any OTA from such a fingerprint.
+      - name: Verify fingerprints hash Expo native modules
+        if: steps.expo-token.outputs.present == 'true' && (github.event_name == 'push' || inputs.mode == 'update')
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          PLATFORM: ${{ inputs.platform || 'all' }}
+        run: |
+          if [ "$PLATFORM" = "all" ]; then platforms="ios android"; else platforms="$PLATFORM"; fi
+          failed=0
+          for platform in $platforms; do
+            # eas-cli prints an environment-loaded notice to stdout before the
+            # JSON even with --json, so discard everything before the document.
+            expo_modules="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | sed -n '/^{/,$p' | jq --arg reason "expoAutolinking${platform^}" '[.sources[] | select((.reasons // []) | index($reason))] | length')"
+            if [ "${expo_modules:-0}" -eq 0 ]; then
+              failed=1
+              echo ":x: $platform: the native fingerprint hashes no Expo native modules — OTAs and builds skipped" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit "$failed"
+
       - name: Publish OTA update (manual)
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'update'
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          MOBILE_BUILD_PROFILE: ${{ inputs.profile || 'production' }}
+          OTA_MESSAGE: ${{ inputs.message || format('Production OTA ({0})', github.sha) }}
         run: |
+          if [ "$MOBILE_BUILD_PROFILE" = "testflight" ]; then
+            T3CODE_MOBILE_VERSION="$(node -p 'require("./eas.json").build.testflight.env.T3CODE_MOBILE_VERSION')"
+            export T3CODE_MOBILE_VERSION
+          fi
           eas update \
             --channel production \
             --environment production \
             --platform ${{ inputs.platform }} \
-            --message "${{ inputs.message || format('Production OTA ({0})', github.sha) }}" \
+            --message "$OTA_MESSAGE" \
             --non-interactive
 
-      # One pass per platform. The fingerprint decides OTA vs store build:
-      #   - a finished build matches → publish the OTA;
-      #   - a queued/in-progress build matches → wait, the next merge after it
-      #     finishes publishes the OTA (no duplicate build per merge);
-      #   - no build matches → native drift, so cut and submit a new build.
-      # A version bump also cuts a build even when native code is unchanged,
-      # because only the major version is part of the fingerprint.
-      # An errored build for this fingerprint is not retried on push (it would
-      # rebuild on every merge); retry via workflow_dispatch mode=build.
+      # Reconcile each version separately because the major is in the fingerprint.
+      # Production iOS only receives OTAs here; store binaries are manual releases.
+      # Failed prerelease builds are retried manually, not on every merge.
       - id: reconcile
         name: Publish OTA or cut store build
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'push'
@@ -282,17 +288,24 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           failed=0
-          version="$(npx expo config --json --type public | jq -r '.version')"
           message="$(git log -1 --pretty=%s | head -c 120) ($(git rev-parse --short=9 HEAD))"
-          for platform in ios android; do
+          for target in ios:production ios:testflight android:production; do
+            platform="${target%%:*}"
+            profile="${target#*:}"
+            unset T3CODE_MOBILE_VERSION
+            if [ "$profile" = "testflight" ]; then
+              T3CODE_MOBILE_VERSION="$(node -p 'require("./eas.json").build.testflight.env.T3CODE_MOBILE_VERSION')"
+              export T3CODE_MOBILE_VERSION
+            fi
+            version="$(npx expo config --json --type public | jq -r '.version')"
             # eas-cli prints an environment-loaded notice to stdout before the
             # JSON even with --json, so discard everything before the document.
             hash="$(eas fingerprint:generate --platform "$platform" --environment production --json --non-interactive | sed -n '/^{/,$p' | jq -er '.hash | select(type == "string" and length > 0)')"
-            matches="$(eas build:list --platform "$platform" --build-profile production --fingerprint-hash "$hash" --limit 20 --json --non-interactive)"
+            matches="$(eas build:list --platform "$platform" --build-profile "$profile" --fingerprint-hash "$hash" --limit 20 --json --non-interactive)"
             finished="$(jq '[.[] | select(.status == "FINISHED")] | length' <<<"$matches")"
             active="$(jq '[.[] | select(.status == "NEW" or .status == "IN_QUEUE" or .status == "IN_PROGRESS")] | length' <<<"$matches")"
             errored="$(jq '[.[] | select(.status == "ERRORED")] | length' <<<"$matches")"
-            latest_version="$(eas build:list --platform "$platform" --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
+            latest_version="$(eas build:list --platform "$platform" --build-profile "$profile" --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
 
             if [ "$finished" -gt 0 ]; then
               if eas update \
@@ -301,34 +314,39 @@ jobs:
                 --platform "$platform" \
                 --message "$message" \
                 --non-interactive; then
-                echo ":white_check_mark: $platform: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+                echo ":white_check_mark: $platform/$profile: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
               else
                 failed=1
-                echo ":x: $platform: OTA publish failed (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+                echo ":x: $platform/$profile: OTA publish failed (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
               fi
+            fi
+
+            # Never rebuild the released iOS version automatically.
+            if [ "$target" = "ios:production" ]; then
+              continue
             fi
 
             reason=""
             if [ "$finished" -eq 0 ] && [ "$active" -eq 0 ]; then
               if [ "$errored" -gt 0 ]; then
-                echo ":x: $platform: the production build for fingerprint \`$hash\` errored — retry with workflow_dispatch mode=build" >> "$GITHUB_STEP_SUMMARY"
+                echo ":x: $platform/$profile: the build for fingerprint \`$hash\` errored — retry with workflow_dispatch mode=build profile=$profile platform=$platform" >> "$GITHUB_STEP_SUMMARY"
                 failed=1
                 continue
               fi
               reason="native fingerprint \`$hash\` has no build"
             elif [ "$latest_version" != "$version" ] && [ "$active" -eq 0 ]; then
-              reason="latest production build is $latest_version, app.config.ts says $version"
+              reason="latest $profile build is $latest_version, expected $version"
             fi
 
             if [ -z "$reason" ]; then
               if [ "$finished" -eq 0 ]; then
-                echo ":hourglass: $platform: production build for fingerprint \`$hash\` is in progress — OTA resumes on the next merge after it finishes" >> "$GITHUB_STEP_SUMMARY"
+                echo ":hourglass: $platform/$profile: build for fingerprint \`$hash\` is in progress — OTA resumes on the next merge after it finishes" >> "$GITHUB_STEP_SUMMARY"
               fi
               continue
             fi
 
             echo "$platform: $reason — building"
-            if eas build --platform "$platform" --profile production --auto-submit --non-interactive --no-wait; then
+            if eas build --platform "$platform" --profile "$profile" --auto-submit --non-interactive --no-wait; then
               echo ":building_construction: $platform: scheduled production build and submission for $version ($reason)" >> "$GITHUB_STEP_SUMMARY"
             else
               failed=1

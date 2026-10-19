@@ -53,10 +53,6 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("react/compiler-runtime", () => ({ c: hooks.useMemoCache }));
-vi.mock("lucide-react/dynamic", () => ({
-  DynamicIcon: "dynamic-icon",
-  iconNames: ["alarm-clock", "folder-code"],
-}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => testState.faviconUrl,
 }));

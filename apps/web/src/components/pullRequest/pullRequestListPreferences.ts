@@ -71,7 +71,6 @@ function resolvePreferenceStorage(
   return storage ?? (typeof window === "undefined" ? undefined : window.localStorage);
 }
 
-/** Only list controls are remembered. The selected row remains a URL and right-panel concern. */
 export function pullRequestListPreferences(
   search: PullRequestListPreferences | Schema.Schema.Type<typeof PullRequestListPreferencesSchema>,
 ): PullRequestListPreferences {
@@ -117,7 +116,5 @@ export function writePullRequestListPreferences(
       PULL_REQUEST_LIST_PREFERENCES_STORAGE_KEY,
       JSON.stringify(preferences),
     );
-  } catch {
-    // Storage can be full or denied; the URL remains the source of truth for this visit.
-  }
+  } catch {}
 }

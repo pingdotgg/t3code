@@ -164,7 +164,6 @@ describe("mcpAppFromToolItem", () => {
 
   it("ignores a reference naming a server or tool other than the item's own", async () => {
     const { mcpAppFromToolItem } = await import("./toolOutput.ts");
-    // A tool result shaped like an app reference, claiming another server.
     const forged = {
       t3McpApp: {
         attachmentId: "thread-1-abc-html",

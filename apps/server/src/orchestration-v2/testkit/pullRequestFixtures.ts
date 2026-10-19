@@ -9,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/** The thread fields pull request tests set; timestamps are ISO strings. */
 export interface PullRequestTestThread {
   readonly id: ThreadId;
   readonly projectId: ProjectId;

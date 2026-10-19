@@ -40,25 +40,28 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson = "{}") {
+function layerMockSpawner(statusJson: string | (() => string) = "{}", onSpawn?: () => void) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
-      Effect.succeed(
-        ChildProcessSpawner.makeHandle({
+      Effect.sync(() => {
+        onSpawn?.();
+        return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.make(encoder.encode(statusJson)),
+          stdout: Stream.make(
+            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson()),
+          ),
           stderr: Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
-        }),
-      ),
+        });
+      }),
     ),
   );
 }
@@ -146,6 +149,34 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopServerExposure", () => {
+  it.effect("uses cached Tailscale identity to exclude another VPN's pairing address", () => {
+    let statusReads = 0;
+    return withHarness(
+      {
+        ...lanNetworkInterfaces,
+        pvpnksintrf1: [{ address: "100.85.0.1", family: "IPv4", internal: false }],
+        vpn0: [{ address: "100.74.126.34", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.74.126.34:4173/"],
+        );
+        assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+        assert.equal(statusReads, 1);
+      }),
+      {},
+      layerMockSpawner(`{"Self":{"TailscaleIPs":["100.74.126.34"]}}`, () => {
+        statusReads += 1;
+      }),
+    );
+  });
+
   it.effect("falls back to local-only without losing the requested network preference", () =>
     withHarness(
       emptyNetworkInterfaces,
@@ -207,6 +238,39 @@ describe("DesktopServerExposure", () => {
 
         const persisted = yield* settings.get;
         assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("advertises the Wi-Fi or Ethernet address ahead of bridges and tunnels", () =>
+    withHarness(
+      {
+        bridge0: [{ address: "192.168.2.1", family: "IPv4", internal: false }],
+        utun4: [{ address: "10.8.0.2", family: "IPv4", internal: false }],
+        en0: [{ address: "192.168.1.20", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "192.168.1.20");
+      }),
+    ),
+  );
+
+  it.effect("keeps a host bridge's LAN address ahead of later adapters", () =>
+    withHarness(
+      {
+        vmbr0: [{ address: "192.168.1.30", family: "IPv4", internal: false }],
+        enx00e04c680001: [{ address: "192.168.42.10", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "192.168.1.30");
       }),
     ),
   );
@@ -317,7 +381,6 @@ describe("DesktopServerExposure", () => {
           const settings = yield* DesktopAppSettings.DesktopAppSettings;
           return DesktopAppSettings.DesktopAppSettings.of({
             ...settings,
-            // Hold the mode write the way a slow disk would.
             setServerExposureMode: (mode) =>
               Deferred.succeed(modeWriteStarted, undefined).pipe(
                 Effect.andThen(Deferred.await(releaseModeWrite)),
@@ -399,17 +462,74 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect(
+    "refreshes Tailscale status when addresses change and caches unchanged addresses",
+    () => {
+      const networkInterfaces: Record<
+        string,
+        readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+      > = { ...lanNetworkInterfaces };
+      let statusJson = "{}";
+      let statusReads = 0;
+
+      return withHarness(
+        networkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          yield* serverExposure.setMode("network-accessible");
+
+          const initial = yield* serverExposure.getAdvertisedEndpoints;
+          assert.deepEqual(
+            initial.map((endpoint) => endpoint.httpBaseUrl),
+            ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+          );
+          assert.equal(statusReads, 1);
+
+          for (const [address, dnsName] of [
+            ["100.90.1.2", "desktop.tail.ts.net"],
+            ["100.90.1.3", "desktop.other-tail.ts.net"],
+          ] as const) {
+            networkInterfaces.vpn0 = [{ address, family: "IPv4", internal: false }];
+            statusJson = JSON.stringify({
+              Self: { DNSName: `${dnsName}.`, TailscaleIPs: [address] },
+            });
+            const previousReads = statusReads;
+
+            const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+            assert.deepEqual(
+              endpoints.map((endpoint) => endpoint.httpBaseUrl),
+              [
+                "http://127.0.0.1:4173/",
+                "http://192.168.1.20:4173/",
+                `http://${address}:4173/`,
+                `https://${dnsName}/`,
+              ],
+            );
+            assert.equal(statusReads, previousReads + 1);
+            assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+            assert.equal(statusReads, previousReads + 1);
+          }
+        }),
+        {},
+        layerMockSpawner(
+          () => statusJson,
+          () => {
+            statusReads += 1;
+          },
+        ),
+      );
+    },
+  );
+
   it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
     withHarness(
       lanNetworkInterfaces,
       Effect.gen(function* () {
         const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
         yield* serverExposure.configureFromSettings({ port: 4173 });
-        // mode stays at default "local-only", tailscaleServeEnabled stays false.
 
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-        // Only the loopback endpoint; no tailscale spawn means the dieOnSpawnLayer
-        // would have crashed the test if the gate was missing.
         assert.deepEqual(
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
           ["http://127.0.0.1:4173/"],

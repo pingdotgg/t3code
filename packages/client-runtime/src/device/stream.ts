@@ -1,24 +1,6 @@
 // @effect-diagnostics globalFetch:off globalTimers:off - This browser and WebView transport runs without an Effect runtime.
 /* oxlint-disable unicorn/prefer-add-event-listener -- Each client owns its sockets and their handlers. */
 
-/**
- * Framework-free client for expo-device-hub's per-device streams, reached
- * through the T3 proxy. One class handles both platforms because the hub
- * vendors two servers with different wire formats:
- *
- * - iOS (serve-sim): video is an HTTP `stream.avcc` body of length-prefixed
- *   envelopes (`u32be length, u8 tag, payload`; tag 1 avcC description,
- *   2 keyframe, 3 delta, 4 JPEG seed) decoded with WebCodecs; input goes over
- *   `helper/ws?device=<udid>` as `[tag][json]` packets. When WebCodecs is
- *   unavailable (plain-http remote origins) the MJPEG endpoint is used as an
- *   `<img>` source instead.
- * - Android (serve-emu): one WebSocket at `ws?device=<serial>&frame-meta=1`
- *   carries H.264 access units prefixed with a 16-byte "SEMU" header
- *   (magic, version, key flag, pts) and accepts JSON gestures upstream.
- *
- * The decoder only runs while frames arrive and the viewer is attached; a
- * hidden panel calls `stop()` so an idle device costs nothing on the GPU.
- */
 import {
   createDuoControl,
   type DuoCommand,
@@ -85,11 +67,9 @@ export interface DuoPanelSinks {
 
 export interface DeviceStreamEvents {
   readonly onDuoControl?: (state: DuoControlState) => void;
-  /** A fixed panel cannot be decoded; the owner should return to the active flat feed. */
   readonly onDuoUnavailable?: (detail?: string) => void;
   readonly onStatus: (status: DeviceStreamStatus, detail?: string) => void;
   readonly onScreen: (screen: DeviceScreenSize) => void;
-  /** The proxy rejected the credential; the owner should refresh access and reconnect. */
   readonly onUnauthorized: () => void;
   /**
    * H.264 cannot be decoded here (no WebCodecs, or the simulator's profile is
@@ -97,7 +77,6 @@ export interface DeviceStreamEvents {
    * and attach it with `setMjpegImage` so the client can observe real frames.
    */
   readonly onMjpegFallback: (url: string) => void;
-  /** Whether touches and keys can currently reach the device. */
   readonly onInputConnected: (connected: boolean, detail?: string) => void;
 }
 
@@ -107,7 +86,6 @@ export interface DeviceStreamTarget {
   readonly access: DeviceHubAccess;
   /** Native iOS WebViews can use MJPEG without cross-origin fetch or secure-context support. */
   readonly preferMjpeg?: boolean;
-  /** Internal fixed-panel feeds share their parent's input session. */
   readonly panelId?: 1 | 3;
   readonly videoOnly?: boolean;
 }
@@ -123,12 +101,10 @@ const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
 
-// serve-sim binary WS message tags (browser -> helper).
 const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
 const IOS_MSG_KEY = 0x06;
 const IOS_MSG_ORIENTATION = 0x07;
-// helper -> browser.
 const IOS_TAG_SCREEN_CONFIG = 0x82;
 const IOS_TAG_INPUT_ADMITTED = 0x83;
 
@@ -148,14 +124,12 @@ function taggedJson(tag: number, payload: unknown): Uint8Array<ArrayBuffer> {
   return out;
 }
 
-/** Build the WebCodecs `avc1.PPCCLL` string from an avcC record or an SPS NAL. */
 export function avcCodecString(bytes: Uint8Array): string {
   if (bytes.length < 4) return "avc1.42E01E";
   const hex = (byte: number) => byte.toString(16).padStart(2, "0");
   return `avc1.${hex(bytes[1]!)}${hex(bytes[2]!)}${hex(bytes[3]!)}`;
 }
 
-/** Split serve-emu's SEMU-framed message into metadata and the Annex-B payload. */
 export function parseSemuPacket(raw: ArrayBuffer): {
   readonly data: Uint8Array;
   readonly isKey: boolean | null;
@@ -185,7 +159,6 @@ const isVideoSessionMessage = (text: string) => {
   }
 };
 
-/** Walk an Annex-B access unit for its keyframe flag and SPS bytes. */
 export function scanAccessUnit(buf: Uint8Array): { isKey: boolean; sps: Uint8Array | null } {
   let isKey = false;
   let sps: Uint8Array | null = null;
@@ -221,7 +194,6 @@ const AVCC_TAGS: Record<number, AvccChunk["type"] | undefined> = {
   4: "seed",
 };
 
-/** Turns a fragmented AVCC byte stream into complete envelopes. */
 export class AvccDemuxer {
   private buffer = new Uint8Array(64 * 1024);
   private length = 0;
@@ -267,7 +239,6 @@ export interface DeviceStreamClient {
   readonly start: () => void;
   readonly stop: () => void;
   /**
-   * Own the displayed MJPEG image's source and frame/error observation.
    * `stop()` detaches it; attach a fresh image for each restart.
    */
   readonly setMjpegImage: (image: HTMLImageElement | null) => void;
@@ -278,9 +249,7 @@ export interface DeviceStreamClient {
   readonly rotate: () => void;
   readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
   readonly controlDuo: (command: DuoCommand) => void;
-  /** Switch between one active feed and two fixed-panel feeds without replacing HID. */
   readonly setDuoPanels: (panels: DuoPanelSinks | null) => void;
-  /** Model UVs already map to the hardware framebuffer. */
   readonly sendRawTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
 }
 
@@ -467,7 +436,7 @@ export function createDeviceStreamClient(
       timer = null;
       if (image.naturalWidth > 0 && image.naturalHeight > 0) frameReceived();
       else {
-        // Multipart images may not emit load until the response ends. Stop checking after the first frame.
+        // Multipart images may not emit load until the response ends.
         timer = setTimeout(check, MJPEG_FRAME_CHECK_MS);
       }
     };
@@ -523,9 +492,7 @@ export function createDeviceStreamClient(
     decoderEpoch++;
     try {
       videoDecoder?.close();
-    } catch {
-      // Already closed.
-    }
+    } catch {}
     videoDecoder = null;
     awaitingKeyframe = true;
   };
@@ -568,7 +535,6 @@ export function createDeviceStreamClient(
     return decoder;
   };
 
-  /** iOS can fall back to MJPEG when the stream's H.264 profile is unsupported. */
   const configureDecoder = async (
     config: VideoDecoderConfig,
     isCurrent = () => !stopped,
@@ -645,7 +611,6 @@ export function createDeviceStreamClient(
     events.onUnauthorized();
   };
 
-  // iOS video: fetch the AVCC body and demux into the decoder.
   const readIosVideo = async () => {
     const lifecycle = generation;
     const feedGeneration = ++videoGeneration;
@@ -768,7 +733,6 @@ export function createDeviceStreamClient(
       if (response.status === 401 || response.status === 403) return handleUnauthorized();
       await response.body?.getReader().read();
     } catch {
-      // A failed prime just means the socket may take a retry to come up.
     } finally {
       clearTimeout(timeout);
       controller.abort();
@@ -812,7 +776,6 @@ export function createDeviceStreamClient(
     for (const panel of panelClients) panel.start();
   };
 
-  // iOS input socket; also carries the screen config the helper pushes.
   const connectIosInput = async () => {
     if (stopped) return;
     const session = generation;
@@ -874,9 +837,7 @@ export function createDeviceStreamClient(
             }
           }
         }
-      } catch {
-        // Ignore malformed config frames.
-      }
+      } catch {}
     };
     ws.onclose = (event) => {
       if (socket !== ws) return;
@@ -901,7 +862,6 @@ export function createDeviceStreamClient(
     ws.onerror = () => ws.close();
   };
 
-  // Android: one socket for video and input.
   const connectAndroid = () => {
     if (stopped) return;
     const ws = new WebSocket(wsUrl(`/ws?device=${device}&frame-meta=1`));

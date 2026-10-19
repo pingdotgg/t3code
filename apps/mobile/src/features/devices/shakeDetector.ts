@@ -3,14 +3,9 @@ export interface AccelerationSample {
   readonly x: number;
   readonly y: number;
   readonly z: number;
-  /** Milliseconds. */
   readonly timestamp: number;
 }
 
-/**
- * Reports a shake after two strong jolts within a short window. A single bump,
- * setting the phone down, or walking stays below the threshold or the count.
- */
 export function createShakeDetector({
   threshold = 1.8,
   window = 600,

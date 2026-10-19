@@ -2,7 +2,6 @@ import type { ThreadContextRecord, UserInputQuestion } from "@t3tools/contracts"
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
-/** Question responses carry text, so send thread chips as links with the actual thread IDs. */
 export function projectPendingUserInputAnswer(
   answer: unknown,
   threadContexts: ReadonlyArray<ThreadContextRecord>,
@@ -102,14 +101,37 @@ export function setPendingUserInputCustomAnswer(
   };
 }
 
+export function pendingUserInputRequestKey(
+  environmentId: string,
+  threadId: string | null,
+  requestId: string | undefined,
+): string {
+  return JSON.stringify([environmentId, threadId, requestId]);
+}
+
+/** Drops a thread's drafts for requests that are no longer pending. Unchanged input is returned as is. */
+export function pruneResolvedUserInputDrafts<T>(
+  draftsByRequestKey: Record<string, T>,
+  environmentId: string,
+  threadId: string,
+  pendingRequestIds: ReadonlyArray<string>,
+): Record<string, T> {
+  const threadPrefix = JSON.stringify([environmentId, threadId]).slice(0, -1);
+  const pendingKeys = new Set(
+    pendingRequestIds.map((requestId) =>
+      pendingUserInputRequestKey(environmentId, threadId, requestId),
+    ),
+  );
+  const retained = Object.entries(draftsByRequestKey).filter(
+    ([key]) => !key.startsWith(threadPrefix) || pendingKeys.has(key),
+  );
+  return retained.length === Object.keys(draftsByRequestKey).length
+    ? draftsByRequestKey
+    : Object.fromEntries(retained);
+}
+
 const DISPLACED_ANSWER_SEPARATOR = "\n\n";
 
-/**
- * Selecting an option replaces the custom answer, because a non-empty custom
- * answer outranks selected options in `resolvePendingUserInputAnswer`. Text the
- * user typed into the answer field must not vanish on that click: it moves back
- * into the thread draft, after whatever was already waiting there.
- */
 export function carryDisplacedCustomAnswerIntoPrompt(
   prompt: string,
   customAnswer: string | undefined,
