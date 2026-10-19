@@ -5,7 +5,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -17,6 +19,7 @@ import {
   type AntigravityAuth,
   type AntigravityAuthRuntime,
 } from "./AntigravityAuth.ts";
+import * as AntigravityCredentials from "./AntigravityCredentials.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const instanceId = ProviderInstanceId.make("antigravity-auth-test");
@@ -54,9 +57,12 @@ const phase = (auth: AntigravityAuth, value: ProviderAuthState["phase"], session
 const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   options: {
     readonly interactive?: boolean;
+    readonly usesBrowser?: boolean;
+    readonly profileDirectory?: string;
     readonly authorizationUrls?: ReadonlyArray<string>;
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
+    readonly credentialFileSystem?: FileSystem.FileSystem;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
   } = {},
 ) {
@@ -64,6 +70,31 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
   const events: string[] = [];
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const tokenPath = options.profileDirectory
+    ? path.join(options.profileDirectory, "antigravity-acp", "acp_token.json")
+    : undefined;
+  const readToken = (
+    tokenPath
+      ? fs
+          .exists(tokenPath)
+          .pipe(
+            Effect.flatMap((exists) =>
+              exists ? fs.readFileString(tokenPath) : Effect.succeed(null),
+            ),
+          )
+      : Effect.succeed(null)
+  ).pipe(Effect.orDie);
+  const credentials = options.profileDirectory
+    ? yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(options.profileDirectory)),
+        Effect.provideService(FileSystem.FileSystem, options.credentialFileSystem ?? fs),
+      )
+    : undefined;
+  const setupFailure = (cause: AntigravityCredentials.AntigravityCredentialsError) =>
+    new ProviderSetupError({ instanceId, operation: "credentials", detail: cause.message, cause });
+  const tokensAtClose: Array<string | null> = [];
   let receiveAuthorizationUrl:
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
     | undefined;
@@ -73,10 +104,14 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     instanceId,
     makeRuntime: (input) =>
       Effect.gen(function* () {
+        if (tokenPath && input.onAuthorizationUrl) {
+          assert.equal(yield* readToken, options.usesBrowser === false ? "previous-account" : null);
+        }
         receiveAuthorizationUrl = input.onAuthorizationUrl;
         events.push("process-open");
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
+            if (tokenPath) tokensAtClose.push(yield* readToken);
             events.push("process-close");
             yield* Deferred.succeed(closed, undefined);
           }),
@@ -104,8 +139,11 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
               return started;
             }),
           request: (method) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               events.push(method);
+              if (method === "logout" && tokenPath) {
+                yield* fs.remove(tokenPath, { force: true }).pipe(Effect.orDie);
+              }
               return {};
             }),
         } satisfies AntigravityAuthRuntime;
@@ -115,10 +153,28 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
         catalog = ["gemini-test"];
         events.push("catalog-published");
       }),
-    onSignedOut: Effect.sync(() => {
-      catalog = [];
-      events.push("catalog-cleared");
-    }),
+    onSignedOut: (credentials?.discardBackup ?? Effect.void).pipe(
+      Effect.mapError(setupFailure),
+      Effect.andThen(
+        Effect.sync(() => {
+          catalog = [];
+          events.push("catalog-cleared");
+        }),
+      ),
+    ),
+    ...(options.usesBrowser === undefined ? {} : { usesBrowser: options.usesBrowser }),
+    ...(credentials
+      ? {
+          withFreshCredentials: (
+            task: Effect.Effect<void, AcpErrors.AcpError | ProviderSetupError>,
+          ) =>
+            credentials.withFreshSignIn(task).pipe(
+              Effect.catchTags({
+                AntigravityCredentialsError: (cause) => Effect.fail(setupFailure(cause)),
+              }),
+            ),
+        }
+      : {}),
     forwardCallback: () =>
       options.forwardCallback ??
       Effect.sync(() => {
@@ -131,6 +187,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     discovered,
     closed,
     events,
+    tokensAtClose,
     catalog: () => catalog,
     forwarded: () => forwarded,
     receiveAuthorizationUrl: (url: string) =>
@@ -279,6 +336,204 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       yield* phase(harness.auth, "succeeded");
       assert.equal(harness.forwarded(), 0);
       assert.deepEqual(harness.catalog(), ["gemini-test"]);
+    }),
+  );
+
+  const makeCredentialProfile = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const profileDirectory = yield* fs.makeTempDirectoryScoped();
+    const directory = path.join(profileDirectory, "antigravity-acp");
+    yield* fs.makeDirectory(directory);
+    const tokenPath = path.join(directory, "acp_token.json");
+    yield* fs.writeFileString(tokenPath, "previous-account");
+    return { fs, profileDirectory, directory, tokenPath };
+  });
+
+  it.effect.each(["success", "cancel", "auth failure", "model failure"] as const)(
+    "changes Google accounts without losing credentials on %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const profile = yield* makeCredentialProfile;
+        const harness = yield* makeHarness({ profileDirectory: profile.profileDirectory });
+        const processScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(processScope, Exit.void));
+        yield* harness.auth
+          .withProcess(
+            Effect.gen(function* () {
+              assert.equal(
+                yield* profile.fs.readFileString(profile.tokenPath).pipe(Effect.orDie),
+                "previous-account",
+              );
+              harness.events.push("chat-close");
+              yield* Scope.close(processScope, Exit.void);
+            }),
+            Effect.void,
+          )
+          .pipe(Scope.provide(processScope));
+        const state = yield* harness.auth.controller.start(
+          owner,
+          Effect.sync(() => {
+            harness.events.push("sessions-stop");
+          }),
+        );
+        // A failed start must settle too, so an isolation regression fails instead of waiting forever.
+        const pending = yield* harness.auth.controller.subscribe(owner).pipe(
+          Stream.filter((state) => state.phase !== "starting"),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        assert.equal(pending.phase, "waiting");
+        assert.equal(pending.authorizationUrl, authorizationUrl);
+        assert.deepEqual(harness.events, [
+          "sessions-stop",
+          "chat-close",
+          "process-open",
+          "authenticate",
+        ]);
+        assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
+
+        const savedNewToken = outcome === "success" || outcome === "model failure";
+        if (savedNewToken) {
+          yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
+          yield* Deferred.succeed(harness.authenticated, undefined);
+        }
+        if (outcome === "cancel") {
+          yield* harness.auth.controller.cancel(owner, state.flowId!);
+        } else {
+          if (outcome === "success") {
+            yield* Deferred.succeed(harness.discovered, undefined);
+          } else {
+            yield* Deferred.fail(
+              outcome === "auth failure" ? harness.authenticated : harness.discovered,
+              AcpErrors.AcpRequestError.internalError("Sign-in failed"),
+            );
+          }
+          yield* phase(harness.auth, outcome === "success" ? "succeeded" : "failed");
+        }
+
+        assert.deepEqual(harness.tokensAtClose, [savedNewToken ? "chosen-account" : null]);
+        assert.equal(
+          yield* profile.fs.readFileString(profile.tokenPath),
+          savedNewToken ? "chosen-account" : "previous-account",
+        );
+        assert.deepEqual(yield* profile.fs.readDirectory(profile.directory), ["acp_token.json"]);
+      }),
+  );
+
+  it.effect("reports failed cancellation when saved credentials cannot be restored", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeCredentialProfile;
+      const backupPath = `${profile.tokenPath}.before-sign-in`;
+      let failRestore = false;
+      const restoring = yield* Deferred.make<void>();
+      const continueRestore = yield* Deferred.make<void>();
+      const credentialFileSystem = FileSystem.FileSystem.of({
+        ...profile.fs,
+        link: (from, to) =>
+          Effect.gen(function* () {
+            if (failRestore) {
+              yield* Deferred.succeed(restoring, undefined);
+              yield* Deferred.await(continueRestore);
+            }
+            yield* profile.fs.link(
+              from,
+              failRestore ? `${profile.directory}/missing/acp_token.json` : to,
+            );
+          }),
+      });
+      const harness = yield* makeHarness({
+        profileDirectory: profile.profileDirectory,
+        credentialFileSystem,
+      });
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      failRestore = true;
+      const cancellation = yield* harness.auth.controller
+        .cancel(owner, state.flowId!)
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(restoring);
+      const stopping = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(stopping.phase, "verifying");
+      assert.isTrue(
+        Exit.isFailure(yield* harness.auth.controller.start(otherOwner).pipe(Effect.exit)),
+      );
+      assert.isTrue(
+        Exit.isFailure(
+          yield* harness.auth
+            .withProcess(Effect.void, Effect.void)
+            .pipe(Effect.scoped, Effect.exit),
+        ),
+      );
+      yield* Deferred.succeed(continueRestore, undefined);
+      const result = yield* Fiber.join(cancellation);
+      const subscribed = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+
+      assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
+      assert.equal(yield* profile.fs.readFileString(backupPath), "previous-account");
+      assert.deepEqual(
+        { result: result.phase, subscribed: subscribed.phase },
+        { result: "failed", subscribed: "failed" },
+      );
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "retires the old account on sign-out and reports backup cleanup failure (%s)",
+    (failCleanup) =>
+      Effect.gen(function* () {
+        const profile = yield* makeCredentialProfile;
+        const backupPath = `${profile.tokenPath}.before-sign-in`;
+        yield* profile.fs.writeFileString(backupPath, "older-account");
+        const credentialFileSystem = FileSystem.FileSystem.of({
+          ...profile.fs,
+          remove: (file, options) =>
+            file === backupPath && failCleanup
+              ? profile.fs.remove(profile.directory) // A nonempty directory cannot be removed.
+              : profile.fs.remove(file, options),
+        });
+        const harness = yield* makeHarness({
+          profileDirectory: profile.profileDirectory,
+          credentialFileSystem,
+        });
+        const result = yield* harness.auth.controller.logout(Effect.void).pipe(Effect.exit);
+        assert.equal(Exit.isFailure(result), failCleanup);
+        const state = yield* phase(harness.auth, failCleanup ? "failed" : "idle");
+        assert.equal(
+          state.message,
+          failCleanup ? "Antigravity sign-out failed. Try again." : "Signed out of Google.",
+        );
+        assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
+        assert.equal(yield* profile.fs.exists(backupPath), failCleanup);
+        assert.deepEqual(harness.catalog(), failCleanup ? ["previous-account-model"] : []);
+        if (!failCleanup) {
+          const recreated = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+            Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+          );
+          yield* recreated.recover;
+          assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
+        }
+      }),
+  );
+
+  it.effect("leaves saved credentials available for non-browser authentication", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeCredentialProfile;
+      const harness = yield* makeHarness({
+        profileDirectory: profile.profileDirectory,
+        usesBrowser: false,
+        interactive: false,
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.equal(yield* profile.fs.readFileString(profile.tokenPath), "previous-account");
+      assert.deepEqual(yield* profile.fs.readDirectory(profile.directory), ["acp_token.json"]);
     }),
   );
 
