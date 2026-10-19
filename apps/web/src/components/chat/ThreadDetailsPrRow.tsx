@@ -279,7 +279,7 @@ export function ThreadDetailsPrRow({
             {detail.isDraft && conflicting ? (
               <div className="flex min-w-0 items-start gap-2 text-destructive">
                 <TriangleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
-                <div className="min-w-0 flex-1 wrap-break-word leading-5">
+                <div className="min-w-0 flex-1 wrap-break-word">
                   Merge conflicts with {detail.baseBranch}
                 </div>
               </div>

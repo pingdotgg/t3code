@@ -1006,7 +1006,7 @@ function SidebarThreadTooltip({
         {branchMismatch ? (
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
-            <div className="min-w-0 flex-1 wrap-break-word leading-5">
+            <div className="min-w-0 flex-1 wrap-break-word">
               You're currently checked out on another branch.
             </div>
           </div>

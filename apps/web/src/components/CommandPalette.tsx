@@ -206,6 +206,7 @@ import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sideb
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import {
+  CommandPaletteTitleIcon,
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
@@ -3274,7 +3275,9 @@ function OpenCommandPaletteDialog(props: {
       {newProjectPathPreview !== null ? (
         <div className="p-2 pb-0">
           <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
-            <FolderGit2Icon className={ITEM_ICON_CLASS} />
+            <CommandPaletteTitleIcon>
+              <FolderGit2Icon className={ITEM_ICON_CLASS} />
+            </CommandPaletteTitleIcon>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-foreground text-sm">
                 {newProjectName.length > 0 ? newProjectName : "New project"}
@@ -3293,7 +3296,7 @@ function OpenCommandPaletteDialog(props: {
         <div className="shrink-0 p-2 pb-0">
           <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Repository</div>
           <div className="flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5">
-            {remoteProjectContext.icon}
+            <CommandPaletteTitleIcon>{remoteProjectContext.icon}</CommandPaletteTitleIcon>
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="truncate text-foreground text-sm">{remoteProjectContext.title}</span>
               <span className="truncate text-muted-foreground/85 text-xs">

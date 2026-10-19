@@ -239,7 +239,7 @@ function ToastDescriptionAndExpandable({
           </div>
           <MorphIcon
             aria-hidden
-            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
+            className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
             icon={open ? ChevronUp : ChevronDown}
             strokeWidth={2.25}
           />
