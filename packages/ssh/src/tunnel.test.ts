@@ -124,8 +124,6 @@ describe("ssh tunnel scripts", () => {
       script,
       'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
-    assert.include(script, 'while ! mkdir "$T3_LOCK" 2>/dev/null; do');
-    assert.include(script, 'mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"');
     assert.include(script, 'if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then');
     assert.include(script, 'if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then');
     assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 360 ]; then');
@@ -233,7 +231,6 @@ describe("ssh tunnel scripts", () => {
 
   it("embeds the runner in the launch script byte for byte", () => {
     const runner = SshTunnel.buildRemoteT3RunnerScript(ARCHIVE);
-    assert.include(runner, 'printf \'%s\\n\' "$$" > "$T3_LOCK/pid.tmp"');
     assert.include(SshTunnel.buildRemoteLaunchScript(ARCHIVE), runner);
   });
 
@@ -1053,13 +1050,22 @@ describe("remote port picker", () => {
   );
 });
 
-const runScript = (home: string, args: ReadonlyArray<string>) =>
+const runScript = (
+  home: string,
+  args: ReadonlyArray<string>,
+  options?: {
+    path?: string;
+    stdin?: Stream.Stream<Uint8Array>;
+    onStderrLine?: (line: string) => Effect.Effect<void>;
+  },
+) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make("sh", args, {
-        env: { PATH: process.env.PATH ?? "", HOME: home },
+        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home },
         extendEnv: false,
+        ...(options?.stdin ? { stdin: { stream: options.stdin } } : {}),
       }),
     );
     const [stdout, stderr, exitCode] = yield* Effect.all(
@@ -1073,9 +1079,11 @@ const runScript = (home: string, args: ReadonlyArray<string>) =>
         ),
         child.stderr.pipe(
           Stream.decodeText(),
+          Stream.splitLines,
+          Stream.tap((line) => options?.onStderrLine?.(line) ?? Effect.void),
           Stream.runFold(
             () => "",
-            (acc, chunk) => acc + chunk,
+            (acc, line) => `${acc}${line}\n`,
           ),
         ),
         child.exitCode.pipe(Effect.map(Number)),
@@ -1091,7 +1099,8 @@ describe("archive runner script", () => {
   const windowsHost = hostPlatform === "win32";
   const archiveVersion = "1.2.3-preview.20260911.4";
 
-  const runRunner = (home: string, runner: string) => runScript(home, [runner, "--version"]);
+  const runRunner = (home: string, runner: string, options?: Parameters<typeof runScript>[2]) =>
+    runScript(home, [runner, "--version"], options);
 
   const makeMirror = Effect.fn("makeMirror")(function* (root: string) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1127,11 +1136,45 @@ describe("archive runner script", () => {
         );
         const home = `${root}/home`;
         yield* fs.makeDirectory(home, { recursive: true });
-
-        const results = yield* Effect.all(
-          [runRunner(home, runner), runRunner(home, runner), runRunner(home, runner)],
-          { concurrency: "unbounded" },
-        );
+        // Reproduce mkdir succeeding on EEXIST, even on hosts without the uutils bug.
+        const bin = `${root}/bin`;
+        yield* fs.makeDirectory(bin);
+        for (const [name, script] of Object.entries({
+          mkdir: 'PATH=${PATH#*:}\nexec mkdir -p "$@"',
+          tar: 'echo >> "${0%/*}/installs"\necho installing >&2\nread -r release\nPATH=${PATH#*:}\nexec tar "$@"',
+          sleep: 'echo waiting >&2\nPATH=${PATH#*:}\nexec sleep "$@"',
+        })) {
+          yield* fs.writeFileString(`${bin}/${name}`, `#!/bin/sh\n${script}\n`);
+          yield* fs.chmod(`${bin}/${name}`, 0o755);
+        }
+        const path = `${bin}:${process.env.PATH ?? ""}`;
+        const installing = yield* Deferred.make<void>();
+        const contended = yield* Deferred.make<void>();
+        // Hold the first extraction until another runner either waits for the lock
+        // or incorrectly begins installing. This forces contention without timing assumptions.
+        const first = yield* runRunner(home, runner, {
+          path,
+          stdin: Stream.fromEffect(
+            Deferred.await(contended).pipe(Effect.as(new TextEncoder().encode("release\n"))),
+          ),
+          onStderrLine: (line) =>
+            line === "installing"
+              ? Deferred.succeed(installing, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(installing);
+        const contender = runRunner(home, runner, {
+          path,
+          stdin: Stream.make(new TextEncoder().encode("release\n")),
+          onStderrLine: (line) =>
+            line === "installing" || line === "waiting"
+              ? Deferred.succeed(contended, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        const results = yield* Effect.all([Fiber.join(first), contender, contender], {
+          concurrency: "unbounded",
+        });
+        assert.equal(yield* fs.readFileString(`${bin}/installs`), "\n");
         for (const result of results) {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `t3 v${archiveVersion}`);
@@ -1145,13 +1188,12 @@ describe("archive runner script", () => {
 
         const lock = `${versionsDir}/.${archiveVersion}.install.lock`;
         yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
-        yield* fs.makeDirectory(lock);
-        yield* fs.writeFileString(`${lock}/pid`, "999999\n");
+        yield* fs.writeFileString(lock, "999999\n");
         const afterDead = yield* runRunner(home, runner);
         assert.equal(afterDead.exitCode, 0, afterDead.stderr);
 
         yield* fs.remove(`${versionsDir}/${archiveVersion}`, { recursive: true });
-        yield* fs.makeDirectory(lock);
+        yield* fs.writeFileString(lock, "");
         const afterUnowned = yield* runRunner(home, runner);
         assert.equal(afterUnowned.exitCode, 0, afterUnowned.stderr);
         assert.isFalse(yield* fs.exists(lock));

@@ -461,21 +461,13 @@ t3_runtime_ready() {
 }
 if ! t3_runtime_ready; then
   mkdir -p "$HOME/.t3/runtime/versions"
-  # Concurrent launches (two clients, a retry racing a slow first run) must
-  # not both install: mkdir is the atomic lock and the ready check repeats
-  # under it.
   T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
-  # mkdir is the only portable atomic exclusive create (mv would silently
-  # nest a candidate inside an existing lock). The owner publishes its pid
-  # right after, so a lock with a live owner is never reclaimed however
-  # slow its download is, and a lock whose owner is dead is reclaimed at
-  # once. A lock with no pid at all is a crash between mkdir and the pid
-  # write; it is reclaimed after a short grace so a live owner has time to
-  # publish.
+  # uutils mkdir can report success on EEXIST, so use shell noclobber.
+  # An empty lock gets a short grace period for its owner to publish a PID.
   T3_LOCK_WAITED=0
   T3_LOCK_UNOWNED=0
-  while ! mkdir "$T3_LOCK" 2>/dev/null; do
-    T3_LOCK_OWNER="$(cat "$T3_LOCK/pid" 2>/dev/null || true)"
+  while ! (set -C; printf '%s\\n' "$$" > "$T3_LOCK") 2>/dev/null; do
+    T3_LOCK_OWNER="$(cat "$T3_LOCK" 2>/dev/null || true)"
     if [ -n "$T3_LOCK_OWNER" ]; then
       T3_LOCK_UNOWNED=0
       if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then
@@ -496,7 +488,6 @@ if ! t3_runtime_ready; then
     sleep 1
     T3_LOCK_WAITED=$((T3_LOCK_WAITED + 1))
   done
-  printf '%s\\n' "$$" > "$T3_LOCK/pid.tmp" && mv "$T3_LOCK/pid.tmp" "$T3_LOCK/pid"
   trap 'rm -rf "$T3_LOCK"' EXIT
 fi
 if ! t3_runtime_ready; then
