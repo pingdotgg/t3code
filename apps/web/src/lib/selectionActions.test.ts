@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { observeSelectionActions, resolveSelectionActionPosition } from "./selectionActions";
+import {
+  isSelectionRectVisible,
+  observeSelectionActions,
+  resolveSelectionActionPosition,
+} from "./selectionActions";
 
 function event(type: string, values: Record<string, unknown> = {}) {
   return Object.assign(new Event(type, { cancelable: true }), values);
 }
 
-function createSelectionSurface({ interactiveActions = false } = {}) {
+function createSelectionSurface({ interactiveActions = false, restoreAfterScroll = false } = {}) {
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   const view = Object.assign(new EventTarget(), {
@@ -42,6 +46,7 @@ function createSelectionSurface({ interactiveActions = false } = {}) {
     ...(interactiveActions
       ? { getActionElement: () => actionElement as unknown as HTMLElement }
       : {}),
+    restoreAfterScroll,
     onSelection,
     onDismiss,
   });
@@ -294,6 +299,69 @@ describe("selection action gestures", () => {
     expect(surface.onSelection).toHaveBeenCalledOnce();
   });
 
+  it("restores after scrolling settles with a fresh anchor, without interrupting a held drag", () => {
+    const surface = createSelectionSurface({ restoreAfterScroll: true });
+    surface.down();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.change();
+    surface.flush(1000);
+    expect(surface.onSelection).not.toHaveBeenCalled();
+    surface.up({ x: 420, y: 310 });
+    surface.flush();
+    expect(surface.onSelection.mock.calls).toEqual([[{ x: 420, y: 310 }]]);
+
+    surface.onDismiss.mockClear();
+    surface.element.dispatchEvent(event("scroll"));
+    expect(surface.onDismiss).toHaveBeenCalledWith("cancel");
+    surface.flush(100);
+    surface.element.dispatchEvent(event("scroll"));
+    surface.change();
+    surface.flush(100);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+    surface.flush(50);
+    expect(surface.onSelection.mock.calls).toEqual([[{ x: 420, y: 310 }], [null]]);
+    surface.flush(1000);
+    expect(surface.onSelection).toHaveBeenCalledTimes(2);
+
+    surface.down();
+    surface.up();
+    vi.advanceTimersByTime(0);
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush(149);
+    expect(surface.onSelection).toHaveBeenCalledTimes(2);
+    surface.flush(1);
+    expect(surface.onSelection.mock.calls).toEqual([[{ x: 420, y: 310 }], [null], [null]]);
+  });
+
+  it("keeps Escape during scroll settling dismissed through later scrolling", () => {
+    const surface = createSelectionSurface({ restoreAfterScroll: true });
+    surface.down();
+    surface.up();
+    surface.flush();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.key("Escape");
+    surface.change();
+    surface.flush(1000);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+
+    surface.key("PageDown");
+    surface.element.dispatchEvent(event("scroll"));
+    surface.change();
+    surface.flush(1000);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+
+    surface.document.dispatchEvent(event("keydown", { key: "ArrowRight", shiftKey: true }));
+    surface.change();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush(150);
+    expect(surface.onSelection.mock.calls).toEqual([[{ x: 300, y: 200 }], [null]]);
+    surface.key("Escape");
+    surface.down();
+    surface.up();
+    surface.flush();
+    expect(surface.onSelection).toHaveBeenCalledTimes(3);
+  });
+
   it("cancels a queued animation frame when a new press supersedes the release", () => {
     const surface = createSelectionSurface();
     surface.down();
@@ -384,6 +452,30 @@ describe("interactive selection actions", () => {
     surface.up({ x: 520, y: 320 });
     surface.flush();
     expect(surface.onSelection).toHaveBeenCalledWith({ x: 520, y: 320 });
+  });
+});
+
+describe("selection visibility", () => {
+  const rect = (left: number, top: number, right: number, bottom: number) => ({
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+  });
+  const timeline = rect(0, 0, 800, 600);
+  const codeBlock = rect(100, 200, 400, 260);
+
+  it("only shows text overlapping both the timeline and its nested scroller", () => {
+    expect(isSelectionRectVisible(rect(150, 210, 220, 226), [timeline, codeBlock])).toBe(true);
+    expect(isSelectionRectVisible(rect(420, 210, 480, 226), [timeline, codeBlock])).toBe(false);
+    expect(isSelectionRectVisible(rect(380, 210, 460, 226), [timeline, codeBlock])).toBe(true);
+    expect(
+      isSelectionRectVisible(rect(150, -40, 220, -24), [timeline, rect(100, -50, 400, 260)]),
+    ).toBe(false);
+    expect(
+      isSelectionRectVisible(rect(-200, 210, 220, 226), [timeline, rect(-200, 200, -20, 260)]),
+    ).toBe(false);
   });
 });
 
