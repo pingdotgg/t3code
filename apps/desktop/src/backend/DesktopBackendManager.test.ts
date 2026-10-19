@@ -431,6 +431,30 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
+  it.effect("reports a SIGKILL exit without an exit code", () =>
+    Effect.gen(function* () {
+      const exitCause = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "exitCode",
+        cause: new Error("Process interrupted due to receipt of signal: 'SIGKILL'"),
+      });
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(makeProcess({ exitCode: Effect.fail(exitCause) })),
+        ),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
+
+      assert.deepEqual(exit, { code: Option.none(), reason: "killed by SIGKILL" });
+    }),
+  );
+
   it.effect("reports output stream failures with process and stream context", () =>
     Effect.gen(function* () {
       const outputCause = PlatformError.systemError({
