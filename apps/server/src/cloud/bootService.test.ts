@@ -602,6 +602,18 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(yield* newer.restart).toBe("restarted");
         expect((yield* newer.status).problems).not.toContain("restart-pending");
         expect((yield* newer.status).current).toBe(true);
+
+        const latest = yield* makeService(undefined, "1.2.5");
+        yield* latest.install({ start: true });
+        expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.2.5",
+        });
+        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.5/t3");
+        expect((yield* latest.status).current).toBe(true);
+        expect(
+          yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+        ).toBe(false);
       }),
   );
 
