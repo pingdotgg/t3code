@@ -1026,7 +1026,7 @@ export const make = Effect.gen(function* () {
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });
-      const window = yield* focusedMainWindow;
+      const window = yield* electronWindow.main;
       if (Option.isNone(window) || window.value.isDestroyed()) {
         return;
       }
