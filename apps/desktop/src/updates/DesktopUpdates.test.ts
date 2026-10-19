@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -448,6 +449,97 @@ describe("DesktopUpdates", () => {
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect(
+    "recovers a timed-out SSH drain and owns a connection that finishes after recovery",
+    () =>
+      Effect.gen(function* () {
+        const launching = yield* Deferred.make<void>();
+        const releaseLaunch = yield* Deferred.make<void>();
+        const backendStopped = yield* Deferred.make<void>();
+        const installFinished = yield* Deferred.make<void>();
+        const ssh = makeSshHarness({
+          beforeRemoteLaunch: Deferred.succeed(launching, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseLaunch)),
+          ),
+        });
+        const harness = makeHarness({
+          sshLayer: ssh.layer,
+          stopBackend: Deferred.succeed(backendStopped, undefined).pipe(Effect.asVoid),
+        });
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            const environment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+            const desktopState = yield* DesktopState.DesktopState;
+            const pool = yield* DesktopBackendPool.DesktopBackendPool;
+            yield* updates.configure;
+            harness.emit("update-downloaded", { version: "1.2.4" });
+            yield* flushCallbacks;
+
+            const connecting = yield* environment
+              .ensureEnvironment(ssh.target)
+              .pipe(Effect.forkScoped);
+            yield* Deferred.await(launching);
+            const installing = yield* updates.install.pipe(
+              Effect.ensuring(Deferred.succeed(installFinished, undefined)),
+              Effect.forkScoped,
+            );
+            yield* TestClock.adjust(Duration.zero);
+            assert.isTrue(yield* Ref.get(desktopState.quitting));
+            assert.isFalse(
+              yield* Deferred.isDone(backendStopped),
+              "a blocked SSH drain must not stop a running backend",
+            );
+            assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+            const refused = yield* environment
+              .ensureEnvironment({ ...ssh.target, alias: "another-host", hostname: "another-host" })
+              .pipe(Effect.exit);
+            assert.isTrue(Exit.isFailure(refused), "new ensures must wait for update recovery");
+
+            // Allow ample preparation time without reaching the archive launch's 15-minute limit.
+            yield* TestClock.adjust(Duration.minutes(1));
+            assert.isTrue(
+              yield* Deferred.isDone(installFinished),
+              "install must abort its blocked SSH drain before remote startup finishes",
+            );
+            const result = yield* Fiber.join(installing);
+            assert.isTrue(result.accepted);
+            assert.isFalse(result.completed);
+            assert.equal(result.state.status, "error");
+            assert.equal(result.state.errorContext, "install");
+            assert.equal(harness.quitAndInstalls(), 0);
+            assert.isFalse(yield* Ref.get(desktopState.quitting));
+            assert.isFalse(yield* updates.isInstallActive);
+            assert.isFalse(yield* updates.isActionActive);
+            assert.isFalse(yield* Deferred.isDone(backendStopped));
+            assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+            assert.notInclude(harness.installSteps, "startBackend");
+            assert.notInclude(harness.installSteps, "destroyAll");
+            assert.equal(harness.updateRestartMarkers.size, 0);
+            assert.equal(harness.installRecords.size, 0);
+
+            yield* Deferred.succeed(releaseLaunch, undefined);
+            const lateConnection = yield* Fiber.join(connecting);
+            assert.isTrue(ssh.isReachable(lateConnection.httpBaseUrl));
+            assert.isTrue(ssh.isReachable(lateConnection.wsBaseUrl));
+            const reconnected = yield* environment.ensureEnvironment(ssh.target);
+            assert.equal(reconnected.httpBaseUrl, lateConnection.httpBaseUrl);
+            assert.equal(reconnected.wsBaseUrl, lateConnection.wsBaseUrl);
+            assert.equal(ssh.forwardCount(), 1, "the late forward must remain registered");
+            assert.equal(ssh.remoteStopCount(), 0);
+            assert.equal(
+              harness.quitAndInstalls(),
+              0,
+              "an aborted drain must never hand off later",
+            );
+          }).pipe(Effect.ensuring(Deferred.succeed(releaseLaunch, undefined))),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+        assert.equal(ssh.forwardCount(), 0);
+        assert.equal(ssh.remoteStopCount(), 1, "normal shutdown must own the late managed remote");
+      }),
+  );
 
   it.effect("flags an install that did not apply and keeps the flag through checks", () => {
     const harness = makeHarness({

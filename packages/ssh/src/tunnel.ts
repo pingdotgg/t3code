@@ -1803,11 +1803,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
             const entry = tunnels.get(key);
             if (entry === undefined) return;
             yield* closeTunnelEntry(entry);
-          }),
+          }).pipe(Effect.uninterruptible),
         ),
       { concurrency: "unbounded", discard: true },
     );
-  }).pipe(Effect.uninterruptible);
+  });
 
   const reopenLocalForwards = Effect.sync(() => {
     forwardsClosed = false;

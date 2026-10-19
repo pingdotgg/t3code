@@ -340,7 +340,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 }
 
 // Model the process-owned loopback listeners while exercising the real desktop SSH service.
-export function makeSshHarness() {
+export function makeSshHarness(
+  options: { readonly beforeRemoteLaunch?: Effect.Effect<void> } = {},
+) {
   const listeners = new Set<number>();
   const occupiedPorts = new Set<number>();
   let remoteStops = 0;
@@ -374,7 +376,11 @@ export function makeSshHarness() {
       const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const stdout = forward
         ? Stream.empty
-        : Stream.make(new TextEncoder().encode('{"remotePort":3773,"serverKind":"managed"}\n'));
+        : Stream.fromEffect(
+            (args.includes("-l") ? (options.beforeRemoteLaunch ?? Effect.void) : Effect.void).pipe(
+              Effect.as(new TextEncoder().encode('{"remotePort":3773,"serverKind":"managed"}\n')),
+            ),
+          );
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(123),
         stdout,
