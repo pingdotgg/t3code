@@ -816,6 +816,7 @@ function ThreadRouteContent(
         projectId: selectedThread.projectId,
         projectCwd: selectedThreadProject.workspaceRoot,
         text: setupMessage.text,
+        titleText: selectedThread.title,
         ...(setupMessage.context ? { context: setupMessage.context } : {}),
         uploadedAttachments: setupMessage.attachments,
         modelSelection: selectedThread.modelSelection,

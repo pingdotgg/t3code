@@ -10,7 +10,6 @@ import {
 } from "./ChatView.logic";
 import * as DateTime from "effect/DateTime";
 import { restorePlanFollowUpComposer } from "./ChatView.logic";
-import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import {
   isPaintOnlyThreadTimeline,
@@ -81,6 +80,7 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
   wasBootstrapThreadNotCreated,
@@ -341,7 +341,6 @@ import {
 import {
   ensureInlineContextReferences,
   removeInlineContextReference,
-  stripInlineContextReferences,
 } from "../lib/composerContextReferences";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
@@ -6598,11 +6597,10 @@ export default function ChatView(props: ChatViewProps) {
               : composerAttachmentsSnapshot[index]!.id,
           ),
         );
-        const title = truncate(
-          assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim() ||
-            composerAttachmentsSnapshot[0]?.name ||
-            "New thread",
-        );
+        const title = deriveThreadTitleSeed({
+          text: messageTextForSend,
+          attachments: composerAttachmentsSnapshot,
+        });
         promptRef.current = "";
         clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
@@ -6851,30 +6849,21 @@ export default function ChatView(props: ChatViewProps) {
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
 
-    let firstComposerImageName: string | null = null;
-    if (composerImagesSnapshot.length > 0) {
-      const firstComposerImage = composerImagesSnapshot[0];
-      if (firstComposerImage) {
-        firstComposerImageName = firstComposerImage.name;
-      }
-    }
-    let titleSeed = assistantCitationsToPlainText(stripInlineContextReferences(trimmed)).trim();
-    if (!titleSeed) {
-      if (firstComposerImageName) {
-        titleSeed = `Image: ${firstComposerImageName}`;
-      } else if (composerFilesSnapshot[0]) {
-        titleSeed = `File: ${composerFilesSnapshot[0].name}`;
-      } else if (composerTerminalContextsSnapshot.length > 0) {
-        titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
-      } else if (composerReviewCommentsSnapshot.length > 0) {
-        titleSeed = `Review: ${reviewCommentContextLabel(composerReviewCommentsSnapshot[0]!)}`;
-      } else if (composerPreviewAnnotationsSnapshot.length > 0) {
-        titleSeed = previewAnnotationContextLabel(composerPreviewAnnotationsSnapshot[0]!);
-      } else {
-        titleSeed = "New thread";
-      }
-    }
-    const title = truncate(titleSeed);
+    const title = deriveThreadTitleSeed({
+      text: messageTextForSend,
+      attachments: composerAttachmentsSnapshot,
+      fallbackLabels: [
+        composerTerminalContextsSnapshot[0]
+          ? formatTerminalContextLabel(composerTerminalContextsSnapshot[0])
+          : undefined,
+        composerReviewCommentsSnapshot[0]
+          ? `Review: ${reviewCommentContextLabel(composerReviewCommentsSnapshot[0])}`
+          : undefined,
+        composerPreviewAnnotationsSnapshot[0]
+          ? previewAnnotationContextLabel(composerPreviewAnnotationsSnapshot[0])
+          : undefined,
+      ],
+    });
     const threadCreateModelSelection = createModelSelection(
       ctxSelectedModelSelection.instanceId,
       ctxSelectedModel || activeProjectDefaultModelSelection?.model || DEFAULT_MODEL,
