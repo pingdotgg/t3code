@@ -208,7 +208,12 @@ describe("fixed-time scheduled tasks", () => {
       ...legacyTask,
       schedule: { type: "fixed_time", timeOfDay: "14:30" },
     });
-    expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "14:30" });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "fixed_time",
+      timeOfDay: "14:30",
+      monthDays: [],
+      months: [],
+    });
     // A native time input reports "" when it is cleared or only partly filled.
     expect(scheduleFromDraft({ ...draft, timeOfDay: "" })).toBeNull();
   });
@@ -452,10 +457,10 @@ function clock(hour12: boolean, hour: number, minute: number) {
 
 it("appends the server zone only to fixed-time schedule labels", () => {
   expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "24-hour", "Etc/UTC")).toBe(
-    `Daily at ${clock(false, 16, 31)} UTC`,
+    `At ${clock(false, 16, 31)} UTC every day`,
   );
   expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" }, "24-hour")).toBe(
-    `Daily at ${clock(false, 9, 0)}`,
+    `At ${clock(false, 9, 0)} every day`,
   );
   expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "24-hour", "Etc/UTC")).toBe(
     "Every 1 min",
@@ -476,17 +481,17 @@ it("labels the weekdays a schedule runs on, whatever order or repeats it stores"
       "en-US",
     );
   const at = clock(false, 9, 0);
-  expect(label([1, 1, 2, 3, 4])).toBe(`Mon, Tue, Wed, Thu at ${at}`);
-  expect(label([0, 1, 2, 3, 4, 5, 6])).toBe(`Daily at ${at}`);
-  expect(label([5, 1, 3])).toBe(`Mon, Wed, Fri at ${at}`);
+  expect(label([1, 1, 2, 3, 4])).toBe(`At ${at} on Mon, Tue, Wed, and Thu`);
+  expect(label([0, 1, 2, 3, 4, 5, 6])).toBe(`At ${at} every day`);
+  expect(label([5, 1, 3])).toBe(`At ${at} on Mon, Wed, and Fri`);
 });
 
 it("shows schedule times in the Time format setting", () => {
   const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
-  expect(scheduleLabel(daily, "24-hour")).toBe(`Daily at ${clock(false, 17, 30)}`);
-  expect(scheduleLabel(daily, "12-hour")).toBe(`Daily at ${clock(true, 17, 30)}`);
+  expect(scheduleLabel(daily, "24-hour")).toBe(`At ${clock(false, 17, 30)} every day`);
+  expect(scheduleLabel(daily, "12-hour")).toBe(`At ${clock(true, 17, 30)} every day`);
   const midnight = scheduleLabel({ type: "fixed_time", timeOfDay: "0:05" }, "24-hour");
-  expect(midnight).toBe(`Daily at ${clock(false, 0, 5)}`);
+  expect(midnight).toBe(`At ${clock(false, 0, 5)} every day`);
   // An h24 clock would print midnight as 24:05 in both the label and the helper.
   expect(midnight).not.toContain("24");
 
@@ -501,4 +506,54 @@ it("shows schedule times in the Time format setting", () => {
     }).format(runAt);
     expect(scheduleLabel(once, hour12 ? "12-hour" : "24-hour")).toBe(`Once, ${dateTime}`);
   }
+});
+
+describe("fixed-time scheduled tasks", () => {
+  const fixedTask = (schedule: ScheduledTask["schedule"]): ScheduledTask => ({
+    ...legacyTask,
+    schedule,
+  });
+
+  it("round-trips days of the month limited to some months", () => {
+    const schedule = {
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      monthDays: [5],
+      months: [1, 4, 7, 10],
+    } as const;
+    const draft = taskToDraft(fixedTask(schedule));
+    expect(draft.dayMode).toBe("month");
+    expect(draft.limitMonths).toBe(true);
+    expect(scheduleFromDraft(draft)).toEqual(schedule);
+    // Switching the limit off runs every month but keeps the choice for switching back.
+    expect(scheduleFromDraft({ ...draft, limitMonths: false })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      monthDays: [5],
+      months: [],
+    });
+  });
+
+  it("sorts days numerically and sends only the active day selection", () => {
+    const draft = taskToDraft(fixedTask({ type: "fixed_time", timeOfDay: "09:00" }));
+    expect(
+      scheduleFromDraft({ ...draft, dayMode: "month", monthDays: new Set([31, 4, 10]) }),
+    ).toEqual({ type: "fixed_time", timeOfDay: "09:00", monthDays: [4, 10, 31], months: [] });
+    expect(scheduleFromDraft({ ...draft, dayMode: "week", weekdays: new Set([5, 1]) })).toEqual({
+      type: "fixed_time",
+      timeOfDay: "09:00",
+      weekdays: [1, 5],
+      monthDays: [],
+      months: [],
+    });
+  });
+
+  it("sends empty lists for selections that cover every day or month", () => {
+    const draft = taskToDraft(fixedTask({ type: "fixed_time", timeOfDay: "09:00" }));
+    expect(draft.dayMode).toBe("week");
+    expect(draft.limitMonths).toBe(false);
+    const everyDay = { type: "fixed_time", timeOfDay: "09:00", monthDays: [], months: [] };
+    expect(scheduleFromDraft(draft)).toEqual(everyDay);
+    expect(scheduleFromDraft({ ...draft, limitMonths: true })).toEqual(everyDay);
+  });
 });

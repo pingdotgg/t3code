@@ -53,6 +53,7 @@ Enable **Settings → Source control & issues → Automatically pull** to fast-f
 Create and manage scheduled tasks in **Settings → Scheduled tasks** (web, desktop, and mobile).
 
 - **Schedules**: Recurring fixed-time schedules use the target environment's time zone. **Once** uses your local time zone (runs on reconnect if offline).
+- **Days of the month**: **At a time** can run on chosen days of the month instead of days of the week, optionally only in chosen months (e.g., the 5th of January, April, July, and October for a quarterly report). A day a month lacks, such as the 31st, runs on that month's last day.
 - **Destination**: Choose **New thread each run**, **One thread (continue conversation)**, or **One thread (fresh session each run)**. Deleting a target thread deletes tasks bound to it; archiving a target thread causes runs to fail (settle it instead).
 - **Controls**: Edit, pause, resume, run now (except webhook tasks), or delete from the list.
 
