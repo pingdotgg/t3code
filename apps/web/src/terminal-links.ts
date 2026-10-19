@@ -34,6 +34,9 @@ const QUOTED_FILE_PATH_PATTERN =
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
+// A question mark is legal in filenames; only exclude query-bearing request targets.
+const REQUEST_ROUTE_PATTERN =
+  /(?:^|[\s"'`])(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE|proxying)\s+["'`]?(?:\/|[A-Za-z0-9_-]+\/)[^\s?]*\?\S*/g;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
@@ -99,13 +102,21 @@ function collectMatches(
 }
 
 export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
+  const requestRoutes = Array.from(line.matchAll(REQUEST_ROUTE_PATTERN), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
   const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
   const quotedMatches = collectMatches(line, "path", QUOTED_FILE_PATH_PATTERN, urlMatches);
   const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, [
     ...urlMatches,
     ...quotedMatches,
   ]);
-  return [...urlMatches, ...quotedMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+  return [...urlMatches, ...quotedMatches, ...pathMatches]
+    .filter(
+      (match) => match.kind === "url" || !requestRoutes.some((route) => overlaps(match, route)),
+    )
+    .toSorted((a, b) => a.start - b.start);
 }
 
 export function isTerminalUrl(value: string): boolean {

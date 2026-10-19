@@ -171,6 +171,37 @@ describe("extractTerminalLinks", () => {
       { kind: "path", text, start, end: start + text.length },
     ]);
   });
+
+  it.each([
+    " GET /api/trpc/post.list,user.me?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D 200 in 35ms",
+    "GET /api?+debug 200",
+    'Started GET "/posts?page=2" for ::1',
+    "proxying api/trpc/post.list?batch=1 to the backend",
+  ])("does not turn a logged request route into an editor link: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
+  });
+
+  it("keeps file and URL links before and after a logged request route", () => {
+    const before = "src/server.ts:12";
+    const after = "/app/bin/server:3:7";
+    const url = "https://example.com/api/users?id=42";
+    const line = `${before} GET /api/users?id=42 200 ${after} ${url}`;
+    const afterStart = line.indexOf(after);
+    const urlStart = line.indexOf(url);
+
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: before, start: 0, end: before.length },
+      { kind: "path", text: after, start: afterStart, end: afterStart + after.length },
+      { kind: "url", text: url, start: urlStart, end: urlStart + url.length },
+    ]);
+  });
+
+  it("keeps a question mark inside a filesystem path", () => {
+    const path = "/tmp/report?draft";
+    expect(extractTerminalLinks(`wrote ${path}`)).toEqual([
+      { kind: "path", text: path, start: 6, end: 6 + path.length },
+    ]);
+  });
 });
 
 describe("collectWrappedTerminalLinkLine", () => {
