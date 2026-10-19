@@ -453,7 +453,6 @@ const ProviderAdapterFailureReason = Schema.Literals([
   "attachment_unreadable",
 ]);
 export type ProviderAdapterFailureReason = typeof ProviderAdapterFailureReason.Type;
-/** The app deliberately closed an exclusive session to move its thread's workspace. */
 export class ProviderAdapterSessionDetached extends Schema.TaggedError<ProviderAdapterSessionDetached>()(
   "ProviderAdapterSessionDetached",
   {
@@ -675,8 +674,10 @@ export interface ProviderAdapterV2SessionRuntime {
   /** False keeps conversations alive when the provider cannot restore them after a restart. */
   readonly canResumeAfterRestart?: boolean;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
-  /** Manager runtimes broadcast independent subscriptions; adapters may expose only a single-consumer stream. */
-  readonly subscribeEvents?: Effect.Effect<ProviderAdapterV2EventSubscription>;
+  /** Manager subscriptions broadcast independently; a thread ID limits detach to its stream. */
+  readonly subscribeEvents?: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<ProviderAdapterV2EventSubscription>;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   /** Root-subscription probe; replacement checks opt in to subagents owned by the live process. */
   readonly hasPendingBackgroundWorkForThread?: (

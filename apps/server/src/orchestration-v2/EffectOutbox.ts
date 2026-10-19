@@ -41,7 +41,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
     reason: Schema.optional(Schema.Literal("workspace_changed")),
-    /** Set on terminal detaches (thread archive/delete): revoke the thread's MCP credentials. */
     revokeMcpCredential: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({

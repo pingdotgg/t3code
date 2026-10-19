@@ -2019,8 +2019,8 @@ it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shu
         modelSelection,
         runtimePolicy,
       });
-      const bufferedSubscription = yield* runtime.subscribeEvents!;
-      const activeSubscription = yield* runtime.subscribeEvents!;
+      const bufferedSubscription = yield* runtime.subscribeEvents!();
+      const activeSubscription = yield* runtime.subscribeEvents!();
       const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterQueue);
       yield* Queue.offer(adapterQueue!, {
@@ -2062,7 +2062,7 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
         modelSelection,
         runtimePolicy,
       });
-      const subscription = yield* runtime.subscribeEvents!;
+      const subscription = yield* runtime.subscribeEvents!();
       const collected = yield* subscription.events.pipe(Stream.runCollect, Effect.forkScoped);
       const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterQueue);
@@ -4368,8 +4368,8 @@ it.effect.each([
         const subscribe = firstRuntime.subscribeEvents;
         assert.isDefined(subscribe);
         if (subscribe === undefined) return;
-        const firstSubscription = yield* subscribe;
-        const secondSubscription = yield* subscribe;
+        const firstSubscription = yield* subscribe();
+        const secondSubscription = yield* subscribe();
         const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
         assert.isDefined(queue);
         yield* Queue.offer(queue!, {

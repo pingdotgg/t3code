@@ -256,7 +256,6 @@ const make = Effect.gen(function* () {
         );
         const worktreePath = worktree.worktree.path;
 
-        // Setup errors are reported after the handoff has already committed.
         const reportFailed = (logMessage: string) =>
           Effect.catchCause((cause: Cause.Cause<unknown>) => {
             const detail = errorMessage(Cause.squash(cause));
@@ -329,8 +328,6 @@ const make = Effect.gen(function* () {
           ),
         );
 
-        // Binding and continuation events share the detach effect's commit, so
-        // even an immediately executing detach sees the durable queued message.
         const bound = yield* recheckAndBind;
         const queued = bound.storedEvents.some(
           ({ event }) => event.type === "run.created" && event.payload.status === "queued",
