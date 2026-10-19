@@ -16,7 +16,6 @@ export interface HtmlRenderReference {
   readonly title: string;
   readonly height: number;
   readonly heights?: ReadonlyArray<readonly [width: number, height: number]>;
-  readonly outline?: string;
 }
 
 export const HTML_RENDER_MEASURE_WIDTHS = [320, 375, 430, 520, 640, 728, 860, 1000, 1144] as const;
@@ -47,7 +46,7 @@ function readMeasuredHeights(value: unknown) {
 
 export function readHtmlRenderReference(value: unknown): HtmlRenderReference | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { attachmentId, title, height, heights, outline } = value as Record<string, unknown>;
+  const { attachmentId, title, height, heights } = value as Record<string, unknown>;
   if (
     typeof attachmentId !== "string" ||
     attachmentId.length === 0 ||
@@ -64,9 +63,6 @@ export function readHtmlRenderReference(value: unknown): HtmlRenderReference | u
     title: title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
     height: clampHtmlRenderHeight(height),
     ...(measured === undefined ? {} : { heights: measured }),
-    ...(measured !== undefined && typeof outline === "string" && OUTLINE_PATTERN.test(outline)
-      ? { outline }
-      : {}),
   };
 }
 
@@ -75,7 +71,6 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
     left.attachmentId === right.attachmentId &&
     left.title === right.title &&
     left.height === right.height &&
-    left.outline === right.outline &&
     (left.heights ?? []).length === (right.heights ?? []).length &&
     (left.heights ?? []).every(
       ([width, height], index) =>
@@ -111,65 +106,6 @@ export function htmlRenderFrameHeight(
       ? reference.height
       : HTML_RENDER_MAX_HEIGHT;
   return clampHtmlRenderHeight(Math.min(cap, contentHeight ?? measuredHeight(heights, width)));
-}
-
-export interface HtmlRenderOutlineBox {
-  readonly kind: "text" | "media" | "table";
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-  readonly lines: number;
-}
-
-const OUTLINE_KINDS = { t: "text", m: "media", g: "table" } as const;
-const OUTLINE_LETTERS = { text: "t", media: "m", table: "g" } as const;
-const OUTLINE_UNIT = 4;
-export const HTML_RENDER_OUTLINE_MAX_BOXES = 48;
-const OUTLINE_BOX = "[tmg]\\d{1,4},\\d{1,4},[1-9]\\d{0,3},[1-9]\\d{0,3},[1-9]\\d{0,2}";
-const OUTLINE_PATTERN = new RegExp(
-  `^${OUTLINE_BOX}(?:;${OUTLINE_BOX}){0,${HTML_RENDER_OUTLINE_MAX_BOXES - 1}}$`,
-);
-
-export function encodeHtmlRenderOutline(
-  boxes: ReadonlyArray<HtmlRenderOutlineBox>,
-): string | undefined {
-  const unit = (value: number) => Math.min(9_999, Math.max(0, Math.round(value / OUTLINE_UNIT)));
-  const encoded = boxes
-    .slice(0, HTML_RENDER_OUTLINE_MAX_BOXES)
-    .flatMap((box) =>
-      unit(box.width) > 0 && unit(box.height) > 0
-        ? [
-            `${OUTLINE_LETTERS[box.kind]}${unit(box.x)},${unit(box.y)},${unit(box.width)},${unit(box.height)},${Math.min(999, Math.max(1, Math.round(box.lines)))}`,
-          ]
-        : [],
-    )
-    .join(";");
-  return encoded === "" ? undefined : encoded;
-}
-
-export function htmlRenderOutlineBoxes(
-  reference: HtmlRenderReference,
-  width: number,
-): ReadonlyArray<HtmlRenderOutlineBox> {
-  const heights = reference.heights;
-  if (reference.outline === undefined || heights === undefined || heights.length === 0) return [];
-  const scaleX = width / HTML_RENDER_COLUMN_WIDTH;
-  const scaleY = measuredHeight(heights, width) / measuredHeight(heights, HTML_RENDER_COLUMN_WIDTH);
-  return reference.outline.split(";").map((entry) => {
-    const [x = 0, y = 0, boxWidth = 0, boxHeight = 0, lines = 1] = entry
-      .slice(1)
-      .split(",")
-      .map(Number);
-    return {
-      kind: OUTLINE_KINDS[entry[0] as keyof typeof OUTLINE_KINDS],
-      x: x * OUTLINE_UNIT * scaleX,
-      y: y * OUTLINE_UNIT * scaleY,
-      width: boxWidth * OUTLINE_UNIT * scaleX,
-      height: boxHeight * OUTLINE_UNIT * scaleY,
-      lines,
-    };
-  });
 }
 
 export function htmlRenderFileName(title: string) {

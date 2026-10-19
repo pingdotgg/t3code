@@ -88,7 +88,6 @@ const HtmlRenderTool = Tool.make(HTML_RENDER_TOOL_NAME, {
       title: Schema.String,
       height: Schema.Number,
       heights: Schema.optional(Schema.Array(Schema.Tuple([Schema.Int, Schema.Int]))),
-      outline: Schema.optional(Schema.String),
     }),
     message: Schema.String,
   }),

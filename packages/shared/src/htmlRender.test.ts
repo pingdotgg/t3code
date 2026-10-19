@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  encodeHtmlRenderOutline,
   HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
-  htmlRenderOutlineBoxes,
   htmlRenderReferencesEqual,
   htmlRenderTheme,
   htmlRenderThemeFragment,
@@ -288,50 +286,5 @@ describe("htmlRenderFrameHeight", () => {
     const copy = readHtmlRenderReference(JSON.parse(JSON.stringify(measured)))!;
     expect(htmlRenderReferencesEqual(measured, copy)).toBe(true);
     expect(htmlRenderReferencesEqual(measured, { ...copy, heights: [[390, 1290]] })).toBe(false);
-  });
-});
-
-describe("htmlRenderOutlineBoxes", () => {
-  const outline = encodeHtmlRenderOutline([
-    { kind: "text", x: 0, y: 0, width: 300, height: 40, lines: 2 },
-    { kind: "media", x: 0, y: 48, width: 728, height: 300, lines: 1 },
-    { kind: "media", x: 2, y: 2, width: 0, height: 10, lines: 1 },
-  ]);
-  const outlined = readHtmlRenderReference({
-    ...reference,
-    heights: [
-      [364, 1600],
-      [728, 800],
-    ],
-    outline,
-  })!;
-
-  it("round-trips through a tool result and stretches to the client's width and height", () => {
-    expect(outline).toBe("t0,0,75,10,2;m0,12,182,75,1");
-    expect(htmlRenderOutlineBoxes(outlined, 728)).toEqual([
-      { kind: "text", x: 0, y: 0, width: 300, height: 40, lines: 2 },
-      { kind: "media", x: 0, y: 48, width: 728, height: 300, lines: 1 },
-    ]);
-    expect(htmlRenderOutlineBoxes(outlined, 364)[1]).toEqual({
-      kind: "media",
-      x: 0,
-      y: 96,
-      width: 364,
-      height: 600,
-      lines: 1,
-    });
-  });
-
-  it("drops a malformed or unmeasured outline", () => {
-    expect(readHtmlRenderReference({ ...outlined, outline: "x1,2" })?.outline).toBeUndefined();
-    expect(
-      readHtmlRenderReference({ ...outlined, outline: "t0,0,10,10,0" })?.outline,
-    ).toBeUndefined();
-    expect(
-      readHtmlRenderReference({ ...outlined, outline: "m0,0,0,10,1" })?.outline,
-    ).toBeUndefined();
-    expect(readHtmlRenderReference({ ...reference, outline })?.outline).toBeUndefined();
-    expect(htmlRenderOutlineBoxes(reference, 728)).toEqual([]);
-    expect(htmlRenderReferencesEqual(outlined, { ...outlined, outline: "m0,0,1,1,1" })).toBe(false);
   });
 });

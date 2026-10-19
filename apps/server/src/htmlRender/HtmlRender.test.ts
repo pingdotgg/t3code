@@ -446,7 +446,6 @@ describe("HtmlRender", () => {
           expect(reference.heights).toEqual(
             HTML_RENDER_MEASURE_WIDTHS.map((width) => [width, Math.ceil(width / 2)]),
           );
-          expect(reference.outline).toBe("m0,0,182,91,1");
         }).pipe(Effect.provide(layerHtmlRender(executable)));
       }),
     30_000,
