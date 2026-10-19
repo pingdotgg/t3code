@@ -124,7 +124,7 @@ const setPresentations = (entries: ReadonlyArray<readonly [EnvironmentId, object
   act(async () => appAtomRegistry.set(state.presentations, new Map(entries) as Presentations));
 const setNow = (iso: string) => vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
 const resetsIn = (countdown: string) =>
-  page.getByRole("button", { name: `codex: 60% left, resets in ${countdown}` });
+  page.getByRole("button", { name: `codex: 60% left, resets in ${countdown}`, exact: false });
 const refreshButton = () => page.getByRole("button", { name: "Refresh limits" });
 const selectMetric = (label: string) => userEvent.click(page.getByRole("button", { name: label }));
 
