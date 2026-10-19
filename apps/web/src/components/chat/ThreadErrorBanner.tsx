@@ -7,6 +7,25 @@ import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { ExpandableText } from "../settings/ExpandableText";
 
+export function getThreadErrorBannerMessage(error: string): string {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(error);
+  } catch {
+    return error;
+  }
+  if (typeof payload !== "object" || payload === null || !("error" in payload)) {
+    return error;
+  }
+  const nestedError = payload.error;
+  if (typeof nestedError !== "object" || nestedError === null || !("message" in nestedError)) {
+    return error;
+  }
+  return typeof nestedError.message === "string" && nestedError.message.trim().length > 0
+    ? nestedError.message
+    : error;
+}
+
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
 }
@@ -59,7 +78,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               <p>Review your usage settings in ChatGPT to continue.</p>
             </div>
           ) : (
-            <ExpandableText text={error} />
+            <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
           )}
         </AlertDescription>
         {(chatGptUsageLimit || onDismiss) && (
