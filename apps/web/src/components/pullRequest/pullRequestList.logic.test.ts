@@ -12,6 +12,7 @@ import {
   largestPullRequestReadCount,
   pullRequestQuickActions,
   filterPullRequestsByInvolvement,
+  findProjectForRepository,
   findScopedProject,
   mergePullRequestLists,
   pullRequestEntryKey,
@@ -1614,4 +1615,112 @@ describe("refresh page size", () => {
   it("asks for the whole host where one search reads every repository", () => {
     expect(largestPullRequestReadCount(twoPagesAcrossFourRepositories("github"))).toBe(792);
   });
+});
+
+describe("findProjectForRepository", () => {
+  it("resolves Azure bare names using matching project and environment scope", () => {
+    const azure = (id: string, environmentId: string, path: string) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        canonicalKey: `dev.azure.com/${path}`,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: "azure-devops",
+        displayName: path,
+        owner: "contoso",
+        name: path.split("/").at(-1)!,
+      },
+    });
+    const payments = azure("p1", ENV_1, "contoso/payments/_git/api");
+    const billing = azure("p2", ENV_1, "contoso/billing/_git/api");
+    const remoteBilling = azure("p2", ENV_2, "contoso/billing/_git/api");
+    const unrelated = azure("p3", ENV_2, "contoso/billing/_git/web");
+    const projects = [payments, billing, remoteBilling, unrelated];
+
+    expect(findProjectForRepository(projects, { repository: "api" })).toBe(payments);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "api",
+        scopedProjectId: "p2",
+        scopedEnvironmentId: ENV_2,
+      }),
+    ).toBe(remoteBilling);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "api",
+        scopedProjectId: "p3",
+        scopedEnvironmentId: ENV_2,
+      }),
+    ).toBe(payments);
+  });
+
+  it("keeps repository matches on the selected environment when project IDs overlap", () => {
+    const project = (id: string, environmentId: string, repository: string) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        canonicalKey: `github.com/${repository}`,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: "github",
+        displayName: repository,
+      },
+    });
+    const unrelated = project("p1", ENV_1, "acme/web");
+    const local = project("p2", ENV_1, "acme/api");
+    const remote = project("p1", ENV_2, "acme/api");
+    const projects = [unrelated, local, remote];
+
+    expect(findProjectForRepository(projects, { repository: "acme/api" })).toBe(local);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/api",
+        selectedEnvironmentId: ENV_2,
+      }),
+    ).toBe(remote);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/web",
+        selectedEnvironmentId: ENV_2,
+      }),
+    ).toBeUndefined();
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/api",
+        selectedEnvironmentId: "env-connecting",
+      }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ["gitlab", "t3tools/platform/t3code", "T3Tools/Platform/T3Code"],
+    ["github", "t3tools/t3code", "T3Tools/T3Code"],
+  ] as const)(
+    "selects the %s repository on the requested host despite a scope on another host",
+    (provider, repository, displayName) => {
+      const project = (host: string) => ({
+        id: host,
+        environmentId: ENV_1,
+        repositoryIdentity: {
+          canonicalKey: `${host}/${repository}`,
+          locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+          provider,
+          displayName,
+          owner: "t3tools",
+          name: "t3code",
+        },
+      });
+      const publicProject = project(`${provider}.com`);
+      const enterpriseProject = project(`${provider}.acme.test`);
+      const projects = [publicProject, enterpriseProject];
+
+      expect(
+        findProjectForRepository(projects, {
+          repository: repository.toUpperCase(),
+          host: `${provider}.ACME.TEST`,
+          scopedProjectId: publicProject.id,
+          scopedEnvironmentId: ENV_1,
+        }),
+      ).toBe(enterpriseProject);
+    },
+  );
 });
