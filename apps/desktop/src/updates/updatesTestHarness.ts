@@ -103,10 +103,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
     }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
-    quitAndInstall: ({ isForceRunAfter }) =>
+    quitAndInstall: () =>
       Effect.sync(() => {
         quitAndInstallCount += 1;
-        installSteps.push(isForceRunAfter ? "quitAndInstall" : "quitAndInstall(no-run)");
+        installSteps.push("quitAndInstall");
       }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
     on: (eventName, listener) =>
       Effect.acquireRelease(
