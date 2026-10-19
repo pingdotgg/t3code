@@ -200,7 +200,13 @@ export const CodexDriver: ProviderDriver<
         enabled,
         config,
       },
-      { compatibility: installation.compatibility, onUsageLimits: (update) => snapshot.applyUsageLimits(update), getUsageLimits: Effect.suspend(() => snapshot.getSnapshot).pipe(Effect.map((provider) => provider.usageLimits)) },
+      {
+        compatibility: installation.compatibility,
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        getUsageLimits: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((provider) => provider.usageLimits),
+        ),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
