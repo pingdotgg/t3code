@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const setup = vi.hoisted(() => ({
@@ -291,6 +291,29 @@ describe("Antigravity setup", () => {
 
     await renderSetup();
     expect(occurrences("Checking the downloaded runtime.")).toBe(1);
+  });
+
+  it("exposes download progress as a bounded progressbar only while the total is known", async () => {
+    const downloading = (downloadedBytes: number, totalBytes: number | null) => {
+      setup.installation = {
+        ...setup.installation!,
+        operationId: "install-1",
+        phase: "downloading",
+        downloadedBytes,
+        totalBytes,
+      };
+      return publish();
+    };
+    const progressbar = page.getByRole("progressbar", { name: "Antigravity download" });
+    await renderSetup();
+
+    await downloading(40_000_000, 100_000_000);
+    await expect.element(progressbar).toHaveValue(40_000_000);
+    // The wire contract does not cap downloaded bytes at the advertised total.
+    await downloading(110_000_000, 100_000_000);
+    await expect.element(progressbar).toHaveValue(100_000_000);
+    await downloading(40_000_000, null);
+    expect(progressbar.query()).toBeNull();
   });
 
   it("removes an owned damaged runtime only after confirmation", async () => {
