@@ -8001,6 +8001,7 @@ export default function ChatView(props: ChatViewProps) {
                     <>
                       <div className="chat-content-lane">
                         <HandoffRow
+                          environmentId={environmentId}
                           endpoints={pendingHandoff}
                           providers={providerStatuses}
                           pending
