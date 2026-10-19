@@ -9292,59 +9292,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("ends a subagent's open call when the CLI exits while the root turn is idle", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const TOOL_USE_ID = "toolu-idle-exit";
-        const BASH = "toolu-idle-exit-bash";
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const bashStatuses = () =>
-          harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === BASH
-              ? [`${event.turnItem.type}:${event.turnItem.status}`]
-              : [],
+  it.effect.each(["exit", "Stop"] as const)(
+    "settles a plain background subagent and its open call on %s after the root turn completes",
+    (reason) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const TOOL_USE_ID = "toolu-idle-exit";
+          const BASH = "toolu-idle-exit-bash";
+          const harness = yield* makeWakeHarnessWithOptions({ close: Queue.shutdown });
+          const now = yield* DateTime.now;
+          const bashStatuses = () =>
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === BASH
+                ? [`${event.turnItem.type}:${event.turnItem.status}`]
+                : [],
+            );
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-idle-exit"),
+              text: "Audit in the background.",
+              attachments: [],
+            }),
           );
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-idle-exit"),
-            text: "Audit in the background.",
-            attachments: [],
-          }),
-        );
-        for (const frame of [
-          makeSubagentTaskStartedFrame({
-            taskId: "task-idle-exit",
-            toolUseId: TOOL_USE_ID,
-            uuid: "00000000-0000-4000-8000-000000000981",
-          }),
-          ...makeSubagentAssistantFrames({
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId: "task-idle-exit",
+              toolUseId: TOOL_USE_ID,
+              uuid: "00000000-0000-4000-8000-000000000981",
+            }),
+          );
+          const started = yield* Queue.take(harness.subagentReceipts);
+          assert.equal(started.subagent.status, "running");
+          for (const frame of makeSubagentAssistantFrames({
             parentToolUseId: TOOL_USE_ID,
             uuid: "00000000-0000-4000-8000-000000000982",
             bashToolUseId: BASH,
-          }),
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-000000000983",
-            result: "Auditing in the background.",
-          }),
-        ]) {
-          yield* Queue.offer(harness.sdkMessages, frame);
-        }
-        yield* awaitUntil(() => harness.terminalEvents().length === 1, "launch turn terminal");
-        assert.deepEqual(bashStatuses(), ["command_execution:running"]);
+          })) {
+            yield* harness.offerAndWait(frame);
+          }
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000983",
+              result: "Auditing in the background.",
+            }),
+          );
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal.status, "completed");
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.deepEqual(bashStatuses(), ["command_execution:running"]);
 
-        yield* Queue.shutdown(harness.sdkMessages);
-        yield* awaitUntil(() => bashStatuses().length === 2, "call ended");
-        assert.deepEqual(bashStatuses(), ["command_execution:running", "command_execution:failed"]);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          if (reason === "Stop") {
+            yield* harness.runtime.interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId: terminal.providerTurnId,
+              requestRuntimeRestart: true,
+            });
+          } else {
+            yield* Queue.shutdown(harness.sdkMessages);
+          }
+          let ended = yield* Queue.take(harness.subagentReceipts);
+          while (ended.subagent.status === "running") {
+            ended = yield* Queue.take(harness.subagentReceipts);
+          }
+          assert.equal(ended.subagent.nativeTaskRef?.nativeId, "task-idle-exit");
+          assert.equal(ended.subagent.status, reason === "Stop" ? "cancelled" : "failed");
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          assert.deepEqual(bashStatuses(), [
+            "command_execution:running",
+            reason === "Stop" ? "command_execution:interrupted" : "command_execution:failed",
+          ]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect("ends a subagent's open call when Stop's close of the CLI times out", () =>
