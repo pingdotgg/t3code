@@ -3,6 +3,7 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxElectronOptions,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
@@ -267,5 +268,72 @@ describe("DesktopEarlyElectronStartup", () => {
         }),
       );
     });
+  });
+});
+
+describe("Linux device scale persistence failures", () => {
+  const input = {
+    env: { T3CODE_HOME: "/isolated" },
+    homeDirectory: "/home/user",
+    joinPath: NodePath.posix.join,
+  };
+
+  it.each(["0", "Infinity", "garbage"])("ignores invalid persisted scale %j", (value) => {
+    const applied: Array<[string, string]> = [];
+    const writes: Array<string> = [];
+    restoreEarlyLinuxDeviceScaleFactor({
+      ...input,
+      commandLine: {
+        hasSwitch: () => false,
+        getSwitchValue: () => "",
+        appendSwitch: (name, scale) => applied.push([name, scale]),
+      },
+      readFileString: () => value,
+      writeFileString: (_path, contents) => writes.push(contents),
+    });
+    assert.deepEqual(applied, []);
+    assert.deepEqual(writes, []);
+  });
+
+  it("keeps startup available with default scaling when saved state cannot be read", () => {
+    const applied: Array<[string, string]> = [];
+    restoreEarlyLinuxDeviceScaleFactor({
+      ...input,
+      commandLine: {
+        hasSwitch: () => false,
+        getSwitchValue: () => "",
+        appendSwitch: (name, value) => applied.push([name, value]),
+      },
+      readFileString: () => {
+        throw new Error("ENOENT");
+      },
+      writeFileString: () => {},
+    });
+    assert.deepEqual(applied, []);
+  });
+
+  it("keeps an explicit scale when saving it fails, without falling back to saved state", () => {
+    const applied: Array<[string, string]> = [];
+    const reads: Array<string> = [];
+    const writes: Array<string> = [];
+    restoreEarlyLinuxDeviceScaleFactor({
+      ...input,
+      commandLine: {
+        hasSwitch: () => true,
+        getSwitchValue: () => "1",
+        appendSwitch: (name, value) => applied.push([name, value]),
+      },
+      readFileString: (path) => {
+        reads.push(path);
+        return "1.75";
+      },
+      writeFileString: (_path, value) => {
+        writes.push(value);
+        throw new Error("EACCES");
+      },
+    });
+    assert.deepEqual(writes, ["1"]);
+    assert.deepEqual(reads, []);
+    assert.deepEqual(applied, []);
   });
 });
