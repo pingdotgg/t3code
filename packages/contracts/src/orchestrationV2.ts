@@ -364,6 +364,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Last explicit workspace write, including an equal-valued clear. */
+  workspaceBindingId: Schema.optional(CommandId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -549,6 +551,14 @@ export const OrchestrationV2Run = Schema.Struct({
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** A claimed checkout can survive failed provisioning without becoming the thread's workspace. */
+  claimedWorkspace: Schema.optional(
+    Schema.Struct({ worktreePath: TrimmedNonEmptyString, branch: TrimmedNonEmptyString }),
+  ),
+  /** Null until checkout completes; absent on legacy runs that only published completed checkouts. */
+  completedWorkspace: Schema.optional(
+    Schema.NullOr(Schema.Struct({ worktreePath: TrimmedNonEmptyString, bindingId: CommandId })),
+  ),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -1806,6 +1816,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Last explicit workspace write, including an equal-valued clear. */
+  workspaceBindingId: Schema.optional(CommandId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2675,6 +2687,7 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    expectedWorkspaceBindingId: Schema.optional(Schema.NullOr(CommandId)),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
@@ -2810,13 +2823,6 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
-  }),
-  Schema.Struct({
-    type: Schema.Literal("prepared-run.progress"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    runId: RunId,
-    phase: Schema.Literals(["worktree", "setup"]),
   }),
   Schema.Struct({
     type: Schema.Literal("prepared-run.fail"),
@@ -2987,6 +2993,38 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.worktree-claimed"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    worktreePath: TrimmedNonEmptyString,
+    branch: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("prepared-run.progress"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    phase: Schema.Literals(["worktree", "setup"]),
+    completedWorkspace: Schema.optional(
+      Schema.Struct({
+        worktreePath: TrimmedNonEmptyString,
+        branch: TrimmedNonEmptyString,
+        expectedWorkspaceBindingId: Schema.NullOr(CommandId),
+      }),
+    ),
+  }),
+  /** A Git rename preserves checkout ownership; client workspace writes do not. */
+  Schema.Struct({
+    type: Schema.Literal("thread.worktree-branch.renamed"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    branch: TrimmedNonEmptyString,
+    expectedBranch: TrimmedNonEmptyString,
+    expectedWorktreePath: TrimmedNonEmptyString,
+    expectedWorkspaceBindingId: Schema.NullOr(CommandId),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request-watch.sync"),
     commandId: CommandId,
