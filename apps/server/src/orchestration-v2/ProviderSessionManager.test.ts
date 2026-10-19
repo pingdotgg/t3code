@@ -352,6 +352,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
+    readonly compactThread?: Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
     readonly ensureThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["ensureThread"];
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
@@ -456,6 +457,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
+          ...(options.compactThread === undefined
+            ? {}
+            : { compactThread: () => options.compactThread! }),
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -1122,14 +1126,15 @@ it.effect(
     }).pipe(Effect.provide(McpProviderSessions.layer)),
 );
 
-it.effect(
-  "ProviderSessionManagerV2 retains shared active and background work across provider settings changes",
-  () =>
+it.effect.each(["startTurn", "compactThread"] as const)(
+  "ProviderSessionManagerV2 retains shared active and background work across provider settings changes (%s)",
+  (method) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const backgroundWork = yield* Ref.make(false);
       const instances = yield* makeTestInstanceRegistry(state, {
         hasPendingBackgroundWork: Ref.get(backgroundWork),
+        ...(method === "compactThread" ? { compactThread: Effect.void } : {}),
       });
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
@@ -1159,7 +1164,7 @@ it.effect(
           now,
         });
         const runId = idAllocator.derive.run({ threadId: threadB, ordinal: 1 });
-        yield* runtime.startTurn({
+        yield* runtime[method]!({
           appThread: (yield* projectionStore.getThreadProjection(threadB)).thread,
           threadId: threadB,
           runId,

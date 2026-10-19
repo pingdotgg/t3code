@@ -1512,7 +1512,8 @@ export const layerWithOptions = (
                   logReleaseFailure(providerSessionId),
                 ),
               );
-              yield* markBusy(providerSessionId, key);
+              const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+              if (entry !== undefined) yield* markBusy(providerSessionId, key, entry.runtime);
             }).pipe(Effect.uninterruptible);
 
       const hasBusyTurn = (entry: LiveSessionEntry, providerThreadId: ProviderThreadId) => {
@@ -1746,6 +1747,66 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        const withBusyTurn = (
+          start: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"],
+        ): ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] =>
+(input) =>
+            observeActivity(
+              providerSessionId,
+              ensureThreadAttached({
+                providerSessionId,
+                threadId: input.threadId,
+                providerInstanceId: runtime.instanceId,
+              }),
+            ).pipe(
+              // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
+              Effect.andThen(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId: input.threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              Effect.andThen(
+                Effect.acquireUseRelease(
+                  markBusy(
+                    providerSessionId,
+                    busyTurnKey(input.providerThread.id, input.runOrdinal),
+                    runtime,
+                  ).pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
+                        providerSessionId,
+                        cause,
+                      }).pipe(Effect.as(true)),
+                    ),
+                    // A release between attach and markBusy leaves nothing to mark: fail the
+                    // start instead of running it on a runtime being torn down.
+                    Effect.flatMap((marked) =>
+                      marked
+                        ? Effect.void
+                        : Effect.fail(
+                            new ProviderAdapter.ProviderAdapterTurnStartError({
+                              driver: runtime.driver,
+                              threadId: input.threadId,
+                              providerThreadId: input.providerThread.id,
+                              runId: input.runId,
+                              cause: "The provider session was released while the turn started.",
+                            }),
+                          ),
+                    ),
+                  ),
+                  () => start(input),
+                  (_, exit) =>
+                    Exit.isFailure(exit)
+                      ? observeActivity(
+                          providerSessionId,
+                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
+                        )
+                      : Effect.void,
+                ),
+              ),
+            );
         return {
           ...runtime,
           subscribeEvents,
@@ -1850,64 +1911,12 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          startTurn: (input) =>
-            observeActivity(
-              providerSessionId,
-              ensureThreadAttached({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-              }),
-            ).pipe(
-              // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
-              Effect.andThen(
-                holdThreadLoaded({
-                  providerSessionId,
-                  threadId: input.threadId,
-                  providerThread: input.providerThread,
-                }),
-              ),
-              Effect.andThen(
-                Effect.acquireUseRelease(
-                  markBusy(
-                    providerSessionId,
-                    busyTurnKey(input.providerThread.id, input.runOrdinal),
-                    runtime,
-                  ).pipe(
-                    Effect.catchCause((cause) =>
-                      Effect.logWarning("orchestration-v2.driver-session.activity-failed", {
-                        providerSessionId,
-                        cause,
-                      }).pipe(Effect.as(true)),
-                    ),
-                    // A release between attach and markBusy leaves nothing to mark: fail the
-                    // start instead of running it on a runtime being torn down.
-                    Effect.flatMap((marked) =>
-                      marked
-                        ? Effect.void
-                        : Effect.fail(
-                            new ProviderAdapter.ProviderAdapterTurnStartError({
-                              driver: runtime.driver,
-                              threadId: input.threadId,
-                              providerThreadId: input.providerThread.id,
-                              runId: input.runId,
-                              cause: "The provider session was released while the turn started.",
-                            }),
-                          ),
-                    ),
-                  ),
-                  () =>
-                    runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
-                  (_, exit) =>
-                    Exit.isFailure(exit)
-                      ? observeActivity(
-                          providerSessionId,
-                          markIdle(providerSessionId, input.providerThread.id, input.runOrdinal),
-                        )
-                      : Effect.void,
-                ),
-              ),
-            ),
+          startTurn: withBusyTurn((input) =>
+            runtime.startTurn(input).pipe(turnMetrics("send", input.modelSelection.model)),
+          ),
+          ...(runtime.compactThread === undefined
+            ? {}
+            : { compactThread: withBusyTurn(runtime.compactThread) }),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
