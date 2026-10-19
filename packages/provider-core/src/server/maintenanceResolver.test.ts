@@ -208,6 +208,52 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
+  it("pins the advertised stable version in a pnpm-global update command", () => {
+    const advisoryFor = (
+      maintenanceCapabilities: ReturnType<typeof makeProviderMaintenanceCapabilities>,
+      latestVersion: string,
+    ) =>
+      createProviderVersionAdvisory({
+        driver: driver("packageTool"),
+        currentVersion: "1.0.0",
+        latestVersion,
+        maintenanceCapabilities,
+      }).updateCommand;
+    const pnpmTool = makeProviderMaintenanceCapabilities({
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateExecutable: "pnpm",
+      updateArgs: [
+        "add",
+        "-g",
+        "--allow-build=@example/package-tool",
+        "@example/package-tool@latest",
+      ],
+      updateLockKey: "pnpm-global",
+    });
+
+    expect(advisoryFor(pnpmTool, "1.1.0")).toBe(
+      "pnpm add -g --allow-build=@example/package-tool @example/package-tool@1.1.0",
+    );
+    // A prerelease cannot be pinned safely, so pnpm keeps @latest.
+    expect(advisoryFor(pnpmTool, "1.1.0-beta.1")).toBe(
+      "pnpm add -g --allow-build=@example/package-tool @example/package-tool@latest",
+    );
+    // Only pnpm's minimumReleaseAge skips fresh releases; npm keeps @latest.
+    expect(
+      advisoryFor(
+        makeProviderMaintenanceCapabilities({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          updateExecutable: "npm",
+          updateArgs: ["install", "-g", "@example/package-tool@latest"],
+          updateLockKey: "npm-global:/opt/node",
+        }),
+        "1.1.0",
+      ),
+    ).toBe("npm install -g @example/package-tool@latest");
+  });
+
   it("names the install to update when it is behind but unowned", () => {
     expect(
       createProviderVersionAdvisory({

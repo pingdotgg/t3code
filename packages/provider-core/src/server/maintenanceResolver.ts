@@ -176,6 +176,18 @@ export function makeTargetedProviderUpdateAction(
   return { ...update, args, command };
 }
 
+// pnpm 11 resolves `@latest` to the newest release older than `minimumReleaseAge`
+// and exits 0, so a release advertised from the npm dist-tag would never install.
+// An exact spec installs it and pnpm records it in `minimumReleaseAgeExclude`.
+export function resolveLatestProviderUpdateAction(
+  capabilities: ProviderMaintenanceCapabilities,
+  latestVersion: string | null,
+): ProviderMaintenanceCommandAction | null {
+  const update = capabilities.update;
+  if (update?.lockKey !== "pnpm-global" || latestVersion === null) return update;
+  return makeTargetedProviderUpdateAction(capabilities, latestVersion) ?? update;
+}
+
 export function makeManualOnlyProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
@@ -752,7 +764,7 @@ export function createProviderVersionAdvisory(input: {
     status: advisory.status,
     currentVersion: input.currentVersion,
     latestVersion,
-    updateCommand: capabilities.update?.command ?? null,
+    updateCommand: resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ?? null,
     canUpdate: capabilities.update !== null,
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
