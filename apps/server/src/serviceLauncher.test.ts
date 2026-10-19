@@ -252,9 +252,12 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect.each(["1.0.0", "1.2.0"])(
-    "recovers a rolled-back update without downgrading the installed unit at %s",
-    (unitVersion) =>
+  it.effect.each([
+    { unitVersion: "1.0.0", replacement: "an intentional downgrade" },
+    { unitVersion: "1.2.0", replacement: "another T3 home" },
+  ])(
+    "recovers a rolled-back update with unit $unitVersion and preserves $replacement",
+    ({ unitVersion, replacement }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -282,25 +285,69 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         const expected = renderBootServiceUnit(
           unitPlan(root, unitVersion === "1.0.0" ? "1.1.0" : unitVersion),
         );
-        const run = () =>
+        const createLauncher = Effect.gen(function* () {
+          return new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)), {
+            serviceUnit: unit,
+          });
+        });
+        const run = (launcher: Launcher) =>
           Effect.gen(function* () {
-            const launcher = new Launcher(
-              root,
-              yield* Effect.promise(() => readServiceState(statePath)),
-              { serviceUnit: unit },
-            );
             const running = launcher.run();
             yield* Effect.promise(() => launcher.stop("SIGTERM"));
             yield* Effect.promise(() => running);
           });
 
-        yield* run();
+        yield* run(yield* createLauncher);
         assert.equal(yield* fs.readFileString(unit.path), expected);
         assert.equal(unit.loadedContents, expected);
 
-        yield* run();
+        yield* run(yield* createLauncher);
         assert.equal(yield* fs.readFileString(unit.path), expected);
         assert.equal(unit.loadedContents, expected);
+
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.1.0",
+            update: {
+              id: "update-2",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              status: "committed",
+            },
+          }),
+        );
+        const staleLauncher = yield* createLauncher;
+        // A local install can replace the selection or service owner without stopping this launcher.
+        const selectedRoot =
+          replacement === "another T3 home" ? path.join(root, "other-home") : root;
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(selectedRoot, "runtime", "versions", "1.0.0"),
+          "setInterval(() => {}, 1_000);\n",
+        );
+        const selectedStatePath = path.join(selectedRoot, "runtime", "service-state.json");
+        yield* Effect.promise(() =>
+          writeServiceState(selectedStatePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+          }),
+        );
+        const selectedUnit = renderBootServiceUnit({
+          ...unitPlan(selectedRoot, "1.0.0"),
+          unitPath: unit.path,
+        });
+        yield* fs.writeFileString(unit.path, selectedUnit);
+        yield* Effect.promise(() => unit.reload());
+        const oldHomeState = yield* fs.readFileString(statePath);
+        const selectedState = yield* fs.readFileString(selectedStatePath);
+
+        yield* run(staleLauncher);
+        assert.equal(yield* fs.readFileString(statePath), oldHomeState);
+        assert.equal(yield* fs.readFileString(selectedStatePath), selectedState);
+        assert.equal(yield* fs.readFileString(unit.path), selectedUnit, replacement);
+        assert.equal(unit.loadedContents, selectedUnit, replacement);
       }),
   );
 
