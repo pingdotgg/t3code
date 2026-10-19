@@ -1,5 +1,6 @@
+import * as NodeEvents from "node:events";
 import * as NodeModule from "node:module";
-
+import { vi } from "vite-plus/test";
 import { assert, describe, it } from "@effect/vitest";
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
 import { computeReleaseNotes } from "electron-updater/out/providers/GitHubProvider.js";
@@ -23,7 +24,17 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
-import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
+import { flushCallbacks, makeHarness, makeInstalledDebUpdater } from "./updatesTestHarness.ts";
+
+const installed = vi.hoisted(() => ({
+  updater: undefined as typeof import("electron-updater").autoUpdater | undefined,
+}));
+vi.mock("electron-updater", () => ({
+  get autoUpdater() {
+    if (!installed.updater) throw new Error("Unexpected native updater access");
+    return installed.updater;
+  },
+}));
 
 type ReleaseFeed = Parameters<typeof computeReleaseNotes>[2];
 type RunningVersion = Parameters<typeof computeReleaseNotes>[0];
@@ -580,23 +591,81 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("relaunches a .deb install itself instead of through electron-updater", () => {
-    const harness = makeHarness({ platform: "linux", packageType: "deb" });
+  it.effect.each(["success", "failed", "cancelled"] as const)(
+    "handles a %s .deb install through the installed updater",
+    (outcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const native = yield* Effect.acquireRelease(
+            Effect.promise(() =>
+              makeInstalledDebUpdater(
+                outcome === "success"
+                  ? undefined
+                  : new Error(`pkexec exited with code ${outcome === "cancelled" ? 126 : 1}`),
+              ),
+            ),
+            (native) =>
+              Effect.sync(() => {
+                installed.updater = undefined;
+                native.restore();
+              }),
+          );
+          installed.updater = native.updater;
+          const install = vi.spyOn(native.updater, "quitAndInstall");
+          const harness = makeHarness({
+            platform: "linux",
+            packageType: "deb",
+            updater: ElectronUpdater.make,
+          });
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const updates = yield* DesktopUpdates.DesktopUpdates;
+              const desktopState = yield* DesktopState.DesktopState;
+              const pool = yield* DesktopBackendPool.DesktopBackendPool;
+              yield* updates.configure;
+              const { changes } = yield* updates.subscribe;
+              native.updater.emit("update-downloaded", {
+                version: "1.2.4",
+                downloadedFile: "/unused/test.deb",
+                releaseDate: "2026-10-01",
+                files: [],
+                path: "test.deb",
+                sha512: "test",
+              });
+              yield* changes.pipe(
+                Stream.filter((state) => state.status === "downloaded"),
+                Stream.runHead,
+              );
+              const quit =
+                outcome === "success"
+                  ? NodeEvents.EventEmitter.once(native.events, "quit")
+                  : undefined;
 
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
-
-        assert.isTrue((yield* updates.install).accepted);
-        assert.include(harness.installSteps, "quitAndInstall(no-run)");
-        assert.include(harness.installSteps, "relaunch");
-        assert.notInclude(harness.installSteps, "quitAndInstall");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+              assert.isTrue((yield* updates.install).accepted);
+              if (quit) yield* Effect.promise(() => quit);
+              assert.deepEqual(install.mock.calls, [[true, false]]);
+              if (quit) {
+                assert.deepEqual(native.steps, ["install", "quit"]);
+                assert.deepEqual(harness.installSteps, ["relaunch"]);
+                assert.isFalse((yield* (yield* pool.primary).snapshot).desiredRunning);
+              } else {
+                yield* changes.pipe(
+                  Stream.filter((state) => state.errorContext === "install"),
+                  Stream.runHead,
+                );
+                assert.deepEqual(native.steps, ["install"]);
+                assert.deepEqual(harness.installSteps, ["startBackend"]);
+                assert.isFalse(yield* Ref.get(desktopState.quitting));
+                assert.isTrue((yield* (yield* pool.primary).snapshot).desiredRunning);
+                assert.equal(harness.updateRestartMarkers.size, 0);
+                assert.equal(harness.installRecords.size, 0);
+                assert.equal((yield* updates.getState).errorContext, "install");
+              }
+            }),
+          ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+        }),
+      ),
+  );
 
   it.effect("drops the update restart marker when an install is interrupted", () =>
     Effect.gen(function* () {
