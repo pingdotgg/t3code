@@ -2889,7 +2889,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             pinnedAt: null,
             pinOrderKey: null,
             activeOrderKey: null,
-            updatedAt: alreadySettled ? thread.updatedAt : now,
+            snoozedUntil: null,
+            snoozedAt: null,
+            updatedAt:
+              alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
+                ? thread.updatedAt
+                : now,
           };
         }
         case "thread.unsettle": {
