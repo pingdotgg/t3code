@@ -90,10 +90,9 @@ describe("claudeResetCreditsToContract", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
+effectIt.layer(NodeServices.layer)("fetchClaudeResetCredits", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
       const client = HttpClient.make((request) => {
         expect(request.method).toBe("GET");
         expect(request.url).toBe("https://api.anthropic.com/api/oauth/usage");
@@ -110,26 +109,35 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
+      const block = yield* ClaudeResetCredits.fetchClaudeResetCredits("oauth-token", "2.1.0").pipe(
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(ClaudeResetCredits.claudeResetCreditsToContract(block, NOW)).toEqual({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+      });
     }),
   );
 
-  it.effect("reads nothing from keychain logins or failed requests", () =>
+  it.effect("skips keychain logins and reports failed requests", () =>
     Effect.gen(function* () {
-      const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const login = yield* writeLogin;
+      const darwin = yield* ClaudeResetCredits.readClaudeResetCreditAccount(
+        login.configDir,
+        login.accountConfigPath,
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, respond(429, {})),
-      );
-      expect([darwin, limited]).toEqual([undefined, undefined]);
+      const limited = yield* ClaudeResetCredits.fetchClaudeResetCredits(
+        "oauth-token",
+        "2.1.0",
+      ).pipe(Effect.provideService(HttpClient.HttpClient, respond(429, {})), Effect.result);
+      expect(darwin).toBeUndefined();
+      expect(limited).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ClaudeResetCreditReadError" },
+      });
     }),
   );
 });
