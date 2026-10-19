@@ -1,9 +1,11 @@
 import { act, cloneElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   ThreadId,
   type ModelSelection,
+  type ScopedThreadRef,
   type ProviderOptionDescriptor,
   type OrchestrationV2ContextTransfer,
 } from "@t3tools/contracts";
@@ -15,6 +17,7 @@ import "~/index.css";
 const state = vi.hoisted(() => ({
   stopWorkflowLabel: "environment-data:orchestration:stop-workflow",
   projection: null as unknown,
+  projections: null as Map<string, unknown> | null,
   navigate: vi.fn(),
   shells: [] as unknown[],
   projects: [] as unknown[],
@@ -31,7 +34,14 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
-  useThreadProjection: (() => ({ projection: state.projection })) as never,
+  useThreadProjection: ((ref: ScopedThreadRef | null) =>
+    ref === null
+      ? undefined
+      : {
+          projection: state.projections
+            ? state.projections.get(scopedThreadKey(ref))
+            : state.projection,
+        }) as never,
   useThreadRelationshipShells: ((ref: { readonly environmentId: string }) =>
     (state.shells as ReadonlyArray<{ readonly environmentId: string; readonly source: unknown }>)
       .filter((shell) => shell.environmentId === ref.environmentId)
@@ -153,6 +163,7 @@ afterEach(async () => {
   state.workflowCommand.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toast.mockClear();
   state.projection = null;
+  state.projections = null;
 });
 
 it("stops the entire native workflow through its parent without changing state before acknowledgement", async () => {
@@ -1186,6 +1197,72 @@ it("shows the parent's own visible status as parent and child activity change", 
   await update();
   expect(visibleText()).toContain("Done");
   expect(visibleText()).not.toContain("Running");
+});
+
+it("shows the native coordinator status from its member and gives follow-up activity precedence", async () => {
+  const environmentId = EnvironmentId.make("remote");
+  const coordinator = {
+    id: "coordinator",
+    title: "Workflow coordinator",
+    status: "idle",
+    creationSource: "provider",
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: "parent", relationshipToParent: "subagent" },
+  };
+  const member = {
+    ...coordinator,
+    id: "member",
+    title: "Reviewer",
+    lineage: { parentThreadId: "coordinator", relationshipToParent: "subagent" },
+  };
+  const emptyProjection = {
+    runs: [],
+    nodes: [],
+    providerThreads: [],
+    providerSessions: [],
+    contextTransfers: [],
+    subagents: [],
+  };
+  const rootTurn = {
+    kind: "root_turn",
+    runId: null,
+    status: "failed",
+    startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
+    completedAt: DateTime.makeUnsafe("2026-09-16T12:00:10Z"),
+  };
+  state.projections = new Map([
+    ["remote:member", { ...emptyProjection, thread: member, nodes: [rootTurn] }],
+    ["local:coordinator", { ...emptyProjection, thread: coordinator, nodes: [rootTurn] }],
+  ]);
+  state.shells = [coordinator, member].map((source) => ({ environmentId, source }));
+  await render(
+    <ThreadRelationshipsPanel environmentId={environmentId} threadId={ThreadId.make("member")} />,
+  );
+  const coordinatorText = () =>
+    buttons().find((button) => button.textContent?.includes("Workflow coordinator"))?.textContent;
+  expect(coordinatorText()).toMatch(/Workflow coordinator\s*Idle$/);
+
+  for (const [status, label] of [
+    ["running", "Running"],
+    ["completed", "Done"],
+  ]) {
+    state.projections.set("remote:coordinator", {
+      ...emptyProjection,
+      thread: coordinator,
+      nodes: [
+        { ...rootTurn, status, completedAt: status === "running" ? null : rootTurn.completedAt },
+      ],
+    });
+    await update();
+    expect(coordinatorText()).toMatch(new RegExp(`Workflow coordinator\\s*${label}$`));
+  }
+
+  state.shells = [
+    { environmentId, source: { ...coordinator, activityRunStatus: "running" } },
+    { environmentId, source: member },
+  ];
+  await update();
+  expect(coordinatorText()).toMatch(/Workflow coordinator\s*Running$/);
 });
 
 it.each(["source", "target"])(
