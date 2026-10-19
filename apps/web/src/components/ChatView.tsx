@@ -339,6 +339,7 @@ import {
   type TerminalContextSelection,
 } from "../lib/terminalContext";
 import {
+  collectInlineContextIds,
   ensureInlineContextReferences,
   removeInlineContextReference,
 } from "../lib/composerContextReferences";
@@ -559,7 +560,10 @@ import {
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextsOutsideEnvironment,
+} from "@t3tools/shared/composerContextReferences";
 import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 import { observeResize } from "~/lib/observeResize";
 
@@ -1226,6 +1230,15 @@ export default function ChatView(props: ChatViewProps) {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
   });
+  const referencedThreadContexts = useComposerDraftStore(
+    useShallow((store) => {
+      const draft = store.getComposerDraft(composerDraftTarget);
+      if (!draft?.threadContexts.length) return [];
+      // Linked prompts can replace text without pruning stored context records.
+      const referenced = new Set(collectInlineContextIds(draft.prompt));
+      return draft.threadContexts.filter((record) => referenced.has(record.contextId));
+    }),
+  );
   const composerHasNonPromptContent = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
@@ -3128,6 +3141,9 @@ export default function ChatView(props: ChatViewProps) {
           return (
             environment?.connection.phase === "connected" &&
             (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
+            referencedThreadContexts.every(
+              (record) => record.environmentId === candidate.environmentId,
+            ) &&
             providersByEnvironment
               .get(candidate.environmentId)
               ?.some(
@@ -6037,7 +6053,14 @@ export default function ChatView(props: ChatViewProps) {
           : "Choose a machine to continue",
         description: loadBalancing.pending
           ? "Resource checks are still running. You can choose a machine in the composer."
-          : "No eligible machine has available resources. Choose a machine in the composer to override.",
+          : referencedThreadContexts.length > 0 &&
+              !logicalProjectEnvironments.some((candidate) =>
+                referencedThreadContexts.every(
+                  (record) => record.environmentId === candidate.environmentId,
+                ),
+              )
+            ? "No machine can read every attached thread. Choose a machine in the composer or remove the threads."
+            : "No eligible machine has available resources. Choose a machine in the composer to override.",
       });
       return;
     }
@@ -6122,6 +6145,22 @@ export default function ChatView(props: ChatViewProps) {
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
       : promptRef.current;
+    const strandedThread = threadContextsOutsideEnvironment({
+      text: promptForSend,
+      records: composerThreadContexts,
+      environmentId,
+    })[0];
+    if (strandedThread) {
+      const owner = environmentById.get(strandedThread.environmentId)?.label ?? "its machine";
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Attached thread is on another machine",
+          description: `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
+        }),
+      );
+      return;
+    }
     if (queuedRunEdit.isEditing) {
       // Edit mode repurposes the composer: sending saves the queued message
       // in place instead of dispatching a new turn.

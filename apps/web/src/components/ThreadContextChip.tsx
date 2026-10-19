@@ -9,6 +9,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 export function ThreadContextChip(props: {
   record: Pick<ThreadContextRecord, "environmentId" | "threadId" | "title">;
   copyMarkdown?: string;
+  unreadable?: boolean;
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -19,6 +20,7 @@ export function ThreadContextChip(props: {
         render={
           <ContextChip
             kind="thread"
+            {...(props.unreadable ? { state: "invalid" as const } : {})}
             render={<Link to="/$environmentId/$threadId" params={{ environmentId, threadId }} />}
             aria-label={`Thread, ${title}`}
             data-markdown-copy={props.copyMarkdown}
@@ -29,7 +31,13 @@ export function ThreadContextChip(props: {
           </ContextChip>
         }
       />
-      <TooltipPopup side="top">{shell ? "Open thread" : "Thread no longer available"}</TooltipPopup>
+      <TooltipPopup side="top">
+        {props.unreadable
+          ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
+          : shell
+            ? "Open thread"
+            : "Thread no longer available"}
+      </TooltipPopup>
     </Tooltip>
   );
 }
