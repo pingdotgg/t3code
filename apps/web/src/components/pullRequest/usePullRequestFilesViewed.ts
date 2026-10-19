@@ -107,6 +107,7 @@ export function usePullRequestFilesViewed(options: {
         setOverlay((current) => revertFileViewedOverlay(current, batch, owned));
         if (owned.size > 0 && !isAtomCommandInterrupted(result)) {
           toastManager.add({ type: "error", title: "Could not update viewed files" });
+          refresh();
         }
         return;
       }

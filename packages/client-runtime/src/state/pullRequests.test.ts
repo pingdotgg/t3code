@@ -584,6 +584,70 @@ it.effect.each(["github", "gitlab", "bitbucket", "azure-devops"] as const)(
     ),
 );
 
+it.effect("forgets routed viewed marks when a viewed-files batch fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const reference = {
+        projectId: ProjectId.make("project-1"),
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+      };
+      const invalidations: { environment: string; input: unknown }[] = [];
+      const identity = () =>
+        Effect.succeed({
+          host: reference.host,
+          provider: "github",
+          accountId: "123",
+          viewer: "maria-rcks",
+        });
+      const clientFor = (environment: string) =>
+        ({
+          [WS_METHODS.pullRequestsRouting]: identity,
+          [WS_METHODS.pullRequestsRoutingIdentity]: identity,
+          [WS_METHODS.pullRequestsFilesViewed]: () =>
+            Effect.succeed({ files: [{ path: "a.ts", state: "unviewed" }], truncated: false }),
+          // The host may have applied part of the batch before refusing the rest.
+          [WS_METHODS.pullRequestsSetFilesViewed]: () => Effect.fail("second path refused"),
+          [WS_METHODS.pullRequestsInvalidate]: (input: unknown) =>
+            Effect.sync(() => {
+              invalidations.push({ environment, input });
+            }),
+        }) as unknown as WsRpcProtocolClient;
+      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+        clientFor("origin"),
+        clientFor("local"),
+      );
+      const route = createPullRequestRouter();
+      const write = yield* Effect.gen(function* () {
+        yield* route(WS_METHODS.pullRequestsFilesViewed, reference);
+        return yield* Effect.exit(
+          route(WS_METHODS.pullRequestsSetFilesViewed, {
+            ...reference,
+            files: [
+              { path: "a.ts", viewed: true },
+              { path: "b.ts", viewed: true },
+            ],
+          }),
+        );
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(write._tag).toBe("Failure");
+      expect(invalidations).toContainEqual({
+        environment: "local",
+        input: { reference: expect.objectContaining(reference), filesViewedOnly: true },
+      });
+      for (const call of invalidations) {
+        expect(call.input).toMatchObject({ filesViewedOnly: true });
+      }
+    }),
+  ),
+);
+
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
   label: "Test environment",

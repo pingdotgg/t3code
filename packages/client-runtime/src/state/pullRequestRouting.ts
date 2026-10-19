@@ -202,7 +202,7 @@ const invalidateTarget = Effect.fn("PullRequestRouting.invalidateTarget")(functi
     inputs,
     (input) =>
       registry.run(target, request(WS_METHODS.pullRequestsInvalidate, input)).pipe(
-        // GitHub already accepted the write. A stalled reader must not delay its confirmation.
+        // A stalled reader must not delay the write's answer.
         Effect.timeoutOption("1 second"),
         Effect.orElseSucceed(() => undefined),
       ),
@@ -272,42 +272,39 @@ export function createPullRequestRouter() {
       ref.repository.toLowerCase(),
       String(ref.number),
     ]);
-    const finish = (operation: ReturnType<typeof request<T>>) =>
-      operation.pipe(
-        Effect.tap(() => {
-          if (!writes.has(tag) || used.size === 0) return Effect.void;
-          const targets = new Map<EnvironmentId, PullRequestRef[]>([
-            [origin.target.environmentId, [ref]],
-          ]);
-          for (const entry of used.values()) {
-            if (
-              entry.origin !== origin.target.environmentId ||
-              !matchesReference(entry.reference, ref)
-            )
-              continue;
-            for (const target of [...entry.targets, origin.target.environmentId]) {
-              const refs = targets.get(target) ?? [];
-              if (!refs.some((existing) => existing.host === entry.reference.host))
-                refs.push(entry.reference);
-              targets.set(target, refs);
-            }
-          }
-          return Effect.forEach(
-            targets,
-            ([target, refs]) =>
-              invalidateTarget(registry, origin.target.environmentId, target, [
-                ...refs.map((reference) => ({
-                  reference,
-                  ...(tag === WS_METHODS.pullRequestsSetFilesViewed
-                    ? { filesViewedOnly: true }
-                    : {}),
-                })),
-                ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? [] : [{}]),
-              ]),
-            { concurrency: 4, discard: true },
-          );
-        }),
+    const invalidateReaders = Effect.suspend(() => {
+      if (!writes.has(tag) || used.size === 0) return Effect.void;
+      const targets = new Map<EnvironmentId, PullRequestRef[]>([
+        [origin.target.environmentId, [ref]],
+      ]);
+      for (const entry of used.values()) {
+        if (entry.origin !== origin.target.environmentId || !matchesReference(entry.reference, ref))
+          continue;
+        for (const target of [...entry.targets, origin.target.environmentId]) {
+          const refs = targets.get(target) ?? [];
+          if (!refs.some((existing) => existing.host === entry.reference.host))
+            refs.push(entry.reference);
+          targets.set(target, refs);
+        }
+      }
+      return Effect.forEach(
+        targets,
+        ([target, refs]) =>
+          invalidateTarget(registry, origin.target.environmentId, target, [
+            ...refs.map((reference) => ({
+              reference,
+              ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? { filesViewedOnly: true } : {}),
+            })),
+            ...(tag === WS_METHODS.pullRequestsSetFilesViewed ? [] : [{}]),
+          ]),
+        { concurrency: 4, discard: true },
       );
+    });
+    // A failed viewed-files batch may have applied some paths. Other writes invalidate on success.
+    const finish = (operation: ReturnType<typeof request<T>>) =>
+      tag === WS_METHODS.pullRequestsSetFilesViewed
+        ? operation.pipe(Effect.ensuring(invalidateReaders))
+        : operation.pipe(Effect.tap(() => invalidateReaders));
     const alternatives = [];
     for (const [id, entry] of entries) {
       if (id === origin.target.environmentId) continue;

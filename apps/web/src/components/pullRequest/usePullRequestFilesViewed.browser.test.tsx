@@ -4,6 +4,7 @@ import {
   type PullRequestFilesViewedResult,
   type PullRequestRef,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act, StrictMode, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -47,7 +48,13 @@ const reference: PullRequestRef = {
 };
 
 function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesViewedResult {
-  return { files: [{ path: "a.ts", state }], truncated: false };
+  return {
+    files: [
+      { path: "a.ts", state },
+      { path: "b.ts", state: "unviewed" },
+    ],
+    truncated: false,
+  };
 }
 
 let root: Root;
@@ -146,5 +153,28 @@ describe("a mark the host has not answered for yet", () => {
 
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isStale("a.ts")).toBe(false);
+  });
+});
+
+describe("a failed batch that the host partly applied", () => {
+  it("refreshes the host and accepts the applied marks", async () => {
+    setFilesViewed.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("partial batch"))),
+    );
+    host.refresh.mockImplementation(() => {
+      host.data = answer("viewed");
+      root.render(
+        <StrictMode>
+          <Surface />
+        </StrictMode>,
+      );
+    });
+    act(() => {
+      view().setViewed("a.ts", true);
+      view().setViewed("b.ts", true);
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(500));
+    expect(view().isViewed("a.ts")).toBe(true);
+    expect(view().isViewed("b.ts")).toBe(false);
   });
 });
