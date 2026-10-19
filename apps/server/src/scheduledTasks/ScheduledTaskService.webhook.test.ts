@@ -13,6 +13,7 @@ import * as Metric from "effect/Metric";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -64,6 +65,7 @@ const withService = <A, E>(
   body: (input: {
     readonly service: ScheduledTaskService.ScheduledTaskService["Service"];
     readonly launches: Queue.Queue<LaunchInput>;
+    readonly sql: SqlClient.SqlClient;
     readonly secretsByRef: Map<string, string>;
   }) => Effect.Effect<A, E, never>,
   options: { readonly gate?: Deferred.Deferred<void>; readonly relayHookBaseUrl?: string } = {},
@@ -98,7 +100,8 @@ const withService = <A, E>(
     );
     return yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
-      return yield* body({ service, launches, secretsByRef });
+      const sql = yield* SqlClient.SqlClient;
+      return yield* body({ service, launches, sql, secretsByRef });
     }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory));
 
@@ -552,6 +555,52 @@ it.effect("a held request already delivered directly runs only once", () =>
       yield* Queue.take(launches);
       const logged = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries;
       assert.equal(logged.length, 1);
+    }),
+  ),
+);
+
+it.effect("relay retries recover failed acceptance without releasing another request's claim", () =>
+  withService(({ service, launches, sql }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* webhookTaskInput());
+      const request = requestFor(task, { relayDeliveryId: "retry-after-log-failure" });
+      yield* sql`
+        CREATE TRIGGER fail_webhook_delivery_log
+        BEFORE INSERT ON scheduled_task_webhook_deliveries
+        BEGIN
+          SELECT RAISE(FAIL, 'injected delivery log failure');
+        END
+      `;
+      const error = yield* service.triggerWebhook(request).pipe(Effect.flip);
+      assert.equal(error.message, "Could not record webhook delivery.");
+      assert.equal(yield* Queue.size(launches), 0);
+      assert.isEmpty((yield* service.listWebhookDeliveries({ id: task.id })).deliveries);
+      yield* sql`DROP TRIGGER fail_webhook_delivery_log`;
+
+      const retried = yield* Effect.all(
+        [service.triggerWebhook(request), service.triggerWebhook(request)],
+        { concurrency: "unbounded" },
+      );
+      assert.deepEqual(
+        retried.map((result) => (result._tag === "accepted" ? result.outcome : result._tag)).sort(),
+        ["accepted", "duplicate"],
+      );
+      assert.include((yield* Queue.take(launches)).commandId, request.relayDeliveryId!);
+
+      yield* sql`
+        CREATE TRIGGER fail_webhook_claim
+        BEFORE INSERT ON scheduled_task_webhook_relay_deliveries
+        BEGIN
+          SELECT RAISE(FAIL, 'injected claim failure');
+        END
+      `;
+      const retryError = yield* service.triggerWebhook(request).pipe(Effect.flip);
+      assert.equal(retryError.message, "Could not record webhook delivery.");
+      yield* sql`DROP TRIGGER fail_webhook_claim`;
+      const replayed = yield* service.triggerWebhook(request);
+      assert.equal(replayed._tag === "accepted" ? replayed.outcome : replayed._tag, "duplicate");
+      assert.equal(yield* Queue.size(launches), 0);
+      assert.equal((yield* service.listWebhookDeliveries({ id: task.id })).deliveries.length, 1);
     }),
   ),
 );
