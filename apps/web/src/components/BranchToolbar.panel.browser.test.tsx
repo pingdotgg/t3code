@@ -106,6 +106,22 @@ it("keeps machine choices usable when the combined row's workspace is locked", a
   expect(onEnvironmentChange).toHaveBeenCalledWith("remote");
 });
 
+it("shows a started thread's primary machine as a static label in the composer", async () => {
+  await render({
+    layout: "composer",
+    showGitControls: false,
+    availableEnvironments: ["local", "remote"].map((id) => ({
+      environmentId: EnvironmentId.make(id),
+      projectId: ProjectId.make("project"),
+      label: id,
+      isPrimary: id === "local",
+      machine: "server",
+    })),
+  });
+  expect(container.textContent).toBe("local");
+  expect(container.querySelector("button")).toBeNull();
+});
+
 it.each([
   ["local", null, "/tmp/project"],
   ["worktree", null, null],
