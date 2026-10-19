@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -19,6 +20,7 @@ import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
   type ConnectionAttemptError,
   type ConnectionTarget,
   ConnectionTransientError,
@@ -35,6 +37,7 @@ import {
   connectionRoutes,
   entryWithRoutes,
   type ReportedEndpoint,
+  routeEntry,
 } from "./routes.ts";
 
 const RETRY_BASE_DELAY_MS = 1_000;
@@ -568,7 +571,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       ),
     );
     // Ticks always run: the check skips the preferred route itself, and the
-    // route list can grow while connected (learned routes).
+    // route list can grow while connected (learned routes). They stop with
+    // this monitor, because a replacement session starts its own.
     yield* Stream.tick(BETTER_ROUTE_CHECK_INTERVAL).pipe(
       Stream.drop(1),
       Stream.runForEach(() => requestBetterRouteCheck(lease)),
@@ -631,6 +635,69 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }
       }
     }
+  }, Effect.scoped);
+
+  // The server closes a socket when the DPoP access token it opened with
+  // expires, so a replacement opens on a renewed token first. Starting inside
+  // the refresh skew makes the authorization service mint a new token instead
+  // of returning the one that is about to expire. After a handoff, the next one
+  // waits at least the skew, so tokens issued for less than that can't start
+  // a loop; their sessions end at expiry and reconnect with backoff instead.
+  const replaceBeforeExpiry = Effect.fnUntraced(function* (
+    lease: ConnectionDriver.EnvironmentConnectionLease,
+    minimumDelayMs: number,
+  ) {
+    const authorization = lease.prepared.httpAuthorization;
+    if (authorization?._tag !== "Dpop") return yield* Effect.never;
+    const untilExpiry = Clock.currentTimeMillis.pipe(
+      Effect.map((now) => Math.max(0, authorization.expiresAtEpochMs - now)),
+    );
+    const lifetimeMs = yield* untilExpiry;
+    const delayMs = Math.max(minimumDelayMs, lifetimeMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS);
+    if (delayMs >= lifetimeMs) return yield* Effect.never;
+    yield* Effect.sleep(delayMs);
+    const attemptScope = yield* Scope.Scope;
+    const routeId = connectionRouteId(lease.prepared.target);
+    for (let failureCount = 0; ; failureCount += 1) {
+      const latest = yield* Ref.get(currentEntry);
+      const route = connectionRoutes(latest).find(
+        (candidate) => connectionRouteId(candidate.target) === routeId,
+      );
+      const scope = yield* Scope.fork(attemptScope, "sequential");
+      const remainingMs = yield* untilExpiry;
+      const replacement = yield* driver
+        .connect(route === undefined ? latest : routeEntry(latest, route), () => Effect.void)
+        .pipe(
+          Scope.provide(scope),
+          Effect.timeout(remainingMs),
+          Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : Scope.close(scope, exit))),
+          Effect.withSpan("EnvironmentSupervisor.replaceBeforeExpiry", {
+            root: true,
+            attributes: {
+              "environment.id": target.environmentId,
+              "environment.label": target.label,
+              "connection.replacement.failure_count": failureCount,
+            },
+          }),
+          Effect.result,
+        );
+      if (Result.isSuccess(replacement)) {
+        return { lease: replacement.success, scope };
+      }
+      const delayMs = retryDelayMs(failureCount, yield* Random.next);
+      yield* Effect.logWarning(
+        "Could not replace an environment connection before its access token expires.",
+      ).pipe(
+        Effect.annotateLogs({
+          "environment.id": target.environmentId,
+          "connection.retry.delay_ms": delayMs,
+          ...safeErrorLogAttributes(replacement.failure),
+        }),
+      );
+      // Past expiry the server ends the socket, and the normal reconnect takes over.
+      if ((yield* untilExpiry) <= delayMs) return yield* Effect.never;
+      yield* Effect.sleep(delayMs);
+    }
   });
 
   const runAttempt = Effect.fnUntraced(function* (
@@ -643,6 +710,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     const switchingTo = yield* Ref.get(preferredRouteId);
     yield* SubscriptionRef.set(prepared, Option.none());
     const synchronizedRoutes = yield* Ref.make(0);
+    // A replacement session closes this one without ending the attempt.
+    const connectionScope = yield* Scope.fork(yield* Scope.Scope, "sequential");
     const establishment = yield* Effect.raceAllFirst([
       exitUnlessInterrupted(
         establishTracedConnection(
@@ -651,7 +720,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure,
           pendingRetry,
           synchronizedRoutes,
-        ),
+        ).pipe(Scope.provide(connectionScope)),
       ).pipe(
         Effect.map((exit): EstablishmentEvent => ({
           _tag: "Completed",
@@ -725,7 +794,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       return outcome;
     }
 
-    const active = establishment.exit.value;
+    let active = establishment.exit.value;
+    let activeScope = connectionScope;
     if (Option.isSome(switchingTo)) {
       const landed = connectionRouteId(active.lease.prepared.target);
       if (landed !== switchingTo.value) {
@@ -763,27 +833,51 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
-    const connectedExit = yield* Effect.raceFirst(
-      active.lease.session.closed.pipe(
-        Effect.mapError((error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: active.attemptSpan,
-        })),
-      ),
-      monitorConnectedLease(active.lease).pipe(
-        Effect.mapError((error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: active.attemptSpan,
-        })),
-      ),
-    ).pipe(exitUnlessInterrupted);
+    const awaitConnectedEvent = (current: typeof active, minimumReplacementDelayMs: number) => {
+      const traced = (error: ConnectionAttemptError): TracedAttemptFailure => ({
+        error,
+        attemptSpan: current.attemptSpan,
+      });
+      return Effect.raceAllFirst([
+        current.lease.session.closed.pipe(Effect.mapError(traced)),
+        monitorConnectedLease(current.lease).pipe(
+          Effect.map((resetRetry) => ({ _tag: "Ended" as const, resetRetry })),
+          Effect.mapError(traced),
+        ),
+        replaceBeforeExpiry(current.lease, minimumReplacementDelayMs).pipe(
+          Effect.map((replacement) => ({ _tag: "Replaced" as const, replacement })),
+        ),
+      ]).pipe(exitUnlessInterrupted);
+    };
+    let connectedExit = yield* awaitConnectedEvent(active, 0);
+    while (Exit.isSuccess(connectedExit) && connectedExit.value._tag === "Replaced") {
+      // A disconnect signal lost to the race must not keep the replacement.
+      if (!(yield* Ref.get(intent)).desired) break;
+      const { replacement } = connectedExit.value;
+      yield* SubscriptionRef.set(prepared, Option.some(replacement.lease.prepared));
+      yield* SubscriptionRef.set(session, Option.some(replacement.lease.session));
+      yield* Ref.set(probeUnanswered, false);
+      // The replacement session reports its own direct endpoints, as a reconnect would.
+      if (options?.learnRoutes !== undefined) {
+        yield* learnRoutesFrom(options.learnRoutes, replacement.lease).pipe(Effect.forkScoped);
+      }
+      // Requests already running on the previous socket finish on it; the
+      // server closes it at expiry, within the refresh skew.
+      yield* Scope.close(activeScope, Exit.void).pipe(
+        Effect.delay(DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS),
+        Effect.forkScoped,
+      );
+      active = { attemptSpan: active.attemptSpan, lease: replacement.lease };
+      activeScope = replacement.scope;
+      connectedExit = yield* awaitConnectedEvent(active, DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS);
+    }
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
       return {
         _tag: "Interrupted",
         established: true,
         stable: connectedForMs >= BACKOFF_RESET_AFTER_MS,
-        resetRetry: connectedExit.value,
+        resetRetry: connectedExit.value._tag === "Ended" && connectedExit.value.resetRetry,
       } satisfies AttemptOutcome;
     }
     const outcome = failureFromExit(

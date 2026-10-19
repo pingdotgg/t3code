@@ -36,9 +36,14 @@ to relay registrations; they must not discard directly paired environments.
 RPC sessions authenticate at socket upgrade, while HTTP requests need current
 credentials from the
 [authorization service](../../packages/client-runtime/src/authorization/service.ts).
-Replacing a healthy socket for HTTP renewal would interrupt conversations and
-change the transport generation without a transport failure. Credential expiry
-does not close the socket, and refresh failure belongs to the HTTP operation.
+HTTP renewal never replaces a socket, and refresh failure belongs to the HTTP
+operation. The server closes a socket when the session it authenticated with
+expires, so the supervisor opens a replacement on a renewed DPoP token shortly
+before that and moves the session to it without leaving the connected state or
+changing the transport generation. The previous socket stays open until its
+token expires, for requests already running on it. Handoffs on one connection
+are at least the refresh skew apart, so a session whose token lasts less than
+that ends at expiry and reconnects instead.
 
 Session listings must retain unrevoked connected sessions after credential expiry
 so an open connection does not disappear from connection management. This does

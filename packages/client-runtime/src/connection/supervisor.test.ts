@@ -1,12 +1,14 @@
 import { AuthStandardClientScopes, EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -130,6 +132,35 @@ function awaitState(
   );
 }
 
+function awaitNewSession(
+  session: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession.RpcSession>>,
+  previous: RpcSession.RpcSession,
+) {
+  return SubscriptionRef.changes(session).pipe(
+    Stream.filterMap((current) =>
+      Option.isSome(current) && current.value !== previous
+        ? Result.succeed(current.value)
+        : Result.failVoid,
+    ),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+}
+
+function collectingTracer(spans: Array<string>): Tracer.Tracer {
+  return Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        spans.push(span.name);
+      };
+      return span;
+    },
+  });
+}
+
 const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(function* (
   state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
   predicate: (value: SupervisorConnectionState) => boolean,
@@ -203,6 +234,15 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
     const attempt = yield* Ref.updateAndGet(sessionCount, (count) => count + 1);
     const closed = yield* Deferred.make<never, ConnectionTransientError>();
     yield* Ref.update(closedSessions, (sessions) => [...sessions, closed]);
+    // The server ends a socket when the DPoP access token it opened with expires.
+    const authorization = prepared.httpAuthorization;
+    if (authorization?._tag === "Dpop") {
+      const remainingMs = authorization.expiresAtEpochMs - (yield* Clock.currentTimeMillis);
+      yield* Deferred.fail(
+        closed,
+        transient(`${prepared.label} disconnected. ${NETWORK_BLOCKING_HINT}`),
+      ).pipe(Effect.delay(Math.max(0, remainingMs)), Effect.forkScoped);
+    }
 
     const session = yield* Effect.acquireRelease(
       Effect.succeed({
@@ -1484,8 +1524,9 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
-  it.effect("keeps a healthy relay session when its HTTP access token expires", () =>
+  it.effect("moves a relay session to a renewed token before the server ends it at expiry", () =>
     Effect.gen(function* () {
+      const spans: Array<string> = [];
       const harness = yield* makeHarness({
         prepare: (attempt) =>
           Effect.succeed({
@@ -1500,16 +1541,138 @@ describe("EnvironmentSupervisor", () => {
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies), Effect.withTracer(collectingTracer(spans)));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const first = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const phases: Array<SupervisorConnectionState["phase"]> = [];
+      yield* SubscriptionRef.changes(supervisor.state).pipe(
+        Stream.runForEach((state) => Effect.sync(() => phases.push(state.phase))),
+        Effect.forkScoped,
+      );
+
+      yield* TestClock.adjust("58 minutes");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      const second = yield* awaitNewSession(supervisor.session, first);
+      expect(yield* SubscriptionRef.get(supervisor.prepared)).toMatchObject(
+        Option.some({ httpAuthorization: { accessToken: "access-token-2" } }),
+      );
+      // Requests already running on the first socket keep it until expiry.
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(second);
+
+      yield* TestClock.adjust("1 hour");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(3);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
+      expect(phases).toEqual(["connected"]);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+        lastFailure: null,
+      });
+      expect(spans).toContain("EnvironmentSupervisor.replaceBeforeExpiry");
+      expect(spans).not.toContain("EnvironmentSupervisor.connectionLost");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("learns routes from the replacement session after a token handoff", () =>
+    Effect.gen(function* () {
+      const learnCalls = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.succeed({
+            ...PREPARED_CONNECTION,
+            target: RELAY_TARGET,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: `access-token-${attempt}`,
+              expiresAtEpochMs: 3_600_000 * attempt,
+            },
+          }),
+        initialConfig: () =>
+          Effect.succeed({ directEndpoints: [] } as Pick<
+            ServerConfig,
+            "directEndpoints"
+          > as ServerConfig),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+        learnRoutes: () =>
+          Ref.update(learnCalls, (count) => count + 1).pipe(Effect.as(Option.none())),
       }).pipe(Effect.provide(harness.dependencies));
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      const session = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const first = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(learnCalls)).toBe(1);
 
-      yield* TestClock.adjust("2 hours");
+      yield* TestClock.adjust("58 minutes");
+      yield* awaitNewSession(supervisor.session, first);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Ref.get(learnCalls)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
+  it.effect("does not hand off again when renewed tokens expire within the refresh skew", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => ({
+              ...PREPARED_CONNECTION,
+              target: RELAY_TARGET,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: `access-token-${attempt}`,
+                expiresAtEpochMs: now + 30_000,
+              },
+            })),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("29 seconds");
+      // The first token is already inside the skew, so it is replaced once. The
+      // renewed token is too short for another handoff, so its session ends at
+      // expiry and reconnects instead of looping.
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits at least the refresh skew between handoffs", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => ({
+              ...PREPARED_CONNECTION,
+              target: RELAY_TARGET,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: `access-token-${attempt}`,
+                expiresAtEpochMs: now + 90_000,
+              },
+            })),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("5 minutes");
+      // Handoffs at 30 s, a skew before the first token expires, then every
+      // 60 s: 90, 150, 210 and 270 s.
+      expect(yield* Ref.get(harness.sessionCount)).toBe(6);
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
         phase: "connected",
         generation: 1,
@@ -1517,7 +1680,78 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("refreshes HTTP authorization without replacing the active relay session", () =>
+  it.effect("keeps the session while a failed replacement retries before expiry", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 2
+            ? Effect.fail(transient("Relay connection timed out."))
+            : Effect.succeed({
+                ...PREPARED_CONNECTION,
+                target: RELAY_TARGET,
+                httpAuthorization: {
+                  _tag: "Dpop",
+                  accessToken: `access-token-${attempt}`,
+                  expiresAtEpochMs: attempt === 1 ? 3_600_000 : 7_200_000,
+                },
+              }),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const first = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+
+      yield* TestClock.adjust("59 minutes");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(first);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        lastFailure: null,
+      });
+
+      yield* TestClock.adjust("2 seconds");
+      yield* awaitNewSession(supervisor.session, first);
+      expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("releases a replacement still synchronizing when the server ends the session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.succeed({
+            ...PREPARED_CONNECTION,
+            target: RELAY_TARGET,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: `access-token-${attempt}`,
+              expiresAtEpochMs: 3_600_000 * attempt,
+            },
+          }),
+        ready: (attempt) => (attempt === 2 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("59 minutes");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+
+      yield* TestClock.adjust("1 minute");
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("renews a nearly expired cached token for a new socket and HTTP shares it", () =>
     Effect.gen(function* () {
       const endpoint = {
         httpBaseUrl: TARGET.httpBaseUrl,
@@ -1532,12 +1766,11 @@ describe("EnvironmentSupervisor", () => {
             label: TARGET.label,
             endpoint,
             accessToken: "access-token-1",
-            expiresAtEpochMs: 3_600_000,
+            expiresAtEpochMs: 300_000,
             dpopThumbprint: "test-thumbprint",
           }),
         ),
       );
-      const bootstrapFails = yield* Ref.make(false);
       const bootstrapCalls = yield* Ref.make(0);
       const httpPaths: Array<string> = [];
       const sessionAuthorizations: Array<string | null> = [];
@@ -1608,13 +1841,6 @@ describe("EnvironmentSupervisor", () => {
         getEnvironmentStatus: unused,
         connectEnvironment: Effect.fn("TestConnectionHttp.connectEnvironment")(function* () {
           yield* Ref.update(bootstrapCalls, (count) => count + 1);
-          if (yield* Ref.get(bootstrapFails)) {
-            return yield* new ManagedRelay.ManagedRelayRequestTimeoutError({
-              activity: "Relay environment connection",
-              timeoutMs: 6_000,
-              traceId: null,
-            });
-          }
           return {
             environmentId: TARGET.environmentId,
             endpoint,
@@ -1663,40 +1889,38 @@ describe("EnvironmentSupervisor", () => {
         initiallyDesired: true,
       }).pipe(Effect.provide(harness.dependencies));
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      const session = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const first = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      const tickets = () => httpPaths.filter((path) => path === "/api/auth/websocket-ticket");
+      expect(tickets()).toHaveLength(1);
+      expect(yield* Ref.get(bootstrapCalls)).toBe(0);
+
+      yield* TestClock.adjust("3 minutes");
+      expect(tickets()).toHaveLength(1);
+
+      yield* TestClock.adjust("1 minute");
+      const second = yield* awaitNewSession(supervisor.session, first);
       const prepared = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared));
+      expect(prepared.httpAuthorization).toMatchObject({ accessToken: "access-token-2" });
+      expect(tickets()).toHaveLength(2);
+      expect(yield* Ref.get(bootstrapCalls)).toBe(1);
+
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(second);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+
       const readSession = fetchEnvironmentSessionState({
         prepared,
         signer: Option.some(signer),
         remoteAuthorization: Option.some(remoteAuthorization),
       }).pipe(Effect.provide(layerHttp));
-
-      yield* TestClock.adjust("2 hours");
       expect((yield* readSession).authenticated).toBe(true);
       expect(sessionAuthorizations).toEqual(["DPoP access-token-2"]);
       expect(yield* Ref.get(bootstrapCalls)).toBe(1);
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
-        phase: "connected",
-        generation: 1,
-      });
-
-      yield* TestClock.adjust("2 hours");
-      yield* Ref.set(bootstrapFails, true);
-      const failure = yield* readSession.pipe(Effect.flip);
-      expect(failure._tag).toBe("RemoteEnvironmentAuthFetchError");
-      expect(yield* Ref.get(bootstrapCalls)).toBe(2);
-      expect(sessionAuthorizations).toEqual(["DPoP access-token-2"]);
-      expect(httpPaths.filter((path) => path === "/api/auth/websocket-ticket")).toHaveLength(1);
       expect(httpPaths.filter((path) => path === "/oauth/token")).toHaveLength(1);
-      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
-      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
-        phase: "connected",
-        generation: 1,
-      });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
