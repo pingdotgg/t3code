@@ -915,6 +915,30 @@ describe("ServerSettings worktree defaults", () => {
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {
+  it.each([
+    { legacy: "", mode: "repo_conventions", customInstructions: "" },
+    { legacy: " \t\n ", mode: "repo_conventions", customInstructions: "" },
+    {
+      legacy: "  Prefer concise wording.\nKeep issue references.  ",
+      mode: "custom",
+      customInstructions: "Prefer concise wording.\nKeep issue references.",
+    },
+  ])("normalizes legacy writing style $legacy in snapshots only", ({ legacy, ...expected }) => {
+    const style = { ...expected, followChangeRequestTemplates: true };
+    for (const [input, normalized] of [
+      [{ sourceControlWritingStyle: legacy }, { sourceControlWritingStyle: style }],
+      [
+        { projectSettingsOverrides: { project: { sourceControlWritingStyle: legacy } } },
+        { projectSettingsOverrides: { project: { sourceControlWritingStyle: style } } },
+      ],
+    ] as const) {
+      const settings = decodeServerSettings(input);
+      expect(settings).toMatchObject(normalized);
+      expect(encodeServerSettings(settings)).toMatchObject(normalized);
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    }
+  });
+
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});
 
@@ -926,17 +950,33 @@ describe("ServerSettings.sourceControlWritingStyle", () => {
     expect(settings.sourceControlWriterModelSelection).toBeNull();
   });
 
-  it("trims partial style updates", () => {
-    const patch = decodeServerSettingsPatch({
-      sourceControlWritingStyle: {
-        mode: "custom",
-        customInstructions: "  Prefer concise wording.  ",
-      },
-    });
-
-    expect(patch.sourceControlWritingStyle).toEqual({
+  it("preserves structured encoding and trims partial style updates", () => {
+    const style = {
       mode: "custom",
       customInstructions: "Prefer concise wording.",
+      followChangeRequestTemplates: false,
+    };
+    const input = {
+      sourceControlWritingStyle: style,
+      projectSettingsOverrides: { project: { sourceControlWritingStyle: style } },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+
+    const partial = { mode: "custom", customInstructions: "  Prefer concise wording.  " };
+    const normalized = { mode: "custom", customInstructions: "Prefer concise wording." };
+    expect(
+      decodeServerSettingsPatch({
+        sourceControlWritingStyle: partial,
+        projectSettingsOverrides: { project: { sourceControlWritingStyle: partial } },
+      }),
+    ).toEqual({
+      sourceControlWritingStyle: normalized,
+      projectSettingsOverrides: {
+        project: {
+          sourceControlWritingStyle: { ...normalized, followChangeRequestTemplates: true },
+        },
+      },
     });
   });
 });
