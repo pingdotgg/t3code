@@ -47,7 +47,7 @@ function isProviderSkillNameShared(
       (other) =>
         other.name === skill.name &&
         normalizePathSeparators(other.path) !== normalizePathSeparators(skill.path) &&
-        isProviderSkillUserInvocable(other),
+        other.enabled,
     )
   );
 }

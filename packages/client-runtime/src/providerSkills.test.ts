@@ -68,7 +68,7 @@ describe("getProviderSkillsForSlashMenu", () => {
     ]);
   });
 
-  it("keeps plain mentions for unique invocable skills", () => {
+  it("keeps unique and native mentions plain while binding enabled local collisions", () => {
     const skill = { name: "review", path: "/repo/review/SKILL.md", enabled: true };
     expect(formatProviderSkillMention(skill, [skill])).toBe("$review");
     expect(
@@ -82,7 +82,7 @@ describe("getProviderSkillsForSlashMenu", () => {
         skill,
         { ...skill, path: "/other/SKILL.md", userInvocable: false },
       ]),
-    ).toBe("$review");
+    ).toBe("[$review](/repo/review/SKILL.md)");
 
     for (const path of ["acp://skill/review", "pi:skill:review", "https://example.com/SKILL.md"]) {
       const native = { ...skill, path };

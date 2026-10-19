@@ -263,7 +263,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             props.item.label
           )}
         </span>
-        <span className="min-w-0 flex-1 truncate text-left text-secondary-label text-xs">
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-left text-secondary-label text-xs",
+            props.item.type === "skill" ? "whitespace-normal break-all" : "truncate",
+          )}
+        >
           {props.item.description}
         </span>
         {skillSourceKind ? (

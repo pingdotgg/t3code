@@ -218,7 +218,10 @@ const CommandRow = memo(function CommandRow(props: {
         )}
       </Text>
       {props.item.description ? (
-        <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+        <Text
+          className="min-w-0 flex-1 text-xs text-foreground-muted"
+          numberOfLines={props.item.type === "skill" ? undefined : 1}
+        >
           {props.item.description}
         </Text>
       ) : null}
