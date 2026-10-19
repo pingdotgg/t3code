@@ -28,30 +28,46 @@ it("preserves in-app thread links through the shared Markdown sanitizer", () => 
   expect(JSON.stringify(tree)).not.toContain("javascript:");
 });
 
-it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
+it("keeps backslashes before punctuation in prose Windows drive paths", () => {
   const processor = unified()
     .use(remarkParse)
     .use(CHAT_MARKDOWN_REMARK_PLUGINS)
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
-  type Node = { type: string; value?: string; tagName?: string; children?: Node[] };
-  const text = (node: Node): string =>
-    node.type === "text"
-      ? (node.value ?? "")
-      : node.tagName === "code"
-        ? `<code>${(node.children ?? []).map(text).join("")}</code>`
-        : (node.children ?? []).map(text).join("");
-  const render = (markdown: string) => text(processor.runSync(processor.parse(markdown)) as Node);
+  const markdown = String.raw`Saved to C:\Users\me\.t3\_build\shot.png and C:/work\.config and C:\folder\(draft.`;
 
-  expect(
-    render(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`),
-  ).toBe(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`);
-  // Paths render as written, so one an agent already escaped keeps its doubled backslashes.
-  expect(render(String.raw`Escaped C:\\Users\\me`)).toBe(String.raw`Escaped C:\\Users\\me`);
-  expect(render(String.raw`See C:\x and \*this\* and Note:\*that\*.`)).toBe(
-    String.raw`See C:\x and *this* and Note:*that*.`,
-  );
-  expect(render(String.raw`${"`"}C:\me\.t3${"`"} and C:\me\.t3`)).toBe(
-    String.raw`<code>C:\me\.t3</code> and C:\me\.t3`,
-  );
+  expect(processor.runSync(processor.parse(markdown)).children).toMatchObject([
+    { tagName: "p", children: [{ type: "text", value: markdown }] },
+  ]);
+});
+
+it("keeps ordinary Markdown escapes and inline and fenced code unchanged around drive paths", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  const code = String.raw`C:\Users\me\.t3\_build\shot.png \*literal\*`;
+  const markdown = [
+    String.raw`See C:\x and \*this\* and Note:\*that\*. Code: ` + "`" + code + "`",
+    "",
+    "```text",
+    code,
+    "```",
+  ].join("\n");
+
+  expect(processor.runSync(processor.parse(markdown)).children).toMatchObject([
+    {
+      tagName: "p",
+      children: [
+        { type: "text", value: String.raw`See C:\x and *this* and Note:*that*. Code: ` },
+        { tagName: "code", children: [{ type: "text", value: code }] },
+      ],
+    },
+    { type: "text", value: "\n" },
+    {
+      tagName: "pre",
+      children: [{ tagName: "code", children: [{ type: "text", value: code + "\n" }] }],
+    },
+  ]);
 });

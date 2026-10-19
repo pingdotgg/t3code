@@ -1,0 +1,137 @@
+diff --git a/cpp/enrmrkd/enrmrkd.h b/cpp/enrmrkd/enrmrkd.h
+--- a/cpp/enrmrkd/enrmrkd.h
++++ b/cpp/enrmrkd/enrmrkd.h
+@@ -244,7 +244,10 @@
+ 
+     /* Text is inside an equation. This is processed the same way as inlined code
+      * spans (`code`). */
+-    ENRMRKD_TEXT_LATEXMATH
++    ENRMRKD_TEXT_LATEXMATH,
++
++    /* An escaped punctuation character, after syntax and reference resolution. */
++    ENRMRKD_TEXT_ESCAPED
+ } ENRMRKD_TEXTTYPE;
+ 
+ 
+diff --git a/cpp/enrmrkd/enrmrkd.c b/cpp/enrmrkd/enrmrkd.c
+--- a/cpp/enrmrkd/enrmrkd.c
++++ b/cpp/enrmrkd/enrmrkd.c
+@@ -4785,7 +4785,8 @@
+                     if(ISNEWLINE(mark->beg+1))
+                         enforce_hardbreak = 1;
+                     else
+-                        ENRMRKD_TEXT(text_type, STR(mark->beg+1), 1);
++                        ENRMRKD_TEXT(text_type == ENRMRKD_TEXT_NORMAL ? ENRMRKD_TEXT_ESCAPED : text_type,
++                                     STR(mark->beg+1), 1);
+                     break;
+ 
+                 case ' ':       /* Non-trivial space. */
+diff --git a/cpp/parser/MD4CParser.cpp b/cpp/parser/MD4CParser.cpp
+--- a/cpp/parser/MD4CParser.cpp
++++ b/cpp/parser/MD4CParser.cpp
+@@ -1,11 +1,13 @@
+ #include "MD4CParser.hpp"
+ #include "enrmrkd.h"
++#include <algorithm>
+ #include <cctype>
+ #include <cstdlib>
+ extern "C" {
+ #include "enrmrkd-entity.h"
+ }
+ #include <cstring>
++#include <string_view>
+ #include <vector>
+ 
+ namespace Markdown {
+@@ -71,6 +73,30 @@
+   appendCodepoint(output, codepoint);
+ }
+ 
++bool isPathWhitespace(const std::string &text, size_t at) {
++  const auto c = static_cast<unsigned char>(text[at]);
++  if (c < 128)
++    return c == ' ' || (c >= '\t' && c <= '\r');
++  if (c != 0xC2 && c != 0xE1 && c != 0xE2 && c != 0xE3 && c != 0xEF)
++    return false;
++  // Match JavaScript's \s, including non-ASCII spaces in decoded prose.
++  constexpr std::string_view spaces[] = {
++      "\u00a0", "\u1680", "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", "\u2007",
++      "\u2008", "\u2009", "\u200a", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000", "\ufeff"};
++  for (const auto space : spaces)
++    if (text.compare(at, space.size(), space) == 0)
++      return true;
++  return false;
++}
++
++bool isDriveLetter(unsigned char c) {
++  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
++}
++
++bool isWordCharacter(unsigned char c) {
++  return isDriveLetter(c) || (c >= '0' && c <= '9') || c == '_';
++}
++
+ struct HtmlTag {
+   std::string name;
+   std::unordered_map<std::string, std::string> attributes;
+@@ -84,6 +110,8 @@
+   std::shared_ptr<MarkdownASTNode> root;
+   std::vector<std::shared_ptr<MarkdownASTNode>> nodeStack;
+   std::string currentText;
++  size_t pathScanned = 0;
++  bool inWindowsPath = false;
+   const char *inputText = nullptr;
+   bool inHtmlBlock = false;
+   std::string htmlBlockContent;
+@@ -108,6 +136,8 @@
+     nodeStack.reserve(std::min(estimatedDepth, static_cast<size_t>(128)));
+     nodeStack.push_back(root);
+     currentText.clear();
++    pathScanned = 0;
++    inWindowsPath = false;
+     currentText.reserve(256);
+     inHtmlBlock = false;
+     htmlBlockContent.clear();
+@@ -120,6 +150,26 @@
+       nodeStack.back()->addChild(std::move(textNode));
+       currentText.clear();
+     }
++    pathScanned = 0;
++    inWindowsPath = false;
++  }
++
++  bool endsInWindowsPath() {
++    // Inspect only appended text, so many escapes cannot rescan a growing paragraph.
++    for (; pathScanned < currentText.size(); ++pathScanned) {
++      const size_t at = pathScanned;
++      if (isPathWhitespace(currentText, at)) {
++        inWindowsPath = false;
++      } else if (!inWindowsPath && (currentText[at] == '/' || currentText[at] == '\\') &&
++                 at >= 2 && currentText[at - 1] == ':' && isDriveLetter(currentText[at - 2]) &&
++                 (at == 2 || !isWordCharacter(currentText[at - 3]))) {
++        inWindowsPath = true;
++      }
++    }
++    const size_t end = currentText.size();
++    return inWindowsPath ||
++           (end >= 2 && currentText[end - 1] == ':' && isDriveLetter(currentText[end - 2]) &&
++            (end == 2 || !isWordCharacter(currentText[end - 3])));
+   }
+ 
+   void pushNode(std::shared_ptr<MarkdownASTNode> node) {
+@@ -504,6 +554,15 @@
+ 
+     if (type == ENRMRKD_TEXT_ENTITY) {
+       appendCharacterReference(impl->currentText, text, size);
++      return 0;
++    }
++
++    if (type == ENRMRKD_TEXT_ESCAPED) {
++      const bool inImage = std::any_of(impl->nodeStack.begin(), impl->nodeStack.end(),
++                                     [](const auto &node) { return node->type == NodeType::Image; });
++      if (!inImage && impl->endsInWindowsPath())
++        impl->currentText += '\\';
++      impl->currentText.append(text, size);
+       return 0;
+     }
+ 

@@ -1,9 +1,10 @@
+import { remarkKeepWindowsPaths } from "@t3tools/shared/markdownWindowsPaths";
 import type { Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 
-const parser = unified().use(remarkParse).use(remarkGfm);
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsPaths);
 export type MarkdownNode = Root | RootContent;
 
 function decodeCodePoint(codePoint: number, entity: string): string {

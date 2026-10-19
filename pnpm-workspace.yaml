@@ -21,6 +21,7 @@ allowBuilds:
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
   "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.15.tgz(patch_hash=7072424da45164899d24a10214eeabd16861e2b5f7a344e5ce22bdf3be73f0cb)": true
   sharp: true
   tsc-rs: true
   utf-8-validate: false
@@ -331,6 +332,7 @@ patchedDependencies:
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
+  react-native-enriched-markdown@1.2.0-t3.15: patches/react-native-enriched-markdown@1.2.0-t3.15.patch
   react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
   react-native-keyboard-controller@1.22.7: patches/react-native-keyboard-controller@1.22.7.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
