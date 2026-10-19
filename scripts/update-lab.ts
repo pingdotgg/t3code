@@ -16,6 +16,15 @@ import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
+import type {
+  ServerConfig,
+  ServerProvider,
+  ServerProviderUpdatedPayload,
+  ServerSelfUpdateResult,
+} from "@t3tools/contracts";
+
 const REPO = NodePath.resolve(import.meta.dirname, "..");
 const LAB = NodePath.join(REPO, ".t3", "update-lab");
 const STATE_PATH = NodePath.join(LAB, "state.json");
@@ -27,14 +36,16 @@ const SELF = import.meta.filename;
 const REPO_VERSION: string = JSON.parse(
   NodeFS.readFileSync(NodePath.join(REPO, "apps/server/package.json"), "utf8"),
 ).version;
-// oxlint-disable-next-line t3code/no-global-process-runtime -- Plain Node dev script; the lab only targets this host.
-const PLATFORM_KEY = `${process.platform}-${process.arch}`;
+const PLATFORM = HostProcess.Platform.defaultValue();
+const PLATFORM_KEY = `${PLATFORM}-${HostProcess.Architecture.defaultValue()}`;
 const ORCHESTRATION_PROTOCOL = "2";
 
 const HELP = `Usage: node scripts/update-lab.ts <command>
 
 Isolated T3 servers with fake provider CLIs, a fake npm registry and a fake
 t3 release feed, all under .t3/update-lab (state survives down/up).
+Requires Linux with /proc, flock, ss, bash, git and tar, and the repo's Node
+version and installed dependencies. Homebrew layouts are simulated on Linux.
 
   up [--envs N] [--host IP] [--launcher N] [--from-version V] [--busy-seconds S]
       Start the feed and N servers (default 3; host 127.0.0.1). The last N
@@ -132,7 +143,7 @@ const PROVIDERS: Record<
 };
 const PROVIDER_KEYS = Object.keys(PROVIDERS) as ProviderKey[];
 
-// Env N uses row (N-1) % rows; three envs already reach every resolver branch.
+// Env N uses row (N-1) % rows.
 const INSTALL_MATRIX: ReadonlyArray<Record<ProviderKey, Method>> = [
   { codex: "npm", claude: "native", opencode: "homebrew", pi: "pnpm", grok: "native" },
   { codex: "native", claude: "homebrew", opencode: "bun", pi: "native", grok: "npm" },
@@ -177,9 +188,6 @@ interface LabState {
   latest: Record<ProviderKey, string>;
   envs: LabEnv[];
 }
-
-// ---------------------------------------------------------------------------
-// State
 
 function readState(): LabState | null {
   if (!NodeFS.existsSync(STATE_PATH)) return null;
@@ -250,9 +258,6 @@ const t3Home = (id: string) => NodePath.join(envDir(id), "t3");
 const projectDir = (id: string) => NodePath.join(envDir(id), "project");
 const logPath = (id: string) => NodePath.join(envDir(id), "server.log");
 const originOf = (state: LabState, env: LabEnv) => `http://${state.host}:${env.port}`;
-
-// ---------------------------------------------------------------------------
-// Fake installs
 
 function writeExecutable(path: string, content: string): void {
   NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
@@ -391,6 +396,19 @@ function seedEnvFiles(state: LabState, env: LabEnv): void {
 
   const settingsPath = NodePath.join(t3Home(env.id), "userdata", "settings.json");
   NodeFS.mkdirSync(NodePath.dirname(settingsPath), { recursive: true });
+  // Keep compatibility checks on this checkout's bundled manifest during the lab run.
+  NodeFS.writeFileSync(
+    NodePath.join(NodePath.dirname(settingsPath), "model-manifest.json"),
+    JSON.stringify({
+      fetchedAtMs: Date.now(),
+      manifest: JSON.parse(
+        NodeFS.readFileSync(
+          NodePath.join(REPO, "apps/server/src/provider/model-manifest.json"),
+          "utf8",
+        ),
+      ),
+    }),
+  );
   const settings = NodeFS.existsSync(settingsPath)
     ? JSON.parse(NodeFS.readFileSync(settingsPath, "utf8"))
     : {};
@@ -413,9 +431,6 @@ function seedEnvFiles(state: LabState, env: LabEnv): void {
   settings.defaultModelSelection ??= { instanceId: "mock-acp", model: "default" };
   NodeFS.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 }
-
-// ---------------------------------------------------------------------------
-// Fake CLIs and package managers (`__tool <env> <tool> ...args`)
 
 async function runTool(envId: string, tool: string, args: string[]): Promise<void> {
   const state = requireState();
@@ -569,9 +584,6 @@ async function install(
   console.log(`${tool}: installed ${PROVIDERS[provider].pkg}@${target} (was ${current.version})`);
 }
 
-// ---------------------------------------------------------------------------
-// Fake npm registry + t3 release feed (`__feed <port>`)
-
 function runFeed(port: number): void {
   const server = NodeHttp.createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://lab");
@@ -637,9 +649,6 @@ function compareVersions(a: string, b: string): number {
   }
   return 0;
 }
-
-// ---------------------------------------------------------------------------
-// Runtimes for the release feed and the service launcher
 
 /**
  * Publish `t3-<version>-<platform>.tar.gz` + SHA256SUMS. Without `--archive`
@@ -723,9 +732,6 @@ function installLauncherRuntime(envId: string, version: string): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Processes
-
 function listeningPorts(): Set<number> {
   const output = NodeChildProcess.execFileSync("ss", ["-H", "-ltn"], { encoding: "utf8" });
   return new Set(
@@ -755,19 +761,27 @@ async function freePort(host: string, taken: Set<number>): Promise<number> {
   fail("Could not find a free port.");
 }
 
-/** Check the recorded process's command and working directory before signaling it. */
-function isLabProcess(pid: number | null, marker: string, cwd = REPO): pid is number {
-  if (!pid) return false;
+/** A detached lab leader must still own its original session and process group. */
+function labProcessStart(pid: number | null, marker: string, cwd = REPO): string | null {
+  if (!pid || !Number.isSafeInteger(pid) || pid <= 0) return null;
   try {
     const args = NodeFS.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
-    return (
-      args.includes(marker) &&
+    const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return args.includes(marker) &&
       args.includes(marker === "__feed" ? SELF : SERVER_BIN) &&
-      NodeFS.realpathSync(`/proc/${pid}/cwd`) === NodeFS.realpathSync(cwd)
-    );
+      NodeFS.realpathSync(`/proc/${pid}/cwd`) === NodeFS.realpathSync(cwd) &&
+      Number(fields[2]) === pid &&
+      Number(fields[3]) === pid
+      ? (fields[19] ?? null)
+      : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isLabProcess(pid: number | null, marker: string, cwd = REPO): pid is number {
+  return labProcessStart(pid, marker, cwd) !== null;
 }
 
 const serverMarker = (env: LabEnv) => (env.launcher ? "__service-launcher" : t3Home(env.id));
@@ -799,8 +813,8 @@ function serverEnvironment(state: LabState, env: LabEnv): NodeJS.ProcessEnv {
     XDG_STATE_HOME: NodePath.join(home, ".local/state"),
     npm_config_registry: `http://127.0.0.1:${state.feedPort}/npm`,
     T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${state.feedPort}/releases`,
-    T3CODE_UPDATE_LAB: "1",
     T3CODE_NO_BROWSER: "1",
+    T3CODE_TELEMETRY_ENABLED: "false",
   };
 }
 
@@ -870,23 +884,25 @@ async function waitForPairingUrl(env: LabEnv): Promise<string> {
   fail(`${env.id} did not print a pairing URL within 120s; see ${logPath(env.id)}`);
 }
 
-/** SIGTERM the process group we created, then SIGKILL it if it lingers. */
 async function stopGroup(pid: number, marker: string, cwd = REPO): Promise<void> {
-  if (!isLabProcess(pid, marker, cwd)) return;
-  process.kill(-pid, "SIGTERM");
+  const startedAt = labProcessStart(pid, marker, cwd);
+  if (startedAt === null) return;
+  const signal = (value: NodeJS.Signals) => {
+    // Recheck start time before every signal, including escalation after the wait.
+    if (labProcessStart(pid, marker, cwd) !== startedAt) return;
+    try {
+      process.kill(-pid, value);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  };
+  signal("SIGTERM");
   const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline && isLabProcess(pid, marker, cwd)) {
+  while (Date.now() < deadline && labProcessStart(pid, marker, cwd) === startedAt) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    // The group is already gone.
-  }
+  signal("SIGKILL");
 }
-
-// ---------------------------------------------------------------------------
-// Talking to a lab server like a client does
 
 async function sessionToken(env: LabEnv): Promise<string> {
   const tokenPath = NodePath.join(envDir(env.id), "session-token");
@@ -918,8 +934,20 @@ async function authHeaders(env: LabEnv): Promise<Record<string, string>> {
   };
 }
 
+type LabRpcResults = {
+  "server.getConfig": ServerConfig;
+  "server.updateProvider": ServerProviderUpdatedPayload;
+  "server.updateServer": ServerSelfUpdateResult;
+  "orchestration.launchThread": unknown;
+};
+
 /** One unary call over the server's Effect RPC WebSocket protocol (JSON frames). */
-async function rpc(state: LabState, env: LabEnv, tag: string, payload: unknown): Promise<any> {
+async function rpc<Tag extends keyof LabRpcResults>(
+  state: LabState,
+  env: LabEnv,
+  tag: Tag,
+  payload: unknown,
+): Promise<LabRpcResults[Tag]> {
   const origin = originOf(state, env);
   const ticketResponse = await fetch(`${origin}/api/auth/websocket-ticket`, {
     method: "POST",
@@ -930,7 +958,7 @@ async function rpc(state: LabState, env: LabEnv, tag: string, payload: unknown):
   const socket = new WebSocket(
     `${origin.replace("http", "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL}&wsTicket=${encodeURIComponent(ticket)}`,
   );
-  return await new Promise((resolve, reject) => {
+  return await new Promise<LabRpcResults[Tag]>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(
       () => finish(() => reject(new Error(`${tag} timed out`))),
@@ -951,7 +979,12 @@ async function rpc(state: LabState, env: LabEnv, tag: string, payload: unknown):
       finish(() => reject(new Error(`${tag}: socket closed before response`))),
     );
     socket.addEventListener("message", (event) => {
-      const decoded = JSON.parse(String(event.data));
+      type Reply = {
+        _tag: string;
+        requestId: string;
+        exit: { _tag: string; value: LabRpcResults[Tag]; cause: unknown };
+      };
+      const decoded = JSON.parse(String(event.data)) as Reply | Reply[];
       for (const message of Array.isArray(decoded) ? decoded : [decoded]) {
         if (message._tag !== "Exit" || message.requestId !== "1") continue;
         const exit = message.exit;
@@ -965,27 +998,27 @@ async function rpc(state: LabState, env: LabEnv, tag: string, payload: unknown):
   });
 }
 
-function printProviders(providers: ReadonlyArray<any>): void {
+function printProviders(providers: ReadonlyArray<ServerProvider>): void {
   for (const provider of providers) {
-    const advisory = provider.versionAdvisory ?? {};
+    const advisory = provider.versionAdvisory;
     const update = provider.updateState ?? null;
     console.log(
       [
         `  ${provider.instanceId.padEnd(10)} ${String(provider.status).padEnd(8)}`,
-        `installed=${provider.version ?? "-"} latest=${advisory.latestVersion ?? "-"} advisory=${advisory.status ?? "-"}`,
-        `update=${advisory.canUpdate ? JSON.stringify(advisory.updateCommand) : "manual"}`,
+        `installed=${provider.version ?? "-"} latest=${advisory?.latestVersion ?? "-"} advisory=${advisory?.status ?? "-"}`,
+        `update=${advisory?.canUpdate ? JSON.stringify(advisory.updateCommand) : "manual"}`,
         update ? `last=${update.status}: ${update.message ?? ""}` : "",
       ].join("  "),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Commands
-
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(`--${name}`);
-  return index >= 0 ? args[index + 1] : undefined;
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) fail(`Missing value for --${name}.`);
+  return value;
 }
 
 async function up(args: string[]): Promise<void> {
@@ -993,6 +1026,15 @@ async function up(args: string[]): Promise<void> {
   const host = option(args, "host") ?? previous?.host ?? "127.0.0.1";
   const envCount = Number(option(args, "envs") ?? previous?.envs.length ?? 3);
   const launcherCount = Number(option(args, "launcher") ?? 1);
+  const busySeconds = Number(option(args, "busy-seconds") ?? previous?.busySeconds ?? 120);
+  const fromVersion = option(args, "from-version");
+  if (!Number.isInteger(envCount) || envCount < 1) fail("--envs must be a positive integer.");
+  if (!Number.isInteger(launcherCount) || launcherCount < 0 || launcherCount > envCount)
+    fail("--launcher must be an integer between 0 and --envs.");
+  if (!Number.isFinite(busySeconds) || busySeconds <= 0)
+    fail("--busy-seconds must be a positive number.");
+  if (fromVersion !== undefined && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(fromVersion))
+    fail("--from-version must be an exact version.");
   const [major, minor, patch] = REPO_VERSION.split(/[.-]/).map(Number);
   const initial: LabState = {
     host,
@@ -1016,8 +1058,8 @@ async function up(args: string[]): Promise<void> {
       );
     }
     next.host = host;
-    next.busySeconds = Number(option(args, "busy-seconds") ?? next.busySeconds);
-    next.fromVersion = option(args, "from-version") ?? next.fromVersion;
+    next.busySeconds = busySeconds;
+    next.fromVersion = fromVersion ?? next.fromVersion;
     for (let index = next.envs.length; index < envCount; index++) {
       const row = INSTALL_MATRIX[index % INSTALL_MATRIX.length]!;
       next.envs.push({
@@ -1167,7 +1209,7 @@ async function busy(state: LabState, env: LabEnv): Promise<void> {
     runtimeMode: "full-access",
     interactionMode: "default",
     workspaceStrategy: { type: "root" },
-    initialMessage: { text: "Stay busy so updates have to wait.", attachments: [] },
+    initialMessage: { text: "Keep this mock turn running.", attachments: [] },
   });
   console.log(`${env.id}: thread ${threadId} runs for ~${state.busySeconds}s on mock-acp.`);
 }
@@ -1249,7 +1291,7 @@ async function main(argv: string[]): Promise<void> {
         instanceId,
         ...(args[2] ? { targetVersion: args[2] } : {}),
       });
-      return printProviders(result.providers.filter((p: any) => p.instanceId === instanceId));
+      return printProviders(result.providers.filter((p) => p.instanceId === instanceId));
     }
     case "busy": {
       const state = requireState();
@@ -1286,6 +1328,19 @@ async function main(argv: string[]): Promise<void> {
 }
 
 const argv = process.argv.slice(2);
+if (argv[0] && !["help", "--help"].includes(argv[0])) {
+  if (PLATFORM !== "linux" || !NodeFS.existsSync("/proc/self/stat")) {
+    fail("update-lab requires Linux with /proc, flock and ss. See --help.");
+  }
+  for (const [command, args] of [
+    ["flock", ["--version"]],
+    ["ss", ["--version"]],
+  ] as const) {
+    const result = NodeChildProcess.spawnSync(command, [...args], { stdio: "ignore" });
+    if (result.error || result.status !== 0)
+      fail(`update-lab requires ${command} on PATH. See --help.`);
+  }
+}
 const release = ["up", "down", "reset"].includes(argv[0] ?? "") ? acquireLock("processes") : null;
 try {
   await main(argv);
