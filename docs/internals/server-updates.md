@@ -27,9 +27,10 @@ retries reconciliation and reload even when the file already names the selected
 runtime, since a previous reload may have failed. A newer locally installed unit
 is preserved.
 
-launchd reads the plist only at its next bootstrap, so a crash respawn before then
-still runs the loaded definition. After a deferred protocol-3 upgrade, that loaded
-launcher cannot read protocol-4 state; the local restart is required to recover.
+launchd keeps its loaded definition until the next bootstrap; systemd keeps its
+loaded definition until daemon-reload. After a deferred protocol-3 upgrade, either
+manager can therefore respawn the old launcher, which cannot read protocol-4
+state. One local service restart is required to load the updated launcher.
 
 ## Commit boundary
 
