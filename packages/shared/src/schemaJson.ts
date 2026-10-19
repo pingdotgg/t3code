@@ -158,14 +158,10 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
+  // Match comments together so URLs stay inside blocks; whitespace keeps adjacent tokens apart.
   let stripped = input.replace(
-    /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
-  );
-
-  stripped = stripped.replace(
-    /("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
+    /("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
+    (match, stringLiteral: string | undefined) => (stringLiteral ? match : " "),
   );
 
   stripped = stripped.replace(
