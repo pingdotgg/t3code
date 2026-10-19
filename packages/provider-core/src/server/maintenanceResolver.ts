@@ -121,6 +121,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
+  readonly lookupLatestVersion?: Effect.Effect<string | null>;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
@@ -143,6 +144,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     packageName: input.packageName,
     update,
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
+    ...(input.lookupLatestVersion ? { lookupLatestVersion: input.lookupLatestVersion } : {}),
   };
 }
 
@@ -326,6 +328,7 @@ const runProbe = Effect.fn("runProbe")(function* (
   command: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv,
+  okExitCodes: ReadonlyArray<number> = [0],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
@@ -348,7 +351,7 @@ const runProbe = Effect.fn("runProbe")(function* (
       ],
       { concurrency: "unbounded" },
     );
-    return Number(exitCode) !== 0 || stdout.truncated ? null : stdout.text;
+    return !okExitCodes.includes(Number(exitCode)) || stdout.truncated ? null : stdout.text;
   });
   return yield* collect.pipe(
     Effect.scoped,
@@ -362,6 +365,54 @@ const runProbe = Effect.fn("runProbe")(function* (
       }).pipe(Effect.as(null)),
     ),
   );
+});
+
+const decodePnpmOutdated = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Record(Schema.String, Schema.Struct({ latest: Schema.optional(Schema.String) })),
+  ),
+);
+const decodePnpmList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        dependencies: Schema.optional(
+          Schema.Record(Schema.String, Schema.Struct({ version: Schema.optional(Schema.String) })),
+        ),
+      }),
+    ),
+  ),
+);
+
+// Unlike npm's latest tag, pnpm outdated respects minimumReleaseAge and its excludes.
+const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion")(function* (
+  packageName: string,
+) {
+  // Match the updater's pnpm and server environment, rather than the instance's.
+  const pnpmPath = yield* resolveCommandPath("pnpm");
+  if (!pnpmPath) return null;
+  // Silent reporting keeps project package-manager warnings out of the JSON.
+  const outdated = yield* runProbe(
+    pnpmPath,
+    ["outdated", "-g", "--reporter=silent", "--format", "json", packageName],
+    {},
+    // pnpm outdated exits 1 when updates are available.
+    [0, 1],
+  );
+  const outdatedEntries = outdated
+    ? Option.getOrUndefined(decodePnpmOutdated(outdated))
+    : undefined;
+  if (!outdatedEntries) return null;
+  const latest = nonEmptyString(outdatedEntries[packageName]?.latest);
+  if (latest) return latest;
+  // An empty result means the installed version is still the eligible release.
+  const listed = yield* runProbe(
+    pnpmPath,
+    ["ls", "-g", "--reporter=silent", "--depth", "0", "--json", packageName],
+    {},
+  );
+  const listedEntries = listed ? Option.getOrUndefined(decodePnpmList(listed)) : undefined;
+  return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
@@ -443,12 +494,16 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       pnpmVersion !== null && satisfiesSemverRange(pnpmVersion, ">=10.4.0")
         ? [`--allow-build=${packageName}`]
         : [];
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     return makeProviderMaintenanceCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "pnpm",
       updateArgs: ["add", "-g", ...allowBuild, `${packageName}@latest`],
       updateLockKey: "pnpm-global",
+      lookupLatestVersion: resolvePnpmGlobalLatestVersion(packageName).pipe(
+        Effect.provideContext(services),
+      ),
     });
   }
 
@@ -795,6 +850,21 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return payload ? nonEmptyString(payload.version) : null;
 });
 
+/** The installer's own answer is cached apart from the npm registry entry. */
+function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
+  return capabilities.lookupLatestVersion && capabilities.update && capabilities.packageName
+    ? `${capabilities.update.lockKey}:${capabilities.packageName}`
+    : null;
+}
+
+export function latestProviderVersionCacheKeys(
+  capabilities: ProviderMaintenanceCapabilities,
+): ReadonlyArray<string> {
+  return [capabilities.packageName, installerLatestVersionKey(capabilities)].filter(
+    (key) => key !== null,
+  );
+}
+
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
 ) {
@@ -807,6 +877,14 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
   }
 
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+  if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
+    const installable = yield* latestVersions.cached(
+      installerKey,
+      maintenanceCapabilities.lookupLatestVersion,
+    );
+    if (installable !== null) return installable;
+  }
   return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
 

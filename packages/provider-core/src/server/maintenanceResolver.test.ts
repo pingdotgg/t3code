@@ -99,7 +99,10 @@ const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("maintenance resolution should not spawn a process here"),
 );
 
-function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) => string) {
+function stdoutSpawner(
+  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
+) {
   return ChildProcessSpawner.make((command) => {
     const { command: executable, args } = command as unknown as {
       readonly command: string;
@@ -108,7 +111,7 @@ function stdoutSpawner(onSpawn: (command: string, args: ReadonlyArray<string>) =
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCodeOf(args))),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
@@ -622,6 +625,79 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "pnpm add -g @example/package-tool@latest",
         );
       }),
+  );
+
+  it.effect.each([
+    {
+      case: "the eligible release",
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      exitCode: 1,
+      expected: "1.1.0",
+    },
+    { case: "no update during cooldown", outdated: {}, exitCode: 0, expected: "1.0.0" },
+    {
+      case: "the npm fallback when the pnpm probe fails",
+      outdated: { "@example/package-tool": { current: "1.0.0", latest: "1.1.0" } },
+      exitCode: 2,
+      expected: "9.9.9",
+    },
+  ])(
+    "advertises $case for pnpm-global installs",
+    (fixture) =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-latest");
+        const pnpmBinDir = NodePath.join(tempDir, "pnpm-bin");
+        writeExecutable(NodePath.join(pnpmBinDir, "pnpm"));
+        const link = linkIntoPackage(tempDir, "package-tool", [
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath: link, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: pnpmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) =>
+                args[0] === "outdated"
+                  ? JSON.stringify(fixture.outdated)
+                  : JSON.stringify([
+                      { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                    ]),
+              (args) => (args[0] === "outdated" ? fixture.exitCode : 0),
+            ),
+          ),
+        );
+
+        const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        ).pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm version is already cached")),
+          ),
+        );
+        expect(provider.versionAdvisory).toMatchObject({
+          status: fixture.expected === "1.0.0" ? "current" : "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: fixture.expected,
+        });
+      }),
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(
