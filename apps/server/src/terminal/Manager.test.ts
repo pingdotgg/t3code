@@ -2256,9 +2256,14 @@ it.layer(
           T3CODE_PORT: "3773",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
+          TMUX: "/tmp/tmux-1000/default,1234,0",
+          TMUX_PANE: "%3",
+          ZELLIJ_SESSION_NAME: "work",
+          ZELLIJ_CONFIG_DIR: "/home/user/.config/zellij",
         },
       });
       yield* manager.open(openInput());
+      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
       const spawnInput = ptyAdapter.spawnInputs[0];
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
@@ -2267,6 +2272,11 @@ it.layer(
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+      expect(spawnInput.env.TMUX).toBeUndefined();
+      expect(spawnInput.env.TMUX_PANE).toBeUndefined();
+      expect(spawnInput.env.ZELLIJ_SESSION_NAME).toBeUndefined();
+      expect(spawnInput.env.ZELLIJ_CONFIG_DIR).toBe("/home/user/.config/zellij");
+      expect(ptyAdapter.spawnInputs[1]?.env.TMUX_PANE).toBe("%9");
     }),
   );
 
