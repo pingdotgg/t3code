@@ -86,16 +86,22 @@ export function projectThreadAwarenessV2(
 function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") {
+  const runStatus = thread.activityRunStatus ?? thread.status;
+  if (
+    thread.pendingRuntimeRequest?.kind === "user_input" &&
+    (thread.pendingRuntimeRequest.blocking !== false ||
+      !(runStatus === "preparing" || runStatus === "starting" || runStatus === "running"))
+  ) {
     return "waiting_for_input";
   }
   if (
     thread.pendingRuntimeRequest !== null &&
+    thread.pendingRuntimeRequest.kind !== "user_input" &&
     thread.pendingRuntimeRequest.kind !== "auth_refresh"
   ) {
     return "waiting_for_approval";
   }
-  switch (thread.activityRunStatus ?? thread.status) {
+  switch (runStatus) {
     case "preparing":
     case "starting":
       return "starting";
