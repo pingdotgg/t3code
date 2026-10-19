@@ -2011,9 +2011,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const holdingUserInput = incomingPendingUserInputs[0]
     ? heldRequestIds.has(incomingPendingUserInputs[0].requestId)
     : false;
-  const pendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
-  const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
-  const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
+  const pendingUserInputRequestKey = incomingPendingUserInputs[0]
+    ? JSON.stringify([environmentId, activeThreadId, incomingPendingUserInputs[0].requestId])
+    : null;
+  // Keep the message selected as options advance within the same request.
+  const [messageModeRequestKey, setMessageModeRequestKey] = useState<string | null>(null);
+  if (messageModeRequestKey !== null && messageModeRequestKey !== pendingUserInputRequestKey) {
+    setMessageModeRequestKey(null);
+  }
+  const shownPendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
+  const shownPendingUserInput = shownPendingUserInputs[0] ?? null;
+  const shownPendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
+  const answeringUserInput =
+    shownPendingUserInput !== null && pendingUserInputRequestKey !== messageModeRequestKey;
+  const pendingUserInputs = answeringUserInput ? shownPendingUserInputs : [];
+  const activePendingProgress = answeringUserInput ? incomingPendingProgress : null;
+  const activePendingIsResponding = answeringUserInput && incomingPendingIsResponding;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   const shownSyncPhase = useDelayedStatus(composerDraftTargetKey, props.threadSyncPhase);
   const activeTasksProgress = shownSyncPhase === null ? props.activeTasksProgress : null;
@@ -2800,7 +2813,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
     isComposerApprovalState ||
-    pendingUserInputs.length > 0 ||
+    shownPendingUserInputs.length > 0 ||
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow = isComposerCollapsedMobile && !isComposerApprovalState;
   const showComposerAttachAction =
@@ -2843,6 +2856,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   })();
 
   const setPromptFromTraits = (nextPrompt: string) => {
+    if (activePendingProgress !== null) {
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      scheduleComposerFocus();
+      return;
+    }
     if (nextPrompt === promptRef.current) {
       scheduleComposerFocus();
       return;
@@ -3270,16 +3288,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const importContextFragmentStable = useStableCallback(importContextFragment);
 
   useEffect(() => {
-    if (isLiteralPendingAnswer) return;
+    if (activePendingProgress !== null) return;
     promptRef.current = prompt;
-  }, [isLiteralPendingAnswer, prompt, promptRef]);
+  }, [activePendingProgress, prompt, promptRef]);
   const [cursorClampedFor, setCursorClampedFor] = useState({ prompt, isLiteralPendingAnswer });
   if (
     cursorClampedFor.prompt !== prompt ||
     cursorClampedFor.isLiteralPendingAnswer !== isLiteralPendingAnswer
   ) {
     setCursorClampedFor({ prompt, isLiteralPendingAnswer });
-    if (!isLiteralPendingAnswer) {
+    if (!isLiteralPendingAnswer && activePendingProgress === null) {
       setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
     }
   }
@@ -3330,54 +3348,68 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedSearchKey(resolvedHighlightedSearchKey);
   }
 
-  const lastSyncedPendingInputRef = useRef<{
-    requestId: string | null;
-    questionId: string | null;
-  } | null>(null);
+  const pendingAnswerKey =
+    activePendingProgress && activePendingUserInput
+      ? JSON.stringify([
+          composerDraftTargetKey,
+          activePendingUserInput.requestId,
+          activePendingProgress.activeQuestion?.id,
+        ])
+      : null;
+  const composerText = activePendingProgress?.customAnswer ?? prompt;
+  const lastSyncedDraftKeyRef = useRef<string | null>(null);
+  const draftCaretsRef = useRef<{
+    message: { key: string; text: string; cursor: number } | null;
+    answer: { key: string; text: string; cursor: number } | null;
+  }>({ message: null, answer: null });
 
   useEffect(() => {
-    const nextCustomAnswer = activePendingProgress?.customAnswer;
-    if (typeof nextCustomAnswer !== "string") {
-      if (lastSyncedPendingInputRef.current !== null) {
-        promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
-        setComposerCursor(cursor);
-        resetComposerTrigger(trigger);
-      }
-      lastSyncedPendingInputRef.current = null;
+    // During a switch, the cursor still belongs to the draft being left.
+    if (lastSyncedDraftKeyRef.current !== pendingAnswerKey || promptRef.current !== composerText) {
       return;
     }
-
-    const nextRequestId = activePendingUserInput?.requestId ?? null;
-    const nextQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
-    const questionChanged =
-      lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
-      lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
-    const textChangedExternally = promptRef.current !== nextCustomAnswer;
-
-    lastSyncedPendingInputRef.current = {
-      requestId: nextRequestId,
-      questionId: nextQuestionId,
+    draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"] = {
+      key: pendingAnswerKey ?? composerDraftTargetKey,
+      text: composerText,
+      cursor: composerCursor,
     };
+  }, [composerCursor, composerDraftTargetKey, composerText, pendingAnswerKey, promptRef]);
 
-    if (!questionChanged && !textChangedExternally) {
+  useEffect(() => {
+    const draftChanged = lastSyncedDraftKeyRef.current !== pendingAnswerKey;
+    lastSyncedDraftKeyRef.current = pendingAnswerKey;
+    if (!draftChanged && (pendingAnswerKey === null || promptRef.current === composerText)) {
       return;
     }
 
-    promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer);
+    const saved = draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"];
+    const cursor =
+      saved?.key === (pendingAnswerKey ?? composerDraftTargetKey) && saved.text === composerText
+        ? clampCollapsedComposerCursor(composerText, saved.cursor, isLiteralPendingAnswer)
+        : composerStateAtPromptEnd(composerText, isLiteralPendingAnswer).cursor;
+    promptRef.current = composerText;
     setComposerCursor(cursor);
-    resetComposerTrigger(trigger);
+    resetComposerTrigger(
+      isLiteralPendingAnswer
+        ? null
+        : detectComposerTrigger(composerText, expandCollapsedComposerCursor(composerText, cursor)),
+    );
     setComposerHighlightedItemId(null);
   }, [
-    activePendingProgress?.customAnswer,
-    activePendingProgress?.activeQuestion?.id,
+    composerDraftTargetKey,
+    composerText,
     isLiteralPendingAnswer,
-    activePendingUserInput?.requestId,
-    prompt,
+    pendingAnswerKey,
     promptRef,
     resetComposerTrigger,
   ]);
+
+  const toggleAnsweringPendingUserInput = () => {
+    if (!shownPendingUserInput) return;
+    setMessageModeRequestKey(answeringUserInput ? pendingUserInputRequestKey : null);
+    window.requestAnimationFrame(() => composerEditorRef.current?.focus());
+  };
+  const toggleAnsweringPendingUserInputStable = useStableCallback(toggleAnsweringPendingUserInput);
 
   const composerSessionKey = `${draftId ?? ""}:${activeThreadId ?? ""}:${isLiteralPendingAnswer}`;
   const [shownComposerSessionKey, setShownComposerSessionKey] = useState(composerSessionKey);
@@ -4050,7 +4082,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       compactDisabled ||
       noProviderAvailable ||
       activePendingApproval !== null ||
-      pendingUserInputs.length > 0 ||
+      incomingPendingUserInputs.length > 0 ||
       phase === "running" ||
       isSendBusy ||
       isConnecting ||
@@ -4766,7 +4798,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const toggleTasksDrawerStable = useStableCallback(toggleTasksDrawer);
   const hasBannerItems = props.bannerItems.length > 0;
   const hasBlockingComposerTopDrawer =
-    activePendingApproval !== null || pendingUserInputs.length > 0;
+    activePendingApproval !== null || shownPendingUserInputs.length > 0;
   const showInlineTasksBadge =
     activeTasksProgress !== null &&
     activeTaskSteps !== null &&
@@ -6460,19 +6492,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </ComposerBanner.Actions>
                   </ComposerBanner.Row>
-                ) : pendingUserInputs.length > 0 ? (
+                ) : shownPendingUserInput ? (
                   <ComposerPendingUserInputPanel
-                    pendingUserInputs={pendingUserInputs}
+                    pendingUserInputs={shownPendingUserInputs}
                     cwd={gitCwd ?? undefined}
                     threadRef={routeThreadRef}
                     disabled={!canOperateThread}
                     respondingRequestIds={
-                      activePendingIsResponding && activePendingUserInput
-                        ? [...respondingRequestIds, activePendingUserInput.requestId]
+                      shownPendingIsResponding
+                        ? [...respondingRequestIds, shownPendingUserInput.requestId]
                         : respondingRequestIds
                     }
                     answers={activePendingDraftAnswers}
                     questionIndex={activePendingQuestionIndex}
+                    isAnswering={answeringUserInput}
+                    onToggleAnswering={toggleAnsweringPendingUserInputStable}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}

@@ -1,5 +1,12 @@
-import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
-import { act, useState } from "react";
+import {
+  EnvironmentId,
+  NodeId,
+  ProviderSessionId,
+  RuntimeRequestId,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
+import { act, createRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
@@ -7,6 +14,11 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
+import type { ChatComposerHandle } from "./ChatComposer";
+import { usePendingThreadRequests } from "./usePendingThreadRequests";
 
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -48,6 +60,8 @@ function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
         respondingRequestIds={[]}
         answers={answers}
         questionIndex={questionIndex}
+        isAnswering
+        onToggleAnswering={() => {}}
         onAdvance={advance}
         onToggleOption={(questionId, value) => {
           const question = prompt.questions.find((entry) => entry.id === questionId)!;
@@ -130,4 +144,128 @@ it("still auto-advances once after the answer draft rerenders the same question"
   expect(activeIndex()).toBe("1");
   await act(async () => vi.advanceTimersByTime(200));
   expect(activeIndex()).toBe("1");
+});
+
+it("keeps the message and insertion point when an option advances the pending question", async () => {
+  const projection = makeThreadProjectionFixture();
+  const target = { ...threadRef, threadId: projection.thread.id };
+  const nodeId = NodeId.make("question-node");
+  const serverProjection = {
+    ...projection,
+    runtimeRequests: [
+      {
+        id: prompt.requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input" as const,
+        status: "pending" as const,
+        responseCapability: {
+          type: "live" as const,
+          providerSessionId: ProviderSessionId.make("question-session"),
+        },
+        createdAt: projection.updatedAt,
+        resolvedAt: null,
+      },
+    ],
+    turnItems: [
+      {
+        id: TurnItemId.make("question-item"),
+        threadId: target.threadId,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed" as const,
+        title: null,
+        startedAt: projection.updatedAt,
+        completedAt: projection.updatedAt,
+        updatedAt: projection.updatedAt,
+        type: "user_input_request" as const,
+        requestId: prompt.requestId,
+        questions: prompt.questions.map((question, index) =>
+          index === 0 ? { ...question, initialAnswer: "Use OAuth" } : question,
+        ),
+      },
+    ],
+  };
+  const message = "Keep the README short.";
+  const promptRef = { current: message };
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  // The hook consumes only these two methods of the surrounding composer.
+  const composerRef = {
+    current: {
+      getSendContext: () => ({ answeringPendingUserInput: false }),
+      resetCursorState: ({ cursor = 0 } = {}) => editorRef.current?.focusAt(cursor),
+    } as ChatComposerHandle,
+  };
+  const store = useComposerDraftStore.getState();
+  store.setPrompt(target, message);
+
+  function MessageWithPendingQuestion() {
+    const requests = usePendingThreadRequests({
+      environmentId: target.environmentId,
+      activeThreadId: target.threadId,
+      activeThread: projection.thread,
+      serverProjection,
+      supportsQuestionAttachments: false,
+      composerDraftTarget: target,
+      setComposerDraftPrompt: store.setPrompt,
+      promptRef,
+      composerRef,
+      setThreadError: () => {},
+    });
+    const value = useComposerDraftStore((state) => state.getComposerDraft(target)?.prompt ?? "");
+    return (
+      <>
+        <ComposerPromptEditor
+          editorRef={editorRef}
+          value={value}
+          cursor={9}
+          contextRecords={new Map()}
+          skills={[]}
+          disabled={false}
+          placeholder="Message"
+          onChange={(next) => {
+            promptRef.current = next;
+            store.setPrompt(target, next);
+          }}
+          onPaste={() => {}}
+        />
+        <ComposerPendingUserInputPanel
+          pendingUserInputs={requests.pendingUserInputs}
+          cwd="/repo"
+          threadRef={target}
+          disabled={false}
+          respondingRequestIds={requests.respondingRequestIds}
+          answers={requests.activePendingDraftAnswers}
+          questionIndex={requests.activePendingQuestionIndex}
+          isAnswering={false}
+          onToggleAnswering={() => {}}
+          onToggleOption={requests.onSelectActivePendingUserInputOption}
+          onAdvance={requests.onAdvanceActivePendingUserInput}
+          onDismiss={requests.onDismissUserInput}
+        />
+      </>
+    );
+  }
+
+  try {
+    await act(async () => root.render(<MessageWithPendingQuestion />));
+    await act(async () => editorRef.current!.focusAt(9));
+    expect(editorRef.current!.readSnapshot()).toMatchObject({ value: message, cursor: 9 });
+
+    await chooseOption();
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(container.textContent).toContain("Choose for question 2");
+    expect.soft(promptRef.current).toBe(message);
+    expect.soft(store.getComposerDraft(target)?.prompt).toBe(message);
+    expect.soft(editorRef.current!.readSnapshot()).toMatchObject({ value: message, cursor: 9 });
+  } finally {
+    await act(async () => root.render(null));
+    store.clearDraftThread(target);
+  }
 });
