@@ -163,6 +163,8 @@ it("shows the loading, error, and empty states", async () => {
 
 it("submits a typed query at once and refreshes when the same query is submitted again", async () => {
   await render();
+  // A slow runner must not let the typing debounce submit the query before Enter does.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   await userEvent.fill(searchBox(), "Codex");
   await userEvent.keyboard("{Enter}");
   expect(lastQuery()).toBe("Codex");
