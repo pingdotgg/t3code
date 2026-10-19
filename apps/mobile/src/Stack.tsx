@@ -889,7 +889,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
         ...FORM_SHEET_PRESENTATION_OPTIONS,
-        sheetAllowedDetents: [0.55, 0.92],
+        sheetAllowedDetents: [0.8, 0.92],
         sheetGrabberVisible: true,
       },
     }),

@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { SubagentStatusDot } from "./SubagentStatusDot";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import {
@@ -796,24 +797,23 @@ function WorkspacePreparationRetryButton(props: {
   const [busy, setBusy] = useState(false);
   if (!retryable) return null;
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Retry workspace preparation"
-      disabled={busy}
-      onPress={() => {
-        setBusy(true);
-        void Haptics.selectionAsync();
-        void retry({
-          environmentId: props.environmentId,
-          input: { threadId: props.threadId, runId: props.runId },
-        }).finally(() => setBusy(false));
-      }}
-      className="ml-7 mt-2 min-h-11 flex-row items-center gap-1.5 self-start rounded-full border border-border px-4"
-      style={{ opacity: busy ? 0.5 : 1 }}
-    >
-      <SymbolView name="arrow.clockwise" size={13} tintColorClassName="accent-icon" />
-      <Text className="font-t3-medium text-sm text-foreground">Retry</Text>
-    </Pressable>
+    <View className="ml-7 mt-2">
+      <Button
+        label="Retry"
+        tone="secondary"
+        accessibilityLabel="Retry workspace preparation"
+        disabled={busy}
+        onPress={() => {
+          setBusy(true);
+          void Haptics.selectionAsync();
+          void retry({
+            environmentId: props.environmentId,
+            input: { threadId: props.threadId, runId: props.runId },
+          }).finally(() => setBusy(false));
+        }}
+        icon="arrow.clockwise"
+      />
+    </View>
   );
 }
 

@@ -12,7 +12,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Pressable, View, type ColorValue } from "react-native";
+import { View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -147,16 +147,12 @@ function PendingSecretRequestForm(props: {
             {SECRET_REQUEST_PRIVACY_NOTE}
           </Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: submitting }}
+        <Button
+          label="Decline"
+          tone="text"
           disabled={submitting}
-          hitSlop={8}
-          className="px-1 py-1 active:opacity-60 disabled:opacity-50"
           onPress={() => void send({ type: "decline" })}
-        >
-          <Text className="font-sans text-xs text-foreground-muted">Decline</Text>
-        </Pressable>
+        />
       </View>
     </View>
   );

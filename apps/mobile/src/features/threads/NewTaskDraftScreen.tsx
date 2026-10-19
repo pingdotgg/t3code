@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -1612,14 +1613,12 @@ export function NewTaskDraftScreen(props: {
       ) : null}
 
       {modelUnavailable ? (
-        <Pressable
-          accessibilityRole="button"
-          className="px-3 py-2"
+        <Button
+          label="Model unavailable. Open model settings."
+          tone="text"
           disabled={isComposerInteractionLocked}
           onPress={settingsSheetPresentation.open}
-        >
-          <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
-        </Pressable>
+        />
       ) : null}
 
       <ComposerSurface

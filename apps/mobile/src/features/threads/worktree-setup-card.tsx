@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import {
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
@@ -229,28 +230,24 @@ function SetupDetailsSheet({
         ) : null}
         {canCancel ? (
           <View className="mt-3 flex-row items-center justify-end gap-4 border-t border-border pt-1">
-            <Pressable
-              accessibilityRole="button"
+            <Button
+              label="Cancel setup"
+              tone="danger"
               accessibilityLabel="Cancel worktree setup"
               onPress={() => {
                 onClose();
                 onCancel();
               }}
-              className="min-h-11 justify-center px-2"
-            >
-              <Text className="text-sm text-danger-foreground">Cancel setup</Text>
-            </Pressable>
+            />
             {onWorkLocally ? (
-              <Pressable
-                accessibilityRole="button"
+              <Button
+                label="Work locally"
+                tone="secondary"
                 onPress={() => {
                   onClose();
                   onWorkLocally();
                 }}
-                className="min-h-11 justify-center px-2"
-              >
-                <Text className="text-sm text-foreground">Work locally</Text>
-              </Pressable>
+              />
             ) : null}
           </View>
         ) : null}

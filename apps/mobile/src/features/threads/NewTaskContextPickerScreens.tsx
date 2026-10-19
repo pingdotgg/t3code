@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -470,13 +471,9 @@ export function BranchPickerScreen(props: {
                   : "No branches available"}
           </Text>
           {!props.loading && props.error ? (
-            <Pressable
-              accessibilityRole="button"
-              className="rounded-full bg-card px-4 py-2 active:opacity-70"
-              onPress={props.onRefresh}
-            >
-              <Text className="text-sm font-t3-medium text-foreground">Try again</Text>
-            </Pressable>
+            <View className="self-center">
+              <Button label="Try again" tone="secondary" onPress={props.onRefresh} />
+            </View>
           ) : null}
         </View>
       </ScrollView>

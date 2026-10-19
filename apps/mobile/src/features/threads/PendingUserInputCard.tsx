@@ -312,16 +312,12 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         onPress={() => void props.onSubmit()}
       />
       {props.pendingUserInput.dismissible ? (
-        <Pressable
-          accessibilityRole="button"
-          className="items-center justify-center rounded-2xl px-4 py-2.5 active:opacity-70"
+        <Button
+          label="Dismiss without answering"
+          tone="text"
           disabled={isResponding}
           onPress={() => void props.onDismiss()}
-        >
-          <Text className="font-t3-bold text-sm text-foreground-muted">
-            Dismiss without answering
-          </Text>
-        </Pressable>
+        />
       ) : null}
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-tertiary">
