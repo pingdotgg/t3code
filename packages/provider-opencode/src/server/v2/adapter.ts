@@ -506,11 +506,12 @@ const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
 const textOf = (content: ReadonlyArray<{ readonly type: string; readonly text?: string }>) =>
   content.flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n");
 
-const BASE64_DATA_URI = /^data:[^,]*;base64,(.+)$/s;
+const BASE64_DATA_URI = /^data:([^;,]*)[^,]*;base64,(.+)$/s;
 
 /**
  * An image tool such as `image_generation` answers with a file block, not text.
  * Only raster images inlined as base64 are kept; anything else can't be served.
+ * The data URI's media type must match the block's mime, so a conflicting file isn't relabeled.
  * Blocks keep the provider's order so text and images stay interleaved.
  */
 const toolContentOf = (
@@ -523,9 +524,11 @@ const toolContentOf = (
 ) =>
   content.flatMap((part): ReadonlyArray<OpenCodeToolContentBlock> => {
     if (part.type === "text") return part.text ? [{ type: "text", text: part.text }] : [];
-    const data = part.type === "file" ? BASE64_DATA_URI.exec(part.uri ?? "")?.[1] : undefined;
+    const match = part.type === "file" ? BASE64_DATA_URI.exec(part.uri ?? "") : null;
     const image =
-      data === undefined ? null : readToolOutputImage({ type: "image", mimeType: part.mime, data });
+      match == null || match[1]!.toLowerCase() !== part.mime?.toLowerCase()
+        ? null
+        : readToolOutputImage({ type: "image", mimeType: part.mime, data: match[2] });
     return image?.data === undefined
       ? []
       : [{ type: "image", mimeType: image.mimeType, data: image.data }];
