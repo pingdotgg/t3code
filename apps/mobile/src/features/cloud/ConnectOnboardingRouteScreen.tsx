@@ -1,10 +1,11 @@
+import { Button } from "../../components/ui/Button";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
 import { useAuth } from "@clerk/expo";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useEffect, useState } from "react";
-import { Platform, Pressable, RefreshControl, View } from "react-native";
+import { Platform, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -125,14 +126,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
         )}
 
         {userId ? (
-          <Pressable
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={handleDontShowAgain}
-            className="items-center py-1 active:opacity-70"
-          >
-            <Text className="text-xs text-foreground-muted">{"Don't show this again"}</Text>
-          </Pressable>
+          <Button label={"Don't show this again"} tone="text" onPress={handleDontShowAgain} />
         ) : null}
       </ScrollView>
     </View>

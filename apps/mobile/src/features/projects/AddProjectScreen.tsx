@@ -433,12 +433,13 @@ function EmptyEnvironmentState() {
       <Text className="text-center text-sm leading-normal text-foreground-muted">
         Start or reconnect an environment before adding a project.
       </Text>
-      <Pressable
-        onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
-        className="mt-1 rounded-full bg-primary px-4 py-2.5 active:opacity-70"
-      >
-        <Text className="text-sm font-t3-bold text-primary-foreground">Add environment</Text>
-      </Pressable>
+      <View className="mt-1">
+        <Button
+          label="Add environment"
+          tone="primary"
+          onPress={() => navigation.dispatch(StackActions.replace("ConnectionsNew"))}
+        />
+      </View>
     </View>
   );
 }
