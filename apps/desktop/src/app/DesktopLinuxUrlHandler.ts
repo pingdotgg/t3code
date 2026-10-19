@@ -75,6 +75,12 @@ export function escapeDesktopEntryExecArgument(value: string): string {
   return escapeDesktopEntryString(`"${quoted}"`);
 }
 
+// Legacy xdg-open looks up the first Exec word without unquoting it.
+const escapeUrlHandlerExecTarget = (value: string): string =>
+  /[ \t\n"'\\><~|&;$*?#()`]/.test(value)
+    ? escapeDesktopEntryExecArgument(value)
+    : escapeDesktopEntryString(value.replaceAll("%", "%%"));
+
 // The AppImage integration entry owns the window identity. This
 // hidden URL-only entry must not compete with it for StartupWMClass matching.
 export function renderUrlHandlerDesktopEntry(input: {
@@ -87,7 +93,7 @@ export function renderUrlHandlerDesktopEntry(input: {
     "[Desktop Entry]",
     "Type=Application",
     `Name=${escapeDesktopEntryString(input.displayName)}`,
-    `Exec=${escapeDesktopEntryExecArgument(input.execTarget)} %U`,
+    `Exec=${escapeUrlHandlerExecTarget(input.execTarget)} %U`,
     ...(input.iconPath === undefined ? [] : [`Icon=${escapeDesktopEntryString(input.iconPath)}`]),
     "Terminal=false",
     "NoDisplay=true",
