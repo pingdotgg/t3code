@@ -22,7 +22,7 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import { getProviderOptionCurrentLabel, getProviderOptionDescriptors } from "@t3tools/shared/model";
+import { getProviderOptionCurrentLabel, getProviderOptionStatedValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -160,11 +160,18 @@ export function formatModelSelectionEffort(
 ): string | null {
   const caps = models.find((model) => model.slug === selection.model)?.capabilities;
   if (!caps) return null;
-  const descriptors = getProviderOptionDescriptors({ caps, selections: selection.options });
   for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const descriptor = descriptors.find((candidate) => candidate.id === id);
+    const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
-    const label = getProviderOptionCurrentLabel(descriptor, selection, reportedSelection);
+    const value = getProviderOptionStatedValue(id, selection, reportedSelection);
+    if (value === undefined && id !== "variant") continue;
+    if (typeof value === "boolean") continue;
+    // Bypass picker normalization so an obsolete choice cannot become a catalog default.
+    const label = getProviderOptionCurrentLabel(
+      { ...descriptor, currentValue: value },
+      selection,
+      reportedSelection,
+    );
     if (label) return label;
   }
   return null;
