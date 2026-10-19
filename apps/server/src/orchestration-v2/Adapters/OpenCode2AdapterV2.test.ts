@@ -35,6 +35,7 @@ import { describe } from "vite-plus/test";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -3241,6 +3242,60 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         yield* runtime.unloadThread!({ providerThread: thread });
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        browserToolsAvailable: false,
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const add = out("mcp.add", {
+        server,
+        "location[directory]": WORK,
+        config: {
+          type: "remote",
+          url: "http://127.0.0.1:3773/mcp",
+          headers: { Authorization: "Bearer thread-credential" },
+          oauth: false,
+        },
+      });
+      const turn = [
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ];
+      // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
+      const { runtime, thread } = yield* resumed([
+        add,
+        reply("mcp.add", null),
+        ...turn,
+        add,
+        reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+        }),
+        reply("session.instructions.entry.put", null),
+        ...turn,
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+      ]);
+      for (let index = 0; index < 2; index++) {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(turnInput(thread));
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      }
+    }).pipe(Effect.scoped),
   );
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
