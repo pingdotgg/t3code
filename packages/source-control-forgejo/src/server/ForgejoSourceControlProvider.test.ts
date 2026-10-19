@@ -675,25 +675,27 @@ it.effect("says an author search was cut short by a server that pages below its 
   ),
 );
 
+const closedPull = (number: number, merged: boolean) => ({
+  number,
+  title: `Change ${number}`,
+  body: "",
+  html_url: `https://forgejo.test/maria/project/pulls/${number}`,
+  user: { login: "maria" },
+  state: "closed",
+  merged,
+  head: { ref: `change-${number}`, sha: "head", repo: null },
+  base: { ref: "main", sha: "base", repo: null },
+  created_at: "2026-09-01T00:00:00Z",
+  updated_at: `2026-09-01T10:${String(59 - number).padStart(2, "0")}:00Z`,
+  closed_at: "2026-09-02T00:00:00Z",
+  merged_at: merged ? "2026-09-02T00:00:00Z" : null,
+  labels: [],
+});
+
 // Forgejo answers `state=closed` with merged and unmerged pull requests alike. This server caps
 // pages at three rows, and its second page holds only merged pull requests.
 const closedPulls = [true, false, true, true, true, true, false, true, false, false].map(
-  (merged, index) => ({
-    number: index + 1,
-    title: `Change ${index + 1}`,
-    body: "",
-    html_url: `https://forgejo.test/maria/project/pulls/${index + 1}`,
-    user: { login: "maria" },
-    state: "closed",
-    merged,
-    head: { ref: `change-${index + 1}`, sha: "head", repo: null },
-    base: { ref: "main", sha: "base", repo: null },
-    created_at: "2026-09-01T00:00:00Z",
-    updated_at: `2026-09-${String(20 - index).padStart(2, "0")}T00:00:00Z`,
-    closed_at: "2026-09-02T00:00:00Z",
-    merged_at: merged ? "2026-09-02T00:00:00Z" : null,
-    labels: [],
-  }),
+  (merged, index) => closedPull(index + 1, merged),
 );
 
 const listClosedPulls = (
@@ -701,6 +703,7 @@ const listClosedPulls = (
   limit: number,
   delivered?: number,
   requests: Array<string> = [],
+  pulls: ReadonlyArray<ReturnType<typeof closedPull>> = closedPulls,
 ) =>
   Effect.gen(function* () {
     const provider = yield* ForgejoPullRequestProvider.make;
@@ -731,8 +734,8 @@ const listClosedPulls = (
           const params = new URLSearchParams(query);
           requests.push(`${params.get("state")}:${params.get("page")}`);
           const page = Number(params.get("page"));
-          const rel = page * 3 < closedPulls.length ? "next" : "prev";
-          return encodeJsonEffect(closedPulls.slice((page - 1) * 3, page * 3)).pipe(
+          const rel = page * 3 < pulls.length ? "next" : "prev";
+          return encodeJsonEffect(pulls.slice((page - 1) * 3, page * 3)).pipe(
             Effect.orDie,
             Effect.map((stdout) =>
               processOutput(stdout, { stderr: `Link: <${input.path}>; rel="${rel}"` }),
@@ -758,21 +761,20 @@ it.effect.each([
   }),
 );
 
-it.effect("reads past a Forgejo page whose rows are all filtered out of the view", () =>
+it.effect("stops a Forgejo slice at its row budget when every row it read is filtered out", () =>
   Effect.gen(function* () {
     const requests: Array<string> = [];
-    // Starts at #3. Its row budget runs out on the all-merged second page with nothing kept, so
-    // it reads on to #7 rather than end on a slice the service cannot continue from.
+    // Starts at #3 and reads two merged rows. It keeps none, but still counts both.
     const list = yield* listClosedPulls("closed", 2, 2, requests);
-    assert.deepStrictEqual(list.numbers, [7]);
+    assert.deepStrictEqual(list.numbers, []);
     assert.strictEqual(list.truncated, true);
-    assert.strictEqual(list.cursorAdvance, 5);
-    assert.deepStrictEqual(requests, ["closed:1", "closed:2", "closed:3"]);
+    assert.strictEqual(list.cursorAdvance, 2);
+    assert.deepStrictEqual(requests, ["closed:1", "closed:2"]);
   }),
 );
 
 it.effect.each([
-  ["closed", 3, [[2], [7], [9, 10]], [3, 4, 3]],
+  ["closed", 3, [[2], [], [7, 9], [10]], [3, 3, 3, 1]],
   ["merged", 4, [[1, 3, 4], [5, 6, 8], []], [4, 4, 2]],
 ] as const)(
   "continues the %s Forgejo list after the rows already consumed",
@@ -789,9 +791,33 @@ it.effect.each([
         delivered = (delivered ?? 0) + (list.cursorAdvance ?? 0);
       }
       assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number>>>(seen, slices);
-      // Each slice reads about `limit` rows however few of them it keeps.
+      // Each slice reads at most `limit` rows however few of them it keeps.
       assert.deepStrictEqual<ReadonlyArray<number | undefined>>(consumed, advances);
     }),
+);
+
+it.effect("reaches an old closed Forgejo pull request behind a long merged history", () =>
+  Effect.gen(function* () {
+    // Forty merged pull requests, then the only one closed without merging.
+    const pulls = Array.from({ length: 40 }, (_, index) => closedPull(index + 1, true));
+    pulls.push(closedPull(41, false));
+    const slices: Array<ReadonlyArray<number>> = [];
+    let delivered: number | undefined;
+    for (;;) {
+      const requests: Array<string> = [];
+      const list = yield* listClosedPulls("closed", 5, delivered, requests, pulls);
+      slices.push(list.numbers);
+      // The first page, read for its size, and the pages holding at most five rows.
+      assert.isAtMost(requests.length, 4);
+      assert.isAtMost(list.cursorAdvance ?? 0, 5);
+      if (!list.truncated) break;
+      delivered = (delivered ?? 0) + (list.cursorAdvance ?? 0);
+    }
+    assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number>>>(slices, [
+      ...Array.from({ length: 8 }, () => []),
+      [41],
+    ]);
+  }),
 );
 
 it.effect("gives Forgejo identities the browser URL of the login that serves them", () =>

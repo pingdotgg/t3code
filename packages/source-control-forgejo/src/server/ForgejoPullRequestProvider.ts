@@ -311,20 +311,18 @@ export const make = Effect.gen(function* () {
         const pageSize = first.rows.length || 50;
         const firstIndex = Math.floor(offset / pageSize) + 1;
         // The cursor counts every row read, kept or not, so a continuation resumes after the
-        // last one. A slice reads about `limit` rows whatever it keeps, since each page can be
-        // slow on a large server. One that has kept nothing reads on, because an empty slice
-        // gives the service no row to continue from.
+        // last one. A slice reads at most `limit` rows however few it keeps, since each page can
+        // be slow on a large server; the service continues from one that kept none.
         let consumed = 0;
         let more = true;
-        const full = () => consumed >= input.limit && items.length > 0;
-        for (let index = firstIndex; more && !full(); index++) {
+        for (let index = firstIndex; more && consumed < input.limit; index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
           const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
           const countBefore = consumed;
           for (const row of rows.slice(start)) {
-            if (full()) break;
+            if (consumed >= input.limit) break;
             consumed++;
             if (row && keeps(row)) items.push(forgejoChangeRequest(row));
           }
