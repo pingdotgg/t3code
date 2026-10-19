@@ -15,6 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -1212,3 +1213,50 @@ it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publi
     ),
   );
 });
+
+it.effect.each(["win32", "linux"] as const)(
+  "checkpoint working-tree commands enable Git long paths only on Windows (%s)",
+  (platform) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-long-paths-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      // An unborn nested repository fails the first `add`, so recovery's listing runs too.
+      yield* git(["init", "empty"]);
+      const observedArgs: ReadonlyArray<string>[] = [];
+      const platformDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            observedArgs.push(input.args);
+            return liveProcess.run(input);
+          },
+        }),
+      );
+
+      yield* platformDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fs.writeFileString(path.join(cwd, "file.txt"), "changed\n");
+      assert.isTrue(yield* platformDriver.checkpoints.restoreCheckpoint({ cwd, checkpointRef }));
+
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "file.txt")), "unstaged\n");
+      assert.strictEqual((yield* git(["ls-tree", checkpointRef, "--", "empty"])).stdout, "");
+      for (const command of ["add", "ls-files", "restore", "clean", "reset"]) {
+        const calls = observedArgs.filter(
+          (args) => args.includes(command) && (command !== "ls-files" || args.includes("--others")),
+        );
+        assert.isNotEmpty(calls, `Expected checkpoint command: ${command}`);
+        for (const args of calls) {
+          const setting = args.indexOf("core.longpaths=true");
+          if (platform === "win32") {
+            assert.strictEqual(args[setting - 1], "-c", args.join(" "));
+            assert.isBelow(setting, args.indexOf(command), args.join(" "));
+          } else {
+            assert.strictEqual(setting, -1, args.join(" "));
+          }
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
