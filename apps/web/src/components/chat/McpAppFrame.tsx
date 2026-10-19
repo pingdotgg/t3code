@@ -48,6 +48,8 @@ const fullscreenSupported =
   typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
 
 const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+// Exclude activation left by input elsewhere in T3.
+const PAGE_ACTIVATION_MS = 5_000;
 
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -167,6 +169,21 @@ export function McpAppFrame(props: {
   useEffect(() => {
     latest.current = live;
   });
+
+  // Frame input does not bubble here. An app can refocus itself, so focus
+  // alone cannot exclude activation from input elsewhere in T3.
+  const lastPageInputAt = useRef(Number.NEGATIVE_INFINITY);
+  useEffect(() => {
+    const note = () => {
+      lastPageInputAt.current = performance.now();
+    };
+    if (navigator.userActivation?.isActive) note();
+    const types = ["pointerdown", "pointerup", "touchend", "keydown"] as const;
+    for (const type of types) window.addEventListener(type, note, true);
+    return () => {
+      for (const type of types) window.removeEventListener(type, note, true);
+    };
+  }, []);
 
   useEffect(() => {
     const box = boxRef.current;
@@ -343,7 +360,10 @@ export function McpAppFrame(props: {
         const otherFullscreen = document.querySelector("[data-mcp-app-fullscreen]");
         if (
           mode === "fullscreen" &&
-          (latest.current.props.awaitingUser === true ||
+          (document.activeElement !== frameRef.current ||
+            !navigator.userActivation?.isActive ||
+            performance.now() - lastPageInputAt.current < PAGE_ACTIVATION_MS ||
+            latest.current.props.awaitingUser === true ||
             isConfirmDialogActive() ||
             (otherFullscreen !== null && otherFullscreen !== boxRef.current))
         ) {
