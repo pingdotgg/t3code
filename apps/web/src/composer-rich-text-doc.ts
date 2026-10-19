@@ -1,5 +1,11 @@
 import { joinBackward, joinTextblockBackward, joinTextblockForward } from "@tiptap/pm/commands";
-import { Fragment, Mark, type Node as ProseMirrorNode, type ResolvedPos } from "@tiptap/pm/model";
+import {
+  Fragment,
+  Mark,
+  type MarkType,
+  type Node as ProseMirrorNode,
+  type ResolvedPos,
+} from "@tiptap/pm/model";
 import { Code } from "@tiptap/extension-code";
 import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
@@ -12,6 +18,7 @@ import { TaskList } from "@tiptap/extension-task-list";
 import {
   type EditorState,
   Plugin,
+  PluginKey,
   Selection,
   TextSelection,
   type Transaction,
@@ -40,6 +47,71 @@ const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
   code: "code",
 };
 
+type CodePair = { from: number; to: number };
+
+const codePairKey = new PluginKey<CodePair[]>("typedBacktickPairs");
+
+// Input rules only see text before the caret, so filling an already typed
+// pair needs a separate exit handler. Only typed pairs opt into that handler.
+function codePairCaretPlugin(type: MarkType) {
+  return new Plugin<CodePair[]>({
+    key: codePairKey,
+    state: {
+      init: () => [],
+      apply(tr, pairs) {
+        const mapped = pairs.flatMap((pair) => {
+          const from = tr.mapping.mapResult(pair.from, 1);
+          const to = tr.mapping.mapResult(pair.to, -1);
+          return from.deleted || to.deleted ? [] : [{ from: from.pos, to: to.pos }];
+        });
+        const typed = tr.getMeta(codePairKey) as CodePair | undefined;
+        return typed ? [...mapped, typed] : mapped;
+      },
+    },
+    props: {
+      handleTextInput(view, from, to, text, insert) {
+        if (view.composing || from !== to || text !== "`") return false;
+        const $from = view.state.doc.resolve(from);
+        if (
+          !$from.parent.isTextblock ||
+          $from.parent.type.spec.code ||
+          !/(^|[^`])`$/.test($from.nodeBefore?.text ?? "")
+        ) {
+          return false;
+        }
+        view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
+        return true;
+      },
+    },
+    appendTransaction(transactions, oldState, state) {
+      if (!state.selection.empty || oldState.selection.from === state.selection.from) return null;
+      if (transactions.some((tr) => tr.docChanged)) return null;
+      const pair = codePairKey.getState(state)?.find(({ to }) => to === state.selection.from);
+      if (!pair) return null;
+      const $start = state.doc.resolve(pair.from);
+      const $end = state.selection.$from;
+      if (!$start.sameParent($end) || $start.parent.type.spec.code) return null;
+      if (
+        $start.nodeBefore?.text?.endsWith("`") ||
+        $end.nodeAfter?.text?.startsWith("`") ||
+        !/^`[^`]+`$/.test(state.doc.textBetween(pair.from, pair.to))
+      ) {
+        return null;
+      }
+      let plain = true;
+      state.doc.nodesBetween(pair.from, pair.to, (node) => {
+        if (node.isInline && (!node.isText || node.marks.length > 0)) plain = false;
+      });
+      if (!plain) return null;
+      const tr = state.tr.delete(pair.to - 1, pair.to).delete(pair.from, pair.from + 1);
+      tr.addMark(pair.from, pair.to - 2, type.create());
+      tr.setSelection(TextSelection.create(tr.doc, pair.to - 2));
+      tr.removeStoredMark(type);
+      return tr;
+    },
+  });
+}
+
 /**
  * Tiptap's code mark excludes every other mark, which rejects the `bold+code`
  * spans markdown like `**\`x\`**` parses into and drops the whole insert.
@@ -49,6 +121,9 @@ export const ComposerCodeExtension = Code.extend({
   // ArrowRight leaves code through the caret stops at styled edges, so the
   // stock exit (inserting a space at the end of a line) is not needed.
   exitable: false,
+  addProseMirrorPlugins() {
+    return [...(this.parent?.() ?? []), codePairCaretPlugin(this.type)];
+  },
 });
 
 /**
