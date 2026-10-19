@@ -3,6 +3,7 @@ import { assert, beforeEach, it, vi } from "vite-plus/test";
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
 
 vi.mock("node:child_process", () => ({ execFile: execFileMock }));
+vi.mock("../electron/WindowsForeground.ts", () => ({ loadWindowsForegroundApi: vi.fn() }));
 
 import { activeWindow } from "./ActiveWindow.ts";
 
@@ -11,14 +12,19 @@ beforeEach(() => {
 });
 
 function stubMacLookup(stdout: string) {
+  const stdin = { on: vi.fn(), end: vi.fn() };
   execFileMock.mockImplementation(
     (
       _file: string,
       _args: ReadonlyArray<string>,
       _options: unknown,
       callback: (error: Error | null, stdout: string) => void,
-    ) => callback(null, stdout),
+    ) => {
+      stdin.end.mockImplementation(() => callback(null, stdout));
+      return { stdin };
+    },
   );
+  return stdin;
 }
 
 function macLookup(
@@ -40,8 +46,8 @@ function macLookup(
   });
 }
 
-it("parses the frontmost macOS window from the osascript lookup", async () => {
-  stubMacLookup(
+it("feeds the macOS lookup script to osascript over stdin and parses the frontmost window", async () => {
+  const stdin = stubMacLookup(
     macLookup([
       {
         id: 42,
@@ -67,7 +73,9 @@ it("parses the frontmost macOS window from the osascript lookup", async () => {
   });
   const [file, args] = execFileMock.mock.calls[0]!;
   assert.strictEqual(file, "/usr/bin/osascript");
-  assert.deepEqual(args.slice(0, 3), ["-l", "JavaScript", "-e"]);
+  assert.deepEqual(args, ["-l", "JavaScript", "-"]);
+  assert.lengthOf(stdin.end.mock.calls, 1);
+  assert.include(stdin.end.mock.calls[0]![0], "CGWindowListCopyWindowInfo");
 });
 
 it.each([
