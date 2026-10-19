@@ -107,11 +107,9 @@ function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): Servi
   };
 }
 
-// The executable the unit or launch agent starts: systemd's ExecStart value,
-// or the plist string that precedes the __service-launcher argument. Only the
-// version segment changes, so paths the renderer had to quote or escape stay
-// as they are. The launch agent's PATH names a versions directory without the
-// executable and is left alone.
+// systemd's ExecStart value, or the plist string before the __service-launcher argument.
+// Only the version segment changes, so quoted or escaped paths stay as rendered.
+// The launch agent's PATH names a versions directory without the executable; leave it.
 const SERVICE_UNIT_PROGRAMS = [
   /^(ExecStart=.*?[\\/]runtime[\\/]versions[\\/])([^\\/\s"]+)([\\/]t3)(?=["\s])/m,
   /(<string>[^<]*?[\\/]runtime[\\/]versions[\\/])([^\\/<]+)([\\/]t3<\/string>\s*<string>__service-launcher<\/string>)/,
@@ -668,9 +666,12 @@ export class Launcher {
     if (update?.status !== "pending") {
       if (update !== undefined) {
         await discardDatabaseBackup(this.#baseDir, update.id).catch(() => undefined);
-        await this.#repointServiceUnit(this.#state.activeVersion);
       }
-      await this.#startChild(this.#state.activeVersion, "active", update);
+      try {
+        await this.#startChild(this.#state.activeVersion, "active", update);
+      } finally {
+        if (update !== undefined) await this.#repointServiceUnit(this.#state.activeVersion);
+      }
       return;
     }
     if (await databaseRestorePending(this.#baseDir, update)) {

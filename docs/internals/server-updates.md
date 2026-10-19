@@ -29,8 +29,9 @@ is preserved.
 
 launchd keeps its loaded definition until the next bootstrap; systemd keeps its
 loaded definition until daemon-reload. After a deferred protocol-3 upgrade, either
-manager can therefore respawn the old launcher, which cannot read protocol-4
-state. One local service restart is required to load the updated launcher.
+manager can therefore respawn the old launcher, but the new runtime refuses to run
+under it. The service cannot recover until a local restart through
+`t3 update --yes` or `t3 service install` loads the updated launcher.
 
 ## Commit boundary
 

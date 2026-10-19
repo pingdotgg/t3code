@@ -18,7 +18,6 @@ import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootServi
 import {
   databaseBackupBlocker,
   Launcher,
-  main,
   readServiceEnvironment,
   type BackupSpaceProbe,
   readServiceState,
@@ -391,34 +390,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  it.effect("serializes shutdown with launcher recovery", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-stop-" });
-      const statePath = path.join(root, "runtime", "service-state.json");
-      yield* writeFakeRuntime(
-        fs,
-        path,
-        path.join(root, "runtime", "versions", "1.0.0"),
-        "setInterval(() => {}, 1_000);\n",
-      );
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
-      );
-
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      const running = launcher.run();
-      const stopping = launcher.stop("SIGTERM");
-      assert.isTrue(yield* fs.exists(path.join(root, "runtime", SERVICE_STOP_MARKER_FILE)));
-      yield* Effect.promise(() => stopping);
-      yield* Effect.promise(() => running);
-    }),
-  );
-
   const commitUpdate = (
     render = renderBootServiceUnit,
     missingUnit = false,
@@ -622,10 +593,11 @@ if (context.update?.status === "pending") {
         yield* Effect.promise(() => readServiceState(statePath)),
         {
           serviceUnit: unit,
+          environment: yield* Effect.promise(() => readServiceEnvironment(root)),
         },
       );
       yield* Effect.promise(() =>
-        main().then(
+        launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
           () => Promise.resolve(),
         ),

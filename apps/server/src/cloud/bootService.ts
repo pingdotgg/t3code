@@ -38,7 +38,10 @@ import {
   type ServiceState,
 } from "./serviceProtocol.ts";
 
-export { serviceUnitBaseDirOf as bootServiceBaseDirOf } from "./serviceProtocol.ts";
+export {
+  serviceUnitBaseDirOf as bootServiceBaseDirOf,
+  serviceUnitProgramOf as bootServiceProgramOf,
+} from "./serviceProtocol.ts";
 
 const BOOT_SERVICE_NAME = "t3code";
 export const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
@@ -916,8 +919,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
                   : {},
               );
             }
-            // A remote update can finish after the CLI checks status. Read its
-            // final version after the launcher stops and before changing files.
+            // Read the final version after stopping the launcher; a remote update may finish after the status check.
             if (
               installedVersion !== undefined &&
               options?.allowDowngrade !== true &&
@@ -932,12 +934,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           yield* fs
             .makeDirectory(path.dirname(unitPath), { recursive: true })
             .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-          if (!start && (currentlyInstalled || Option.isSome(previousStateText))) {
-            // Written first: once the files below name the new version, the running
-            // service is behind them, and a failure between the two writes must not
-            // leave it looking current.
-            yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
-          }
+          // Files can match the new version even when activation fails; keep that install retryable.
+          yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
           yield* writeDurably(
             statePath,
             // @effect-diagnostics-next-line globalJsonInEffect:off - fixed launcher-owned document.
