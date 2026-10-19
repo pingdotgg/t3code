@@ -1,5 +1,6 @@
 import { SessionPermissions } from "./SessionPermissions";
 import { AUTH_SCOPE_OPTIONS as PAIRING_SCOPE_OPTIONS } from "@t3tools/shared/authScopeOptions";
+import { describeClockSkew } from "@t3tools/shared/clockSkew";
 import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
@@ -1808,6 +1809,18 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
+  const clockSkewSeconds = primaryCloudLinkState.data?.clockSkewSeconds;
+  const clockSkewWarning =
+    clockSkewSeconds === undefined
+      ? null
+      : describeClockSkew(clockSkewSeconds, primaryCloudLinkState.data?.hostPlatform ?? "");
+  // The fix happens outside the app, so check again when the user comes back.
+  const refreshLinkState = primaryCloudLinkState.refresh;
+  useEffect(() => {
+    if (clockSkewWarning === null) return;
+    window.addEventListener("focus", refreshLinkState);
+    return () => window.removeEventListener("focus", refreshLinkState);
+  }, [clockSkewWarning, refreshLinkState]);
 
   const updateManagedTunnel = async (enabled: boolean) => {
     if (
@@ -1888,7 +1901,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
                   ? "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it."
                   : "Make this environment available to your other devices through T3 Connect."
           }
-          status={operationError ?? primaryCloudLinkState.error}
+          status={operationError ?? clockSkewWarning ?? primaryCloudLinkState.error}
           control={
             <CloudLinkSwitch
               checked={managedTunnelActive}
@@ -1904,10 +1917,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
             />
           }
         />
-      ) : linkRevoked ? (
+      ) : linkRevoked || clockSkewWarning !== null ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+          description={
+            linkRevoked
+              ? "This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+              : undefined
+          }
+          status={clockSkewWarning}
         />
       ) : null}
       <SettingsRow

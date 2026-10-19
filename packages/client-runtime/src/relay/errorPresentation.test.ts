@@ -1,4 +1,8 @@
-import { RelayAuthInvalidError } from "@t3tools/contracts/relay";
+import {
+  RelayAuthInvalidError,
+  RelayEnvironmentLinkProofExpiredError,
+  RelayEnvironmentLinkProofInvalidError,
+} from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -53,5 +57,31 @@ describe("relayProtectedErrorMessage", () => {
     });
 
     expect(relayProtectedErrorMessage(error)).toBe("Relay rejected the cloud session token.");
+  });
+  it("points clients to the host clock only when a link proof could have a time failure", () => {
+    const expired = new RelayEnvironmentLinkProofExpiredError({
+      code: "environment_link_proof_expired",
+      traceId: "trace-expired",
+    });
+    const invalid = new RelayEnvironmentLinkProofInvalidError({
+      code: "environment_link_proof_invalid",
+      reason: "invalid_signature_or_scope",
+      traceId: "trace-invalid",
+    });
+    const mismatch = new RelayEnvironmentLinkProofInvalidError({
+      code: "environment_link_proof_invalid",
+      reason: "descriptor_mismatch",
+      traceId: "trace-mismatch",
+    });
+
+    expect(relayProtectedErrorMessage(expired)).toContain(
+      "computer running T3 Code sets its date and time automatically",
+    );
+    expect(relayProtectedErrorMessage(invalid)).toContain(
+      "computer running T3 Code sets its date and time automatically",
+    );
+    expect(relayProtectedErrorMessage(mismatch)).toBe(
+      "Relay rejected the environment link proof (descriptor_mismatch).",
+    );
   });
 });

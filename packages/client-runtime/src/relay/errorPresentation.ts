@@ -11,6 +11,10 @@ export const DPOP_UNKNOWN_HINT =
 
 export const DPOP_RETRY_HINT = "Hint: Try again. If the problem continues, copy the trace ID.";
 
+/** The relay reports a host clock outside its window as an expired or unverifiable link proof. */
+const LINK_PROOF_CLOCK_HINT =
+  "Hint: Check that the computer running T3 Code sets its date and time automatically, then try again.";
+
 function dpopFailureHint(reason: DpopFailureReason | undefined): string {
   if (reason === "time_window") return DPOP_CLOCK_HINT;
   if (reason === undefined) return DPOP_UNKNOWN_HINT;
@@ -34,9 +38,11 @@ export function relayProtectedErrorMessage(error: RelayProtectedError): string {
           return "Relay rejected the authenticated request.";
       }
     case "RelayEnvironmentLinkProofExpiredError":
-      return "Relay rejected an expired environment link proof.";
+      return `Relay rejected an expired environment link proof. ${LINK_PROOF_CLOCK_HINT}`;
     case "RelayEnvironmentLinkProofInvalidError":
-      return `Relay rejected the environment link proof (${error.reason}).`;
+      return error.reason === "invalid_signature_or_scope"
+        ? `Relay rejected the environment link proof (${error.reason}). ${LINK_PROOF_CLOCK_HINT}`
+        : `Relay rejected the environment link proof (${error.reason}).`;
     case "RelayEnvironmentConnectNotAuthorizedError":
       // "Not authorized" covers non-auth causes too; surface the reason so a
       // missing link does not read as a credential problem.

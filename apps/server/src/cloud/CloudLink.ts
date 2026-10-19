@@ -43,6 +43,7 @@ import {
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -96,8 +97,9 @@ import {
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
+import { checkRelayClock } from "./relayClock.ts";
 import {
-  filterRelayResponse,
+  filterRelayClient,
   relayRequestError,
   type RelayRequestError,
   shouldRetryRelayRequest,
@@ -439,6 +441,7 @@ export class CloudLink extends Context.Service<
       | EnvironmentAuth.ServerAuthInternalError
       | RelayRequestError
     >;
+    /** The saved link, plus how far this machine's clock is off when that breaks it. */
     readonly linkState: () => Effect.Effect<
       EnvironmentCloudLinkStateResult,
       CloudLinkInternalError
@@ -524,12 +527,15 @@ const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const cliTokenManager = yield* CliTokenManager.CloudCliTokenManager;
   const httpClient = yield* HttpClient.HttpClient;
+  const relayHttpClient = filterRelayClient(httpClient);
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const crypto = yield* Crypto.Crypto;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Accepted responses may heal old markers, but cannot undo a newer refusal.
+  let revocationRevision = 0;
 
   const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
   const withRuntimeFiles = <A, E>(
@@ -637,19 +643,36 @@ const make = Effect.gen(function* () {
     Effect.catchTags({ PlatformError: internalError("generate-link-proof") }),
   );
 
+  const isCurrentManagedTunnel = Effect.fnUntraced(function* (input: {
+    readonly configJson: string;
+    readonly credential: string;
+    readonly revocationRevision: number;
+  }) {
+    const [currentConfig, currentCredential] = yield* Effect.all([
+      secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+    ]);
+    return (
+      revocationRevision === input.revocationRevision &&
+      Option.isSome(currentConfig) &&
+      bytesToString(currentConfig.value) === input.configJson &&
+      Option.isSome(currentCredential) &&
+      bytesToString(currentCredential.value) === input.credential
+    );
+  });
+
   const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel")(
     function* (input: {
       readonly config: RelayManagedEndpointRuntimeConfig;
       readonly configJson: string;
       readonly origin: RelayManagedEndpointOrigin;
+      readonly credential: string;
+      readonly revocationRevision: number;
     }) {
       return yield* endpointRuntime.withLinkStateLock(
         Effect.gen(function* () {
-          const currentConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-          if (
-            Option.isNone(currentConfig) ||
-            bytesToString(currentConfig.value) !== input.configJson
-          ) {
+          const revoked = yield* secrets.get(CLOUD_LINK_REVOKED);
+          if (Option.isSome(revoked) || !(yield* isCurrentManagedTunnel(input))) {
             return null;
           }
           const status = yield* endpointRuntime.applyConfig(input.config);
@@ -675,6 +698,8 @@ const make = Effect.gen(function* () {
       readonly config: RelayManagedEndpointRuntimeConfig;
       readonly configJson: string;
       readonly origin: RelayManagedEndpointOrigin;
+      readonly credential: string;
+      readonly revocationRevision: number;
     },
     retryRuntimeFailures: boolean,
   ) => {
@@ -708,11 +733,12 @@ const make = Effect.gen(function* () {
     });
     return yield* endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
-        const [runtimeBytes, markerBytes] = yield* Effect.all([
+        const [runtimeBytes, markerBytes, revoked] = yield* Effect.all([
           secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
           secrets.get(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+          secrets.get(CLOUD_LINK_REVOKED),
         ]);
-        if (Option.isNone(runtimeBytes)) return false;
+        if (Option.isNone(runtimeBytes) || Option.isSome(revoked)) return false;
         const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
         if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
         // With the marker required, only a config the relay already confirmed on
@@ -828,8 +854,7 @@ const make = Effect.gen(function* () {
     HttpClientRequest.post(input.url).pipe(
       HttpClientRequest.bearerToken(input.token),
       HttpClientRequest.bodyJson(input.payload),
-      Effect.flatMap(httpClient.execute),
-      Effect.flatMap(filterRelayResponse),
+      Effect.flatMap(relayHttpClient.execute),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
       Effect.timeout(input.timeout ?? "10 seconds"),
       Effect.mapError(relayRequestError),
@@ -967,12 +992,8 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Nothing stored is removed: the relay also answers 401 for a skewed clock,
-   * and the next accepted registration clears the mark. Returns false, without
-   * marking, when a relink replaced the credential while the rejected request
-   * was in flight.
-   */
+  // Check the credential under the same lock as connector startup so an old
+  // rejection cannot stop a replacement link.
   const markLinkRevoked = (credential: string, cause: RelayRequestError) =>
     endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
@@ -980,18 +1001,26 @@ const make = Effect.gen(function* () {
         if (Option.isNone(current) || bytesToString(current.value) !== credential) {
           return false;
         }
+        revocationRevision++;
         yield* Effect.logWarning(
           "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
           { cause },
         );
         yield* secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"));
+        yield* endpointRuntime.applyConfig(null);
         return true;
       }),
     );
 
+  // The relay also answers 401 while this machine's clock is wrong. That
+  // refusal is retried instead, since fixing the clock is enough to recover.
+  const isLinkRevocation = (error: RelayRequestError) =>
+    error.rejection === "unauthorized" && error.clockSkewSeconds === undefined;
+
   const registerManagedTunnelRecovery = Effect.fn(
     "environment.cloud.registerManagedCloudTunnelRecovery",
   )(function* (localOrigin: string, options?: { readonly retryRuntimeFailures?: boolean }) {
+    const requestRevocationRevision = revocationRevision;
     const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
       secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       secrets.get(RELAY_URL_SECRET),
@@ -1045,7 +1074,7 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.catchTags({
         RelayRequestError: (error) =>
-          error.rejection === "unauthorized"
+          isLinkRevocation(error)
             ? markLinkRevoked(credential, error).pipe(
                 Effect.map((marked) => (marked ? ("revoked" as const) : ("superseded" as const))),
               )
@@ -1055,16 +1084,26 @@ const make = Effect.gen(function* () {
     if (registered === "revoked" || registered === "superseded") {
       return { status: registered };
     }
-    yield* secrets.remove(CLOUD_LINK_REVOKED);
+    const activation = {
+      config,
+      configJson: bytesToString(runtimeConfig.value),
+      origin,
+      credential,
+      revocationRevision: requestRevocationRevision,
+    };
+    const accepted = yield* endpointRuntime.withLinkStateLock(
+      Effect.gen(function* () {
+        if (!(yield* isCurrentManagedTunnel(activation))) return false;
+        yield* secrets.remove(CLOUD_LINK_REVOKED);
+        return true;
+      }),
+    );
+    if (!accepted) return { status: "superseded" as const };
     if (registered.status === "recovery_required") {
       return { status: registered.status, config };
     }
     const endpointRuntimeStatus = yield* activateManagedTunnelWithRetry(
-      {
-        config,
-        configJson: bytesToString(runtimeConfig.value),
-        origin,
-      },
+      activation,
       options?.retryRuntimeFailures === true,
     );
     return endpointRuntimeStatus === null
@@ -1077,6 +1116,7 @@ const make = Effect.gen(function* () {
     expectedConfig?: RelayManagedEndpointRuntimeConfig,
     options?: { readonly retryRuntimeFailures?: boolean },
   ) {
+    const requestRevocationRevision = revocationRevision;
     const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
       secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       secrets.get(RELAY_URL_SECRET),
@@ -1133,7 +1173,7 @@ const make = Effect.gen(function* () {
       timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
     }).pipe(
       Effect.tapError((error) =>
-        error.rejection === "unauthorized" ? markLinkRevoked(credential, error) : Effect.void,
+        isLinkRevocation(error) ? markLinkRevoked(credential, error) : Effect.void,
       ),
     );
     if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
@@ -1147,10 +1187,12 @@ const make = Effect.gen(function* () {
     );
     const stored = yield* endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
-        const currentConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
         if (
-          Option.isNone(currentConfig) ||
-          bytesToString(currentConfig.value) !== bytesToString(runtimeConfig.value)
+          !(yield* isCurrentManagedTunnel({
+            configJson: bytesToString(runtimeConfig.value),
+            credential,
+            revocationRevision: requestRevocationRevision,
+          }))
         ) {
           return false;
         }
@@ -1166,6 +1208,8 @@ const make = Effect.gen(function* () {
         config: recovered.endpointRuntime,
         configJson: encoded,
         origin,
+        credential,
+        revocationRevision: requestRevocationRevision,
       },
       options?.retryRuntimeFailures === true,
     );
@@ -1263,8 +1307,7 @@ const make = Effect.gen(function* () {
       `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
-      httpClient.execute,
-      Effect.flatMap(filterRelayResponse),
+      relayHttpClient.execute,
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
     );
@@ -1328,7 +1371,19 @@ const make = Effect.gen(function* () {
 
   const linkState = Effect.fn("environment.cloud.linkState")(
     function* () {
-      return yield* readCloudLinkState();
+      const state = yield* readCloudLinkState();
+      const relayUrl =
+        state.relayUrl ??
+        ((yield* readCliDesiredCloudLink.pipe(withSecrets))
+          ? Option.getOrNull(yield* relayUrlConfig.pipe(Effect.option))
+          : null);
+      if (relayUrl === null) return state;
+      const clockSkewSeconds = yield* checkRelayClock(relayUrl).pipe(
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      );
+      return clockSkewSeconds === null
+        ? state
+        : { ...state, clockSkewSeconds, hostPlatform: yield* HostProcess.Platform };
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-relay-config")),
   );

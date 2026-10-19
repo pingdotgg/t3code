@@ -330,7 +330,8 @@ screenshots, logs, or bug reports.
 ## T3 Connect troubleshooting
 
 Run `t3 connect status` on the host to inspect saved authorization and link
-configuration. It is not a live reachability check. If the environment appears
+configuration. It is not a live reachability check, but it does say when the
+host's clock is too far off for T3 Connect. If the environment appears
 offline, run `t3 service status` and read the displayed log. If it disappears
 when SSH closes, see [background-service troubleshooting](./background-service.md#troubleshooting).
 
@@ -338,7 +339,8 @@ when SSH closes, see [background-service troubleshooting](./background-service.m
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart T3 Code on the host.                                                                         |
 | `auth_invalid` or `invalid_bearer`                        | Run `t3 connect login`. If credentials were revoked, run `t3 connect logout`, then `t3 connect` again. Restart the server after signing in. |
-| Expired or invalid link proof                             | Check the host's date and time, update T3 Code, then restart it.                                                                            |
+| "The host computer's clock is … behind" or "… ahead"      | Turn on automatic date and time on the host and sync it. T3 Connect reconnects by itself, without a restart.                                |
+| Expired or invalid link proof                             | Check the host's automatic date and time. T3 Connect retries expired proofs automatically. Update T3 Code if it continues.                  |
 | HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                               |
 | HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                             |
 
