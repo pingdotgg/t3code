@@ -320,6 +320,8 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
     message,
   ) => {
     switch (message.type) {
+      case "cuaDriverRequest":
+        return Effect.void;
       case "setDiagnosticsDemand":
         return Ref.modify(diagnosticsDemandSources, (sources) => {
           const previous = sources.size > 0;
