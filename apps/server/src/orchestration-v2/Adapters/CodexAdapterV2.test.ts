@@ -2068,6 +2068,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           > => event.type === "subagent.updated",
         );
       return {
+        adapter,
         runtime,
         providerThread,
         threadId,
@@ -2638,6 +2639,150 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ? [event.turnItem]
         : [],
     );
+
+  it.effect.each(["root", "rerouted"] as const)(
+    "learns context capacity only from eligible %s turns across sessions",
+    (source) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "capacity-thread";
+        const nativeTurnId = "capacity-turn";
+        const childThreadId = "capacity-child";
+        const childTurnId = "capacity-child-turn";
+        const prompt = "Measure context capacity.";
+        const selection = CODEX_TEST_MODEL_SELECTION;
+        const cwd = CODEX_TEST_RUNTIME_POLICY.cwd;
+        const notification = (
+          method: string,
+          params: unknown,
+        ): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          frame: { method, params },
+        });
+        const usage = {
+          totalTokens: 15,
+          inputTokens: 10,
+          cachedInputTokens: 2,
+          outputTokens: 5,
+          reasoningOutputTokens: 1,
+        };
+        const usageReport = (threadId: string, turnId: string, modelContextWindow: number | null) =>
+          notification("thread/tokenUsage/updated", {
+            threadId,
+            turnId,
+            tokenUsage: { total: usage, last: usage, modelContextWindow },
+          });
+        const transcript = makeCodexReplayTranscript({
+          scenario: `context-capacity-${source}`,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            ...(source === "rerouted"
+              ? [
+                  notification("model/rerouted", {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    fromModel: selection.model,
+                    toModel: "gpt-5.4-mini",
+                    reason: "highRiskCyberActivity",
+                  }),
+                ]
+              : []),
+            usageReport(nativeThreadId, nativeTurnId, 400_000),
+            ...[null, 0, -1].map((window) => usageReport(nativeThreadId, nativeTurnId, window)),
+            notification("item/completed", {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              item: {
+                type: "subAgentActivity",
+                id: "capacity-spawn",
+                kind: "started",
+                agentThreadId: childThreadId,
+                agentPath: "/root/capacity",
+              },
+            }),
+            notification("turn/started", {
+              threadId: childThreadId,
+              turn: makeCodexReplayTurn({ id: childTurnId, status: "inProgress" }),
+            }),
+            usageReport(childThreadId, childTurnId, 272_000),
+            notification("turn/completed", {
+              threadId: childThreadId,
+              turn: makeCodexReplayTurn({ id: childTurnId, status: "completed" }),
+            }),
+            notification("turn/completed", {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+            }),
+          ],
+        });
+        const adapter = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const harness = yield* makeCodexReplayHarness(transcript);
+            assert.isUndefined(harness.runtime.getModelContextWindow?.(selection, cwd));
+            yield* harness.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now: yield* DateTime.now,
+                attemptId: RunAttemptId.make("capacity-attempt"),
+                text: prompt,
+              }),
+            );
+            yield* harness.firstTerminal;
+            assert.equal(harness.terminalEvents()[0]?.status, "completed");
+            assert.isTrue(
+              harness.events.some(
+                (event) =>
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.nativeTurnRef?.nativeId === childTurnId &&
+                  event.providerTurn.tokenUsage?.maxTokens === 272_000,
+              ),
+            );
+            return harness.adapter;
+          }),
+        );
+        const threadId = ThreadId.make("capacity-later-thread");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("capacity-later-session"),
+          modelSelection: selection,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.ensureThread({
+          threadId,
+          modelSelection: selection,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        assert.equal(
+          runtime.getModelContextWindow?.(selection, cwd),
+          source === "root" ? 400_000 : undefined,
+        );
+        assert.isFunction(runtime.getModelContextWindow);
+        assert.equal(
+          runtime.getModelContextWindow?.(
+            { ...selection, options: [{ id: "reasoningEffort", value: "high" }] },
+            cwd,
+          ),
+          source === "root" ? 400_000 : undefined,
+        );
+        assert.isUndefined(
+          runtime.getModelContextWindow?.({ ...selection, model: "gpt-5.4-mini" }, cwd),
+        );
+        assert.isUndefined(
+          runtime.getModelContextWindow?.(
+            { ...selection, instanceId: ProviderInstanceId.make("other-codex") },
+            cwd,
+          ),
+        );
+        assert.isUndefined(runtime.getModelContextWindow?.(selection, "/other-project"));
+        const independent = yield* makeCodexReplayHarness(transcript);
+        assert.isUndefined(independent.runtime.getModelContextWindow?.(selection, cwd));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   it.effect("keeps an asynchronous Codex question actionable after the turn completes", () =>
     Effect.scoped(
