@@ -4,6 +4,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
@@ -155,6 +156,125 @@ describe("ssh tunnel scripts", () => {
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect("closes local forwards without stopping remote servers, even on scope exit", () => {
+    let forwards = 0;
+    let remoteStops = 0;
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        const args = commandArgs(command);
+        if (args.includes("-N")) {
+          forwards += 1;
+          return makeRunningProcess(() => {
+            forwards -= 1;
+          });
+        }
+        if (args.includes("sh") && !args.includes("-l")) remoteStops += 1;
+        return makeSuccessfulProcess('{"remotePort":3773}\n');
+      }),
+    );
+    const layer = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(HttpClient.HttpClient, testHttpClient),
+      Layer.succeed(NetService.NetService, testNetService),
+      SshAuth.SshPasswordPrompt.disabledLayer,
+      SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+    );
+
+    return Effect.gen(function* () {
+      const manager = yield* SshTunnel.SshEnvironmentManager;
+      yield* manager.ensureEnvironment({
+        alias: "devbox",
+        hostname: "devbox",
+        username: null,
+        port: null,
+      });
+      assert.equal(forwards, 1);
+      yield* manager.closeLocalForwards;
+      for (const alias of ["devbox", "another-host"]) {
+        const result = yield* Effect.exit(
+          manager.ensureEnvironment({
+            alias,
+            hostname: alias,
+            username: null,
+            port: null,
+          }),
+        );
+        assert.isTrue(Exit.isFailure(result), "update cleanup must reject new ensures");
+      }
+      assert.equal(forwards, 0);
+      assert.equal(remoteStops, 0);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.scoped,
+      Effect.andThen(
+        Effect.sync(() => {
+          assert.equal(forwards, 0);
+          assert.equal(remoteStops, 0);
+        }),
+      ),
+    );
+  });
+
+  it.effect("cleanup includes a forward still waiting for readiness", () =>
+    Effect.gen(function* () {
+      const probing = yield* Deferred.make<void>();
+      const releaseProbe = yield* Deferred.make<void>();
+      let forwards = 0;
+      let remoteStops = 0;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            forwards += 1;
+            return makeRunningProcess(() => {
+              forwards -= 1;
+            });
+          }
+          if (args.includes("sh") && !args.includes("-l")) remoteStops += 1;
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }),
+      );
+      const httpClient = HttpClient.make((request) =>
+        Deferred.succeed(probing, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseProbe)),
+          Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 200 }))),
+        ),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const connecting = yield* manager
+          .ensureEnvironment({
+            alias: "devbox",
+            hostname: "devbox",
+            username: null,
+            port: null,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(probing);
+        assert.equal(forwards, 1);
+
+        // Run cleanup to its first suspension while creation is held outside the registry.
+        const closing = yield* manager.closeLocalForwards.pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(releaseProbe, undefined);
+        yield* Fiber.await(connecting);
+        yield* Fiber.join(closing);
+        assert.equal(forwards, 0, "an in-flight ensure must not escape update cleanup");
+        assert.equal(remoteStops, 0);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
 
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
