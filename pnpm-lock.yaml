@@ -167,6 +167,7 @@ patchedDependencies:
   '@expo/metro-config@58.0.14': 90fa980e8b6480631fb2fbb04559834e3c612db40c550cd828f11be297d8d760
   '@expo/ui@58.0.20': 5a26480373850c1a7943919aa21f904151b335a0cb01042109e0746def37923e
   '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
+  '@formkit/auto-animate@0.9.0': 9406c06795b1135b5089ec3488503f421279f6deda8edbdc1d28cec250290d8c
   '@legendapp/list@3.3.5': 680cc6a5c5b4a4032e467e7b3fde22f89a84c0ee2e6eac6fda737d6277cc0806
   '@pierre/diffs@1.5.2': 298e94372dbd51846a4e26ece2ecc3e22eb1f94b0450b1f1a9c6fec127809be7
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
@@ -829,7 +830,7 @@ importers:
         version: 4.0.5(effect@4.0.5)(react@19.3.0)(scheduler@0.28.0)
       '@formkit/auto-animate':
         specifier: ^0.9.0
-        version: 0.9.0
+        version: 0.9.0(patch_hash=9406c06795b1135b5089ec3488503f421279f6deda8edbdc1d28cec250290d8c)
       '@legendapp/list':
         specifier: 'catalog:'
         version: 3.3.5(patch_hash=680cc6a5c5b4a4032e467e7b3fde22f89a84c0ee2e6eac6fda737d6277cc0806)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.0(@babel/core@7.29.7)(@react-native/metro-config@0.88.0(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -15128,7 +15129,7 @@ snapshots:
 
   '@floating-ui/utils@0.2.11': {}
 
-  '@formkit/auto-animate@0.9.0': {}
+  '@formkit/auto-animate@0.9.0(patch_hash=9406c06795b1135b5089ec3488503f421279f6deda8edbdc1d28cec250290d8c)': {}
 
   '@hono/node-server@1.19.17(hono@4.13.7)':
     dependencies:
