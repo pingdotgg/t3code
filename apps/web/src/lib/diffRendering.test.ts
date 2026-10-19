@@ -8,6 +8,8 @@ import {
   buildFileDiffRenderKey,
   getDiffLineStat,
   getRenderablePatch,
+  retainLoadedReviewFiles,
+  retainedReviewFile,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
@@ -267,48 +269,75 @@ describe("getRenderablePatch", () => {
 });
 
 describe("diff file reconciliation", () => {
-  it("retains repeated blocks and their keys when content changes or other files appear", () => {
-    const parse = (blocks: [string, string][]) => {
-      const parsed = getRenderablePatch(
-        blocks
-          .map(([path, content]) =>
-            [
-              `diff --git a/${path} b/${path}`,
-              `--- a/${path}`,
-              `+++ b/${path}`,
-              "@@ -1 +1 @@",
-              "-before",
-              `+${content}`,
-              "",
-            ].join("\n"),
-          )
-          .join(""),
-      );
-      if (parsed?.kind !== "files") throw new Error("Expected file diffs");
-      return parsed.files;
-    };
-    const files = parse([
-      ["same.ts", "first"],
-      ["same.ts", "second"],
-    ]);
-    const before = buildFileDiffEntries([...files, files[1]!]);
-    expect(before.map((entry) => entry.fileDiff)).toEqual([...files, files[1]]);
-    expect(new Set(before.map((entry) => entry.fileKey)).size).toBe(3);
-    expect(before[0]?.fileKey).toBe(buildFileDiffIdentityKey(files[0]!));
-    expect(buildFileDiffEntries([...files, files[1]!])).toEqual(before);
+  const reviewFile = (line: string) => {
+    const patch = getRenderablePatch(
+      [
+        "diff --git a/app.ts b/app.ts",
+        "--- a/app.ts",
+        "+++ b/app.ts",
+        "@@ -1 +1 @@",
+        "-before",
+        `+${line}`,
+      ].join("\n"),
+      "review",
+    );
+    if (patch?.kind !== "files" || !patch.files[0]) throw new Error("Expected a file patch");
+    return patch.files[0];
+  };
+  const loaded = reviewFile("after");
+  const placeholder = {
+    ...loaded,
+    cacheKey: "refresh:app.ts:pending",
+    hunks: [],
+    additionLines: [],
+    deletionLines: [],
+    splitLineCount: 0,
+    unifiedLineCount: 0,
+  };
 
-    const after = buildFileDiffEntries(
-      parse([
-        ["unrelated.ts", "new"],
-        ["same.ts", "first"],
-        ["same.ts", "updated second"],
-        ["same.ts", "second"],
-      ]),
-    ).slice(1);
-    expect(after.map((entry) => entry.fileKey)).toEqual(before.map((entry) => entry.fileKey));
-    expect(after[0]?.fileVersion).toBe(before[0]?.fileVersion);
-    expect(after[1]?.fileVersion).not.toBe(before[1]?.fileVersion);
-    expect(after[2]?.fileVersion).toBe(before[2]?.fileVersion);
+  it("keeps loaded hunks during a same-review refresh until fresh content arrives", () => {
+    const previous = retainLoadedReviewFiles(new Map(), [loaded]);
+    const pending = retainedReviewFile({
+      loaded: null,
+      previous: previous.get("app.ts"),
+      placeholder,
+      sameFamily: true,
+      pending: true,
+    });
+    expect(pending).toBe(loaded);
+    expect(getDiffLineStat([pending])).toEqual({ additions: 1, deletions: 1 });
+
+    const refreshed = retainedReviewFile({
+      loaded: reviewFile("newer"),
+      previous: pending,
+      placeholder,
+      sameFamily: true,
+      pending: false,
+    });
+    expect(refreshed.additionLines.join("")).toBe("newer");
+    expect(buildFileDiffContentVersion(refreshed)).not.toBe(buildFileDiffContentVersion(pending));
+  });
+
+  it("drops old hunks after a failed refresh or a switch to another review", () => {
+    const failed = retainedReviewFile({
+      loaded: null,
+      previous: loaded,
+      placeholder,
+      sameFamily: true,
+      pending: false,
+    });
+    expect(failed.hunks).toEqual([]);
+    const retained = retainLoadedReviewFiles(new Map([["app.ts", loaded]]), [failed]);
+    expect(retained.has("app.ts")).toBe(false);
+
+    const switched = retainedReviewFile({
+      loaded: null,
+      previous: loaded,
+      placeholder,
+      sameFamily: false,
+      pending: true,
+    });
+    expect(switched.hunks).toEqual([]);
   });
 
   it("keeps Pierre's render key stable when a partial diff hydrates", () => {

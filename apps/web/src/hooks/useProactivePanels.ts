@@ -1,4 +1,3 @@
-import { shouldApplyProactiveChangesScope } from "../components/ChatView.logic";
 import type { RunId, ScopedThreadRef, ThreadLinkedPullRequest } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useEffect, useRef } from "react";
@@ -11,6 +10,7 @@ import {
 import type { TurnDiffSummary } from "../types";
 import {
   observeProactivePanelUserChoice,
+  shouldApplyProactiveChangesScope,
   resolveProactiveTurnDiffAction,
   shouldOpenProactivePullRequest,
   shouldOpenProactiveTurnDiff,
