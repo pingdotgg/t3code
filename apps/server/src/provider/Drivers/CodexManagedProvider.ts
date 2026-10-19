@@ -230,6 +230,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
     resolveRuntime: runtime.resolve,
+    // Use the auth gate and refresh path without acquiring another installation lease.
+    currentRuntimeRevision: runtime.auth.controller.withAccess!(
+      runtime.auth.access.pipe(Effect.map((credentials) => credentials.accessToken)),
+    ).pipe(Effect.scoped),
   }).pipe(
     Effect.mapError(
       (cause) =>

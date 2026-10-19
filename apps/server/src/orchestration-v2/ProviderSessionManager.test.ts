@@ -330,6 +330,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly credentialRevision?: Ref.Ref<number>;
+    readonly beforeCredentialProbe?: Effect.Effect<void>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
@@ -397,6 +399,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           yield* countClose;
           if (options.hangSessionScopeClose === true) yield* hangClose;
         }
+        const credentialRevision = options.credentialRevision;
+        const launchedRevision =
+          credentialRevision === undefined ? undefined : yield* Ref.get(credentialRevision);
 
         return {
           instanceId: ProviderInstanceId.make("codex"),
@@ -418,6 +423,14 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(credentialRevision === undefined
+            ? {}
+            : {
+                hasStaleCredentials: (options.beforeCredentialProbe ?? Effect.void).pipe(
+                  Effect.andThen(Ref.get(credentialRevision)),
+                  Effect.map((revision) => revision !== launchedRevision),
+                ),
+              }),
           ...(options.hasPendingBackgroundWorkForThread === undefined
             ? {}
             : {
@@ -479,6 +492,8 @@ function layerTest(input: {
     readonly paused: Deferred.Deferred<void>;
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly credentialRevision?: Ref.Ref<number>;
+  readonly beforeCredentialProbe?: Effect.Effect<void>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
@@ -508,6 +523,12 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.credentialRevision === undefined
+        ? {}
+        : { credentialRevision: input.credentialRevision }),
+      ...(input.beforeCredentialProbe === undefined
+        ? {}
+        : { beforeCredentialProbe: input.beforeCredentialProbe }),
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
@@ -3018,6 +3039,157 @@ it.effect("ProviderSessionManagerV2 defers idle release while background work is
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 replaces renewed credentials only after the shared process settles",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const credentialRevision = yield* Ref.make(1);
+      const probeEntered = yield* Deferred.make<void>();
+      const probeGate = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-renewed-credentials");
+        const siblingId = ThreadId.make("thread-renewed-credentials-sibling");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: siblingId, now }),
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+        const open = (threadId: ThreadId) =>
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const first = yield* open(threadId);
+        yield* first.resumeThread({ providerThread, threadId, modelSelection, runtimePolicy });
+        assert.strictEqual(yield* open(siblingId), first);
+
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        yield* first.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "running while credentials renew",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(credentialRevision, 2);
+        assert.strictEqual(yield* open(siblingId), first);
+        assert.strictEqual(yield* open(threadId), first);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        const subscription = yield* Effect.acquireRelease(
+          first.subscribeEvents!,
+          (sub) => sub.close,
+        );
+        const settled = yield* subscription.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-renewed-credentials",
+          }),
+          runOrdinal: 1,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(settled);
+
+        // Renewal currently takes precedence over background commands after the turn settles.
+        const reopening = yield* open(siblingId).pipe(Effect.forkScoped);
+        yield* Deferred.await(probeEntered);
+        const activitySubscription = yield* Effect.acquireRelease(
+          first.subscribeEvents!,
+          (sub) => sub.close,
+        );
+        const activityProcessed = yield* activitySubscription.events.pipe(
+          Stream.filter((event) => event.type === "provider_session.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: first.providerSession,
+        });
+        assert.isTrue(Option.isSome(yield* Fiber.join(activityProcessed)));
+        yield* Deferred.succeed(probeGate, undefined);
+        const replacement = yield* Fiber.join(reopening);
+        assert.notStrictEqual(replacement, first);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.strictEqual(yield* open(threadId), replacement);
+        const records = yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]);
+        assert.deepEqual(
+          records.providerThreads[0]?.nativeThreadRef,
+          providerThread.nativeThreadRef,
+        );
+        const resumed = yield* replacement.resumeThread({
+          providerThread: records.providerThreads[0]!,
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.deepEqual(resumed.nativeThreadRef, providerThread.nativeThreadRef);
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+        assert.strictEqual(yield* open(siblingId), replacement);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            credentialRevision,
+            beforeCredentialProbe: Effect.gen(function* () {
+              if ((yield* Ref.get(credentialRevision)) === 1) return;
+              yield* Deferred.succeed(probeEntered, undefined);
+              yield* Deferred.await(probeGate);
+            }),
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 releases pinned idle sessions once the pin cap expires", () =>

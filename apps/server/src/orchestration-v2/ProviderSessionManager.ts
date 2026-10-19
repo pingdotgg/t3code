@@ -910,6 +910,7 @@ export const layerWithOptions = (
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfIdleRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
         Effect.gen(function* () {
           const key = sessionKey(input.providerSessionId);
@@ -922,6 +923,12 @@ export const layerWithOptions = (
               const existing = current.get(key);
               if (existing !== candidate) {
                 return [existing === undefined ? "gone" : "changed", current] as const;
+              }
+              if (
+                input.onlyIfIdleRuntime !== undefined &&
+                (existing.runtime !== input.onlyIfIdleRuntime || existing.busyTurns.size > 0)
+              ) {
+                return ["kept", current] as const;
               }
               if (
                 input.onlyIfIdleGeneration !== undefined &&
@@ -988,6 +995,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfIdleRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1174,6 +1182,23 @@ export const layerWithOptions = (
             ),
           );
         });
+
+      // Renewed launch credentials require a restart, even with background work.
+      // releaseEntry rechecks runtime identity and busy turns after the probe yields.
+      const releaseIfStaleCredentials = Effect.fnUntraced(
+        function* (entry: LiveSessionEntry) {
+          const runtime = entry.runtime;
+          if (entry.busyTurns.size > 0 || runtime.hasStaleCredentials === undefined) return;
+          if (!(yield* runtime.hasStaleCredentials)) return;
+          yield* releaseEntry({
+            providerSessionId: runtime.providerSessionId,
+            reason: "manual_shutdown",
+            detail: "Provider credentials were renewed.",
+            onlyIfIdleRuntime: runtime,
+          });
+        },
+        (effect, entry) => effect.pipe(logReleaseFailure(entry.runtime.providerSessionId)),
+      );
 
       const withActivityError = <A, E, R>(
         providerSessionId: ProviderSessionId,
@@ -2082,6 +2107,8 @@ export const layerWithOptions = (
                 }
               }
               const key = sessionKey(input.providerSessionId);
+              const live = (yield* Ref.get(sessions)).get(key);
+              if (live !== undefined) yield* releaseIfStaleCredentials(live);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);

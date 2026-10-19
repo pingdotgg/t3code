@@ -9,6 +9,10 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
+import { TestClock } from "effect/testing";
+import * as CodexClient from "effect-codex-app-server/client";
+import * as CodexReplay from "effect-codex-app-server/replay";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -97,6 +101,161 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect(
+    "managed Codex detects renewed launch credentials and retains them when renewal is unavailable",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("managed-renewal");
+        const credentials = new Map<string, Uint8Array>();
+        const secrets = ServerSecretStore.ServerSecretStore.of({
+          get: (key) => Effect.sync(() => Option.fromUndefinedOr(credentials.get(key))),
+          set: (key, value) =>
+            Effect.sync(() => {
+              credentials.set(key, value);
+            }),
+          remove: (key) =>
+            Effect.sync(() => {
+              credentials.delete(key);
+            }),
+          create: () => Effect.die("unused"),
+          getOrCreateRandom: () => Effect.die("unused"),
+        });
+        let renewalFails = false;
+        let renewals = 0;
+        const launches: Array<string | undefined> = [];
+        const executable = {
+          executablePath: "/fixture/codex",
+          managedVersionDirectory: null,
+          source: "local" as const,
+          version: "0.156.1",
+        };
+        yield* Effect.gen(function* () {
+          const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+          const json = yield* encodeCredentials({
+            clientId: "oaiapp_test",
+            accessToken: "dummy-initial-access",
+            refreshToken: "dummy-initial-refresh",
+            expiresAt: (yield* Clock.currentTimeMillis) + 120_000,
+            earliestRefreshAt: null,
+            scopes: ["chatgpt.tokens.use.direct"],
+            subject: "test-user",
+            email: null,
+          });
+          yield* store.set(new TextEncoder().encode(json));
+          const serverConfig = yield* ServerConfig.ServerConfig;
+          const instance = yield* CodexDriver.create({
+            instanceId,
+            displayName: "Managed renewal",
+            // Disable inventory polling; session launches still use the managed auth path.
+            enabled: false,
+            environment: [],
+            config: {
+              ...CodexDriver.defaultConfig(),
+              setupMode: "managed",
+              homePath: NodePath.join(serverConfig.stateDir, "renewal-codex-home"),
+            },
+          });
+          const open = instance.orchestrationAdapter.openSession({
+            threadId: ThreadId.make("managed-renewal-thread"),
+            providerSessionId: ProviderSessionId.make("managed-renewal-session"),
+            modelSelection: { instanceId, model: "gpt-5.4" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: serverConfig.stateDir,
+            }),
+          });
+          const first = yield* open;
+          expect(launches).toEqual(["dummy-initial-access"]);
+          expect(yield* first.hasStaleCredentials ?? Effect.succeed(false)).toBe(false);
+          yield* TestClock.adjust(60_000);
+          expect(yield* first.hasStaleCredentials ?? Effect.succeed(false)).toBe(true);
+          expect(renewals).toBe(1);
+          expect(yield* first.hasStaleCredentials ?? Effect.succeed(false)).toBe(true);
+          expect(renewals).toBe(1);
+
+          const replacement = yield* open;
+          expect(launches).toEqual(["dummy-initial-access", "dummy-renewed-access"]);
+          expect(yield* replacement.hasStaleCredentials ?? Effect.succeed(false)).toBe(false);
+
+          renewalFails = true;
+          yield* TestClock.adjust(60_000);
+          expect(yield* replacement.hasStaleCredentials ?? Effect.succeed(false)).toBe(false);
+          expect(renewals).toBe(2);
+          expect(Option.isSome(yield* store.get)).toBe(true);
+          yield* store.remove;
+          expect(yield* replacement.hasStaleCredentials ?? Effect.succeed(false)).toBe(false);
+          expect(renewals).toBe(2);
+        }).pipe(
+          Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
+          Effect.provide(
+            Layer.mock(CodexInstallation.CodexInstallation)({
+              managedDirectory: "/fixture",
+              acquire: () => Effect.succeed(executable),
+            }),
+          ),
+          Effect.provideService(CodexAdapterV2.CodexAppServerClientFactory, {
+            open: (input) =>
+              Effect.gen(function* () {
+                launches.push(input.environment.ACCESS_TOKEN);
+                return yield* CodexClient.CodexAppServerClient;
+              }).pipe(
+                Effect.provide(
+                  CodexReplay.layerReplay({
+                    provider: "codex",
+                    protocol: "codex.app-server",
+                    version: "0.144.0",
+                    scenario: "managed-renewal",
+                    entries: [],
+                  }),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterOpenSessionError({
+                      driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                      providerSessionId: input.providerSessionId,
+                      cause,
+                    }),
+                ),
+              ),
+          }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.sync(() => {
+                if (request.url.endsWith("/.well-known/openid-configuration")) {
+                  return HttpClientResponse.fromWeb(
+                    request,
+                    Response.json({
+                      issuer: "https://auth.openai.com",
+                      authorization_endpoint: "https://auth.openai.com/api/accounts/authorize",
+                      token_endpoint: "https://auth.openai.com/api/accounts/oauth/token",
+                      jwks_uri: "https://auth.openai.com/jwks",
+                    }),
+                  );
+                }
+                expect(request.url).toBe("https://auth.openai.com/api/accounts/oauth/token");
+                renewals++;
+                return HttpClientResponse.fromWeb(
+                  request,
+                  renewalFails
+                    ? Response.json({ error: "temporarily_unavailable" }, { status: 503 })
+                    : Response.json({
+                        access_token: "dummy-renewed-access",
+                        refresh_token: "dummy-renewed-refresh",
+                        token_type: "Bearer",
+                        expires_in: 120,
+                        scope: "chatgpt.tokens.use.direct",
+                      }),
+                );
+              }),
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
