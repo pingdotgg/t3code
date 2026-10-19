@@ -1567,6 +1567,83 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live(
+    "discovers trunk without a remote HEAD or tracking ref and removes an integrated worktree",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeUnchanged: true,
+          });
+          const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+          yield* command(remote, ["init", "--bare", "-b", "trunk"]);
+          yield* command(repo, ["remote", "add", "origin", remote]);
+          yield* command(repo, ["push", "origin", "main:trunk"]);
+          yield* command(repo, ["update-ref", "-d", "refs/remotes/origin/trunk"]);
+          expect((yield* command(repo, ["for-each-ref", "refs/remotes/origin"])).stdout).toBe("");
+
+          const report = yield* service.runNow;
+          expect(report.entries[0]).toMatchObject({
+            outcome: "removed",
+            reason: "No commits beyond the default branch",
+          });
+          expect(yield* fs.exists(worktree)).toBe(false);
+        }),
+      ),
+  );
+  it.live(
+    "keeps worktree commits present on nondefault main but absent from advertised trunk",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeUnchanged: true,
+          });
+          const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+          yield* command(remote, ["init", "--bare", "-b", "trunk"]);
+          yield* command(repo, ["remote", "add", "origin", remote]);
+          yield* command(repo, ["push", "origin", "main:trunk"]);
+          yield* fs.writeFileString(`${worktree}/tracked.txt`, "unmerged work\n");
+          yield* command(worktree, ["commit", "-am", "unmerged work"]);
+          yield* command(repo, ["push", "origin", "feature:main"]);
+          expect(
+            (yield* command(repo, ["symbolic-ref", "refs/remotes/origin/HEAD"]).pipe(Effect.exit))
+              ._tag,
+          ).toBe("Failure");
+
+          const report = yield* service.runNow;
+          expect(report.entries[0]).toMatchObject({
+            outcome: "kept",
+            reason: "Has commits beyond the default branch",
+          });
+          expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("unmerged work\n");
+        }),
+      ),
+  );
+  it.live("keeps the worktree when the remote default is unavailable even if main exists", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, repo, worktree, command } = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeUnchanged: true,
+        });
+        const remote = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-remote-" });
+        yield* command(remote, ["init", "--bare", "-b", "trunk"]);
+        yield* command(repo, ["remote", "add", "origin", remote]);
+        // The remote HEAD names an unborn trunk; main exists but is not its default.
+        yield* command(repo, ["push", "origin", "main"]);
+
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Default branch is unavailable",
+        });
+        expect(yield* fs.exists(worktree)).toBe(true);
+      }),
+    ),
+  );
   it.live("preserves tracked edits written after the final status check", () =>
     runCleanupTest(
       Effect.gen(function* () {

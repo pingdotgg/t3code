@@ -592,6 +592,7 @@ const make = Effect.gen(function* () {
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
     const refreshedDefaultRefs = new Map<string, Set<string>>();
+    const defaultBranches = new Map<string, string | null>();
     const groups = Map.groupBy(
       snapshot.threads.filter((thread) => thread.worktreePath !== null),
       (thread) => path.resolve(thread.worktreePath!),
@@ -684,7 +685,30 @@ const make = Effect.gen(function* () {
         if (!eligible && (settings.worktreeUnchanged || settings.worktreeOnMerge)) {
           const repositoryCwd = path.resolve(project.workspaceRoot);
           const remote = yield* git.resolvePrimaryRemoteName(repositoryCwd);
-          const branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
+          const defaultBranchKey = `${repositoryCwd}\0${remote}`;
+          let branch = defaultBranches.get(defaultBranchKey);
+          if (branch === undefined) {
+            branch = yield* git.resolveDefaultBranchName(repositoryCwd, remote);
+            // Without a local HEAD ref, only the remote can identify its default;
+            // a conventional name may be a feature branch.
+            if (branch === null) {
+              branch = yield* git
+                .execute({
+                  operation: "StorageCleanup.resolveDefaultBranch",
+                  cwd: repositoryCwd,
+                  args: ["ls-remote", "--symref", "--", remote, "HEAD"],
+                  timeoutMs: 20_000,
+                })
+                .pipe(
+                  Effect.map(
+                    (result) =>
+                      /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(result.stdout)?.[1] ?? null,
+                  ),
+                  Effect.orElseSucceed(() => null),
+                );
+            }
+            defaultBranches.set(defaultBranchKey, branch);
+          }
           if (branch === null) return keep("default branch is unavailable");
           const defaultRef = `refs/remotes/${remote}/${branch}`;
           const refreshed = refreshedDefaultRefs.get(repositoryCwd) ?? new Set<string>();
