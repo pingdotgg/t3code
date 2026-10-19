@@ -9,7 +9,11 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import * as Undici from "undici";
 import { afterAll, afterEach, beforeAll, describe, expect } from "vite-plus/test";
 
-import { builtinFetchUsesHttp2, installHttp1FetchDispatcher } from "./outboundHttp.ts";
+import {
+  builtinFetchUsesHttp2,
+  extendConnectionAttemptTimeout,
+  installHttp1FetchDispatcher,
+} from "./outboundHttp.ts";
 
 // Test-only self-signed P-256 certificate for 127.0.0.1, valid until 2126; not a
 // secret. Node cannot mint X.509 certificates without a library, and a local
@@ -41,6 +45,7 @@ const server = NodeHttp2.createSecureServer(
 let origin = "";
 const defaultCaCertificates = NodeTls.getCACertificates("default");
 const defaultDispatcher = Undici.getGlobalDispatcher();
+const defaultAttemptTimeout = NodeNet.getDefaultAutoSelectFamilyAttemptTimeout();
 
 beforeAll(async () => {
   NodeTls.setDefaultCACertificates([...defaultCaCertificates, TEST_CERT]);
@@ -50,6 +55,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   Undici.setGlobalDispatcher(defaultDispatcher);
+  NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(defaultAttemptTimeout);
 });
 
 afterAll(async () => {
@@ -89,4 +95,18 @@ describe("installHttp1FetchDispatcher", () => {
         expect(yield* versionViaBuiltinFetch()).toBe("1.1");
       }),
   );
+});
+
+describe("extendConnectionAttemptTimeout", () => {
+  it("raises a default below the floor to 1000 ms", () => {
+    NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(50);
+    extendConnectionAttemptTimeout();
+    expect(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(1_000);
+  });
+
+  it("keeps a larger configured timeout", () => {
+    NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(5_000);
+    extendConnectionAttemptTimeout();
+    expect(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(5_000);
+  });
 });
