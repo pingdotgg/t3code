@@ -270,24 +270,35 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
   ) {
     return null;
   }
-  return {
-    x: Math.max(0, Math.floor(x)),
-    y: Math.max(0, Math.floor(y)),
-    width: Math.max(1, Math.ceil(width)),
-    height: Math.max(1, Math.ceil(height)),
-  };
+  return { x, y, width, height };
 };
 
-/**
- * Crops a full-page capture to a picked annotation. `cropRect` is in CSS px;
- * the capture's pixels are CSS px × the guest's `devicePixelRatio`.
- */
+// capturePage returns a 1x NativeImage containing device pixels, so crop() uses
+// CSS coordinates scaled by the guest's devicePixelRatio (including page zoom).
 const cropAnnotationScreenshot = (
   image: Electron.NativeImage,
   cropRect: PreviewAnnotationRect | null,
   devicePixelRatio: number,
+  targetRects: ReadonlyArray<PreviewAnnotationRect>,
 ): PreviewAnnotationPayload["screenshot"] => {
   const full = image.getSize();
+  if (full.width <= 0 || full.height <= 0) return null;
+  const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  // Padding or a union of offscreen targets can overlap an empty viewport area.
+  // A zero-width/height SVG line can still paint at the top or left edge.
+  if (
+    targetRects.length > 0 &&
+    !targetRects.some(
+      (rect) =>
+        (rect.width > 0 || rect.height > 0) &&
+        rect.x * scale < full.width &&
+        rect.y * scale < full.height &&
+        (rect.width === 0 ? rect.x >= 0 : rect.x + rect.width > 0) &&
+        (rect.height === 0 ? rect.y >= 0 : rect.y + rect.height > 0),
+    )
+  ) {
+    return null;
+  }
   if (!cropRect) {
     return {
       dataUrl: image.toDataURL(),
@@ -296,16 +307,21 @@ const cropAnnotationScreenshot = (
       cropRect: { x: 0, y: 0, width: full.width, height: full.height },
     };
   }
-  const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
-  const x = Math.min(full.width - 1, Math.max(0, Math.floor(cropRect.x * scale)));
-  const y = Math.min(full.height - 1, Math.max(0, Math.floor(cropRect.y * scale)));
+  const x = Math.max(0, Math.floor(cropRect.x * scale));
+  const y = Math.max(0, Math.floor(cropRect.y * scale));
+  const right = Math.min(full.width, Math.ceil((cropRect.x + cropRect.width) * scale));
+  const bottom = Math.min(full.height, Math.ceil((cropRect.y + cropRect.height) * scale));
+  // A target scrolled out of view has no pixels in this capture. Clamping its
+  // origin onto the edge would attach an unrelated strip as a successful crop.
+  if (right <= x || bottom <= y) return null;
   const cropped = image.crop({
     x,
     y,
-    width: Math.max(1, Math.min(full.width - x, Math.ceil(cropRect.width * scale))),
-    height: Math.max(1, Math.min(full.height - y, Math.ceil(cropRect.height * scale))),
+    width: right - x,
+    height: bottom - y,
   });
   const size = cropped.getSize();
+  if (size.width <= 0 || size.height <= 0) return null;
   return { dataUrl: cropped.toDataURL(), width: size.width, height: size.height, cropRect };
 };
 
@@ -2220,13 +2236,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const submission =
             args[2] === "send" && annotationSendEnabled.get(tabId) === true ? "send" : "attach";
           const devicePixelRatio = typeof args[3] === "number" ? args[3] : 1;
+          const targetRects = [
+            ...payload.elements.map((target) => target.rect),
+            ...payload.regions.map((target) => target.rect),
+            ...payload.strokes.map((target) => target.bounds),
+          ];
           runFork(
             capturePageWithRetry(
               { operation: "captureAnnotationScreenshot", tabId, webContentsId: wc.id },
               tabId,
               wc,
             ).pipe(
-              Effect.map((image) => cropAnnotationScreenshot(image, cropRect, devicePixelRatio)),
+              Effect.map((image) =>
+                cropAnnotationScreenshot(image, cropRect, devicePixelRatio, targetRects),
+              ),
               Effect.tapError((error) =>
                 Effect.logWarning("preview annotation screenshot failed").pipe(
                   Effect.annotateLogs({ tabId, webContentsId: wc.id, error: error.message }),
