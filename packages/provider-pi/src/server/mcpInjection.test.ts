@@ -121,6 +121,7 @@ describe("pi T3 MCP injection", () => {
       environment: {},
       mcpSession,
       extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+      sessionPath: "/fake/persisted.jsonl",
       ephemeral: true,
       disableExtensions: true,
       disableTools: true,
