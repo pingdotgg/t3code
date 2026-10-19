@@ -52,6 +52,8 @@ version and installed dependencies. Homebrew layouts are simulated on Linux.
       envs (default 1) run under the real service launcher on runtime V
       (default: repo version minus one patch) so self-update can be tried.
       Prints each env's origin and one-time pairing URL. Rerun to resume.
+      Topology and --from-version are fixed until down + reset. Host and
+      --busy-seconds can change after down; omitted options keep saved values.
   down                          Stop only the processes the lab recorded.
   status                        Envs, ports, liveness, installed vs latest.
   pair <env>                    Mint a fresh pairing URL for env (e.g. env1).
@@ -294,7 +296,14 @@ function envPath(envId: string): string {
     ".local/share/mise/shims",
   ]
     .map((dir) => NodePath.join(home, dir))
-    .concat([NodePath.join(envDir(envId), "tools"), "/usr/local/bin", "/usr/bin", "/bin"])
+    .concat([
+      NodePath.join(envDir(envId), "tools"),
+      "/usr/local/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin",
+    ])
     .join(":");
 }
 
@@ -812,7 +821,9 @@ function serverEnvironment(state: LabState, env: LabEnv): NodeJS.ProcessEnv {
     XDG_CACHE_HOME: NodePath.join(home, ".cache"),
     XDG_STATE_HOME: NodePath.join(home, ".local/state"),
     npm_config_registry: `http://127.0.0.1:${state.feedPort}/npm`,
+    T3CODE_NPM_REGISTRY_URL: `http://127.0.0.1:${state.feedPort}/npm`,
     T3CODE_RELEASE_BASE_URL: `http://127.0.0.1:${state.feedPort}/releases`,
+    T3CODE_RELEASE_INDEX_BASE_URL: `http://127.0.0.1:${state.feedPort}/releases`,
     T3CODE_NO_BROWSER: "1",
     T3CODE_TELEMETRY_ENABLED: "false",
   };
@@ -1025,12 +1036,12 @@ async function up(args: string[]): Promise<void> {
   const previous = readState();
   const host = option(args, "host") ?? previous?.host ?? "127.0.0.1";
   const envCount = Number(option(args, "envs") ?? previous?.envs.length ?? 3);
-  const launcherCount = Number(option(args, "launcher") ?? 1);
+  const launcherCount = Number(
+    option(args, "launcher") ?? previous?.envs.filter((env) => env.launcher).length ?? 1,
+  );
   const busySeconds = Number(option(args, "busy-seconds") ?? previous?.busySeconds ?? 120);
   const fromVersion = option(args, "from-version");
   if (!Number.isInteger(envCount) || envCount < 1) fail("--envs must be a positive integer.");
-  if (!Number.isInteger(launcherCount) || launcherCount < 0 || launcherCount > envCount)
-    fail("--launcher must be an integer between 0 and --envs.");
   if (!Number.isFinite(busySeconds) || busySeconds <= 0)
     fail("--busy-seconds must be a positive number.");
   if (fromVersion !== undefined && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(fromVersion))
@@ -1049,10 +1060,29 @@ async function up(args: string[]): Promise<void> {
     envs: [],
   };
   let state = updateState((next) => {
-    if (
-      next.host !== host &&
-      next.envs.some((env) => isLabProcess(env.pid, serverMarker(env), projectDir(env.id)))
-    ) {
+    if (previous !== null) {
+      const changed = [
+        envCount !== next.envs.length ? "--envs" : null,
+        launcherCount !== next.envs.filter((env) => env.launcher).length ? "--launcher" : null,
+        fromVersion !== undefined && fromVersion !== next.fromVersion ? "--from-version" : null,
+      ].filter((name) => name !== null);
+      if (changed.length > 0) {
+        fail(
+          `Cannot change ${changed.join(", ")} on an existing lab. Run \`node scripts/update-lab.ts down\` then \`node scripts/update-lab.ts reset\` first.`,
+        );
+      }
+    }
+    if (!Number.isInteger(launcherCount) || launcherCount < 0 || launcherCount > envCount)
+      fail("--launcher must be an integer between 0 and --envs.");
+    const serversRunning = next.envs.some((env) =>
+      isLabProcess(env.pid, serverMarker(env), projectDir(env.id)),
+    );
+    if (next.busySeconds !== busySeconds && serversRunning) {
+      fail(
+        "Cannot change --busy-seconds while lab servers are running. Run `node scripts/update-lab.ts down` first.",
+      );
+    }
+    if (next.host !== host && serversRunning) {
       fail(
         "Cannot change --host while lab servers are running. Run `node scripts/update-lab.ts down` first.",
       );
@@ -1283,11 +1313,8 @@ async function main(argv: string[]): Promise<void> {
       const state = requireState();
       const env = requireEnv(state, args[0]);
       const instanceId = args[1] ?? fail("Usage: update <env> <instance> [version]");
-      const driver =
-        PROVIDER_KEYS.map((key) => PROVIDERS[key].driver).find((d) => d === instanceId) ??
-        instanceId;
       const result = await rpc(state, env, "server.updateProvider", {
-        provider: driver,
+        provider: instanceId,
         instanceId,
         ...(args[2] ? { targetVersion: args[2] } : {}),
       });
@@ -1301,8 +1328,17 @@ async function main(argv: string[]): Promise<void> {
       const state = requireState();
       const env = requireEnv(state, args[0]);
       if (!args[1]) fail("Usage: self-update <env> <version>");
-      const result = await rpc(state, env, "server.updateServer", { targetVersion: args[1] });
-      return void console.log(JSON.stringify(result));
+      try {
+        const result = await rpc(state, env, "server.updateServer", { targetVersion: args[1] });
+        return void console.log(JSON.stringify(result));
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("socket closed before response")) {
+          console.error(
+            `Connection closed during server handoff; the update outcome is unknown. Inspect update.status in ${NodePath.join(t3Home(env.id), "runtime/service-state.json")} for the persisted result.`,
+          );
+        }
+        throw error;
+      }
     }
     case "build-runtime": {
       if (!args[0]) fail("Usage: build-runtime <version> [--archive file]");
@@ -1328,7 +1364,7 @@ async function main(argv: string[]): Promise<void> {
 }
 
 const argv = process.argv.slice(2);
-if (argv[0] && !["help", "--help"].includes(argv[0])) {
+if (argv[0] && !["help", "--help", "__tool", "__feed"].includes(argv[0])) {
   if (PLATFORM !== "linux" || !NodeFS.existsSync("/proc/self/stat")) {
     fail("update-lab requires Linux with /proc, flock and ss. See --help.");
   }

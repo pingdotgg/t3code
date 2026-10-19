@@ -7,6 +7,7 @@ const CLI_RELEASE_REPOSITORY = "pingdotgg/t3code";
 export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
+export const CLI_RELEASE_INDEX_BASE_URL_ENV = "T3CODE_RELEASE_INDEX_BASE_URL";
 
 // Keep archive keys aligned with the Linux matrix, Windows ARM64 build, and cli_archive rows in release.yml.
 // Node single-executables do not support darwin-x64 and segfault at startup.
@@ -135,12 +136,12 @@ export function acceptsTrackSwitchRelease(
  * until a channel match turns up; a busy nightly train can push the newest
  * preview or stable release past any single page.
  *
- * A mirror set through `T3CODE_RELEASE_BASE_URL` serves the same JSON (an
+ * A CLI index mirror set through `T3CODE_RELEASE_INDEX_BASE_URL` serves the same JSON (an
  * array of `{ tag_name, draft? }`, newest first, empty past the last page) at
  * `<base>/index.json?per_page=100&page=N`.
  */
-export function cliReleaseIndexPageUrl(page: number, baseUrl?: string): string {
-  const mirror = baseUrl?.trim().replace(/\/+$/, "");
+export function cliReleaseIndexPageUrl(page: number, indexBaseUrl?: string): string {
+  const mirror = indexBaseUrl?.trim().replace(/\/+$/, "");
   return mirror
     ? `${mirror}/index.json?per_page=100&page=${page}`
     : `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;

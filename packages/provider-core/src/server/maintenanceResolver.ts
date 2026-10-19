@@ -962,8 +962,8 @@ export function createProviderVersionAdvisory(input: {
 
 const DEFAULT_NPM_REGISTRY_URL = "https://registry.npmjs.org";
 
-/** npm's own registry override, so mirrors (and local fake registries) answer "latest". */
-const NpmRegistryUrlConfig = Config.String("npm_config_registry").pipe(
+// Advisory HTTP requests do not carry npm CLI authentication or scoped-registry config.
+const NpmRegistryUrlConfig = Config.String("T3CODE_NPM_REGISTRY_URL").pipe(
   Config.withDefault(DEFAULT_NPM_REGISTRY_URL),
   Config.map((url) => url.trim().replace(/\/+$/, "") || DEFAULT_NPM_REGISTRY_URL),
 );

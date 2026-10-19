@@ -31,6 +31,7 @@ import {
   resolveMirrorVersion,
   resolveNewestVersion,
   runUpdate,
+  updateCommand,
 } from "./update.ts";
 
 // lsof listing one process, so prune sees a process list in which no runtime is running.
@@ -122,7 +123,7 @@ it.effect("reads the newest version from the update feed file a mirror publishes
 );
 
 it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update discovery", (it) => {
-  it.effect("selects a published stable release from the configured feed across pages", () =>
+  it.effect("keeps release index discovery separate from the download mirror across pages", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-feed-" });
@@ -137,43 +138,49 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 update discov
           }),
         }),
       );
-      const requests: Array<string> = [];
-      const error = yield* Command.runWith(updateCommand, { version: packageJson.version })([
-        "--base-dir",
-        baseDir,
-        "--channel",
-        "stable",
-      ]).pipe(
-        Effect.provideService(HostProcessEnvironment, {
-          T3CODE_RELEASE_BASE_URL: " http://127.0.0.1:4321/releases/ ",
-        }),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-        Effect.provideService(FetchHttpClient.Fetch, async (input) => {
-          const url = String(input);
-          requests.push(url);
-          if (url === "http://127.0.0.1:4321/releases/index.json?per_page=100&page=1") {
-            return Response.json([
-              { tag_name: "v999.0.0", draft: true },
-              { tag_name: "v999.0.0-nightly.20261019.1" },
-            ]);
-          }
-          if (url === "http://127.0.0.1:4321/releases/index.json?per_page=100&page=2") {
-            return Response.json([{ tag_name: "v0.0.0" }]);
-          }
-          throw new Error(`Unexpected release request: ${url}`);
-        }),
-        Effect.flip,
-      );
+      for (const indexBaseUrl of [" http://127.0.0.1:4321/releases/ ", undefined]) {
+        const indexUrl = indexBaseUrl
+          ? "http://127.0.0.1:4321/releases/index.json"
+          : "https://api.github.com/repos/pingdotgg/t3code/releases";
+        const requests: Array<string> = [];
+        const error = yield* Command.runWith(updateCommand, { version: packageJson.version })([
+          "--base-dir",
+          baseDir,
+          "--channel",
+          "stable",
+        ]).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            T3CODE_RELEASE_BASE_URL: "http://127.0.0.1:9876/downloads",
+            ...(indexBaseUrl === undefined ? {} : { T3CODE_RELEASE_INDEX_BASE_URL: indexBaseUrl }),
+          }),
+          Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+          Effect.provideService(FetchHttpClient.Fetch, async (input) => {
+            const url = String(input);
+            requests.push(url);
+            if (url === `${indexUrl}?per_page=100&page=1`) {
+              return Response.json([
+                { tag_name: "v999.0.0", draft: true },
+                { tag_name: "v999.0.0-nightly.20261019.1" },
+              ]);
+            }
+            if (url === `${indexUrl}?per_page=100&page=2`) {
+              return Response.json([{ tag_name: "v0.0.0" }]);
+            }
+            throw new Error(`Unexpected release request: ${url}`);
+          }),
+          Effect.flip,
+        );
 
-      assert.deepEqual(requests, [
-        "http://127.0.0.1:4321/releases/index.json?per_page=100&page=1",
-        "http://127.0.0.1:4321/releases/index.json?per_page=100&page=2",
-      ]);
-      assert.equal(error._tag, "CliUpdateError");
-      assert.equal(
-        error.message,
-        `t3@0.0.0 is older than the installed ${packageJson.version}. Pass --allow-downgrade to install it anyway.`,
-      );
+        assert.deepEqual(requests, [
+          `${indexUrl}?per_page=100&page=1`,
+          `${indexUrl}?per_page=100&page=2`,
+        ]);
+        assert.equal(error._tag, "CliUpdateError");
+        assert.equal(
+          error.message,
+          `t3@0.0.0 is older than the installed ${packageJson.version}. Pass --allow-downgrade to install it anyway.`,
+        );
+      }
     }),
   );
 });

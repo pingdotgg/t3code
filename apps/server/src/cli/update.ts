@@ -1,6 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
+  CLI_RELEASE_INDEX_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
   cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
@@ -64,17 +65,17 @@ const RELEASE_INDEX_MAX_PAGES = 10;
 
 export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
-  releaseBaseUrl: string | undefined,
+  releaseIndexBaseUrl?: string,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcess.Environment;
   const githubToken = environment.GH_TOKEN?.trim() || environment.GITHUB_TOKEN?.trim() || undefined;
   for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
-    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page, releaseBaseUrl)).pipe(
+    const request = HttpClientRequest.get(cliReleaseIndexPageUrl(page, releaseIndexBaseUrl)).pipe(
       HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
     );
     const authenticatedRequest =
-      githubToken === undefined
+      githubToken === undefined || releaseIndexBaseUrl?.trim()
         ? request
         : HttpClientRequest.setHeader(request, "Authorization", `Bearer ${githubToken}`);
     const body = yield* httpClient.execute(authenticatedRequest).pipe(
@@ -388,7 +389,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     input.requestedVersion !== undefined
       ? Effect.succeed(input.requestedVersion)
       : mirror === undefined
-        ? resolveNewestVersion(channel, releaseBaseUrl)
+        ? resolveNewestVersion(channel, environment[CLI_RELEASE_INDEX_BASE_URL_ENV])
         : resolveMirrorVersion(mirror, channel)
   ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);

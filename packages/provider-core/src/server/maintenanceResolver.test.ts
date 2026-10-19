@@ -154,7 +154,10 @@ it.layer(
             ProviderLatestVersions.layer,
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
-                env: registry === undefined ? {} : { npm_config_registry: registry },
+                env: {
+                  npm_config_registry: "http://127.0.0.1:9876/private",
+                  ...(registry === undefined ? {} : { T3CODE_NPM_REGISTRY_URL: registry }),
+                },
               }),
             ),
           ),

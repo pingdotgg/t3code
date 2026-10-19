@@ -40,7 +40,7 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
   });
 
-  it("pages through the default release index or a configured mirror", () => {
+  it("pages through the default release index or a separate index mirror", () => {
     expect(cliReleaseIndexPageUrl(1)).toBe(
       "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=1",
     );
