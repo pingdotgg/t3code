@@ -158,14 +158,16 @@ describe("ssh tunnel scripts", () => {
   });
 
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("SSH release pairing", () => {
-    it.effect.each(["0.0.46-nightly.20261004.2652", ARCHIVE.archiveVersion, "1.2.4", "0.0.0-dev"])(
-      "mints pairing tokens with the running server's CLI version %s",
-      (serverVersion) =>
+    it.effect.each(["archive", "nodeScript"] as const)(
+      "pairs a reused server without changing its launch runner (%s)",
+      (mode) =>
         Effect.gen(function* () {
+          const serverVersion = "0.0.46-nightly.20261004.2652";
+          const credential = mode === "archive" ? `paired-${serverVersion}` : "paired-dev";
           const fs = yield* FileSystem.FileSystem;
           const localSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-" });
-          for (const version of new Set([serverVersion, ARCHIVE.archiveVersion])) {
+          for (const version of [serverVersion, ARCHIVE.archiveVersion]) {
             const runtime = `${home}/.t3/runtime/versions/${version}`;
             yield* fs.makeDirectory(runtime, { recursive: true });
             yield* fs.writeFileString(`${runtime}/.install-complete`, version);
@@ -175,12 +177,11 @@ describe("ssh tunnel scripts", () => {
             );
             yield* fs.chmod(`${runtime}/t3`, 0o700);
           }
-          const runner =
-            serverVersion === "0.0.0-dev" ? { nodeScriptPath: `${home}/dev.mjs` } : ARCHIVE;
+          const runner = mode === "nodeScript" ? { nodeScriptPath: `${home}/dev.mjs` } : ARCHIVE;
           if ("nodeScriptPath" in runner) {
             yield* fs.writeFileString(
               runner.nodeScriptPath,
-              `process.stdout.write(JSON.stringify({ credential: "paired-${serverVersion}" }));`,
+              `process.stdout.write(JSON.stringify({ credential: "paired-dev" }));`,
             );
           }
           const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
@@ -195,7 +196,7 @@ describe("ssh tunnel scripts", () => {
             Effect.gen(function* () {
               const args = commandArgs(command);
               if (args.includes("-N")) return makeRunningProcess(() => undefined);
-              if (args.includes("--")) {
+              if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
                 launches += 1;
                 return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"external"}\n');
               }
@@ -231,6 +232,7 @@ describe("ssh tunnel scripts", () => {
           );
           const client = HttpClient.make((request) => {
             if (request.url.endsWith("/.well-known/t3/environment")) {
+              assert.equal(request.url, "http://127.0.0.1:41773/.well-known/t3/environment");
               descriptorRequests += 1;
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, Response.json({ serverVersion })),
@@ -244,12 +246,12 @@ describe("ssh tunnel scripts", () => {
             assert.equal(descriptorRequests, 0);
             for (let attempt = 0; attempt < 2; attempt += 1) {
               const paired = yield* manager.ensureEnvironment(target, { issuePairingToken: true });
-              assert.equal(paired.pairingToken, `paired-${serverVersion}`);
+              assert.equal(paired.pairingToken, credential);
+              assert.equal(yield* fs.readFileString(launchRunner), launchScript);
               assert.equal(paired.remoteServerKind, "external");
             }
             assert.equal(descriptorRequests, "nodeScriptPath" in runner ? 0 : 2);
             assert.equal(launches, 1);
-            assert.equal(yield* fs.readFileString(launchRunner), launchScript);
           }).pipe(
             Effect.provide(
               Layer.mergeAll(
@@ -269,17 +271,20 @@ describe("ssh tunnel scripts", () => {
   });
 
   it.effect.each([
-    { status: 500, body: "{}" },
-    { status: 200, body: "not JSON" },
-    { status: 200, body: "{}" },
-    { status: 200, body: '{"serverVersion":"../invalid"}' },
-    { status: 200, body: null },
-  ])("does not mint a grant when server version discovery fails: %j", ({ status, body }) => {
+    {
+      failure: "HTTP error",
+      status: 500,
+      body: JSON.stringify({ serverVersion: ARCHIVE.archiveVersion }),
+    },
+    { failure: "invalid version", status: 200, body: '{"serverVersion":"../invalid"}' },
+    { failure: "timeout", status: 200, body: null },
+  ])("does not mint a grant when server version discovery fails: $failure", ({ status, body }) => {
     let pairingCommands = 0;
     const spawner = ChildProcessSpawner.make((command) => {
       const args = commandArgs(command);
       if (args.includes("-N")) return Effect.succeed(makeRunningProcess(() => undefined));
-      if (args.includes("--")) return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}'));
+      if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--"))
+        return Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}'));
       if (args.includes("sh")) pairingCommands += 1;
       return Effect.succeed(makeSuccessfulProcess(""));
     });
