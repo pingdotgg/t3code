@@ -251,11 +251,16 @@ function SendActionButton(props: {
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
-  const { themeVariables: materialTheme } = useAppearancePreferences();
+  const { themeVariables: materialTheme, fonts, composerFontSize } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
-  const bodyText = useComposerTextRole();
+  const scaledBodyText = useScaledTextRole("body");
+  const bodyText = {
+    ...scaledBodyText,
+    fontSize: composerFontSize,
+    lineHeight: Math.round((composerFontSize * 23) / 16),
+  };
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
@@ -941,6 +946,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   {...compactEditor.editorProps}
                   textStyle={{
                     ...bodyText,
+                    fontFamily: fonts.composer.regular,
                     color: foregroundColor,
                   }}
                 />
