@@ -1,23 +1,16 @@
-/**
- * Claude Code's only user-side invocation is a text block whose first character
- * is `/`: the harness expands `/name args` into the SKILL.md body, and every
- * character after the name (newlines included) arrives as `ARGUMENTS`. Only one
- * skill expands per message; a second `/x` becomes argument text
- *    (anthropics/claude-code#87113).
- */
+// Claude Code expands only the last text block, with `/name` at its start.
+// Everything after the command name, including other commands, is argument text.
 
-/**
- * Same token shape the composer and timeline chips recognise
- * (`packages/shared/src/composerInlineTokens.ts`), so a rendered chip and a
- * dispatched skill are always the same set.
- */
+// Match the chip syntax in packages/shared/src/composerInlineTokens.ts.
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
+const LEADING_SLASH_COMMAND_PATTERN = /^\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u;
+
 export interface ClaudeSkillDispatch {
-  /** The whole prompt with mentions as `/name`, or `undefined` when the mention opens it. */
+  /** The whole rewritten prompt when dispatching a skill from within the request. */
   readonly leadingText: string | undefined;
-  /** `/name` plus the trailing text, ready to be the message's last text block. */
+  /** The leading command or last skill invocation, sent as the last text block. */
   readonly commandText: string;
   readonly skillName: string;
 }
@@ -37,7 +30,6 @@ export function planClaudeSkillDispatch(
     return undefined;
   }
 
-  const trailing = prompt.slice(last.end);
   const promptWithInlineSlashes = mentions
     .reduceRight(
       (text, mention) =>
@@ -46,10 +38,20 @@ export function planClaudeSkillDispatch(
     )
     .trimEnd();
 
+  // Preserve /goal and known slash skills without mistaking root paths for commands.
+  const leadingCommandName = LEADING_SLASH_COMMAND_PATTERN.exec(prompt)?.[1];
+  if (leadingCommandName === "goal" || (leadingCommandName && skillNames.has(leadingCommandName))) {
+    return {
+      leadingText: undefined,
+      commandText: promptWithInlineSlashes,
+      skillName: last.name,
+    };
+  }
+
   return {
     leadingText:
       prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
-    commandText: `/${last.name}${trailing}`.trimEnd(),
+    commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
     skillName: last.name,
   };
 }

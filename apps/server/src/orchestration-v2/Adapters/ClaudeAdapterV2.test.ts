@@ -1600,6 +1600,45 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
+describe("ClaudeAdapterV2 user message skill dispatch", () => {
+  const skillNames = new Set(["review", "implement"]);
+
+  it.each(["goal", "review"])(
+    "preserves a leading /%s in one text block with known skills rewritten inline",
+    (command) => {
+      const message = ClaudeAdapterV2.makeClaudeUserMessage({
+        text: `/${command} ship the fix with $review and $implement then $unknown`,
+        skillNames,
+      });
+      assert.deepEqual(message.message.content, [
+        {
+          type: "text",
+          text: `/${command} ship the fix with /review and /implement then $unknown`,
+        },
+      ]);
+    },
+  );
+
+  it.each(["/tmp/build.log", "/etc", "/tmp"])(
+    "keeps the full path-leading request for %s before the native skill command",
+    (path) => {
+      const message = ClaudeAdapterV2.makeClaudeUserMessage({
+        text: `${path} has errors, $review it`,
+        skillNames,
+      });
+      assert.deepEqual(message.message.content, [
+        { type: "text", text: `${path} has errors, /review it` },
+        { type: "text", text: "/review it" },
+      ]);
+    },
+  );
+
+  it("leaves a command with only unknown mentions unchanged", () => {
+    const text = "/goal check $HOME with $unknown";
+    assert.equal(ClaudeAdapterV2.makeClaudeUserMessage({ text, skillNames }).message.content, text);
+  });
+});
+
 describe("ClaudeAdapterV2 attachments", () => {
   it.effect.each([
     {
