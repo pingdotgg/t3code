@@ -14,6 +14,15 @@ const selection = (
 });
 
 describe("compileClaudeModelSelection", () => {
+  it("defaults Sonnet 5.5 to medium effort while keeping older Sonnet at high", () => {
+    expect(compileClaudeModelSelection(selection("claude-sonnet-5-5", [])).effort).toBe("medium");
+    expect(compileClaudeModelSelection(selection("claude-sonnet-5", [])).effort).toBe("high");
+    expect(
+      compileClaudeModelSelection(selection("claude-sonnet-5-5", [{ id: "effort", value: "high" }]))
+        .effort,
+    ).toBe("high");
+  });
+
   it("compiles context, effort, and settings together", () => {
     expect(
       compileClaudeModelSelection(
@@ -42,6 +51,11 @@ describe("compileClaudeModelSelection", () => {
   });
 
   it("uses the model default SDK effort alongside prompt-injected effort", () => {
+    expect(
+      compileClaudeModelSelection(
+        selection("claude-sonnet-5-5", [{ id: "effort", value: "ultrathink" }]),
+      ),
+    ).toMatchObject({ effort: "medium", promptEffort: "ultrathink" });
     expect(
       compileClaudeModelSelection(
         selection("claude-sonnet-4-6", [{ id: "effort", value: "ultrathink" }]),
