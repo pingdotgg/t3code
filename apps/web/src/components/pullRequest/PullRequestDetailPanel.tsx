@@ -1227,11 +1227,12 @@ export function PullRequestDetailPanel({
       branch: prepared.value.branch,
       worktreePath: prepared.value.worktreePath,
       envMode: prepared.value.worktreePath === null ? "local" : "worktree",
+      checkoutPullRequest: { url: prepared.value.pullRequest.url, branch: prepared.value.branch },
     }).then(
-      (session) => session !== null,
-      () => false,
+      (session) => session,
+      () => null,
     );
-    if (!pointed) {
+    if (pointed === null) {
       setHandoff(null);
       // The checkout is on disk; only the thread failed to move onto it. Writing the task now
       // would send the agent at whatever the thread was already open on — which is the one
@@ -1266,7 +1267,7 @@ export function PullRequestDetailPanel({
       );
       return;
     }
-    await openThreadWithTask(projectRef, task, opened);
+    await openThreadWithTask(projectRef, task, pointed);
     toastManager.update(
       toastId,
       prepared.value.isOnPullRequestHead

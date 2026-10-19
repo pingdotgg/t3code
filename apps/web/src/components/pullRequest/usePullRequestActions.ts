@@ -350,11 +350,12 @@ export function usePullRequestHandoffs({
       branch: prepared.value.branch,
       worktreePath: prepared.value.worktreePath,
       envMode: prepared.value.worktreePath === null ? "local" : "worktree",
+      checkoutPullRequest: { url: prepared.value.pullRequest.url, branch: prepared.value.branch },
     }).then(
-      (session) => session !== null,
-      () => false,
+      (session) => session,
+      () => null,
     );
-    if (!pointed) {
+    if (pointed === null) {
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
@@ -386,7 +387,7 @@ export function usePullRequestHandoffs({
       );
       return;
     }
-    await openThreadWithTask(projectRef, task, opened);
+    await openThreadWithTask(projectRef, task, pointed);
     toastManager.update(
       toastId,
       prepared.value.isOnPullRequestHead

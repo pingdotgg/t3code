@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   EnvironmentId,
+  ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -134,8 +135,12 @@ vi.mock(import("~/components/ui/toast"), async (original) => {
   };
 });
 
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { checkoutPullRequestUrlToLink, DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import GitActionsControl from "./GitActionsControl";
+import { startTurnWithCheckoutLink, usePullRequestLinking } from "~/hooks/usePullRequestLinking";
+import { useEnvironmentQuery } from "~/state/query";
+import { vcsEnvironment } from "~/state/vcs";
+import { useSourceControlActionRunning } from "~/lib/sourceControlActions";
 
 // ThreadDetailsPanel keeps this component mounted behind React.memo when threads change.
 const MemoGitActionsControl = memo(GitActionsControl);
@@ -168,6 +173,7 @@ async function openCommitDialog() {
 }
 
 beforeEach(() => {
+  useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.scopes = new Set([AuthSourceControlWriteScope]);
   state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
@@ -297,6 +303,68 @@ describe("Git actions while thread details load", () => {
     await vi.waitFor(() => expect(commits()).toBe(1));
     expect(state.actions[0]?.input).not.toHaveProperty("featureBranch");
     expect(state.branch).toBe("main");
+  });
+
+  it("reconciles checkout status with details closed and does not link after a branch switch", async () => {
+    state.shell = null;
+    useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
+    const store = () => useComposerDraftStore.getState();
+    const environmentId = EnvironmentId.make("environment");
+    const threadRef = { environmentId, threadId: ThreadId.make("thread") };
+    const draftId = DraftId.make("checkout-draft");
+    const checkout = { url: "https://github.com/acme/widgets/pull/42", branch: "feature/pr-42" };
+    store().setProjectDraftThreadId(
+      { environmentId, projectId: ProjectId.make("project") },
+      draftId,
+      { threadId: threadRef.threadId, branch: checkout.branch, checkoutPullRequest: checkout },
+    );
+
+    // ChatView owns the query and linking hook even when GitActionsControl is absent.
+    function ComposerWithoutDetails() {
+      const draft = useComposerDraftStore((store) => store.getDraftSession(draftId));
+      const scope = { environmentId, cwd: "/repo" };
+      const status = useEnvironmentQuery(
+        vcsEnvironment.status({ environmentId, input: { cwd: scope.cwd } }),
+      );
+      const isGitActionRunning = useSourceControlActionRunning(scope, [
+        "runStackedAction",
+        "pull",
+        "publishRepository",
+      ]);
+      usePullRequestLinking(
+        environmentId,
+        draft ? { draftId, draft, gitStatus: status.data, isGitActionRunning } : undefined,
+      );
+      return null;
+    }
+    const renderComposer = () => act(async () => root.render(<ComposerWithoutDetails />));
+    await renderComposer();
+    expect(store().getDraftSession(draftId)?.branch).toBe(checkout.branch);
+    expect(checkoutPullRequestUrlToLink(store().getDraftSession(draftId))).toBe(checkout.url);
+
+    state.branch = checkout.branch;
+    await renderComposer();
+    expect(checkoutPullRequestUrlToLink(store().getDraftSession(draftId))).toBe(checkout.url);
+
+    // A remount must retain confirmation and accept the next observed branch.
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    state.branch = "another-branch";
+    await renderComposer();
+    const link = vi.fn(async () => {});
+    await act(async () => {
+      await startTurnWithCheckoutLink({
+        threadRef,
+        draftId,
+        draft: store().getDraftSession(draftId),
+        start: async () => AsyncResult.success(undefined),
+        link,
+      });
+    });
+    expect(link).not.toHaveBeenCalled();
+    expect(store().getDraftSession(draftId)?.branch).toBe("another-branch");
+    expect(checkoutPullRequestUrlToLink(store().getDraftSession(draftId))).toBeNull();
+    expect(state.metadataRequests).toEqual([]);
   });
 
   it("keeps feature-branch commits available for a local draft", async () => {

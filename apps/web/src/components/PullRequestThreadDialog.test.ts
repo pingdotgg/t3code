@@ -81,6 +81,7 @@ vi.mock("~/state/git", () => ({
       if (state.interrupted) return AsyncResult.failure(Cause.interrupt());
       return AsyncResult.success({
         branch: "feature/pr",
+        pullRequest: { url: "https://github.com/owner/repo/pull/123" },
         worktreePath: mode === "worktree" ? "/worktree" : null,
       });
     },
@@ -193,7 +194,13 @@ describe("pull request worktree permissions", () => {
 
     expect(state.checkouts).toEqual(["worktree"]);
     expect(state.setupScripts).toBe(1);
-    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: "/worktree" }]);
+    expect(state.prepared).toEqual([
+      {
+        branch: "feature/pr",
+        worktreePath: "/worktree",
+        pullRequestUrl: "https://github.com/owner/repo/pull/123",
+      },
+    ]);
   });
 
   it("rechecks task permission before invoking a retained worktree action", async () => {
@@ -211,7 +218,13 @@ describe("pull request worktree permissions", () => {
 
     expect(state.checkouts).toEqual(["local"]);
     expect(state.setupScripts).toBe(0);
-    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
+    expect(state.prepared).toEqual([
+      {
+        branch: "feature/pr",
+        worktreePath: null,
+        pullRequestUrl: "https://github.com/owner/repo/pull/123",
+      },
+    ]);
   });
 
   it.each(["Local", "Worktree"] as const)(
@@ -255,7 +268,13 @@ describe("pull request worktree permissions", () => {
     response.resolve(undefined);
     await completion;
 
-    expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
+    expect(state.prepared).toEqual([
+      {
+        branch: "feature/pr",
+        worktreePath: null,
+        pullRequestUrl: "https://github.com/owner/repo/pull/123",
+      },
+    ]);
     expect(state.openChanges).toEqual([false]);
   });
 

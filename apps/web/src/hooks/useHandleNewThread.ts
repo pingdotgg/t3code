@@ -9,6 +9,7 @@ import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
   type DraftId,
+  type DraftCheckoutPullRequest,
   type DraftThreadEnvMode,
   type DraftThreadState,
   useComposerDraftStore,
@@ -47,6 +48,7 @@ interface NewThreadWorkspaceOptions {
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  checkoutPullRequest?: DraftCheckoutPullRequest;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -55,6 +57,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
     ...(options?.worktreePath !== undefined ? { worktreePath: options.worktreePath } : {}),
     ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
     ...(options?.startFromOrigin !== undefined ? { startFromOrigin: options.startFromOrigin } : {}),
+    ...(options?.checkoutPullRequest ? { checkoutPullRequest: options.checkoutPullRequest } : {}),
   };
 }
 
@@ -73,6 +76,7 @@ export function useNewThreadHandler() {
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      checkoutPullRequest?: DraftCheckoutPullRequest;
       replace?: boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
@@ -356,6 +360,9 @@ export function useNewThreadHandler() {
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
         threadId,
         createdAt,
+        ...(options?.checkoutPullRequest
+          ? { checkoutPullRequest: options.checkoutPullRequest }
+          : {}),
         branch: options?.branch ?? null,
         worktreePath: options?.worktreePath ?? null,
         envMode: initialEnvMode,

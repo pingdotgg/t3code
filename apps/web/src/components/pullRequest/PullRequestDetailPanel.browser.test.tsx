@@ -246,7 +246,7 @@ beforeEach(() => {
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
   prepareThread.mockReset().mockResolvedValue({
     _tag: "Success",
-    value: { branch: "feature", worktreePath: "/workspace/pr" },
+    value: { branch: "feature", worktreePath: "/workspace/pr", pullRequest: { url: detail.url } },
   });
 });
 afterEach(async () => {

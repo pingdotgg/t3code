@@ -63,6 +63,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  checkoutPullRequestUrlToLink,
   clearComposerDraftsEnvironment,
   composerDraftHasUserContent,
   beginBackgroundDraftSubmissionByRef,
@@ -3533,5 +3534,93 @@ describe("composerDraftStore attachment references", () => {
     expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
       prompt,
     );
+  });
+});
+
+describe("composerDraftStore checkout pull request", () => {
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-checkout"));
+  const draftId = DraftId.make("draft-checkout");
+  const threadId = ThreadId.make("thread-checkout");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const checkout = {
+    url: "https://github.com/acme/widgets/pull/42",
+    branch: "feature/pr-42",
+    branchConfirmed: true,
+  };
+  const store = () => useComposerDraftStore.getState();
+
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+
+  it("keeps checkout metadata on the receiving draft through reload and a failed background send", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const openedDraftId = DraftId.make("draft-opened-before-checkout");
+      store().setProjectDraftThreadId(projectRef, openedDraftId, {
+        threadId: ThreadId.make("thread-opened-before-checkout"),
+        branch: "main",
+      });
+      store().setPrompt(openedDraftId, "Earlier work on main");
+      store().setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        branch: checkout.branch,
+      });
+      store().setDraftThreadContext(draftId, { checkoutPullRequest: checkout });
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(store().getDraftSession(openedDraftId)).toMatchObject({ branch: "main" });
+      expect(store().getDraftSession(openedDraftId)?.checkoutPullRequest).toBeUndefined();
+      expect(store().getDraftSessionByRef(threadRef)).toMatchObject({
+        threadId,
+        checkoutPullRequest: checkout,
+      });
+
+      const sentDraft = store().getDraftSession(draftId)!;
+      beginBackgroundDraftSubmissionByRef(threadRef);
+      markPromotedDraftThreadByRef(threadRef);
+      const nextDraftId = DraftId.make("draft-created-during-send");
+      store().setProjectDraftThreadId(projectRef, nextDraftId, {
+        threadId: ThreadId.make("thread-created-during-send"),
+      });
+      const retryThreadId = ThreadId.make("thread-checkout-retry");
+      restoreFailedBackgroundDraftThread(draftId, sentDraft, retryThreadId);
+      clearBackgroundDraftSubmissionByRef(threadRef);
+
+      const retry = store().getDraftSessionByRef(
+        scopeThreadRef(TEST_ENVIRONMENT_ID, retryThreadId),
+      );
+      expect(retry).toMatchObject({
+        threadId: retryThreadId,
+        promotedTo: null,
+        checkoutPullRequest: checkout,
+      });
+      expect(checkoutPullRequestUrlToLink(retry)).toBe(checkout.url);
+      expect(store().getDraftSession(nextDraftId)?.checkoutPullRequest).toBeUndefined();
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears checkout ownership when an empty draft is reset to the default branch", () => {
+    store().setProjectDraftThreadId(projectRef, draftId, { threadId, branch: "main" });
+    store().setDraftThreadContext(draftId, {
+      branch: checkout.branch,
+      worktreePath: null,
+      envMode: "local",
+      checkoutPullRequest: checkout,
+    });
+    store().setDraftThreadContext(draftId, {
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      startFromOrigin: false,
+    });
+
+    expect(store().getDraftSession(draftId)?.checkoutPullRequest).toBeUndefined();
+    expect(checkoutPullRequestUrlToLink(store().getDraftSessionByRef(threadRef))).toBeNull();
   });
 });

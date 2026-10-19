@@ -27,6 +27,8 @@ import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment"
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { useStableCallback } from "../hooks/useStableCallback";
+import { startTurnWithCheckoutLink, usePullRequestLinking } from "../hooks/usePullRequestLinking";
+import { useSourceControlActionRunning } from "~/lib/sourceControlActions";
 import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
@@ -324,12 +326,12 @@ import {
   beginBackgroundDraftSubmissionByRef,
   clearBackgroundDraftSubmissionByRef,
   finalizePromotedDraftThreadByRef,
-  markPromotedDraftThreadByRef,
   restoreFailedBackgroundDraftThread,
   composerDraftHasUserContent,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  type DraftCheckoutPullRequest,
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
@@ -392,6 +394,7 @@ import {
   useThreadVisibleTurnItems,
   useThreadCheckpointSummaries,
   waitForThreadShell,
+  readThreadShell,
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -2070,6 +2073,7 @@ export default function ChatView(props: ChatViewProps) {
     branch: string;
     worktreePath: string | null;
     envMode: DraftThreadEnvMode;
+    checkoutPullRequest: DraftCheckoutPullRequest;
   }) => {
     if (!activeProject) {
       throw new Error("No active project is available for this pull request.");
@@ -2080,7 +2084,12 @@ export default function ChatView(props: ChatViewProps) {
       projectGroupingSettings,
     );
     const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-    if (storedDraftSession) {
+    if (
+      storedDraftSession &&
+      readThreadShell(
+        scopeThreadRef(storedDraftSession.environmentId, storedDraftSession.threadId),
+      ) === null
+    ) {
       setDraftThreadContext(storedDraftSession.draftId, input);
       setLogicalProjectDraftThreadId(
         logicalProjectKey,
@@ -2101,7 +2110,15 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     const activeDraftSession = routeKind === "draft" && draftId ? getDraftSession(draftId) : null;
-    if (!isServerThread && activeDraftSession?.logicalProjectKey === logicalProjectKey && draftId) {
+    if (
+      !isServerThread &&
+      activeDraftSession?.logicalProjectKey === logicalProjectKey &&
+      !activeDraftSession.promotedTo &&
+      readThreadShell(
+        scopeThreadRef(activeDraftSession.environmentId, activeDraftSession.threadId),
+      ) === null &&
+      draftId
+    ) {
       setDraftThreadContext(draftId, input);
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, draftId, {
         threadId: activeDraftSession.threadId,
@@ -2133,14 +2150,15 @@ export default function ChatView(props: ChatViewProps) {
   const handlePreparedPullRequestThread = async (input: {
     branch: string;
     worktreePath: string | null;
+    pullRequestUrl: string;
   }) => {
     await openOrReuseProjectDraftThread({
       branch: input.branch,
       worktreePath: input.worktreePath,
       envMode: input.worktreePath ? "worktree" : "local",
+      checkoutPullRequest: { url: input.pullRequestUrl, branch: input.branch },
     });
   };
-  const handlePreparedPullRequestThreadStable = useStableCallback(handlePreparedPullRequestThread);
 
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
@@ -2920,6 +2938,17 @@ export default function ChatView(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
+  const isGitActionRunning = useSourceControlActionRunning({ environmentId, cwd: gitStatusCwd }, [
+    "runStackedAction",
+    "pull",
+    "publishRepository",
+  ]);
+  const pullRequestLinking = usePullRequestLinking(
+    environmentId,
+    isLocalDraftThread && draftId && draftThread
+      ? { draftId, draft: draftThread, gitStatus: gitStatusQuery.data, isGitActionRunning }
+      : undefined,
+  );
   useWorkspaceMutationRefresh({
     enabled: gitStatusCwd !== null,
     mutationId: workspaceMutationId,
@@ -3178,6 +3207,7 @@ export default function ChatView(props: ChatViewProps) {
     );
     setDraftThreadContext(draftId, {
       environmentSelection: "auto",
+      checkoutPullRequest: null,
       loadBalancedEnvironmentId: null,
       branch: null,
       worktreePath: null,
@@ -6910,11 +6940,39 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
+    const draftForSend =
+      isLocalDraftThread && draftId
+        ? useComposerDraftStore.getState().getDraftSession(draftId)
+        : null;
+    if (
+      isLocalDraftThread &&
+      (!draftForSend ||
+        draftForSend.environmentId !== environmentId ||
+        draftForSend.projectId !== activeProject.id ||
+        draftForSend.threadId !== threadIdForSend)
+    ) {
+      const movedDraft = await settlePromise(async () => {
+        throw new Error(
+          "The draft workspace or thread changed. Send again from its current workspace.",
+        );
+      });
+      if (movedDraft._tag === "Failure") failure = movedDraft;
+    }
+    const branchForSend = draftForSend ? draftForSend.branch : activeThreadBranch;
+    const worktreePathForSend = draftForSend
+      ? draftForSend.worktreePath
+      : activeThread.worktreePath;
+    const baseBranchAtDispatch = draftForSend
+      ? resolveSendEnvMode({ requestedEnvMode: draftForSend.envMode, isGitRepo }) === "worktree" &&
+        !worktreePathForSend
+        ? branchForSend
+        : null
+      : baseBranchForWorktree;
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        isLocalDraftThread || baseBranchAtDispatch
           ? {
               ...(isLocalDraftThread
                 ? {
@@ -6924,18 +6982,20 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
-                      branch: activeThreadBranch,
-                      worktreePath: activeThread.worktreePath,
+                      branch: branchForSend,
+                      worktreePath: worktreePathForSend,
                       createdAt: activeThread.createdAt,
                     },
                   }
                 : {}),
-              ...(baseBranchForWorktree
+              ...(baseBranchAtDispatch
                 ? {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
-                      baseBranch: baseBranchForWorktree,
-                      ...(startFromOrigin ? { startFromOrigin: true } : {}),
+                      baseBranch: baseBranchAtDispatch,
+                      ...((draftForSend?.startFromOrigin ?? startFromOrigin)
+                        ? { startFromOrigin: true }
+                        : {}),
                     },
                     runSetupScript: true,
                   }
@@ -6947,60 +7007,66 @@ export default function ChatView(props: ChatViewProps) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
-      const startPromise = startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
-            ...(() => {
-              const context = buildOutgoingMessageContext(
-                turnAttachmentsResult.value.map((attachment, index) =>
-                  "id" in attachment && attachment.id !== undefined
-                    ? attachment.id
-                    : composerAttachmentsSnapshot[index]!.id,
-                ),
-              );
-              if (context === undefined) return {};
-              // Read the capability at dispatch time: the upload and persistence
-              // awaits above can span a server reconnect that changes it. Servers
-              // from before inline context drop the records and forward the links
-              // as literal text, so their turns carry the payload the legacy way.
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
-              if (!supportsInlineMessageContext) {
-                return {
-                  text: serializeLegacyContextMessage({
-                    text: outgoingMessageText,
-                    records: context.records,
-                  }),
-                };
-              }
-              return { context };
-            })(),
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
-          runtimeMode,
-          interactionMode: sendInteractionMode,
-          dispatchMode: turnDispatchMode,
-          ...(bootstrap ? { bootstrap } : {}),
-          createdAt: messageCreatedAt,
-        },
+      const startPromise = startTurnWithCheckoutLink({
+        threadRef: scopeThreadRef(environmentId, threadIdForSend),
+        draftId: isLocalDraftThread ? draftId : null,
+        draft: draftForSend,
+        link: pullRequestLinking.changeLink,
+        start: () =>
+          startThreadTurn({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                role: "user",
+                text: outgoingMessageText,
+                attachments: turnAttachmentsResult.value,
+                ...(() => {
+                  const context = buildOutgoingMessageContext(
+                    turnAttachmentsResult.value.map((attachment, index) =>
+                      "id" in attachment && attachment.id !== undefined
+                        ? attachment.id
+                        : composerAttachmentsSnapshot[index]!.id,
+                    ),
+                  );
+                  if (context === undefined) return {};
+                  // Read the capability at dispatch time: the upload and persistence
+                  // awaits above can span a server reconnect that changes it. Servers
+                  // from before inline context drop the records and forward the links
+                  // as literal text, so their turns carry the payload the legacy way.
+                  const supportsInlineMessageContext =
+                    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+                      ?.environment.capabilities.inlineMessageContext === true;
+                  if (!supportsInlineMessageContext) {
+                    return {
+                      text: serializeLegacyContextMessage({
+                        text: outgoingMessageText,
+                        records: context.records,
+                      }),
+                    };
+                  }
+                  return { context };
+                })(),
+              },
+              modelSelection: ctxSelectedModelSelection,
+              titleSeed: title,
+              runtimeMode,
+              interactionMode: sendInteractionMode,
+              dispatchMode: turnDispatchMode,
+              ...(bootstrap ? { bootstrap } : {}),
+              createdAt: messageCreatedAt,
+            },
+          }),
       });
       if (backgroundThreadRef) {
-        markPromotedDraftThreadByRef(backgroundThreadRef);
         try {
           backgroundDraftOpened = Boolean(
             await handleNewThread(
               scopeProjectRef(activeProject.environmentId, activeProject.id),
               resolveBackgroundDraftWorkspaceOptions({
                 envMode: sendEnvMode,
-                branch: activeThreadBranch,
+                branch: branchForSend,
                 startFromOrigin,
               }),
             ),
@@ -7064,7 +7130,7 @@ export default function ChatView(props: ChatViewProps) {
       if (submissionIntent === "background" && draftId && draftThread) {
         restoreFailedBackgroundDraftThread(
           draftId,
-          draftThread,
+          useComposerDraftStore.getState().getDraftSession(draftId) ?? draftThread,
           wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
             ? newThreadId()
             : threadIdForSend,
@@ -7535,6 +7601,7 @@ export default function ChatView(props: ChatViewProps) {
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, {
         envMode: mode,
+        checkoutPullRequest: null,
         startFromOrigin: resolveNewDraftStartFromOrigin({
           envMode: mode,
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
@@ -7638,6 +7705,7 @@ export default function ChatView(props: ChatViewProps) {
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, {
         startFromOrigin: nextStartFromOrigin,
+        checkoutPullRequest: null,
       });
     }
   };
@@ -8493,7 +8561,7 @@ export default function ChatView(props: ChatViewProps) {
               environmentId={activeThread.environmentId}
               threadId={activeThread.id}
               cwd={activeProject?.workspaceRoot ?? null}
-              onPrepared={handlePreparedPullRequestThreadStable}
+              onPrepared={handlePreparedPullRequestThread}
             />
           </ThreadFindCanvas>
         </div>

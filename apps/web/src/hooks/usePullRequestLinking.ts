@@ -1,12 +1,22 @@
+import {
+  checkoutPullRequestUrlToLink,
+  type DraftId,
+  type DraftSessionState,
+  markPromotedDraftThreadByRef,
+  restoreFailedBackgroundDraftThread,
+  useComposerDraftStore,
+} from "../composerDraftStore";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type {
   EnvironmentId,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
+  VcsStatusResult,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -24,6 +34,8 @@ import {
   parseChangeRequestUrl,
   type ChangeRequestLink,
 } from "~/lib/openPullRequestLink";
+import { useEffect } from "react";
+import { resolveLiveThreadBranchUpdate } from "~/components/GitActionsControl.logic";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -31,6 +43,32 @@ import { useProjects } from "~/state/entities";
 import { environmentServerConfigsAtom } from "~/state/server";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
+
+/** Keep checkout ownership fixed once the first send is dispatched. */
+export async function startTurnWithCheckoutLink<A, E>(input: {
+  readonly threadRef: ScopedThreadRef;
+  readonly draftId: DraftId | null;
+  readonly draft: DraftSessionState | null;
+  readonly start: () => Promise<AtomCommandResult<A, E>>;
+  readonly link: (threadRef: ScopedThreadRef, url: string, linked: boolean) => Promise<void>;
+}): Promise<AtomCommandResult<A, E>> {
+  const { draftId, draft } = input;
+  if (!draftId || !draft) return input.start();
+  const url = checkoutPullRequestUrlToLink(draft);
+  markPromotedDraftThreadByRef(input.threadRef);
+  const result = await input.start();
+  if (result._tag === "Failure") {
+    const current = useComposerDraftStore.getState().getDraftSession(draftId) ?? draft;
+    restoreFailedBackgroundDraftThread(draftId, current, current.threadId);
+  } else if (url) {
+    void Promise.resolve()
+      .then(() => input.link(input.threadRef, url, true))
+      .catch((error: unknown) => {
+        console.warn("Failed to link the checked-out pull request to its thread.", error);
+      });
+  }
+  return result;
+}
 
 export function canLinkChangeRequest(
   mode: ReturnType<typeof threadPullRequestLinkMode>,
@@ -54,7 +92,37 @@ const linkModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
   ).pipe(Atom.withLabel("pull-request-link-mode")),
 );
 
-export function usePullRequestLinking(environmentId: EnvironmentId | null | undefined) {
+export function usePullRequestLinking(
+  environmentId: EnvironmentId | null | undefined,
+  checkoutDraft?: {
+    draftId: DraftId;
+    draft: DraftSessionState;
+    gitStatus: VcsStatusResult | null;
+    isGitActionRunning: boolean;
+  },
+) {
+  const { draftId, draft, gitStatus, isGitActionRunning } = checkoutDraft ?? {};
+  useEffect(() => {
+    if (!draftId || !draft?.checkoutPullRequest || draft.promotedTo || isGitActionRunning) return;
+    const store = useComposerDraftStore.getState();
+    if (store.getDraftSession(draftId) !== draft) return;
+    const checkout = draft.checkoutPullRequest;
+    // Cached status can still name the branch from before checkout.
+    if (!checkout.branchConfirmed) {
+      if (gitStatus?.refName === checkout.branch) {
+        store.setDraftThreadContext(draftId, {
+          checkoutPullRequest: { ...checkout, branchConfirmed: true },
+        });
+      }
+      return;
+    }
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: draft.branch,
+      gitStatus: gitStatus ?? null,
+    });
+    if (update) store.setDraftThreadContext(draftId, update);
+  }, [draftId, draft, gitStatus, isGitActionRunning]);
+
   const projects = useProjects();
   const mode = useAtomValue(linkModeAtom(environmentId ?? null));
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });

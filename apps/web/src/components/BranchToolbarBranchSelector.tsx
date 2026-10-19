@@ -203,6 +203,7 @@ export function BranchToolbarBranchSelector({
       effectiveEnvMode,
     });
     setDraftThreadContext(draftId ?? threadRef, {
+      ...(!automatic ? { checkoutPullRequest: null } : {}),
       branch,
       worktreePath,
       envMode: nextDraftEnvMode,

@@ -619,6 +619,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const onUsePreviousWorktree = () => {
     if (!previousWorktreeSeed || !activeProjectRef) return;
     setDraftThreadContext(draftId ?? threadRef, {
+      checkoutPullRequest: null,
       branch: previousWorktreeSeed.branch,
       worktreePath: previousWorktreeSeed.worktreePath,
       envMode: "worktree",

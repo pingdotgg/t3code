@@ -1044,11 +1044,10 @@ export default function GitActionsControl({
       return;
     }
 
-    if (!activeDraftThread || activeDraftThread.branch === branch) {
-      return;
-    }
-
+    if (!activeDraftThread) return;
+    if (activeDraftThread.branch === branch && !manualSelection) return;
     setDraftThreadContext(draftId ?? activeThreadRef, {
+      ...(manualSelection ? { checkoutPullRequest: null } : {}),
       branch,
       worktreePath: activeDraftThread.worktreePath,
       environmentSelection: manualSelection
@@ -1108,7 +1107,12 @@ export default function GitActionsControl({
     activeDraftThread.worktreePath === null;
 
   useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase || activeServerThread) {
+    if (
+      isGitActionRunning ||
+      isSelectingWorktreeBase ||
+      activeServerThread ||
+      activeDraftThread?.checkoutPullRequest
+    ) {
       return;
     }
 
@@ -1124,6 +1128,7 @@ export default function GitActionsControl({
   }, [
     activeServerThread,
     activeDraftThread?.branch,
+    activeDraftThread?.checkoutPullRequest,
     gitStatusForActions,
     isGitActionRunning,
     isSelectingWorktreeBase,
