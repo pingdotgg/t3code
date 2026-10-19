@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -235,6 +236,16 @@ describe("merged pull request cleanup", () => {
     expect(storageCleanupPullRequestMerged(pullRequest({ state: "open" }), integrated)).toBe(false);
   });
 });
+
+const allocatedBytes = (fs: FileSystem.FileSystem, file: string) =>
+  fs.stat(file).pipe(
+    Effect.map((stat) =>
+      Option.getOrElse(
+        Option.map(stat.blocks, (blocks) => Number(blocks) * 512),
+        () => Number(stat.size),
+      ),
+    ),
+  );
 
 const cleanupFixture = (
   storageCleanup: StorageCleanupSettings = {
@@ -823,6 +834,7 @@ describe("orphan worktree reports", () => {
           orphan = `${fixture.config.worktreesDir}/repository/orphan`;
           yield* fs.makeDirectory(orphan, { recursive: true });
           yield* fs.writeFileString(`${orphan}/file`, "x");
+          const bytes = yield* allocatedBytes(fs, `${orphan}/file`);
           yield* fs.utimes(orphan, 1, 1);
           const later = `${fixture.config.worktreesDir}/repository/z-later`;
           yield* fs.makeDirectory(later);
@@ -841,18 +853,20 @@ describe("orphan worktree reports", () => {
           expect(orphanEntry(firstReport)?.bytes).toBeNull();
           expect(firstReport.entries.find((entry) => entry.path === later)?.bytes).toBeNull();
           const nextReport = yield* fixture.service.runNow;
-          expect(orphanEntry(nextReport)?.bytes).toBe(limit === "walk-timeout" ? null : 1);
+          expect(orphanEntry(nextReport)?.bytes).toBe(limit === "walk-timeout" ? null : bytes);
           expect(nextReport.entries.find((entry) => entry.path === later)?.bytes).toBe(0);
-          yield* fs.writeFileString(`${orphan}/file`, "changed");
+          yield* fs.writeFileString(`${orphan}/file`, "changed".repeat(10_000));
+          const changedBytes = yield* allocatedBytes(fs, `${orphan}/file`);
+          expect(changedBytes).not.toBe(bytes);
           expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(
-            limit === "walk-timeout" ? null : 1,
+            limit === "walk-timeout" ? null : bytes,
           );
           expect(walks).toBe(limit === "walk-timeout" ? 1 : 2);
           if (limit === "walk-timeout") return;
           fixture.setStoredWorktreePaths([orphan]);
           expect(orphanEntry(yield* fixture.service.runNow)).toBeUndefined();
           fixture.setStoredWorktreePaths([]);
-          expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(7);
+          expect(orphanEntry(yield* fixture.service.runNow)?.bytes).toBe(changedBytes);
           expect(walks).toBe(3);
         }),
       ),
@@ -868,7 +882,7 @@ describe("orphan worktree reports", () => {
           const orphan = `${fixture.config.worktreesDir}/${location === "nested" ? "repository/" : ""}orphan`;
           yield* fixture.command(fixture.repo, ["worktree", "add", "-b", "orphan", orphan]);
           const sizes = yield* Effect.forEach(yield* fixture.fs.readDirectory(orphan), (name) =>
-            fixture.fs.stat(`${orphan}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
+            allocatedBytes(fixture.fs, `${orphan}/${name}`),
           );
           const outside = yield* fixture.fs.makeTempDirectoryScoped();
           yield* fixture.fs.writeFileString(`${outside}/external`, "outside data");
@@ -1059,7 +1073,11 @@ describe("orphan worktree reports", () => {
         yield* fixture.fs.utimes(orphan, 1, 1);
         const report = yield* fixture.service.runNow;
         expect(report.entries).toEqual([
-          expect.objectContaining({ path: orphan, outcome: "kept", bytes: 1 }),
+          expect.objectContaining({
+            path: orphan,
+            outcome: "kept",
+            bytes: yield* allocatedBytes(fixture.fs, `${orphan}/file`),
+          }),
         ]);
         expect(yield* fixture.fs.exists(`${project}/src/nested`)).toBe(true);
         expect(yield* fixture.fs.exists(orphan)).toBe(true);
@@ -1103,7 +1121,7 @@ describe("orphan worktree reports", () => {
           expect.objectContaining({
             path: folder,
             outcome: "kept",
-            bytes: 13,
+            bytes: yield* allocatedBytes(fixture.fs, `${folder}/payload`),
             reason: "No thread uses this folder, and it isn't a git worktree",
           }),
         ]);
@@ -1131,7 +1149,11 @@ describe("orphan worktree reports", () => {
           Effect.ensuring(fixture.fs.chmod(blocked, 0o700).pipe(Effect.orDie)),
         );
         expect(report.entries).toEqual([
-          expect.objectContaining({ path: orphan, outcome: "kept", bytes: 1 }),
+          expect.objectContaining({
+            path: orphan,
+            outcome: "kept",
+            bytes: yield* allocatedBytes(fixture.fs, `${orphan}/file`),
+          }),
         ]);
         expect(yield* fixture.fs.exists(orphan)).toBe(true);
       }),
@@ -1178,7 +1200,11 @@ describe("orphan worktree reports", () => {
         }
         const report = yield* fixture.service.runNow;
         expect(report.entries).toHaveLength(200);
-        expect(report.entries.every((entry) => entry.bytes === 1)).toBe(true);
+        const bytes = yield* allocatedBytes(
+          fixture.fs,
+          `${fixture.config.worktreesDir}/repository/orphan-0/file`,
+        );
+        expect(report.entries.every((entry) => entry.bytes === bytes)).toBe(true);
         expect(report.omittedCount).toBe(5);
         expect(report.counts).toEqual({ removed: 0, kept: 205, failed: 0 });
         expect(report.bytesFreed).toBe(0);
@@ -1249,26 +1275,57 @@ describe("storage cleanup reports and local file policies", () => {
       ),
   );
 
-  it.live("measures nested regular files without following symlinks", () =>
+  it.live("reports allocated bytes of single-link files without following symlinks", () =>
     runCleanupTest(
       Effect.gen(function* () {
         const { service, fs, worktree, setPolicy } = yield* cleanupFixture();
         setPolicy("tracked-changes");
         const sizes = yield* Effect.forEach(yield* fs.readDirectory(worktree), (name) =>
-          fs.stat(`${worktree}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
+          allocatedBytes(fs, `${worktree}/${name}`),
         );
         const outside = yield* fs.makeTempDirectoryScoped();
         yield* fs.writeFileString(`${outside}/external`, "must not count");
+        yield* fs.writeFileString(`${outside}/store-file`, "shared ".repeat(10_000));
         yield* fs.makeDirectory(`${worktree}/node_modules/nested`, { recursive: true });
         yield* fs.writeFileString(`${worktree}/node_modules/nested/file`, "count me");
+        sizes.push(yield* allocatedBytes(fs, `${worktree}/node_modules/nested/file`));
+        yield* fs.link(`${outside}/store-file`, `${worktree}/node_modules/hardlinked`);
         yield* fs.symlink(outside, `${worktree}/node_modules/directory-link`);
         yield* fs.symlink(`${outside}/external`, `${worktree}/node_modules/file-link`);
         yield* fs.symlink(`${outside}/missing`, `${worktree}/node_modules/dangling-link`);
         const report = yield* service.runNow;
-        const bytes = sizes.reduce((sum, size) => sum + size, 8);
+        const bytes = sizes.reduce((sum, size) => sum + size, 0);
         expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes, files: null });
         expect(report.bytesFreed).toBe(bytes);
         expect(yield* fs.readFileString(`${outside}/external`)).toBe("must not count");
+        expect(yield* fs.readFileString(`${outside}/store-file`)).toBe("shared ".repeat(10_000));
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }),
+    ),
+  );
+  it.live("falls back to file lengths when link counts and allocated blocks are unavailable", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { service, worktree } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (path) =>
+              fs
+                .stat(path)
+                .pipe(
+                  Effect.map((stat) => ({ ...stat, nlink: Option.none(), blocks: Option.none() })),
+                ),
+          }),
+        );
+        const sizes = yield* Effect.forEach(yield* fs.readDirectory(worktree), (name) =>
+          fs.stat(`${worktree}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
+        );
+        const bytes = sizes.reduce((sum, size) => sum + size, 0);
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes });
+        expect(report.bytesFreed).toBe(bytes);
+        expect(yield* fs.exists(worktree)).toBe(false);
       }),
     ),
   );
@@ -1484,7 +1541,7 @@ describe("storage cleanup reports and local file policies", () => {
         expect(yield* service.latestReport).toBeNull();
         yield* fs.writeFileString(`${worktree}/${file}`, "local data\n");
         const sizes = yield* Effect.forEach(yield* fs.readDirectory(worktree), (name) =>
-          fs.stat(`${worktree}/${name}`).pipe(Effect.map((stat) => Number(stat.size))),
+          allocatedBytes(fs, `${worktree}/${name}`),
         );
         const bytes = sizes.reduce((sum, size) => sum + size, 0);
         const report = yield* service.runNow;
