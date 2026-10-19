@@ -326,18 +326,21 @@ describe("scan cache round trip", () => {
 
 describe("dedupeWithinFile", () => {
   it("keeps the first Claude record's attribution with its fullest usage snapshot", () => {
-    const kept = dedupeWithinFile([
-      record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({
-        timestampMs: 1_786_000_000_500,
-        totals: { ...record().totals, outputTokens: 999, reasoningTokens: 400 },
-      }),
-      record({ totals: { ...record().totals, outputTokens: 3 } }),
-      record({ dedupeKey: "msg_2:" }),
-    ]);
+    const first = record({ totals: { ...record().totals, outputTokens: 1 } });
+    const output = record({
+      timestampMs: first.timestampMs + 500,
+      totals: { ...first.totals, outputTokens: 100 },
+      reportedCostUsd: 0.25,
+    });
+    const thinking = record({
+      ...output,
+      totals: { ...output.totals, reasoningTokens: 40 },
+    });
+    const other = record({ dedupeKey: "msg_2:" });
+    const kept = dedupeWithinFile([first, output, thinking, first, thinking, other]);
 
-    expect(kept).toHaveLength(2);
-    expect(kept[0]?.timestampMs).toBe(1_786_000_000_000);
-    expect(kept[0]?.totals).toMatchObject({ outputTokens: 999, reasoningTokens: 400 });
+    expect(kept).toEqual([{ ...first, totals: thinking.totals, reportedCostUsd: 0.25 }, other]);
+    expect(first.totals.outputTokens).toBe(1);
+    expect(output.totals.reasoningTokens).toBe(0);
   });
 });

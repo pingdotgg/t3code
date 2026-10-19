@@ -19,6 +19,7 @@ import {
   ProviderInstanceId,
   UsageDay,
   type UsageSource,
+  type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -89,7 +90,13 @@ function claudeLine(
     message: {
       id: `msg_${id}`,
       model,
-      usage: { input_tokens: 10, output_tokens: outputTokens },
+      usage: {
+        input_tokens: 10,
+        output_tokens: outputTokens,
+        ...(thinkingTokens === undefined
+          ? {}
+          : { output_tokens_details: { thinking_tokens: thinkingTokens } }),
+      },
     },
   })}\n`;
 }
@@ -2645,9 +2652,12 @@ describe("UsageService", () => {
           const service = yield* UsageService.make;
           check(yield* service.readSummary(WINDOW), 160, 40, 1);
 
-      const service = yield* UsageService.make.pipe(
-        Effect.provide(layerService({ prefix: "usage-service-grow-test", home, settings })),
-      );
+          // Preserve the committed prefix and grow the file, so this resumes from the tail.
+          const replacement = claudeLine(2, 200)
+            .trimEnd()
+            .replace('"message":', '"padding":"' + "x".repeat(256) + '","message":');
+          yield* Effect.promise(() => NodeFSP.writeFile(transcript, committed + replacement));
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
 
           yield* Effect.promise(() =>
             NodeFSP.appendFile(
@@ -2698,6 +2708,7 @@ describe("UsageService", () => {
           const service = yield* UsageService.make;
           const first = yield* service.readSummary(WINDOW);
           assert.strictEqual(totalOutputTokens(first), 9900);
+          assert.strictEqual(first.buckets[0]?.totals.reasoningTokens, 3900);
           assert.closeTo(
             first.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
             0.4951,
@@ -2714,7 +2725,16 @@ describe("UsageService", () => {
             ),
           );
           const appended = yield* service.readSummary(WINDOW);
-          assert.strictEqual(totalOutputTokens(appended), 10000);
+          assert.strictEqual(totalOutputTokens(appended), 10100);
+          assert.strictEqual(
+            appended.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0),
+            4030,
+          );
+          assert.closeTo(
+            appended.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+            0.5052,
+            1e-12,
+          );
           assert.strictEqual(
             appended.buckets.reduce((sum, bucket) => sum + bucket.totals.uncachedInputTokens, 0),
             20,
@@ -2986,13 +3006,13 @@ describe("UsageService", () => {
               type: "thread_settings_applied",
               thread_settings: { service_tier: "ultrafast" },
             },
-            {
-              type: "event_msg",
-              timestamp: "2026-08-01T10:00:00Z",
-              payload: {
-                type: "token_count",
-                info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
-              },
+          },
+          {
+            type: "event_msg",
+            timestamp: "2026-08-01T10:00:00Z",
+            payload: {
+              type: "token_count",
+              info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
             },
           },
         ]
@@ -3020,56 +3040,110 @@ describe("UsageService", () => {
         const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
         const v5Path = NodePath.join(stateDir, "usage-scan-cache-v5.json");
         yield* Effect.gen(function* () {
-          const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
-          const legacyPath = NodePath.join(stateDir, "usage-scan-cache.json");
           const first = yield* UsageService.make;
           yield* first.readSummary(WINDOW);
-          yield* first.awaitPersisted;
+        }).pipe(Effect.scoped);
 
-          const legacy = yield* Effect.promise(async () => {
-            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
-              files: Record<string, { r: unknown[][]; cs: { speed?: unknown } }>;
-            };
-            for (const file of Object.values(document.files)) {
-              file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
-              delete file.cs.speed;
+        const legacy = yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<
+              string,
+              { m: number; p: string; r: unknown[][]; cs: { speed?: unknown } | null }
+            >;
+          };
+          for (const file of Object.values(document.files)) {
+            file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
+            if (file.cs !== null) delete file.cs.speed;
+            if (file.p === "claude") {
+              file.r[0]![6] = 100;
+              file.r[0]![7] = 0;
             }
-            const text = encodeUnknownJsonString({ ...document, version: 4 });
-            await NodeFSP.writeFile(legacyPath, text);
-            await NodeFSP.rm(cachePath);
-            await NodeFSP.rm(deleted);
-            return text;
-          });
+          }
+          const newerEntry = document.files[newerOnly]!;
+          delete document.files[newerOnly];
+          const v4 = encodeUnknownJsonString({ ...document, version: 4 });
+          document.files[newerOnly] = newerEntry;
+          await NodeFSP.writeFile(legacyPath, v4);
+          delete document.files[legacyOnly];
+          document.files[deleted]!.m -= 1000;
+          document.files[deleted]!.r[0]![6] = 10;
+          delete document.files[live];
+          for (const file of Object.values(document.files)) {
+            if (file.cs !== null) file.cs.speed = "standard";
+          }
+          const v5 = encodeUnknownJsonString({ ...document, version: 5 });
+          await NodeFSP.writeFile(v5Path, v5);
+          await NodeFSP.rm(cachePath);
+          await NodeFSP.rm(deleted);
+          await NodeFSP.rm(legacyOnly);
+          await NodeFSP.rm(newerOnly);
+          return { v4, v5 };
+        });
 
-          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
-          assert.strictEqual(totalOutputTokens(summary), 30);
-          assert.strictEqual(
-            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
-            80,
-          );
-          assert.strictEqual(
-            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
-            legacy,
-          );
-        }).pipe(
-          Effect.provide(
-            layerService({
-              prefix: "usage-service-v4-upgrade-test",
-              home,
-              settings,
-              ratesDocument: {
-                "gpt-6-astra": {
-                  input_cost_per_token: 0,
-                  output_cost_per_token: 1,
-                  input_cost_per_token_ultrafast: 0,
-                  output_cost_per_token_ultrafast: 6,
-                },
-              },
-            }),
-          ),
+        const check = (summary: UsageSummary) => {
+          expect.soft(totalOutputTokens(summary)).toBe(260);
+          expect
+            .soft(summary.buckets.reduce((sum, bucket) => sum + bucket.totals.reasoningTokens, 0))
+            .toBe(40);
+          expect.soft(summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0)).toBe(310);
+        };
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+
+        // A downgrade can add history after the current cache has already been written.
+        yield* Effect.promise(async () => {
+          const v5 = decodeUnknownJsonString(legacy.v5) as { files: Record<string, unknown> };
+          delete v5.files[newerOnly];
+          legacy.v5 = encodeUnknownJsonString(v5);
+          await NodeFSP.writeFile(v5Path, legacy.v5);
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { m: number; r: unknown[][] }>;
+          };
+          delete document.files[legacyOnly];
+          document.files[deleted]!.m -= 1000;
+          document.files[deleted]!.r[0]![6] = 10;
+          await NodeFSP.writeFile(cachePath, encodeUnknownJsonString(document));
+        });
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+        assert.strictEqual(
+          yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
+          legacy.v4,
         );
-      }).pipe(Effect.scoped),
+        assert.strictEqual(
+          yield* Effect.promise(() => NodeFSP.readFile(v5Path, "utf8")),
+          legacy.v5,
+        );
+
+        // Imported deleted history must survive even when only the new cache remains.
+        yield* Effect.promise(async () => {
+          await NodeFSP.rm(legacyPath);
+          await NodeFSP.rm(v5Path);
+        });
+        yield* Effect.gen(function* () {
+          check(yield* (yield* UsageService.make).readSummary(WINDOW));
+        }).pipe(Effect.scoped);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-v4-upgrade-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-fable-5": { input_cost_per_token: 0, output_cost_per_token: 1 },
+              "gpt-6-astra": {
+                input_cost_per_token: 0,
+                output_cost_per_token: 1,
+                input_cost_per_token_ultrafast: 0,
+                output_cost_per_token_ultrafast: 6,
+              },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>

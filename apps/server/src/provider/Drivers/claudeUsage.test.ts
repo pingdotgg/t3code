@@ -50,7 +50,6 @@ describe("parseClaudeLine", () => {
     });
     expect(record?.dedupeKey).toBe("msg_1:");
     expect(record?.speed).toBe("standard");
-  });
 
     const withThinking = claudeLine({
       messageId: "msg_1",

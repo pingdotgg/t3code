@@ -13,7 +13,7 @@ describe("buildPeriodColumns", () => {
         totalTokens: 420,
         byProvider: new Map([
           ["codex" as const, { costUsd: 10, totalTokens: 100 }],
-          ["claude" as const, { costUsd: 20, totalTokens: 200 }],
+          ["claude" as const, { costUsd: 20, totalTokens: 200, reasoningTokens: 40 }],
           ["pi" as const, { costUsd: 5, totalTokens: 50 }],
           ["muse" as const, { costUsd: 7, totalTokens: 70 }],
         ]),

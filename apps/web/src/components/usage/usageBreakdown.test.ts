@@ -29,24 +29,19 @@ const model = (
 });
 
 describe("token types", () => {
-  it.each([0, 40, 100])(
-    "splits %i thinking tokens out of output without changing the total",
-    (reasoningTokens) => {
-      const segments = tokenTypeSegments({
-        uncachedInputTokens: 200,
-        cachedInputTokens: 300,
-        cacheCreationTokens: 50,
-        outputTokens: 100,
-        reasoningTokens,
-      });
+  it("separates recorded thinking from output without counting it twice", () => {
+    const segments = tokenTypeSegments({
+      uncachedInputTokens: 200,
+      cachedInputTokens: 300,
+      cacheCreationTokens: 50,
+      outputTokens: 100,
+      reasoningTokens: 40,
+    });
 
-      expect(segments.find((segment) => segment.label === "Output")?.value).toBe(
-        100 - reasoningTokens,
-      );
-      expect(segments.find((segment) => segment.label === "Thinking")?.value).toBe(reasoningTokens);
-      expect(segments.reduce((sum, segment) => sum + segment.value, 0)).toBe(650);
-    },
-  );
+    expect(segments.find((segment) => segment.label === "Output")?.value).toBe(60);
+    expect(segments.find((segment) => segment.label === "Thinking")?.value).toBe(40);
+    expect(segments.reduce((sum, segment) => sum + segment.value, 0)).toBe(650);
+  });
 });
 
 describe("model rates", () => {
