@@ -82,6 +82,7 @@ import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
+import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
 const RENDER_SCALE = 2;
@@ -736,6 +737,7 @@ const make = Effect.gen(function* () {
     if (!desktop) await prepareContext(context);
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     const cdp = await context.newCDPSession(page);
+    await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
     if (!desktop) await presentAsChrome(cdp, host);
@@ -885,11 +887,17 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     reportLiveTabs();
-    // A popup is already loading its own URL, and the desktop loads its tab's.
-    if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
-      tab.initialNavigation = page
-        .goto(snapshot.navStatus.url, { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS })
-        .then(constVoid);
+    // Existing desktop and popup PDFs can start loading before interception attaches.
+    if (
+      snapshot.navStatus._tag === "Loading" &&
+      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+    ) {
+      const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
+      tab.initialNavigation = (
+        (desktop || adopted) && page.url() === snapshot.navStatus.url
+          ? page.reload(options)
+          : page.goto(snapshot.navStatus.url, options)
+      ).then(constVoid);
 
       void tab.initialNavigation.catch(constVoid);
     }

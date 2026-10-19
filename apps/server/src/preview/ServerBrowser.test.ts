@@ -908,6 +908,44 @@ it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live.each([
+  { url: "https://environment.test/api/assets/token/guide.pdf", pdf: true },
+  { url: "https://example.com/sign-in", pdf: false },
+])("an adopted popup at $url recovers only PDF asset navigation", ({ url, pdf }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const popup = makeContext();
+      yield* Effect.promise(() => popup.page.goto(url));
+      popup.page.goto.mockClear();
+      popup.page.reload.mockImplementationOnce(async () => {
+        popup.page.emit("load");
+      });
+      contexts[0]!.page.emit("popup", popup.page);
+      let shown = yield* Queue.take(viewer.output);
+      while (shown._tag !== "popup") shown = yield* Queue.take(viewer.output);
+      yield* browser.attachViewer(viewerInput(shown.tabId, true));
+      expect(popup.page.goto).not.toHaveBeenCalled();
+      expect(popup.page.reload).toHaveBeenCalledTimes(pdf ? 1 : 0);
+      if (pdf) {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || event.tabId !== shown.tabId) {
+          event = yield* PubSub.take(events);
+        }
+        const session = (yield* manager.list({ threadId: scope.thread.threadId })).sessions.find(
+          (entry) => entry.tabId === shown.tabId,
+        );
+        expect(session?.navStatus).toMatchObject({ _tag: "Success", url });
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {

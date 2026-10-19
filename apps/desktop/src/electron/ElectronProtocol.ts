@@ -95,6 +95,7 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
     "frame-src 'self' blob: http: https:",
+    "object-src 'self' blob: http: https:",
     "form-action 'self'",
   ].join("; ");
 }

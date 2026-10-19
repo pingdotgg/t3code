@@ -7,8 +7,6 @@ import { use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 import type { ColorValue } from "react-native";
 
-export { NativeHeaderToolbar } from "./NativeHeaderToolbar";
-
 export {
   nativeHeaderScrollEdgeEffects,
   nativeTopScrollEdgeEffect,

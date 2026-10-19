@@ -34,8 +34,6 @@ import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "~/state/server";
 
-const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
-
 /**
  * The page reports the keys, and a page script can report any key it likes,
  * so only commands that change what the reader sees are here, never one that
@@ -65,8 +63,7 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 /**
  * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
- * the app's session or storage. The built-in PDF viewer needs an unsandboxed
- * frame; a PDF runs no scripts.
+ * the app's session or storage. PDFs use the browser's native viewer.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
@@ -77,12 +74,12 @@ export function BrowserDocumentFrame(props: {
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
-    // oxlint-disable-next-line react/iframe-missing-sandbox -- the built-in PDF viewer needs an unsandboxed frame.
-    <iframe
+    <embed
       key={props.src}
-      src={`${props.src}${PDF_VIEWER_FRAGMENT}`}
+      src={props.src}
+      type="application/pdf"
       title={props.title}
-      className={className}
+      className="min-h-0 w-full flex-1 border-0"
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument

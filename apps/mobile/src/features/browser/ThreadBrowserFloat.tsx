@@ -1,5 +1,7 @@
 import { useIsFocused } from "@react-navigation/native";
 import type { EnvironmentId, PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
+import { previewPdfAssetUrl } from "@t3tools/shared/preview";
+import * as Option from "effect/Option";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
@@ -8,6 +10,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { browserTabTitle } from "./browserTabs";
 import { PreviewStreamWebView } from "./PreviewStreamWebView";
+import { usePreparedConnection } from "../../state/session";
 
 const PLAYER_LONG_SIDE = 184;
 const PLAYER_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
@@ -77,6 +80,8 @@ function FloatingBrowserPlayer(props: {
   readonly onClose: () => void;
 }) {
   const { themeVariables } = useAppearancePreferences();
+  const prepared = usePreparedConnection(props.environmentId);
+  const httpBaseUrl = Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;
   const [viewport, setViewport] = useState<{ width: number; height: number } | null>(null);
   const aspect = Math.min(Math.max(viewport ? viewport.width / viewport.height : 16 / 10, 0.5), 2);
   const width = aspect >= 1 ? PLAYER_LONG_SIDE : Math.round(PLAYER_LONG_SIDE * aspect);
@@ -101,6 +106,11 @@ function FloatingBrowserPlayer(props: {
             environmentId={props.environmentId}
             threadId={props.threadId}
             tabId={props.tab.tabId}
+            pdfUri={
+              props.tab.navStatus._tag === "Success"
+                ? previewPdfAssetUrl(props.tab.navStatus.url, httpBaseUrl)
+                : null
+            }
             interactive={false}
             background={background}
             compact

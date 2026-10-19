@@ -333,6 +333,7 @@ patchedDependencies:
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
   react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
   react-native-keyboard-controller@1.22.7: patches/react-native-keyboard-controller@1.22.7.patch
+  react-native-pdf-jsi@5.0.0: patches/react-native-pdf-jsi@5.0.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   "@expo/ui@58.0.20": patches/@expo__ui@58.0.20.patch
