@@ -12,12 +12,14 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { BrowserContext, Page } from "playwright-core";
 import { beforeEach, expect, vi } from "vite-plus/test";
@@ -473,56 +475,120 @@ it.live("readiness none responds immediately but takeover input waits for naviga
 );
 
 it.live.each([
-  { method: "goto" as const, message: { type: "navigate", url: "http://localhost:5173/next" } },
+  {
+    method: "goto" as const,
+    message: { type: "navigate", url: "http://localhost:5173/next" },
+    handoff: "release",
+  },
+  { method: "goBack" as const, message: { type: "history", delta: -1 }, handoff: "release" },
+  { method: "goForward" as const, message: { type: "history", delta: 1 }, handoff: "release" },
+  { method: "reload" as const, message: { type: "reload" }, handoff: "release" },
+  {
+    method: "goto" as const,
+    message: { type: "navigate", url: "http://localhost:5173/next" },
+    handoff: "disconnect",
+  },
+])(
+  "$handoff waits for viewer $method to commit before agent actions",
+  ({ method, message, handoff }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        const viewerScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(viewerScope, Exit.void));
+        const viewer = yield* browser
+          .attachViewer(viewerInput(tabId, true))
+          .pipe(Effect.provideService(Scope.Scope, viewerScope));
+        yield* viewer.input({ type: "takeControl" });
+        const started = Promise.withResolvers<void>();
+        const committed = Promise.withResolvers<void>();
+        const events: string[] = [];
+        contexts[0]!.page[method].mockImplementationOnce(async () => {
+          started.resolve();
+          await committed.promise;
+          events.push("navigation committed");
+        });
+        const navigate = yield* viewer.input(message).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => started.promise);
+        const releasing = yield* (
+          handoff === "disconnect"
+            ? Scope.close(viewerScope, Exit.void)
+            : viewer.input({ type: "releaseControl" })
+        ).pipe(Effect.forkScoped);
+        yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+        // Drain runnable promise work while the navigation gate remains closed.
+        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId,
+          operation: "status",
+          input: {},
+        });
+        expect(status.control?.owner).toBe("agent");
+        const cdp = contexts[0]!.sessions[0]!;
+        const send = cdp.send.getMockImplementation()!;
+        cdp.send.mockImplementation(async (operation, input) => {
+          if (operation === "Runtime.evaluate") events.push("agent acted");
+          return send(operation, input);
+        });
+        const resumed = yield* broker
+          .invoke({
+            scope,
+            tabId,
+            operation: "evaluate",
+            input: { expression: "resumed()" },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+        expect(events).toEqual([]);
+        committed.resolve();
+        yield* Fiber.join(navigate);
+        yield* Fiber.join(releasing);
+        yield* Fiber.join(resumed);
+        expect(events).toEqual(["navigation committed", "agent acted"]);
+        const calls = contexts[0]!.page[method].mock.calls;
+        expect(calls[0]?.at(-1)).toMatchObject({ waitUntil: "commit", timeout: 15_000 });
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  { method: "goto" as const, message: { type: "navigate", url: "http://10.255.255.1/" } },
   { method: "goBack" as const, message: { type: "history", delta: -1 } },
   { method: "goForward" as const, message: { type: "history", delta: 1 } },
   { method: "reload" as const, message: { type: "reload" } },
-])("release waits for viewer $method to commit before agent actions", ({ method, message }) =>
+])("a pending viewer $method allows a corrected URL and text input", ({ method, message }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { browser, broker, tabId } = yield* ready;
+      const { browser, tabId } = yield* ready;
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
-      yield* Queue.clear(viewer.output);
       const started = Promise.withResolvers<void>();
       const committed = Promise.withResolvers<void>();
-      const events: string[] = [];
-      contexts[0]!.page[method].mockImplementationOnce(async () => {
+      const page = contexts[0]!.page;
+      page[method].mockImplementationOnce(() => {
         started.resolve();
-        await committed.promise;
-        events.push("navigation committed");
+        return committed.promise;
       });
-      const navigate = yield* viewer.input(message).pipe(Effect.forkScoped);
-      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      const navigation = yield* viewer.input(message).pipe(Effect.forkScoped);
       yield* Effect.promise(() => started.promise);
-      const releasing = yield* viewer.input({ type: "releaseControl" }).pipe(Effect.forkScoped);
-      let control = yield* Queue.take(viewer.output);
-      while (control._tag !== "control" || control.controller !== "agent") {
-        control = yield* Queue.take(viewer.output);
-      }
-      const cdp = contexts[0]!.sessions[0]!;
-      const send = cdp.send.getMockImplementation()!;
-      cdp.send.mockImplementation(async (operation, input) => {
-        if (operation === "Runtime.evaluate") events.push("agent acted");
-        return send(operation, input);
+      const correction = yield* Effect.gen(function* () {
+        yield* viewer.input({ type: "navigate", url: "http://localhost:5173/fixed" });
+        yield* viewer.input({ type: "text", text: "hello" });
+      }).pipe(Effect.forkScoped);
+      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      // Check after runnable promises drain, without waiting for navigation or a timeout.
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      expect(page.goto).toHaveBeenLastCalledWith(
+        "http://localhost:5173/fixed",
+        expect.objectContaining({ waitUntil: "commit" }),
+      );
+      expect(contexts[0]!.sessions.at(-1)!.send).toHaveBeenCalledWith("Input.insertText", {
+        text: "hello",
       });
-      const resumed = yield* broker
-        .invoke({
-          scope,
-          tabId,
-          operation: "evaluate",
-          input: { expression: "resumed()" },
-        })
-        .pipe(Effect.forkScoped);
-      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
-      expect(events).toEqual([]);
       committed.resolve();
-      yield* Fiber.join(navigate);
-      yield* Fiber.join(releasing);
-      yield* Fiber.join(resumed);
-      expect(events).toEqual(["navigation committed", "agent acted"]);
-      const calls = contexts[0]!.page[method].mock.calls;
-      expect(calls[0]?.at(-1)).toMatchObject({ waitUntil: "commit", timeout: 15_000 });
+      yield* Fiber.join(navigation);
+      yield* Fiber.join(correction);
     }),
   ).pipe(Effect.provide(layer)),
 );

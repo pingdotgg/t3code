@@ -2177,23 +2177,26 @@ const make = Effect.gen(function* () {
         await applySetting(tab, setting);
         return;
       }
+      // A stalled navigation must not block a corrected URL or further viewer input.
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
-          await tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS);
+          tab.control.trackUntilHandoff(tab.page.goto(url, VIEWER_NAVIGATION_OPTIONS));
         }
         return;
       case "history":
-        await (num(message.delta) < 0
-          ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
-          : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS));
+        tab.control.trackUntilHandoff(
+          num(message.delta) < 0
+            ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
+            : tab.page.goForward(VIEWER_NAVIGATION_OPTIONS),
+        );
         return;
       case "reload":
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;
         }
-        await tab.page.reload(VIEWER_NAVIGATION_OPTIONS);
+        tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
       case "probe": {
         const x = num(message.x);
