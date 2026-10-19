@@ -858,6 +858,32 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("keeps failed launch agent installs pending until activation succeeds", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands, control } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      const markerPath = path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE);
+      const bootstrap = `launchctl bootstrap gui/501 ${plan.unitPath}`;
+      control.failCommand = bootstrap;
+
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(yield* service.status).toMatchObject({
+        current: false,
+        problems: ["restart-pending"],
+      });
+      expect(yield* fs.readFileString(markerPath)).toBe("1.2.3\n");
+
+      control.failCommand = undefined;
+      commands.length = 0;
+      yield* service.install();
+
+      expect(commands).toContain(bootstrap);
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
   it.effect("restarts without overwriting a pending remote update on macOS", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands } = yield* makeHarness("darwin");
