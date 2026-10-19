@@ -40,7 +40,7 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson = "{}", onSpawn?: () => void) {
+function layerMockSpawner(statusJson: string | (() => string) = "{}", onSpawn?: () => void) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -53,7 +53,9 @@ function layerMockSpawner(statusJson = "{}", onSpawn?: () => void) {
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
           stdin: Sink.drain,
-          stdout: Stream.make(encoder.encode(statusJson)),
+          stdout: Stream.make(
+            encoder.encode(typeof statusJson === "string" ? statusJson : statusJson()),
+          ),
           stderr: Stream.empty,
           all: Stream.empty,
           getInputFd: () => Sink.drain,
@@ -458,6 +460,66 @@ describe("DesktopServerExposure", () => {
         );
       }),
     ),
+  );
+
+  it.effect(
+    "refreshes Tailscale status when addresses change and caches unchanged addresses",
+    () => {
+      const networkInterfaces: Record<
+        string,
+        readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+      > = { ...lanNetworkInterfaces };
+      let statusJson = "{}";
+      let statusReads = 0;
+
+      return withHarness(
+        networkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          yield* serverExposure.setMode("network-accessible");
+
+          const initial = yield* serverExposure.getAdvertisedEndpoints;
+          assert.deepEqual(
+            initial.map((endpoint) => endpoint.httpBaseUrl),
+            ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+          );
+          assert.equal(statusReads, 1);
+
+          for (const [address, dnsName] of [
+            ["100.90.1.2", "desktop.tail.ts.net"],
+            ["100.90.1.3", "desktop.other-tail.ts.net"],
+          ] as const) {
+            networkInterfaces.vpn0 = [{ address, family: "IPv4", internal: false }];
+            statusJson = JSON.stringify({
+              Self: { DNSName: `${dnsName}.`, TailscaleIPs: [address] },
+            });
+            const previousReads = statusReads;
+
+            const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+            assert.deepEqual(
+              endpoints.map((endpoint) => endpoint.httpBaseUrl),
+              [
+                "http://127.0.0.1:4173/",
+                "http://192.168.1.20:4173/",
+                `http://${address}:4173/`,
+                `https://${dnsName}/`,
+              ],
+            );
+            assert.equal(statusReads, previousReads + 1);
+            assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+            assert.equal(statusReads, previousReads + 1);
+          }
+        }),
+        {},
+        layerMockSpawner(
+          () => statusJson,
+          () => {
+            statusReads += 1;
+          },
+        ),
+      );
+    },
   );
 
   it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
