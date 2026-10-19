@@ -10,6 +10,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import {
   clampPercent,
@@ -17,11 +18,15 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknown) });
 const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
 const decodeAuthFile = Schema.decodeEffect(Schema.fromJsonString(AuthFile));
 const decodeApiAuth = Schema.decodeUnknownOption(ApiAuth);
+// OpenCode 2 tags a stored key "key" where auth.json tagged it "api".
+const StoredKey = Schema.Struct({ type: Schema.Literal("key"), key: Schema.String });
+const decodeStoredKey = Schema.decodeUnknownOption(Schema.fromJsonString(StoredKey));
 const UsageWindow = Schema.Struct({
   percent: Schema.Finite,
   resetsAt: Schema.DateTimeUtcFromString,
@@ -29,6 +34,27 @@ const UsageWindow = Schema.Struct({
 const UsageResponse = Schema.Struct({
   usage: Schema.Struct({ rolling: UsageWindow, weekly: UsageWindow, monthly: UsageWindow }),
 });
+
+/**
+ * OpenCode 2 keeps credentials in its database and selects the connection it
+ * uses by this same order: the active row, else the newest. Only a Go API key
+ * row is usable here; a Console login is an OAuth row under another integration.
+ */
+const readStoredGoApiKey = (databasePath: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // A busy live provider should fail this read promptly rather than stall the probe.
+    yield* sql.unsafe("PRAGMA busy_timeout = 100");
+    const [row] = yield* sql<{ readonly value: unknown }>`
+      SELECT value FROM credential WHERE integration_id = 'opencode-go'
+      ORDER BY active DESC, time_created DESC, id DESC LIMIT 1
+    `;
+    return Option.map(decodeStoredKey(row?.value), (stored) => stored.key);
+  }).pipe(
+    Effect.provide(NodeSqliteClient.layer({ filename: databasePath, readonly: true })),
+    // A missing or pre-OpenCode 2 database holds no stored key.
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
 
 /** External OpenCode servers own their credentials; never read the host's account for them. */
 export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (input: {
@@ -51,19 +77,29 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         ".local",
         "share",
       );
-    const authPath = path.join(dataHome, "opencode", "auth.json");
-    const contents =
-      env.OPENCODE_AUTH_CONTENT ||
-      (yield* fs.readFileString(authPath).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-        }),
-      ));
-    const auth = yield* decodeAuthFile(contents);
-    const apiAuth = decodeApiAuth(auth["opencode-go"]);
+    const dataDir = path.join(dataHome, "opencode");
+    const fileAuth = Effect.gen(function* () {
+      const contents =
+        env.OPENCODE_AUTH_CONTENT ||
+        (yield* fs.readFileString(path.join(dataDir, "auth.json")).pipe(
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+          }),
+        ));
+      const auth = yield* decodeAuthFile(contents);
+      return Option.map(decodeApiAuth(auth["opencode-go"]), (api) => api.key);
+    });
+    // Inline auth content is an explicit override. Otherwise the database wins:
+    // OpenCode 2 no longer writes auth.json, so a key there that disagrees with
+    // it is a stale OpenCode 1 leftover. OpenCode resolves OPENCODE_DB against
+    // its data directory.
+    const storedKey = env.OPENCODE_AUTH_CONTENT
+      ? Option.none<string>()
+      : yield* readStoredGoApiKey(path.resolve(dataDir, env.OPENCODE_DB || "opencode.db"));
+    const savedKey = Option.isSome(storedKey) ? storedKey : yield* fileAuth;
     // OpenCode overlays stored API credentials after environment credentials.
-    const apiKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
+    const apiKey = (Option.isSome(savedKey) ? savedKey.value : env.OPENCODE_API_KEY)?.trim();
     if (!apiKey) return unsupported;
 
     const client = yield* HttpClient.HttpClient;
