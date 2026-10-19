@@ -293,7 +293,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-    refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
+    refresh: input
+      .resolveMaintenance({ fresh: true })
+      .pipe(Effect.andThen(refreshSnapshot), Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);

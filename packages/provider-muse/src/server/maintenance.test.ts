@@ -1,8 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
@@ -15,6 +24,11 @@ import {
 } from "./maintenance.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import { MuseDriver } from "./driver.ts";
 
 const maintenanceCapabilities = {
   ...makeManualOnlyProviderMaintenanceCapabilities({
@@ -38,6 +52,87 @@ const snapshot: ServerProvider = {
 };
 
 it.layer(NodeServices.layer)("Muse maintenance", (it) => {
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "refreshes installation metadata without release requests when update checks are disabled",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-refresh-" });
+        const binaryPath = `${directory}/muse`;
+        // A failing version probe keeps the installed version without starting an SDK host.
+        const source = "#!/bin/sh\nprintf 'muse 1.0.3-R2198.1\\n'\nexit 1\n";
+        yield* fs.writeFileString(binaryPath, source);
+        yield* fs.chmod(binaryPath, 0o755);
+        const requests: string[] = [];
+        yield* Effect.gen(function* () {
+          const { snapshot: provider } = yield* MuseDriver.create({
+            instanceId: ProviderInstanceId.make("muse-refresh"),
+            displayName: "Muse refresh",
+            enabled: true,
+            environment: [{ name: "MUSE_CHANNEL", value: "muse-stable", sensitive: false }],
+            config: { ...MuseDriver.defaultConfig(), binaryPath },
+          });
+          const enriched = provider.streamChanges.pipe(
+            Stream.filter((current) => current.versionAdvisory !== undefined),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.map((snapshots) => Array.from(snapshots)[0]!),
+          );
+          const current = yield* provider.getSnapshot;
+          const initial = current.versionAdvisory ? current : yield* enriched;
+          expect(initial.version).toBe("1.0.3-R2198.1");
+          expect(initial.versionAdvisory?.canUpdate).toBe(false);
+          expect(requests).toEqual([]);
+
+          yield* fs.writeFileString(
+            binaryPath,
+            `${source}# muse-code/launcher-2 MUSE_SYNC_UPDATE\n`,
+          );
+          const refreshed = yield* enriched.pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          yield* provider.refresh;
+          const latest = yield* Fiber.join(refreshed);
+          expect(requests).toEqual([]);
+          expect(latest.versionAdvisory).toMatchObject({
+            status: "unknown",
+            latestVersion: null,
+            canUpdate: true,
+          });
+          expect((yield* provider.resolveMaintenance()).update?.executable).toBe(binaryPath);
+
+          // Explicit update verification must still fetch its target despite the preference.
+          const verification = yield* provider.resolveMaintenance({ fresh: true });
+          expect(verification.latestVersion).toBe("1.1.1-R10.1");
+          expect(requests).toEqual(["https://api.meta.ai/muse-code/channels/muse-stable"]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              TestProviderHost.layer({
+                runBackgroundWork: false,
+                settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },
+              }),
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              ProviderLatestVersions.layer,
+              Layer.succeed(
+                ProviderEventLoggers.ProviderEventLoggers,
+                ProviderEventLoggers.NoOpProviderEventLoggers,
+              ),
+            ),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push(request.url);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, Response.json({ version: "1.1.1-R10.1" })),
+              );
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "refreshes a cached channel failure when an explicit update requests verification",
     () =>
