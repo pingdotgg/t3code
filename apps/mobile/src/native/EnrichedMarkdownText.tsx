@@ -20,7 +20,7 @@ import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import {
-  ENRICHED_INLINE_FILE_LINK_REGEX,
+  enrichedInlineFileLinkRegex,
   enrichedSkillLinkRegex,
   enrichedLinkVariantPattern,
 } from "../lib/enrichedLinkPresentation";
@@ -169,9 +169,9 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
   const linkRecognition = useMemo(
     () => ({
       text: enrichedSkillLinkRegex(props.skills) ?? undefined,
-      inlineCode: ENRICHED_INLINE_FILE_LINK_REGEX,
+      inlineCode: enrichedInlineFileLinkRegex(markdown),
     }),
-    [props.skills],
+    [props.skills, markdown],
   );
   const [activeMenu, setActiveMenu] = useState<{
     url: string;

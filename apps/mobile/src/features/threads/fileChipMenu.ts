@@ -1,4 +1,5 @@
 import { fileBasename } from "@t3tools/shared/path";
+import { formatFilePathPosition, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import type { ThreadId } from "@t3tools/contracts";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import type { MarkdownFileContextMenu } from "../../native/SelectableMarkdownText.types";
@@ -31,14 +32,17 @@ export function resolveFileChipTarget(
       : undefined;
   if (!fullPath && !relativePath) return null;
   return {
-    ...(fullPath ? { fullPath } : {}),
-    ...(relativePath ? { relativePath } : {}),
+    ...(fullPath ? { fullPath: formatFilePathPosition({ ...presentation, path: fullPath }) } : {}),
+    ...(relativePath
+      ? { relativePath: formatFilePathPosition({ ...presentation, path: relativePath }) }
+      : {}),
   };
 }
 
 function fileChipMetadata(target: FileChipTarget) {
-  const path = target.fullPath ?? target.relativePath;
-  if (!path) return null;
+  const targetPath = target.fullPath ?? target.relativePath;
+  if (!targetPath) return null;
+  const { path } = splitFilePathPosition(targetPath);
   const name = fileBasename(path);
   const dot = name.lastIndexOf(".");
   const mimeType = dot < 0 ? null : hostPreviewMimeTypeFromExtension(name.slice(dot));

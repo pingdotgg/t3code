@@ -123,6 +123,21 @@ describe("relative links inside a rendered host file", () => {
 });
 
 describe("resolveInlineCodeFileLinkMeta", () => {
+  it.each(["src/main.ts:49-74", "/work/src/main.ts:49-74"])(
+    "resolves %s without treating the range as part of the filename",
+    (source) => {
+      expect(resolveInlineCodeFileLinkMeta(source, "/work")).toMatchObject({
+        filePath: "/work/src/main.ts",
+        targetPath: "/work/src/main.ts:49-74",
+        displayPath: "work/src/main.ts:49-74",
+        workspaceRelativePath: "src/main.ts",
+        basename: "main.ts",
+        line: 49,
+        endLine: 74,
+      });
+    },
+  );
+
   it("links relative paths with file extensions", () => {
     expect(
       resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md", "/Users/julius/project"),

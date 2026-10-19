@@ -1,6 +1,6 @@
 import type { ComposerContextRecord } from "@t3tools/contracts";
 import { contextChipPresentation } from "./composerChipPresentation";
-import type { MarkdownFileIcon } from "./markdownLinks";
+import { resolveMarkdownInlineCodePresentation, type MarkdownFileIcon } from "./markdownLinks";
 import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 
@@ -33,8 +33,16 @@ export function enrichedLinkVariantPattern(url: string) {
   return `^${url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
 }
 
-export const ENRICHED_INLINE_FILE_LINK_REGEX =
-  /^(?!\S*:\/\/)(?:(?:\.{1,2}[\\/]|~[\\/]|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private|root|usr|bin|sbin|lib|lib64|srv|dev|proc|sys|run|boot|media|workspace|workspaces)\/|[A-Za-z]:[\\/])[^\s`]+|(?:[A-Za-z0-9._-]+[\\/])+[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+(?::\d+){0,2}|[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+:\d+(?::\d+)?)$/;
+export function enrichedInlineFileLinkRegex(markdown: string) {
+  const paths = new Set<string>();
+  for (const piece of markdown.split(/`+/)) {
+    const content = piece.trim();
+    if (resolveMarkdownInlineCodePresentation(content)) paths.add(content);
+  }
+  return paths.size > 0
+    ? new RegExp([...paths].map(enrichedLinkVariantPattern).join("|"))
+    : undefined;
+}
 
 export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdownSkill>) {
   const names = [...new Set(skills?.map((skill) => skill.name) ?? [])].filter(Boolean);

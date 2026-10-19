@@ -14,6 +14,18 @@ describe("resolveMarkdownLinkIcon", () => {
 });
 
 describe("resolveMarkdownLinkPresentation", () => {
+  it("keeps a source range in the label and href while selecting the file icon", () => {
+    expect(resolveMarkdownLinkPresentation("src/main.ts:49-74")).toEqual({
+      kind: "file",
+      href: "src/main.ts:49-74",
+      icon: "typescript",
+      label: "main.ts:49-74",
+      path: "src/main.ts",
+      line: 49,
+      endLine: 74,
+    });
+  });
+
   it("keeps thread-link hrefs for in-app navigation", () => {
     const href = "t3-thread://v1/thread-1";
     expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });

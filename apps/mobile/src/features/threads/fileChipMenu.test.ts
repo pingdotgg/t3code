@@ -6,8 +6,19 @@ import { fileChipMenu, fileChipShareSource, resolveFileChipTarget } from "./file
 describe("resolveFileChipTarget", () => {
   it("resolves a workspace-relative link to both paths", () => {
     expect(resolveFileChipTarget("src/app.ts:12", "/repo")).toEqual({
-      fullPath: "/repo/src/app.ts",
-      relativePath: "src/app.ts",
+      fullPath: "/repo/src/app.ts:12",
+      relativePath: "src/app.ts:12",
+    });
+  });
+
+  it("keeps ranges in copied paths while using the bare path for downloads", () => {
+    const target = resolveFileChipTarget("docs/report.pdf:49-74", "/repo")!;
+    expect(target).toEqual({
+      fullPath: "/repo/docs/report.pdf:49-74",
+      relativePath: "docs/report.pdf:49-74",
+    });
+    expect(fileChipShareSource(target, ThreadId.make("thread-1"))).toMatchObject({
+      resource: { path: "/repo/docs/report.pdf" },
     });
   });
 

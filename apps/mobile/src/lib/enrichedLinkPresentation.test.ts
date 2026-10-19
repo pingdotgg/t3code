@@ -5,31 +5,51 @@ import {
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
   enrichedSkillReference,
-  ENRICHED_INLINE_FILE_LINK_REGEX,
+  enrichedInlineFileLinkRegex,
 } from "./enrichedLinkPresentation";
 
 describe("Enriched link presentation", () => {
   it("recognizes file-shaped code without turning commands or URLs into links", () => {
-    for (const path of [
+    const paths = [
       "src/app.tsx",
       "./README.md",
       "/tmp/report.md",
       "C:\\repo\\app.tsx",
       "app.tsx:12:3",
-    ]) {
-      expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
-    }
-    for (const text of [
+      "src/main.ts:49-74",
+      "/repo/src/main.ts:49-74",
+      "main.ts:49-74",
+    ];
+    const excluded = [
       "npm run dev",
       "port:3000",
       "TODO:12",
       "example.com",
+      "example.com:49-74",
+      "localhost:49-74",
+      "z-ai/glm-5.3:49-74",
       "https://example.com/app.tsx",
       "x + y",
       "README.md",
       "/app/settings",
-    ]) {
-      expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
+    ];
+    const markdown = [
+      "```md\n`other.ts:49-74`\n```",
+      ...paths.map((path) => "``" + path + "``"),
+      ...excluded.map((text) => "`" + text + "`"),
+    ].join("\n");
+    const regex = enrichedInlineFileLinkRegex(markdown);
+    for (const path of paths) {
+      expect(regex?.test(path), path).toBe(true);
+    }
+    for (const text of excluded) {
+      expect(regex?.test(text) ?? false, text).toBe(false);
+    }
+    for (const prefix of ["Use \\` here then", "~~~\na ` b\n~~~\n\nsee"]) {
+      const regex = enrichedInlineFileLinkRegex(prefix + " `src/a.ts` and `src/a.ts:1-2`");
+      for (const path of ["src/a.ts", "src/a.ts:1-2"]) {
+        expect.soft(regex?.test(path) ?? false, `${prefix}: ${path}`).toBe(true);
+      }
     }
   });
 

@@ -2,6 +2,8 @@ import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
+  formatFilePathPosition,
+  splitFilePathPosition,
   resolvePathLinkTarget,
 } from "@t3tools/shared/fileLinks";
 import {
@@ -1964,7 +1966,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     void (async () => {
       try {
-        const result = await onOpen(targetPath);
+        const { endLine, ...position } = splitFilePathPosition(targetPath);
+        const result = await onOpen(
+          endLine === undefined ? targetPath : formatFilePathPosition(position),
+        );
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -2709,6 +2714,7 @@ function useChatMarkdownState({
             path: fileLinkMeta.filePath,
             ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
             ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+            ...(fileLinkMeta.endLine !== undefined ? { endLine: fileLinkMeta.endLine } : {}),
           },
           fileLinkParentSuffixByPath,
         )}

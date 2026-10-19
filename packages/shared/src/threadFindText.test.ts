@@ -85,6 +85,15 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
 });
 
+it("searches range chip labels while retaining a separately authored line label", () => {
+  expect(
+    assistantSegments(
+      "`src/main.ts:49-74` and [example.ts:49](src/example.ts:49-74)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["main.ts · L49-74 and example.ts:49 example.ts · L49-74"]);
+});
+
 it("includes the same parent suffixes for duplicate filenames as the renderer", () => {
   expect(
     assistantSegments(

@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { Image } from "react-native";
 import type {
   LinkPillContent,
@@ -19,6 +20,7 @@ import {
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
+  preserveLabel: boolean,
 ) {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
@@ -35,7 +37,7 @@ function presentation(
   if (link.kind === "file")
     return {
       color: props.textStyle.fileTextColor,
-      label: link.label,
+      label: preserveLabel ? undefined : link.label,
       icon: markdownFileIconSource(link.icon),
     };
   const icon = link.kind === "external" ? resolveMarkdownLinkIcon(link.host) : null;
@@ -54,10 +56,23 @@ export function useEnrichedLinkVariants(
 ) {
   const { linkCustomization, skills, textStyle } = props;
   const links = useMemo(() => {
+    // Pill content is keyed by URL, so preserve every occurrence's native label
+    // when any authored label differs from its destination.
+    const authoredLabelUrls = new Set(
+      assets
+        .filter(
+          (asset) => asset.kind === "link" && !isMarkdownFileLinkLabel(asset.altText, asset.url),
+        )
+        .map((asset) => asset.url),
+    );
     const byUrl = new Map<string, NonNullable<ReturnType<typeof presentation>>>();
     for (const asset of assets) {
       if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
-      const value = presentation(asset.url, { linkCustomization, skills, textStyle });
+      const value = presentation(
+        asset.url,
+        { linkCustomization, skills, textStyle },
+        authoredLabelUrls.has(asset.url),
+      );
       if (value) byUrl.set(asset.url, value);
     }
     return byUrl;
