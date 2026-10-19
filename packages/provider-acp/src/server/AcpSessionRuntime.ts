@@ -1401,8 +1401,37 @@ export const make = (
             ...(options.spawn.env ? { env: options.spawn.env } : {}),
             extendEnv: options.spawn.extendEnv ?? true,
           });
+    const agentScope = yield* AgentScope;
+    const scopedLaunch = spawnCommand.shell
+      ? undefined
+      : yield* agentScope.wrap({
+          command: spawnCommand.command,
+          args: spawnCommand.args,
+          name: "acp",
+          threadId: yield* AgentScopeThreadId,
+          env: { ...process.env, ...options.spawn.env },
+        });
+    const scopeUnit = scopedLaunch?.unit;
+    const stopScope =
+      scopeUnit === undefined
+        ? Effect.void
+        : yield* Effect.cached(
+            agentScope.stop(scopeUnit).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new AcpProcessGroupTerminationError({
+                    detail: `Failed to stop ACP agent scope ${scopeUnit}`,
+                    cause,
+                  }),
+              ),
+              Effect.uninterruptible,
+            ),
+          );
+    yield* Scope.addFinalizer(runtimeScope, stopScope.pipe(Effect.ignoreCause({ log: true })));
     const linuxCgroupLease =
-      options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
+      scopeUnit === undefined &&
+      options.ownDescendantProcessGroups === true &&
+      options.processGroupPlatform === "linux"
         ? yield* Effect.sync(() => {
             try {
               if (options.linuxCgroupController === null) return undefined;
@@ -1438,18 +1467,7 @@ export const make = (
             });
           });
     const scopedSpawnCommand =
-      linuxCgroupLease !== undefined || spawnCommand.shell
-        ? spawnCommand
-        : {
-            ...(yield* (yield* AgentScope).wrap({
-              command: spawnCommand.command,
-              args: spawnCommand.args,
-              name: "acp",
-              threadId: yield* AgentScopeThreadId,
-              env: { ...process.env, ...options.spawn.env },
-            })),
-            shell: false,
-          };
+      scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
     const containedSpawnCommand =
       linuxCgroupLease === undefined
         ? scopedSpawnCommand
@@ -1492,12 +1510,21 @@ export const make = (
         ),
       );
 
+    // An inherited stdout pipe can outlive the agent that owned the scope.
+    if (scopeUnit !== undefined) {
+      yield* child.exitCode.pipe(
+        Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
+        Effect.ignoreCause({ log: true }),
+        Effect.forkIn(runtimeScope),
+      );
+    }
+
     const posixOwnershipLedger = new Map<string, AcpOwnedPosixProcess>();
     const posixOwnershipFrontier = new Map<number, AcpOwnedPosixProcess>();
     const posixOwnershipChildQueues = new Map<number, Array<number>>();
     const posixOwnershipRoot: AcpPosixOwnershipRoot = { value: undefined };
     const posixController =
-      options.ownDescendantProcessGroups === true
+      scopeUnit === undefined && options.ownDescendantProcessGroups === true
         ? yield* Effect.try({
             try: () => {
               if (options.posixProcessTreeController !== undefined) {
@@ -1590,6 +1617,7 @@ export const make = (
       });
     const terminateOwnedProcessGroupImpl = Effect.gen(function* () {
       if (options.ownDetachedProcessGroup !== true) return;
+      if (scopeUnit !== undefined) return yield* stopScope;
       if (options.processGroupPlatform === undefined) {
         return yield* new AcpProcessGroupTerminationError({
           detail: "Detached ACP process-group ownership requires a host platform",
@@ -1629,15 +1657,17 @@ export const make = (
     if (options.ownDetachedProcessGroup === true) {
       const hostPlatform = yield* HostProcess.Platform;
       const forceTerminateOwnedProcessGroup =
-        hostPlatform === "win32"
-          ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            )
-          : linuxCgroupLease !== undefined
-            ? terminateLinuxCgroupLease(linuxCgroupLease)
-            : options.ownDescendantProcessGroups === true
-              ? terminatePosixProcessTree(0, hostPlatform)
-              : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
+        scopeUnit !== undefined
+          ? stopScope
+          : hostPlatform === "win32"
+            ? terminateWindowsProcessTreeWithTaskkill(Number(child.pid)).pipe(
+                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              )
+            : linuxCgroupLease !== undefined
+              ? terminateLinuxCgroupLease(linuxCgroupLease)
+              : options.ownDescendantProcessGroups === true
+                ? terminatePosixProcessTree(0, hostPlatform)
+                : signalOwnedProcessGroup("SIGKILL").pipe(Effect.asVoid);
       yield* Scope.addFinalizer(
         runtimeScope,
         Effect.uninterruptible(forceTerminateOwnedProcessGroup).pipe(
@@ -2377,7 +2407,7 @@ export const make = (
 
     return {
       processContainment:
-        linuxCgroupLease !== undefined
+        scopeUnit !== undefined || linuxCgroupLease !== undefined
           ? "cgroup-v2"
           : options.ownDescendantProcessGroups === true
             ? "process-ledger-reduced-guarantee"

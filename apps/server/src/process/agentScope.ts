@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 
 import {
   AgentScope,
+  AgentScopeStopError,
   agentScopeCommand,
   type AgentScopeShape,
   type AgentSystemdScope,
@@ -44,7 +45,7 @@ export interface ScopeState {
   readonly loadState: string;
   readonly activeState: string;
   readonly result: string;
-  readonly oomKills: number;
+  readonly oomKills: number | undefined;
   readonly populated: boolean | undefined;
 }
 
@@ -62,7 +63,11 @@ export function classifyScope(state: ScopeState): "oom-killed" | "gone" | "runni
   ) {
     return "gone";
   }
-  if (state.activeState === "deactivating" || state.oomKills > 0 || state.populated === false) {
+  if (
+    state.activeState === "deactivating" ||
+    (state.oomKills ?? 0) > 0 ||
+    state.populated === false
+  ) {
     return "stopping";
   }
   return "running";
@@ -171,7 +176,8 @@ export const make = Effect.gen(function* () {
       // older user managers still get scopes, without the OOM label.
       const stopOptions = [STOP_TIMEOUT_OPTION];
       const oomOptions = [...stopOptions, "--property=OOMPolicy=stop"];
-      const scopeOptions = (yield* probe(oomOptions))
+      const oomPolicy = yield* probe(oomOptions);
+      const scopeOptions = oomPolicy
         ? oomOptions
         : (yield* probe(stopOptions))
           ? stopOptions
@@ -197,13 +203,14 @@ export const make = Effect.gen(function* () {
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
-        oomPolicy: scopeOptions.length > 0,
+        oomPolicy,
       });
       return {
         systemdRun,
         systemctl,
         runtimeDir,
         scopeOptions,
+        oomPolicy,
       };
     }),
   );
@@ -228,7 +235,7 @@ export const make = Effect.gen(function* () {
         loadState: values.get("LoadState") ?? "",
         activeState: values.get("ActiveState") ?? "",
         result: values.get("Result") ?? "",
-        oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
+        oomKills: parseCgroupCounter(memoryEvents, "oom_kill"),
         populated: populated === undefined ? undefined : populated === 1,
       } satisfies ScopeState;
     });
@@ -303,6 +310,83 @@ export const make = Effect.gen(function* () {
       return false;
     });
 
+  const hasStopped = (state: ScopeState) =>
+    state.loadState === "not-found" ||
+    state.populated === false ||
+    (state.populated === undefined &&
+      (state.activeState === "inactive" || state.activeState === "failed"));
+
+  const awaitStopped = (systemctl: string, unit: string) =>
+    Effect.gen(function* () {
+      while (true) {
+        const state = yield* readScope(systemctl, unit);
+        if (state === undefined) {
+          return yield* new AgentScopeStopError({
+            unit,
+            detail: "Could not read agent scope state",
+          });
+        }
+        if (hasStopped(state)) return;
+        yield* Effect.sleep(STOPPING_POLL_INTERVAL);
+      }
+    }).pipe(
+      Effect.interruptible,
+      Effect.timeoutOption("15 seconds"),
+      Effect.flatMap((completed) =>
+        completed._tag === "Some"
+          ? Effect.void
+          : Effect.fail(
+              new AgentScopeStopError({ unit, detail: "Agent scope did not finish stopping" }),
+            ),
+      ),
+    );
+
+  const stop = Effect.fn("AgentScope.stop")(function* (unit: string) {
+    if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) {
+      return yield* new AgentScopeStopError({ unit, detail: "Cannot stop an unowned agent scope" });
+    }
+    const scope = yield* systemd;
+    if (scope === undefined) {
+      return yield* new AgentScopeStopError({ unit, detail: "Agent scope manager is unavailable" });
+    }
+    const state = yield* readScope(scope.systemctl, unit);
+    if (state === undefined) {
+      return yield* new AgentScopeStopError({ unit, detail: "Could not read agent scope state" });
+    }
+    if (hasStopped(state)) return;
+    // Let OOMPolicy finish and record a kernel kill before a manual stop overwrites it.
+    const stopping =
+      state.activeState === "deactivating" ||
+      state.result === "oom-kill" ||
+      (scope.oomPolicy && (state.oomKills === undefined || state.oomKills > 0));
+    if (!stopping) {
+      const stopped = yield* runner
+        .run({
+          command: scope.systemctl,
+          args: ["--user", "stop", unit],
+          timeout: "15 seconds",
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new AgentScopeStopError({
+                unit,
+                detail: "Could not stop agent scope",
+                cause,
+              }),
+          ),
+        );
+      if (stopped.code !== 0 || stopped.timedOut) {
+        return yield* new AgentScopeStopError({
+          unit,
+          detail: "Could not stop agent scope",
+          cause: stopped,
+        });
+      }
+    }
+    yield* awaitStopped(scope.systemctl, unit);
+  });
+
   const clear: AgentScopeShape["clear"] = (threadId) =>
     Effect.gen(function* () {
       if (!scopeByThread.has(threadId)) return;
@@ -334,9 +418,10 @@ export const make = Effect.gen(function* () {
         // the unit even when it fails.
         options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
-      return agentScopeCommand({ command: resolved, args, scope: systemdScope });
+      return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
     }),
     oomKilled,
+    stop,
     clear,
   } satisfies AgentScopeShape;
 });

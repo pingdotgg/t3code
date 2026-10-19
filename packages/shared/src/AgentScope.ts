@@ -1,5 +1,15 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+export class AgentScopeStopError extends Schema.TaggedError<AgentScopeStopError>()(
+  "AgentScopeStopError",
+  { unit: Schema.String, detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export interface AgentScopeShape {
   readonly wrap: (input: {
@@ -16,6 +26,8 @@ export interface AgentScopeShape {
     readonly survivesRestart?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
+  /** Waits for scope cleanup, including descendants in other process groups. */
+  readonly stop: (unit: string) => Effect.Effect<void, AgentScopeStopError>;
   /**
    * Forgets the thread's scope. The session manager calls it before it opens
    * a provider session, so a scope only answers for the session that launched
@@ -25,6 +37,7 @@ export interface AgentScopeShape {
 }
 
 export interface AgentScopeCommand {
+  readonly unit?: string | undefined;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
 }
@@ -33,6 +46,7 @@ export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/Ag
   defaultValue: () => ({
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
     oomKilled: () => Effect.succeed(false),
+    stop: () => Effect.void,
     clear: () => Effect.void,
   }),
 });

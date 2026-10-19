@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
@@ -6,6 +7,7 @@ import * as NodeFS from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -13,13 +15,25 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  AgentScope,
+  AgentScopeStopError,
+  agentScopeCommand,
+  type AgentScopeShape,
+} from "@t3tools/shared/AgentScope";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import * as EffectAcpErrors from "effect-acp/errors";
+import * as AgentScopeLive from "../../process/agentScope.ts";
+import * as ProcessRunner from "../../processRunner.ts";
+import * as ServerConfig from "../../config.ts";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -33,6 +47,184 @@ const mockRuntimeOptions = {
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
 describe("AcpSessionRuntime", () => {
+  describe.skipIf(
+    HostProcess.Platform.defaultValue() !== "linux" ||
+      NodeChildProcess.spawnSync("systemctl", ["--user", "show-environment"]).status !== 0,
+  )("native agent scope", () => {
+    it.live.each(["stop", "exit"] as const)(
+      "keeps owned ACP work in its native scope and reaps detached descendants on %s",
+      (end) =>
+        Effect.gen(function* () {
+          const unit = `t3code-acp-test-${yield* (yield* Crypto.Crypto).randomUUIDv4()}.scope`;
+          const stopped = yield* Deferred.make<void>();
+          let stopCount = 0;
+          let legacyLeaseCount = 0;
+          // Keep test subprocesses inside the host's validation budget.
+          const parentSlice =
+            NodeFS.readFileSync("/proc/self/cgroup", "utf8")
+              .split("/")
+              .toReversed()
+              .find((part) => part.endsWith(".slice")) ?? "app.slice";
+          const descendant = `
+            process.on("SIGTERM", () => {});
+            setInterval(() => {}, 1000);
+            process.send({ pid: process.pid, cgroup: require("node:fs").readFileSync("/proc/self/cgroup", "utf8") }, () => process.disconnect());
+          `;
+          const fixture = `
+          const { spawn } = require("node:child_process");
+          const reply = (id, result) => process.stdout.write(JSON.stringify({jsonrpc:"2.0", id, result}) + "\\n");
+          require("node:readline").createInterface({ input: process.stdin }).on("line", line => {
+            const frame = JSON.parse(line);
+            if (frame.method === "_test/exit") return process.exit(19);
+            if (!("id" in frame)) return;
+            if (frame.method === "initialize") return reply(frame.id, {protocolVersion:1, agentCapabilities:{}});
+            if (frame.method === "session/new") return reply(frame.id, {sessionId:"scope-test"});
+            const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
+              detached:true, stdio:["ignore", "ignore", "ignore", "ipc"]
+            });
+            child.once("message", work => reply(frame.id, {
+              ...work, rootPid:process.pid, rootCgroup:require("node:fs").readFileSync("/proc/self/cgroup", "utf8")
+            }));
+          });
+        `;
+          const runner = yield* ProcessRunner.make();
+          yield* Effect.addFinalizer(() =>
+            runner
+              .run({
+                command: "systemctl",
+                args: ["--user", "stop", unit],
+                timeout: "15 seconds",
+              })
+              .pipe(Effect.ignore),
+          );
+          // Probe success avoids changing the live agents slice or its memory limits.
+          const successfulProbe: ProcessRunner.ProcessRunOutput = {
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+          const nativeScope = yield* AgentScopeLive.make.pipe(
+            Effect.provideService(ProcessRunner.ProcessRunner, {
+              run: (input) =>
+                NodePath.basename(input.command) === "systemd-run" ||
+                input.args[1] === "set-property"
+                  ? Effect.succeed(successfulProbe)
+                  : runner.run(input),
+            }),
+            Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-acp-scope-" })),
+          );
+          const agentScope: AgentScopeShape = {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({
+                ...agentScopeCommand({
+                  command,
+                  args,
+                  scope: {
+                    systemdRun: "systemd-run",
+                    slice: parentSlice,
+                    unit,
+                    runtimeDir: process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.()}`,
+                    options: ["--collect", "--property=TimeoutStopSec=1s"],
+                  },
+                }),
+                unit,
+              }),
+            stop: (scopeUnit: string) =>
+              nativeScope.stop(scopeUnit).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    expect(scopeUnit).toBe(unit);
+                    stopCount++;
+                  }),
+                ),
+                Effect.andThen(Deferred.succeed(stopped, undefined)),
+                Effect.asVoid,
+              ),
+          };
+          yield* Effect.gen(function* () {
+            const runtime = yield* AcpSessionRuntime.make({
+              ...mockRuntimeOptions,
+              spawn: { command: process.execPath, args: ["-e", fixture], shell: false },
+              ownDetachedProcessGroup: true,
+              ownDescendantProcessGroups: true,
+              processGroupPlatform: "linux",
+              linuxCgroupController: {
+                create: () => {
+                  legacyLeaseCount++;
+                  return undefined;
+                },
+              },
+            });
+            yield* runtime.start();
+            expect(legacyLeaseCount).toBe(0);
+            const work = yield* runtime.request("_test/work", {}).pipe(
+              Effect.flatMap(
+                Schema.decodeUnknownEffect(
+                  Schema.Struct({
+                    pid: Schema.Number,
+                    cgroup: Schema.String,
+                    rootPid: Schema.Number,
+                    rootCgroup: Schema.String,
+                  }),
+                ),
+              ),
+            );
+            expect(work.cgroup.trim()).toContain(`/${unit}`);
+            expect(work.rootCgroup).toBe(work.cgroup);
+            expect(runtime.processContainment).toBe("cgroup-v2");
+            if (end === "stop") {
+              expect(runtime.terminateProcessGroup).toBeDefined();
+              if (runtime.terminateProcessGroup !== undefined) yield* runtime.terminateProcessGroup;
+              const descendantState = AcpSessionRuntime.makePosixProcessTreeController(
+                "linux",
+              ).identity(work.pid)?.state;
+              expect(descendantState === undefined || descendantState === "Z").toBe(true);
+            } else yield* runtime.notify("_test/exit", {});
+            yield* Deferred.await(stopped);
+            const events = yield* runtime.getEvents().pipe(Stream.take(1), Stream.runCollect);
+            expect(events[0]?._tag).toBe("ConnectionTerminated");
+            for (const pid of [work.pid, work.rootPid]) {
+              const state =
+                AcpSessionRuntime.makePosixProcessTreeController("linux").identity(pid)?.state;
+              expect(state === undefined || state === "Z").toBe(true);
+            }
+          }).pipe(Effect.scoped, Effect.provideService(AgentScope, agentScope));
+          expect(stopCount).toBe(1);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  });
+
+  it.effect("fails explicit teardown when native scope cleanup fails", () =>
+    Effect.gen(function* () {
+      const cause = new AgentScopeStopError({
+        unit: "t3code-acp-test.scope",
+        detail: "systemctl stop failed",
+      });
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        ownDetachedProcessGroup: true,
+      }).pipe(
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) => Effect.succeed({ command, args, unit: cause.unit }),
+          stop: () => Effect.fail(cause),
+        }),
+      );
+      yield* runtime.start();
+      if (runtime.terminateProcessGroup === undefined) return expect.fail("Missing ACP teardown");
+      expect(yield* Effect.flip(runtime.terminateProcessGroup)).toMatchObject({
+        _tag: "AcpProcessGroupTerminationError",
+        cause,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect.each(["session/new", "session/resume"] as const)(
     "buffers root metadata while %s startup is still pending",
     (setupMethod) =>

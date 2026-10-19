@@ -7,7 +7,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
@@ -61,12 +65,26 @@ describe("agentSliceMemoryLimits", () => {
   });
 });
 
+interface FakeScopeState {
+  activeState: string;
+  result: string;
+  oomKills?: number | undefined;
+  populated?: boolean;
+}
+
 const withFakeSystemd = <A, E>(
   body: (input: {
     readonly scope: Effect.Success<typeof make>;
-    readonly units: Map<string, { activeState: string; result: string }>;
+    readonly units: Map<string, FakeScopeState>;
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
+    readonly handlers: Map<
+      string,
+      (
+        input: ProcessRunner.ProcessRunInput,
+      ) => Effect.Effect<ProcessRunner.ProcessRunOutput | undefined>
+    >;
+    readonly output: (stdout: string) => ProcessRunner.ProcessRunOutput;
   }) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
@@ -74,8 +92,14 @@ const withFakeSystemd = <A, E>(
     for (const name of ["systemd-run", "systemctl", "agent"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
-    const units = new Map<string, { activeState: string; result: string }>();
+    const units = new Map<string, FakeScopeState>();
     const calls: Array<ReadonlyArray<string>> = [];
+    const handlers = new Map<
+      string,
+      (
+        input: ProcessRunner.ProcessRunInput,
+      ) => Effect.Effect<ProcessRunner.ProcessRunOutput | undefined>
+    >();
     const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
@@ -87,27 +111,46 @@ const withFakeSystemd = <A, E>(
       stderrInvalidUtf8: false,
     });
     const runner = ProcessRunner.ProcessRunner.of({
-      run: ({ args }) =>
-        Effect.sync(() => {
+      run: (input) =>
+        Effect.gen(function* () {
+          const { args } = input;
           calls.push(args);
-          const [, verb, unit = ""] = args;
+          const [, verb = "", unit = ""] = args;
+          const handled = yield* handlers.get(verb)?.(input) ?? Effect.succeed(undefined);
+          if (handled !== undefined) return handled;
+          if (verb === "stop") units.delete(unit);
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
           const state = units.get(unit);
           return output(
             state === undefined
               ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
+              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\nControlGroup=/t3-agent-scope-test/${unit}\n`,
           );
         }),
     });
+    const fileSystem = yield* FileSystem.FileSystem;
     const scope = yield* make.pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        readFileString: (path, encoding) => {
+          if (!path.startsWith("/sys/fs/cgroup/t3-agent-scope-test/")) {
+            return fileSystem.readFileString(path, encoding);
+          }
+          const state = units.get(NodePath.basename(NodePath.dirname(path)));
+          return Effect.succeed(
+            path.endsWith("memory.events")
+              ? `oom_kill ${state?.oomKills ?? 0}\n`
+              : `populated ${state?.populated === false ? 0 : 1}\n`,
+          );
+        },
+      }),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir }).pipe(
+    return yield* body({ scope, units, calls, stateDir, handlers, output }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -126,6 +169,134 @@ const sliceOf = (launch: { readonly args: ReadonlyArray<string> }) =>
   launch.args.find((arg) => arg.startsWith("--slice="))?.slice("--slice=".length) ?? "";
 
 describe("AgentScope service", () => {
+  it.effect("waits for scope shutdown with a timeout longer than TimeoutStopSec", () =>
+    withFakeSystemd(({ scope, units, calls, handlers, output }) =>
+      Effect.gen(function* () {
+        const launch = yield* scope.wrap({ command: "agent", args: [], name: "acp" });
+        const unit = unitOf(launch);
+        expect(launch.unit).toBe(unit);
+        expect(launch.args).toContain("--property=TimeoutStopSec=10s");
+        units.set(unit, { activeState: "active", result: "success", populated: true });
+        const stopping = yield* Deferred.make<ProcessRunner.ProcessRunInput>();
+        const stopped = yield* Deferred.make<void>();
+        handlers.set("stop", (input) =>
+          Deferred.succeed(stopping, input).pipe(
+            Effect.andThen(Deferred.await(stopped)),
+            Effect.andThen(Effect.sync(() => units.delete(unit))),
+            Effect.as(output("")),
+          ),
+        );
+        const fiber = yield* scope.stop(unit).pipe(Effect.forkChild);
+        expect((yield* Deferred.await(stopping)).timeout).toBe("15 seconds");
+        expect(fiber.pollUnsafe()).toBeUndefined();
+        yield* Deferred.succeed(stopped, undefined);
+        yield* Fiber.join(fiber);
+        expect(calls.filter(([, verb]) => verb === "stop")).toEqual([["--user", "stop", unit]]);
+      }),
+    ),
+  );
+
+  it.effect.each(["kernel OOM", "OOM result", "deactivating"] as const)(
+    "awaits %s shutdown without replacing its diagnosis",
+    (pending) =>
+      withFakeSystemd(({ scope, units, calls, handlers }) =>
+        Effect.gen(function* () {
+          const launch = yield* scope.wrap({
+            command: "agent",
+            args: [],
+            name: "acp",
+            threadId: "a",
+          });
+          const unit = unitOf(launch);
+          units.set(unit, {
+            activeState: pending === "deactivating" ? "deactivating" : "active",
+            result: pending === "OOM result" ? "oom-kill" : "success",
+            oomKills: pending === "kernel OOM" ? 1 : 0,
+            populated: true,
+          });
+          const waiting = yield* Deferred.make<void>();
+          const completed = yield* Deferred.make<void>();
+          let reads = 0;
+          handlers.set("show", () =>
+            ++reads === 2
+              ? Deferred.succeed(waiting, undefined).pipe(
+                  Effect.andThen(Deferred.await(completed)),
+                  Effect.as(undefined),
+                )
+              : Effect.succeed(undefined),
+          );
+          const fiber = yield* scope.stop(unit).pipe(Effect.forkChild);
+          yield* Deferred.await(waiting);
+          expect(fiber.pollUnsafe()).toBeUndefined();
+          expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
+          units.set(unit, { activeState: "failed", result: "oom-kill", populated: false });
+          yield* Deferred.succeed(completed, undefined);
+          yield* Fiber.join(fiber);
+          expect(yield* scope.oomKilled("a")).toBe(true);
+          expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
+        }),
+      ),
+  );
+
+  it.effect("fails when pending OOM shutdown never finishes", () =>
+    withFakeSystemd(({ scope, units, handlers }) =>
+      Effect.gen(function* () {
+        const launch = yield* scope.wrap({ command: "agent", args: [], name: "acp" });
+        const unit = unitOf(launch);
+        units.set(unit, { activeState: "active", result: "success", oomKills: 1, populated: true });
+        const waiting = yield* Deferred.make<void>();
+        let reads = 0;
+        handlers.set("show", () =>
+          ++reads === 2
+            ? Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(undefined),
+        );
+        const fiber = yield* scope.stop(unit).pipe(Effect.uninterruptible, Effect.forkChild);
+        yield* Deferred.await(waiting);
+        yield* TestClock.adjust("15 seconds");
+        expect(yield* Effect.flip(Fiber.join(fiber))).toMatchObject({
+          _tag: "AgentScopeStopError",
+          detail: "Agent scope did not finish stopping",
+        });
+      }),
+    ),
+  );
+
+  it.effect.each(["failure", "timeout"] as const)("reports a scope stop %s", (failure) =>
+    withFakeSystemd(({ scope, units, handlers, output }) =>
+      Effect.gen(function* () {
+        const launch = yield* scope.wrap({ command: "agent", args: [], name: "acp" });
+        const unit = unitOf(launch);
+        units.set(unit, { activeState: "active", result: "success", populated: true });
+        handlers.set("stop", () =>
+          Effect.succeed({
+            ...output(""),
+            code: ChildProcessSpawner.ExitCode(failure === "failure" ? 1 : 0),
+            timedOut: failure === "timeout",
+          }),
+        );
+        expect(yield* Effect.flip(scope.stop(unit))).toMatchObject({
+          _tag: "AgentScopeStopError",
+          unit,
+        });
+      }),
+    ),
+  );
+
+  it.effect("does not report an unreadable scope as stopped", () =>
+    withFakeSystemd(({ scope, handlers, output }) =>
+      Effect.gen(function* () {
+        const launch = yield* scope.wrap({ command: "agent", args: [], name: "acp" });
+        handlers.set("show", () =>
+          Effect.succeed({ ...output(""), code: ChildProcessSpawner.ExitCode(1) }),
+        );
+        expect(yield* Effect.flip(scope.stop(unitOf(launch)))).toMatchObject({
+          _tag: "AgentScopeStopError",
+        });
+      }),
+    ),
+  );
+
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
     withFakeSystemd(({ scope, units }) =>
       Effect.gen(function* () {
