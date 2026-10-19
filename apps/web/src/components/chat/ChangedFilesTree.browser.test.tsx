@@ -107,12 +107,12 @@ describe("ChangedFilesTree", () => {
     file(`src/file-${index.toString().padStart(5, "0")}.ts`),
   );
 
-  it("virtualizes above 250 expanded files and disables it when folders collapse below that count", async () => {
+  it("virtualizes above 250 visible rows and disables it when folders collapse below that count", async () => {
     await render(
       <div style={{ height: 280, overflowY: "auto" }}>
         <ChangedFilesTree
           runId={RunId.make("run-1")}
-          files={[...manyFiles.slice(0, 250), file("extra/overflow.ts")]}
+          files={[...manyFiles.slice(0, 248), file("extra/overflow.ts")]}
           allDirectoriesExpanded={false}
           resolvedTheme="light"
           onOpenTurnDiff={() => {}}
@@ -122,18 +122,50 @@ describe("ChangedFilesTree", () => {
     expect(container.querySelectorAll("button").length).toBe(2);
 
     await act(async () => buttonWithText("src").click());
-    expect(container.querySelectorAll("button").length).toBe(252);
-    expect(text()).toContain("file-00249.ts");
+    expect(container.querySelectorAll("button").length).toBe(250);
+    expect(text()).toContain("file-00247.ts");
     expect(text()).not.toContain("overflow.ts");
 
     await act(async () => buttonWithText("extra").click());
     expect(container.querySelectorAll("button").length).toBeLessThan(60);
-    expect(text()).not.toContain("file-00249.ts");
+    expect(text()).not.toContain("file-00247.ts");
 
     await act(async () => buttonWithText("extra").click());
-    expect(container.querySelectorAll("button").length).toBe(252);
-    expect(text()).toContain("file-00249.ts");
+    expect(container.querySelectorAll("button").length).toBe(250);
+    expect(text()).toContain("file-00247.ts");
     expect(text()).not.toContain("overflow.ts");
+  });
+
+  it("keeps 1,000 collapsed folders virtualized and reachable after scrolling", async () => {
+    const files = Array.from({ length: 1_000 }, (_, index) =>
+      file(`folder-${index.toString().padStart(4, "0")}/index.ts`),
+    );
+    const content = (expanded: boolean) => (
+      <div style={{ height: 280, overflowY: "auto" }}>
+        <ChangedFilesTree
+          runId={RunId.make("run-1")}
+          files={files}
+          allDirectoriesExpanded={expanded}
+          resolvedTheme="light"
+          onOpenTurnDiff={() => {}}
+        />
+      </div>
+    );
+    await render(content(true));
+    expect(container.querySelectorAll("button").length).toBeLessThan(60);
+
+    await render(content(false));
+    expect(container.querySelectorAll("button").length).toBeLessThan(60);
+    expect(text()).toContain("folder-0000");
+    expect(text()).not.toContain("index.ts");
+    expect(text()).not.toContain("folder-0999");
+
+    const viewport = container.firstElementChild as HTMLElement;
+    await scrollTo(viewport, viewport.scrollHeight);
+    expect(text()).toContain("folder-0999");
+    expect(container.querySelectorAll("button").length).toBeLessThan(60);
+    await act(async () => buttonWithText("folder-0999").click());
+    expect(text()).toContain("index.ts");
   });
 
   it("keeps expand-all bounded and opens files after scrolling the surrounding viewport", async () => {
