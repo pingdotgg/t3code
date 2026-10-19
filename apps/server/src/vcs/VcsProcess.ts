@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   type VcsError,
+  type VcsProcessErrorContext,
   VcsProcessExitError,
   type VcsProcessExitFailureKind,
   VcsProcessMissingExitCodeError,
@@ -162,21 +163,24 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
+// On macOS, Git's fsync uses F_FULLFSYNC; writeout-only still uses fsync(2).
+// Network mounts can reject F_FULLFSYNC. Ref writes omit errno, so retry their
+// bare write error too; explicit unrelated errors remain failures.
+// Linux writeout-only only starts writeback, so it must not use this fallback.
+const FULL_FSYNC_ARG = "core.fsyncMethod=fsync";
+const WRITEOUT_ONLY_FSYNC_ARG = "core.fsyncMethod=writeout-only";
+const canRetryFullFsync = (stderr: string) =>
+  /fsync error on [^\r\n]+: operation not supported\r?$/im.test(stderr) ||
+  /cannot update ref [^\r\n]+: couldn't write '[^\r\n]+\.lock'\r?$/im.test(stderr);
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
-  const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
-    const baseError = {
-      operation: input.operation,
-      command: input.command,
-      cwd: input.cwd,
-      argumentCount: input.args.length,
-    };
-
-    const result = yield* processRunner
+  const spawn = (input: VcsProcessInput, baseError: VcsProcessErrorContext) =>
+    processRunner
       .run({
         command: input.command,
         args: input.args,
@@ -223,6 +227,35 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+
+  const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
+    const baseError = {
+      operation: input.operation,
+      command: input.command,
+      cwd: input.cwd,
+      argumentCount: input.args.length,
+    };
+
+    let result = yield* spawn(input, baseError);
+
+    if (
+      hostPlatform === "darwin" &&
+      input.operation === CHECKPOINT_CAPTURE_OPERATION &&
+      !input.allowNonZeroExit &&
+      result.code !== null &&
+      result.code !== 0 &&
+      input.command === "git" &&
+      input.args.includes(FULL_FSYNC_ARG) &&
+      canRetryFullFsync(result.stderr)
+    ) {
+      result = yield* spawn(
+        {
+          ...input,
+          args: input.args.map((arg) => (arg === FULL_FSYNC_ARG ? WRITEOUT_ONLY_FSYNC_ARG : arg)),
+        },
+        baseError,
+      );
+    }
 
     if (result.code === null) {
       return yield* new VcsProcessMissingExitCodeError(baseError);

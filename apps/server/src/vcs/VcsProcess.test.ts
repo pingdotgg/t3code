@@ -97,6 +97,98 @@ describe("VcsProcess.run", () => {
       }),
   );
 
+  it.effect.each([
+    {
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync", "writeout-only"],
+    },
+    {
+      stderr:
+        "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock'",
+      fsyncMethods: ["fsync", "writeout-only"],
+    },
+    { stderr: "fatal: Operation not supported", fsyncMethods: ["fsync"] },
+    {
+      stderr:
+        "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock': Input/output error",
+      fsyncMethods: ["fsync"],
+    },
+    {
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync", "writeout-only"],
+      fallbackFails: true,
+    },
+    {
+      platform: "linux",
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync"],
+    },
+    {
+      operation: baseInput.operation,
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync"],
+    },
+  ] as const)(
+    "falls back to writeout-only only for unsupported fsync on macOS: $stderr",
+    ({ stderr, fsyncMethods, ...scenario }) =>
+      Effect.gen(function* () {
+        const seen: Array<ReadonlyArray<string>> = [];
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(
+            HostProcess.Platform,
+            "platform" in scenario ? scenario.platform : "darwin",
+          ),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.sync(() => {
+                seen.push(input.args);
+                const failed =
+                  input.args.includes("core.fsyncMethod=fsync") ||
+                  ("fallbackFails" in scenario && scenario.fallbackFails);
+                return {
+                  stdout: "",
+                  stderr: failed ? stderr : "",
+                  code: ChildProcessSpawner.ExitCode(failed ? 128 : 0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        );
+        const exit = yield* service
+          .run({
+            ...baseInput,
+            operation:
+              "operation" in scenario
+                ? scenario.operation
+                : VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+            args: ["-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync", "add"],
+          })
+          .pipe(Effect.exit);
+        expect(seen).toEqual(
+          fsyncMethods.map((method) => [
+            "-c",
+            "core.fsync=objects,reference",
+            "-c",
+            `core.fsyncMethod=${method}`,
+            "add",
+          ]),
+        );
+        expect(Exit.isSuccess(exit)).toBe(
+          fsyncMethods.length === 2 && !("fallbackFails" in scenario && scenario.fallbackFails),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+            _tag: "Some",
+            value: { _tag: "VcsProcessExitError", exitCode: 128 },
+          });
+        }
+      }),
+  );
+
   it.effect.each(["timeout", "spawn"] as const)(
     "checkpoint commands do not retry %s failures",
     (kind) =>
