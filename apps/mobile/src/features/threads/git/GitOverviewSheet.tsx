@@ -26,6 +26,8 @@ import {
   AndroidSheetHeader,
 } from "../../../components/ui/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../../components/ui/AndroidAnchoredMenu";
+import { ListRow } from "../../../components/ui/ListRow";
+import { ListSection } from "../../../components/ui/ListSection";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../../layout/AdaptiveWorkspaceLayout";
 import { AppText as Text } from "../../../components/ui/AppText";
@@ -40,7 +42,7 @@ import { useSelectedThreadGitState } from "../../../state/use-selected-thread-gi
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
-import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import { menuItemIconName, statusSummary } from "./gitSheetComponents";
 import {
   LinkedPullRequestRow,
   linkedPullRequestKey,
@@ -245,46 +247,34 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         ) : undefined
       }
     >
-      <View
-        className={`overflow-hidden bg-card android:rounded-[20px] ios:border ios:border-border ${
-          isInspector ? "ios:rounded-2xl ios:px-3 ios:py-1" : "ios:rounded-[22px] ios:px-4 ios:py-1"
-        }`}
-      >
-        {sheetMenuItems.map(({ item, disabledReason }, index) => (
-          <View key={`${item.id}-${item.label}`}>
-            {index > 0 && Platform.OS !== "android" ? (
-              <View className="ml-12 h-px bg-border" />
-            ) : null}
-            <SheetListRow
-              icon={menuItemIconName(item.icon)}
-              title={item.label}
-              subtitle={disabledReason ?? rowStatusDetail(item)}
-              disabled={item.disabled}
-              onPress={() => void onPressMenuItem(item)}
-            />
-          </View>
+      <ListSection>
+        {sheetMenuItems.map(({ item, disabledReason }) => (
+          <ListRow
+            key={`${item.id}-${item.label}`}
+            icon={menuItemIconName(item.icon)}
+            label={item.label}
+            description={disabledReason ?? rowStatusDetail(item)}
+            disabled={item.disabled}
+            onPress={() => void onPressMenuItem(item)}
+          />
         ))}
         {behindCount > 0 ? (
-          <>
-            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-            <SheetListRow
-              icon="arrow.down.circle"
-              title="Pull latest"
-              subtitle={
-                canWriteSourceControl
-                  ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
-                  : "This connection cannot change source control."
-              }
-              disabled={!canWriteSourceControl || busy || !isRepo}
-              onPress={() => void gitActions.onPullSelectedThreadBranch()}
-            />
-          </>
+          <ListRow
+            icon="arrow.down.circle"
+            label="Pull latest"
+            description={
+              canWriteSourceControl
+                ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
+                : "This connection cannot change source control."
+            }
+            disabled={!canWriteSourceControl || busy || !isRepo}
+            onPress={() => void gitActions.onPullSelectedThreadBranch()}
+          />
         ) : null}
-        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-        <SheetListRow
+        <ListRow
           icon="text.bubble"
-          title="Review changes"
-          subtitle="Inspect changes, uncommitted edits, and turn diffs"
+          label="Review changes"
+          description="Inspect changes, uncommitted edits, and turn diffs"
           disabled={busy || !isRepo}
           onPress={() => {
             const params = { environmentId, threadId };
@@ -295,11 +285,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             );
           }}
         />
-        {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-        <SheetListRow
+        <ListRow
           icon="point.topleft.down.curvedto.point.bottomright.up"
-          title="Branches & worktrees"
-          subtitle={
+          label="Branches & worktrees"
+          description={
             canChangeThreadBranch
               ? "Switch branch, create branch, or move to a worktree"
               : "View branches and worktrees"
@@ -313,39 +302,37 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           }
         />
         {linkedPrActions.canLink ? (
-          <>
-            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
-            <SheetListRow
-              icon="link"
-              title="Link pull request"
-              subtitle="Attach a pull request by URL or number"
-              onPress={linkedPrActions.promptLink}
-            />
-          </>
+          <ListRow
+            icon="link"
+            label="Link pull request"
+            description="Attach a pull request by URL or number"
+            onPress={linkedPrActions.promptLink}
+          />
         ) : null}
-      </View>
+      </ListSection>
 
       {linkedPrLines.length > 0 ? (
-        <View className="gap-2">
-          <Text className="px-1 text-xs font-t3-bold text-foreground-muted">
-            Linked pull requests
-          </Text>
-          <View className="overflow-hidden bg-card android:rounded-[20px] ios:rounded-2xl ios:border ios:border-border">
-            {linkedPrLines.map((line, index) => (
-              <LinkedPullRequestRow
-                key={linkedPullRequestKey(line)}
-                line={line}
-                separator={index < linkedPrLines.length - 1}
-                surfaceClassName="text-card"
-                openPullRequest={openPullRequest}
-                actions={linkedPrActions}
-              />
-            ))}
-          </View>
-        </View>
+        <ListSection title="Linked pull requests">
+          {linkedPrLines.map((line, index) => (
+            <LinkedPullRequestRow
+              key={linkedPullRequestKey(line)}
+              line={line}
+              separator={index < linkedPrLines.length - 1}
+              surfaceClassName="text-grouped-card"
+              openPullRequest={openPullRequest}
+              actions={linkedPrActions}
+            />
+          ))}
+        </ListSection>
       ) : null}
 
-      {currentWorktreePath ? <MetaCard label="Worktree" value={currentWorktreePath} /> : null}
+      {currentWorktreePath ? (
+        <ListSection title="Worktree">
+          <Text selectable textRole="footnote" className="p-4 text-foreground-muted">
+            {currentWorktreePath}
+          </Text>
+        </ListSection>
+      ) : null}
     </ScrollView>
   );
 
