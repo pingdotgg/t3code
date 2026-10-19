@@ -28,7 +28,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
-  type ServerProvider,
+  ServerProvider,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
@@ -68,6 +68,8 @@ import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { ProviderDriverError } from "./Errors.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+const decodeServerProvider = Schema.decodeSync(ServerProvider);
+const encodeServerProvider = Schema.encodeSync(ServerProvider);
 const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
@@ -630,7 +632,7 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
-    it("stores workspace skills and commands without changing machine metadata", () => {
+    it("stores workspace skills, commands and options without changing machine metadata", () => {
       const provider = {
         instanceId: ProviderInstanceId.make("codex"),
         driver: ProviderDriverKind.make("codex"),
@@ -649,7 +651,15 @@ it.layer(
         checkedAt: "2026-03-25T00:01:00.000Z",
         slashCommands: [{ name: "project" }],
         skills: [{ name: "project", path: "/project/SKILL.md", enabled: true }],
-      } satisfies ServerProvider;
+        optionDescriptors: [
+          {
+            id: "agent",
+            label: "Agent",
+            type: "select",
+            options: [{ id: "readonly", label: "Readonly" }],
+          },
+        ],
+      } satisfies ProviderWorkspaceSnapshot;
 
       const result = ProviderRegistry.upsertProviderWorkspaceSnapshot(
         provider,
@@ -659,12 +669,15 @@ it.layer(
 
       assert.deepStrictEqual(result.slashCommands, provider.slashCommands);
       assert.deepStrictEqual(result.skills, provider.skills);
-      assert.deepStrictEqual(result.workspaceSnapshots, [
+      assert.strictEqual(result.models, provider.models);
+      const decoded = decodeServerProvider(encodeServerProvider(result));
+      assert.deepStrictEqual(decoded.workspaceSnapshots, [
         {
           cwd: "/project",
           checkedAt: scopedSnapshot.checkedAt,
           slashCommands: scopedSnapshot.slashCommands,
           skills: scopedSnapshot.skills,
+          optionDescriptors: scopedSnapshot.optionDescriptors,
         },
       ]);
 
@@ -697,6 +710,47 @@ it.layer(
         { name: "replacement" },
       ]);
       assert.strictEqual(recovered.workspaceSnapshots?.[0]?.slashCommandsPending, undefined);
+
+      const { optionDescriptors, ...failedSnapshot } = scopedSnapshot;
+      const firstFailure = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        provider,
+        "/project",
+        failedSnapshot,
+      );
+      assert.strictEqual(
+        Object.hasOwn(firstFailure.workspaceSnapshots![0]!, "optionDescriptors"),
+        false,
+      );
+      const failedOtherProject = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        recovered,
+        "/other-project",
+        failedSnapshot,
+      );
+      assert.strictEqual(
+        Object.hasOwn(failedOtherProject.workspaceSnapshots![1]!, "optionDescriptors"),
+        false,
+      );
+
+      for (const clearedDescriptors of [[], [{ ...optionDescriptors[0]!, options: [] }]]) {
+        const cleared = ProviderRegistry.upsertProviderWorkspaceSnapshot(recovered, "/project", {
+          ...scopedSnapshot,
+          optionDescriptors: clearedDescriptors,
+        });
+        assert.deepStrictEqual(
+          cleared.workspaceSnapshots?.[0]?.optionDescriptors,
+          clearedDescriptors,
+        );
+      }
+
+      const failedRefresh = ProviderRegistry.upsertProviderWorkspaceSnapshot(
+        failedOtherProject,
+        "/project",
+        failedSnapshot,
+      );
+      assert.deepStrictEqual(
+        failedRefresh.workspaceSnapshots?.[1]?.optionDescriptors,
+        optionDescriptors,
+      );
     });
 
     it("preserves previously discovered provider models when a refresh returns none", () => {

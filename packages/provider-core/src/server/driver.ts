@@ -37,7 +37,7 @@ export interface ProviderDriverMetadata {
 }
 
 export type ProviderWorkspaceSnapshot = ServerProvider &
-  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending">;
+  Pick<ServerProviderWorkspaceSnapshot, "slashCommandsPending" | "optionDescriptors">;
 
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;

@@ -23,7 +23,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
-import { ModelCapabilities } from "./model.ts";
+import { ModelCapabilities, ProviderOptionDescriptor } from "./model.ts";
 import { RuntimeMode } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
@@ -134,6 +134,7 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   slashCommands: Schema.Array(ServerProviderSlashCommand),
   slashCommandsPending: Schema.optional(Schema.Boolean),
   skills: Schema.Array(ServerProviderSkill),
+  optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
 
