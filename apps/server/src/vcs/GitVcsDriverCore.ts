@@ -4,6 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -83,7 +84,10 @@ const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
 class ReviewFileDiffRequest extends Request.Class<
-  { input: ReviewDiffPreviewInput & { file: NonNullable<ReviewDiffPreviewInput["file"]> } },
+  {
+    input: ReviewDiffPreviewInput & { file: NonNullable<ReviewDiffPreviewInput["file"]> };
+    released: Deferred.Deferred<void>;
+  },
   ReviewDiffPreviewResult,
   GitCommandError
 > {}
@@ -3554,56 +3558,83 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ]),
     delay: Effect.yieldNow,
     collectWhile: (entries) => entries.size < 4,
-    runAll: Effect.fnUntraced(function* (entries) {
-      const input = entries[0].request.input;
-      const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
-        Effect.catchTags({
-          GitCommandError: (error) =>
-            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-        }),
-      );
-      let prepared: PreparedReviewDiff = {
-        repository,
-        review: { baseRef: null, mergeBase: null },
-        untracked: null,
-      };
-      if (repository?.worktreeRoot) {
-        const cwd = repository.worktreeRoot;
-        const review =
-          input.file.sourceKind === "working-tree"
-            ? { baseRef: input.baseRef ?? null, mergeBase: null }
-            : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
-        const files = entries.map((entry) => entry.request.input.file);
-        const paths = [
-          ...new Set(
-            files.flatMap((file) => [file.path, ...(file.previousPath ? [file.previousPath] : [])]),
-          ),
-        ];
-        const untracked = yield* prepareUntrackedReviewIndex(
-          cwd,
-          paths.map((path) => `:(top,literal)${path}`),
-          new Set(files.map((file) => file.path)),
+    runAll: Effect.fnUntraced(
+      function* (entries) {
+        const input = entries[0].request.input;
+        const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+          Effect.catchTags({
+            GitCommandError: (error) =>
+              isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+          }),
         );
-        prepared = { repository, review, untracked };
-      }
-      yield* Effect.forEach(
-        entries,
-        (entry) =>
-          readReviewDiffPreview(entry.request.input, prepared).pipe(
-            Effect.exit,
-            Effect.map((exit) => entry.completeUnsafe(exit)),
-          ),
-        { concurrency: 4, discard: true },
-      );
-    }, Effect.scoped),
+        let prepared: PreparedReviewDiff = {
+          repository,
+          review: { baseRef: null, mergeBase: null },
+          untracked: null,
+        };
+        if (repository?.worktreeRoot) {
+          const cwd = repository.worktreeRoot;
+          const review =
+            input.file.sourceKind === "working-tree"
+              ? { baseRef: input.baseRef ?? null, mergeBase: null }
+              : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
+          const files = entries
+            .filter((entry) => !Deferred.isDoneUnsafe(entry.request.released))
+            .map((entry) => entry.request.input.file);
+          if (files.length === 0) return yield* Effect.interrupt;
+          const paths = [
+            ...new Set(
+              files.flatMap((file) => [
+                file.path,
+                ...(file.previousPath ? [file.previousPath] : []),
+              ]),
+            ),
+          ];
+          const untracked = yield* prepareUntrackedReviewIndex(
+            cwd,
+            paths.map((path) => `:(top,literal)${path}`),
+            new Set(files.map((file) => file.path)),
+          );
+          prepared = { repository, review, untracked };
+        }
+        yield* Effect.forEach(
+          entries,
+          (entry) =>
+            Effect.suspend(() =>
+              Deferred.isDoneUnsafe(entry.request.released)
+                ? Effect.interrupt
+                : readReviewDiffPreview(entry.request.input, prepared).pipe(
+                    Effect.raceFirst(
+                      Deferred.await(entry.request.released).pipe(Effect.andThen(Effect.interrupt)),
+                    ),
+                  ),
+            ).pipe(
+              Effect.exit,
+              Effect.map((exit) => entry.completeUnsafe(exit)),
+            ),
+          { concurrency: 4, discard: true },
+        );
+      },
+      (effect, entries) =>
+        Effect.raceFirst(
+          effect,
+          Effect.forEach(entries, (entry) => Deferred.await(entry.request.released), {
+            concurrency: "unbounded",
+            discard: true,
+          }).pipe(Effect.andThen(Effect.interrupt)),
+        ),
+      Effect.scoped,
+    ),
   });
-  const getReviewDiffPreview = (input: ReviewDiffPreviewInput) =>
-    input.file
-      ? Effect.request(
-          new ReviewFileDiffRequest({ input: { ...input, file: input.file } }),
-          reviewFileDiffResolver,
-        )
-      : readReviewDiffPreview(input);
+  const getReviewDiffPreview = Effect.fnUntraced(function* (input: ReviewDiffPreviewInput) {
+    if (!input.file) return yield* readReviewDiffPreview(input);
+    const released = yield* Deferred.make<void>();
+    // Effect's resolver detaches running batches, so callers must signal when they stop waiting.
+    return yield* Effect.request(
+      new ReviewFileDiffRequest({ input: { ...input, file: input.file }, released }),
+      reviewFileDiffResolver,
+    ).pipe(Effect.ensuring(Deferred.succeed(released, undefined)));
+  });
 
   const reviewDiffFileError = (
     input: ReviewDiffFileContentsInput,

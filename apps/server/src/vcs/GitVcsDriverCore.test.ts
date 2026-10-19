@@ -2206,6 +2206,83 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each([
+      { blockedArgument: "--intent-to-add", completeFirst: false },
+      { blockedArgument: "--patch", completeFirst: false },
+      { blockedArgument: "--patch", completeFirst: true },
+    ])(
+      "cleans abandoned batches during $blockedArgument (finished reader: $completeFirst)",
+      ({ blockedArgument, completeFirst }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "first.txt", "first\n");
+          yield* writeTextFile(cwd, "second.txt", "second\n");
+          const started = yield* Deferred.make<void>();
+          const cleaned = yield* Deferred.make<void>();
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const fs = yield* FileSystem.FileSystem;
+          const indexes: string[] = [];
+          let activeProcesses = 0;
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              makeTempFileScoped: (options) =>
+                Effect.acquireRelease(
+                  fs
+                    .makeTempFile(options)
+                    .pipe(Effect.tap((path) => Effect.sync(() => indexes.push(path)))),
+                  (path) =>
+                    fs
+                      .remove(path)
+                      .pipe(Effect.orDie, Effect.andThen(Deferred.succeed(cleaned, undefined))),
+                ),
+            }),
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                if (
+                  !ChildProcess.isStandardCommand(command) ||
+                  !command.args.includes(blockedArgument) ||
+                  (completeFirst && command.args.includes(":(top,literal)first.txt"))
+                ) {
+                  return delegate.spawn(command);
+                }
+                return Effect.acquireRelease(
+                  Effect.gen(function* () {
+                    activeProcesses++;
+                    yield* Deferred.succeed(started, undefined);
+                    return { ...makeSuccessfulHandle(""), exitCode: Effect.never };
+                  }),
+                  () =>
+                    Effect.sync(() => {
+                      activeProcesses--;
+                    }),
+                );
+              }),
+            ),
+            Effect.provide(layerServerConfig),
+          );
+          const readers = yield* Effect.forEach(["first.txt", "second.txt"], (path) =>
+            driver
+              .getReviewDiffPreview({
+                cwd,
+                file: { path, previousPath: null, sourceKind: "working-tree" },
+              })
+              .pipe(Effect.forkChild),
+          );
+          yield* Deferred.await(started);
+          assert.lengthOf(indexes, 1);
+          assert.isTrue(yield* fs.exists(indexes[0]!));
+          if (completeFirst)
+            assert.include((yield* Fiber.join(readers[0]!)).sources[0]!.diff, "+first");
+          yield* Effect.forEach(readers, Fiber.interrupt, { concurrency: "unbounded" });
+          yield* Deferred.await(cleaned);
+          assert.equal(activeProcesses, 0);
+          assert.isFalse(yield* fs.exists(indexes[0]!));
+        }),
+    );
+
     it.effect("keeps concurrent file reads in different repositories separate", () =>
       Effect.gen(function* () {
         const first = yield* makeTmpDir();
