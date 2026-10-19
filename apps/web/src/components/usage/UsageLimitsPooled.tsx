@@ -15,7 +15,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { createContext, Fragment, type ReactNode, use, useEffect, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -27,7 +27,7 @@ import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   PaceIcon,
   ResetCreditDialog,
@@ -205,18 +205,61 @@ function SegmentPopover({
 }
 
 /**
+ * Every segment on the page shares one popover, so hovering or clicking another
+ * segment moves it instead of opening a second one. The payload is the segment
+ * it currently describes.
+ */
+type SegmentPayload = Omit<Parameters<typeof SegmentPopover>[0], "now" | "onRedeem">;
+const SegmentPopoverContext = createContext<ReturnType<
+  typeof PopoverCreateHandle<SegmentPayload>
+> | null>(null);
+
+function ActiveSegmentPopover({
+  handle,
+  payload,
+  pools,
+  now,
+}: {
+  readonly handle: ReturnType<typeof PopoverCreateHandle<SegmentPayload>>;
+  readonly payload: SegmentPayload;
+  readonly pools: readonly LimitPool[];
+  readonly now: number;
+}) {
+  const available = pools.some((pool) =>
+    displayLimitWindows(pool).some((window) =>
+      window.members.some(
+        (member) =>
+          member.account.key === payload.account.key &&
+          member.window.id === payload.window.id &&
+          member.window.kind === payload.window.kind &&
+          Boolean(member.account.redeem) === Boolean(payload.redeem),
+      ),
+    ),
+  );
+  useEffect(() => {
+    if (!available) handle.close();
+  }, [available, handle]);
+  return (
+    <PopoverPopup side="top" sideOffset={6}>
+      <SegmentPopover
+        {...payload}
+        now={now}
+        onRedeem={() => {
+          handle.close();
+          payload.redeem?.setConfirming(true);
+        }}
+      />
+    </PopoverPopup>
+  );
+}
+
+/**
  * The confirm is a sibling of the popover, not a child: dialogs stack under
  * popovers, and the popover closes as the confirm opens.
  */
 function PoolSegment({
   account,
-  window,
-  reset,
-  refillPercent,
-  color,
-  now,
-  index,
-  showAccountName,
+  ...props
 }: {
   readonly account: LimitAccount;
   readonly window: LimitPoolMember["window"];
@@ -227,14 +270,68 @@ function PoolSegment({
   readonly index: number;
   readonly showAccountName: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  return account.redeem ? (
+    <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
+  ) : (
+    <SegmentTriggers account={account} redeem={null} {...props} />
+  );
+}
+
+function RedeemableSegment({
+  redeemAt,
+  ...props
+}: Omit<Parameters<typeof SegmentTriggers>[0], "redeem"> & {
+  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
+}) {
+  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  return (
+    <>
+      <SegmentTriggers redeem={redeem} {...props} />
+      <ResetCreditDialog
+        open={redeem.confirming}
+        onOpenChange={redeem.setConfirming}
+        onConfirm={() => void redeem.redeem()}
+        disabled={!redeem.canManageProviders}
+      />
+      {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
+      {redeem.busy || redeem.status ? (
+        <span role="status" className="col-span-full text-xs text-muted-foreground">
+          <AccountName account={props.account} className="font-medium text-foreground" />{" "}
+          {redeem.busy ? "Using reset credit…" : redeem.status}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function SegmentTriggers({
+  account,
+  window,
+  reset,
+  redeem,
+  refillPercent,
+  color,
+  now,
+  index,
+  showAccountName,
+}: SegmentPayload & {
+  readonly refillPercent: number;
+  readonly color: string;
+  readonly now: number;
+  readonly index: number;
+  readonly showAccountName: boolean;
+}) {
+  const popover = use(SegmentPopoverContext) ?? undefined;
+  const payload: SegmentPayload = { account, window, reset, redeem };
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <>
       <PopoverTrigger
+        handle={popover}
+        payload={payload}
         openOnHover
         render={
           <button
@@ -303,50 +400,31 @@ function PoolSegment({
           ) : null}
         </div>
       </PopoverTrigger>
-      <LegendRow account={account} window={window} color={color} now={now} index={index} />
-      {account.redeem ? (
-        <RedeemableSegmentPopup
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeemAt={account.redeem}
-          closePopover={() => setOpen(false)}
-        />
-      ) : (
-        <PopoverPopup side="top" sideOffset={6}>
-          <SegmentPopover
-            account={account}
-            window={window}
-            reset={reset}
-            now={now}
-            redeem={null}
-            onRedeem={() => {}}
-          />
-        </PopoverPopup>
-      )}
-    </Popover>
+      <LegendRow payload={payload} color={color} now={now} index={index} />
+    </>
   );
 }
 
 function LegendRow({
-  account,
-  window,
+  payload,
   color,
   now,
   index,
 }: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
+  readonly payload: SegmentPayload;
   readonly color: string;
   readonly now: number;
   readonly index: number;
 }) {
+  const popover = use(SegmentPopoverContext) ?? undefined;
+  const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <PopoverTrigger
+      handle={popover}
+      payload={payload}
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
@@ -381,54 +459,6 @@ function LegendRow({
         ) : null}
       </span>
     </PopoverTrigger>
-  );
-}
-
-function RedeemableSegmentPopup({
-  account,
-  window,
-  reset,
-  now,
-  redeemAt,
-  closePopover,
-}: {
-  readonly account: LimitAccount;
-  readonly window: LimitPoolMember["window"];
-  readonly reset: LimitPoolWindow["resets"][number] | undefined;
-  readonly now: number;
-  readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
-  readonly closePopover: () => void;
-}) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
-  return (
-    <>
-      <PopoverPopup side="top" sideOffset={6}>
-        <SegmentPopover
-          account={account}
-          window={window}
-          reset={reset}
-          now={now}
-          redeem={redeem}
-          onRedeem={() => {
-            closePopover();
-            redeem.setConfirming(true);
-          }}
-        />
-      </PopoverPopup>
-      <ResetCreditDialog
-        open={redeem.confirming}
-        onOpenChange={redeem.setConfirming}
-        onConfirm={() => void redeem.redeem()}
-        disabled={!redeem.canManageProviders}
-      />
-      {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
-      {redeem.busy || redeem.status ? (
-        <span role="status" className="col-span-full text-xs text-muted-foreground">
-          <AccountName account={account} className="font-medium text-foreground" />{" "}
-          {redeem.busy ? "Using reset credit…" : redeem.status}
-        </span>
-      ) : null}
-    </>
   );
 }
 
@@ -551,6 +581,7 @@ export function UsageLimitsPooled({
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
+  const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
@@ -566,12 +597,26 @@ export function UsageLimitsPooled({
           No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
-      {pools.map((pool, index) => (
-        <Fragment key={pool.driver}>
-          {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
-        </Fragment>
-      ))}
+      <SegmentPopoverContext value={segmentPopover}>
+        {pools.map((pool, index) => (
+          <Fragment key={pool.driver}>
+            {index === cursorPromptAt ? cursorPrompt : null}
+            <PoolSection pool={pool} now={now} />
+          </Fragment>
+        ))}
+      </SegmentPopoverContext>
+      <Popover handle={segmentPopover}>
+        {({ payload }) =>
+          payload ? (
+            <ActiveSegmentPopover
+              handle={segmentPopover}
+              payload={payload}
+              pools={pools}
+              now={now}
+            />
+          ) : null
+        }
+      </Popover>
       {cursorPromptAt === pools.length ? cursorPrompt : null}
       {externalLinks.map((link) => (
         <section
