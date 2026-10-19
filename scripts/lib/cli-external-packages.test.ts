@@ -51,6 +51,8 @@ describe("shouldBundleCliDependency", () => {
       "@napi-rs/keyring",
       "@clerk/electron-passkeys",
       "node-addon-api",
+      "@trycua/cua-driver/embedded",
+      "@ubjs/node",
     ]) {
       assert.strictEqual(shouldBundleCliDependency(id), false, id);
     }
@@ -83,6 +85,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "@cursor/sdk",
         "@ff-labs/fff-node",
         "@napi-rs/keyring",
+        "@trycua/cua-driver",
         "node-pty",
         "playwright-core",
         "undici",
