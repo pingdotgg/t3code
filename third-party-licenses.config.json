@@ -1,6 +1,18 @@
 {
   "customNotices": [
     {
+      "bundles": ["desktop", "web"],
+      "license": "MIT",
+      "name": "Ionic keyboard assist",
+      "sourceUrl": "https://github.com/ionic-team/ionic-framework/blob/main/core/src/utils/keyboard/keyboard.ts",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright (c) 2015-present Drifty Co."]
+        }
+      ]
+    },
+    {
       "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
       "name": "Notification Sound 1 by deadrobotmusic",
