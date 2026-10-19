@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
@@ -254,6 +255,180 @@ it.layer(
       expect(changed.status).toBe(200);
       expect(changed.headers["etag"]).not.toBe(etag);
       expect(yield* changed.text).toContain("next build");
+    }),
+  );
+
+  it.effect("serves static files without handles and skips fallback reads for HEAD and 304", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-no-open-" });
+      const filePath = path.join(staticDir, "app.txt");
+      const body = "packaged asset";
+      yield* fs.writeFileString(filePath, body);
+      let reads = 0;
+      // Electron asar files can be statted and read even when opening a handle fails.
+      const fileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        open: (candidate, options) =>
+          candidate === filePath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: candidate,
+                }),
+              )
+            : fs.open(candidate, options),
+        readFile: (candidate) =>
+          Effect.gen(function* () {
+            if (candidate === filePath) reads += 1;
+            return yield* fs.readFile(candidate);
+          }),
+      });
+      const request = yield* makeStaticRequest(staticDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      const get = yield* request("/app.txt");
+      expect(get.status).toBe(200);
+      expect(yield* get.text).toBe(body);
+      expect(reads).toBeGreaterThan(0);
+      const readsAfterGet = reads;
+      const head = yield* request("/app.txt", { method: "HEAD" });
+      expect(head.status).toBe(200);
+      expect(yield* head.text).toBe("");
+      expect(reads).toBe(readsAfterGet);
+      const unchanged = yield* request("/app.txt", {
+        headers: { "if-none-match": get.headers["etag"]! },
+      });
+      expect(unchanged.status).toBe(304);
+      expect(yield* unchanged.text).toBe("");
+      expect(reads).toBe(readsAfterGet);
+    }),
+  );
+
+  it.effect("returns 500 for static file open errors other than NotFound", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-open-error-" });
+      const filePath = path.join(staticDir, "index.html");
+      yield* fs.writeFileString(filePath, "<html>readable</html>");
+      const fileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        open: (candidate, options) =>
+          candidate === filePath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: candidate,
+                }),
+              )
+            : fs.open(candidate, options),
+      });
+      const request = yield* makeStaticRequest(staticDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      const response = yield* request("/");
+      expect(response.status).toBe(500);
+      expect(yield* response.text).toBe("Internal Server Error");
+    }),
+  );
+
+  it.effect("returns 500 when a static fallback read fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-read-error-" });
+      const filePath = path.join(staticDir, "index.html");
+      yield* fs.writeFileString(filePath, "<html>unreadable</html>");
+      const fileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        open: (candidate, options) =>
+          candidate === filePath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "FileSystem",
+                  method: "open",
+                  pathOrDescriptor: candidate,
+                }),
+              )
+            : fs.open(candidate, options),
+        readFile: (candidate) =>
+          candidate === filePath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readFile",
+                  pathOrDescriptor: candidate,
+                }),
+              )
+            : fs.readFile(candidate),
+      });
+      const request = yield* makeStaticRequest(staticDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+
+      const response = yield* request("/");
+      expect(response.status).toBe(500);
+      expect(yield* response.text).toBe("Internal Server Error");
+    }),
+  );
+
+  it.effect("serves replacement bytes with matching static fallback length and validators", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-replaced-" });
+      const filePath = path.join(staticDir, "app.txt");
+      const before = DateTime.toDateUtc(DateTime.makeUnsafe("1985-10-26T08:15:00.000Z"));
+      const after = DateTime.toDateUtc(DateTime.makeUnsafe("2015-10-21T16:29:00.000Z"));
+      const replacement = "the replacement asset";
+      const replacementPath = path.join(staticDir, "replacement.txt");
+      yield* fs.writeFileString(filePath, "old");
+      yield* fs.utimes(filePath, before, before);
+      yield* fs.writeFileString(replacementPath, replacement);
+      yield* fs.utimes(replacementPath, after, after);
+      let replaceOnOpen = false;
+      const fileSystem = FileSystem.FileSystem.of({
+        ...fs,
+        open: (candidate, options) =>
+          Effect.gen(function* () {
+            if (candidate !== filePath) return yield* fs.open(candidate, options);
+            if (replaceOnOpen) {
+              yield* fs.rename(replacementPath, filePath);
+              replaceOnOpen = false;
+            }
+            return yield* PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "open",
+              pathOrDescriptor: candidate,
+            });
+          }),
+      });
+      const request = yield* makeStaticRequest(staticDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+      );
+      const initial = yield* request("/app.txt", { headers: { "accept-encoding": "identity" } });
+      expect(yield* initial.text).toBe("old");
+
+      replaceOnOpen = true;
+      const response = yield* request("/app.txt", { headers: { "accept-encoding": "identity" } });
+      expect(response.status).toBe(200);
+      expect(response.headers).toMatchObject({
+        "content-length": String(Buffer.byteLength(replacement)),
+        "last-modified": after.toUTCString(),
+      });
+      expect(response.headers["etag"]).not.toBe(initial.headers["etag"]);
+      expect(yield* response.text).toBe(replacement);
     }),
   );
 
