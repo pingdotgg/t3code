@@ -862,6 +862,63 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  it.each([
+    ["claudeAgent", "13:00", 40, "14:00", 100],
+    ["codex", "14:00", 100, "14:00", 100],
+    ["claudeAgent", "15:00", 100, "15:00", 100],
+    ["codex", "15:00", 40, "14:00", 60],
+  ] as const)(
+    "%s session resetting at %s with %i percent spent becomes usable at %s with %i percent restored",
+    (driver, sessionReset, usedPercent, usableAt, restoresPercent) => {
+      const at = (time: string) => `2026-09-03T${time}:00.000Z`;
+      const a = {
+        ...account("a", [
+          {
+            ...window,
+            id: driver === "codex" ? "primary" : window.id,
+            usedPercent,
+            resetsAt: at(sessionReset),
+          },
+          {
+            ...weekly,
+            id: driver === "codex" ? "secondary" : weekly.id,
+            usedPercent: 100,
+            resetsAt: at("14:00"),
+          },
+        ]),
+        driver: ProviderDriverKind.make(driver),
+      };
+      const [session] = collectLimitPools([a], now)[0]!.windows;
+      expect.soft(session?.remainingPercent).toBe(0);
+      expect(session?.resets[0]).toMatchObject({
+        at: Date.parse(at(usableAt)),
+        restoresPercent,
+      });
+    },
+  );
+
+  it("excludes weekly-blocked sessions from the pool without changing snapshots or model allowances", () => {
+    const blocked = account("blocked", [
+      window,
+      { ...weekly, usedPercent: 100 },
+      { ...weekly, id: "seven_day_fable", usedPercent: 20 },
+    ]);
+    const accounts = [
+      blocked,
+      account("available", [
+        { ...window, usedPercent: 20 },
+        { ...weekly, usedPercent: 99 },
+        { ...weekly, id: "seven_day_fable", usedPercent: 40 },
+      ]),
+      { ...blocked, key: "cursor", driver: ProviderDriverKind.make("cursor") },
+    ];
+    const snapshot = structuredClone(accounts);
+    const [claude, cursor] = collectLimitPools(accounts, now);
+    expect.soft(claude?.windows.map((row) => row.remainingPercent)).toEqual([40, 1, 70]);
+    expect.soft(cursor?.windows.map((row) => row.remainingPercent)).toEqual([60, 0, 80]);
+    expect(accounts).toEqual(snapshot);
+  });
+
   it("keeps session columns across rows with opposite reset and usage orders", () => {
     const accounts = [
       account("a", [
@@ -882,6 +939,52 @@ describe("pooled account columns", () => {
     expect(pool!.windows[1]!.resets.map((reset) => reset.member.account.key)).toEqual(["a", "b"]);
     expect(pool!.windows[1]!.remainingPercent).toBe(50);
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
+  });
+
+  it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
+    "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
+    (resetsAt) => {
+      const [pool] = collectLimitPools(
+        [
+          account("session-clock", [
+            { ...window, resetsAt },
+            { ...weekly, usedPercent: 100 },
+          ]),
+          account("weekly-clock", [window, { ...weekly, usedPercent: 100, resetsAt }]),
+        ],
+        now,
+      );
+      expect(pool!.windows[0]).toMatchObject({ remainingPercent: 0, pace: null, resets: [] });
+      expect(pool!.windows[0]!.columns.map((column) => column.window?.resetsAt)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    },
+  );
+
+  it("orders by usable session refill and clears suppression after a fresh weekly reading", () => {
+    const blocked = account("blocked", [
+      { ...window, resetsAt: "2026-09-03T13:00:00.000Z" },
+      { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T15:00:00.000Z" },
+    ]);
+    const available = account("available", [window]);
+    const [before] = collectLimitPools([blocked, available], now);
+    expect(before!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
+    expect(before!.windows[0]!.remainingPercent).toBe(30);
+    const refreshed = {
+      ...blocked,
+      limits: {
+        checkedAt: "2026-09-03T12:00:00.000Z",
+        windows: [blocked.limits.windows[0]!, { ...weekly, usedPercent: 10 }],
+      },
+    };
+    const [after] = collectLimitPools([refreshed, available], now);
+    expect(after!.accounts.map((account) => account.key)).toEqual(["blocked", "available"]);
+    expect(after!.windows[0]!.remainingPercent).toBe(60);
+    expect(after!.windows[0]!.resets[0]).toMatchObject({
+      at: Date.parse("2026-09-03T13:00:00.000Z"),
+      restoresPercent: 20,
+    });
   });
 
   it("preserves gaps without counting missing windows toward pooled quota", () => {

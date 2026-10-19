@@ -43,11 +43,11 @@ function accountName(account: LimitAccount) {
 function AccountSegment({
   remaining,
   color,
-  pending,
+  refillPercent,
 }: {
   readonly remaining: number;
   readonly color: string;
-  readonly pending: boolean;
+  readonly refillPercent: number;
 }) {
   const patternId = useId().replace(/:/g, "");
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -70,10 +70,10 @@ function AccountSegment({
               <Path d="M-1 1L1 -1M0 6L6 0M5 7L7 5" stroke={color} strokeWidth={1} opacity={0.22} />
             </Pattern>
           </Defs>
-          {pending ? (
+          {refillPercent > 0 ? (
             <Rect
-              x={`${remaining}%`}
-              width={`${100 - remaining}%`}
+              x={`${100 - Math.min(100 - remaining, refillPercent)}%`}
+              width={`${Math.min(100 - remaining, refillPercent)}%`}
               height="100%"
               fill={`url(#${patternId})`}
             />
@@ -142,8 +142,10 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.columns.map(({ account, window }, index) => {
-          if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
+        {pool.columns.map((member, index) => {
+          if (!member.window)
+            return <View key={member.account.key} className="h-7 min-w-0 flex-1" />;
+          const { account, window } = member;
           return (
             <Pressable
               key={account.key}
@@ -156,7 +158,7 @@ function PoolWindowCard({
               <AccountSegment
                 remaining={remainingPercent(window)}
                 color={color}
-                pending={Boolean(window.resetsAt)}
+                refillPercent={window.resetsAt ? member.refillPercent : 0}
               />
               <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
                 <Text className="text-xs font-t3-medium tabular-nums text-foreground">

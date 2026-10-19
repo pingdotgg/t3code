@@ -313,6 +313,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
 export interface LimitPoolMember {
   readonly account: LimitAccount;
   readonly window: ServerProviderUsageWindow;
+  readonly refillPercent: number;
 }
 
 export interface LimitPoolWindow {
@@ -320,10 +321,9 @@ export interface LimitPoolWindow {
   readonly kind: ServerProviderUsageWindow["kind"];
   readonly label: string;
   readonly members: readonly LimitPoolMember[];
-  readonly columns: ReadonlyArray<{
-    readonly account: LimitAccount;
-    readonly window: ServerProviderUsageWindow | null;
-  }>;
+  readonly columns: ReadonlyArray<
+    LimitPoolMember | { readonly account: LimitAccount; readonly window: null }
+  >;
   readonly remainingPercent: number;
   readonly usedPercent: number;
   readonly pace: LimitPace | null;
@@ -385,7 +385,10 @@ export function collectLimitPools(
       const window = account.limits.windows.find(
         (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
       );
-      return (window ? resetMillis(window) : null) ?? Number.POSITIVE_INFINITY;
+      return (
+        (window ? resetMillis(poolMember(account, window, now).window) : null) ??
+        Number.POSITIVE_INFINITY
+      );
     };
     const sorted = [...members].sort(
       (left, right) =>
@@ -410,17 +413,63 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
   return driver === "codex" ? window.kind : `${window.kind}:${window.id}`;
 }
 
+function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
+  const spentWeekly =
+    reported.kind === "session"
+      ? account.limits.windows.find(
+          (window) =>
+            window.usedPercent >= 100 &&
+            (account.driver === "claudeAgent"
+              ? window.id === "seven_day"
+              : account.driver === "codex" && window.kind === "weekly"),
+        )
+      : undefined;
+  if (!spentWeekly) return { account, window: reported, refillPercent: reported.usedPercent };
+
+  const weeklyReset = resetMillis(spentWeekly);
+  const sessionReset = resetMillis(reported);
+  const cutoff = Math.max(now, Date.parse(account.limits.checkedAt));
+  let resetsAt: string | undefined;
+  let refillPercent = 0;
+  // A stale or missing clock cannot tell us when blocked quota becomes usable.
+  if (
+    weeklyReset !== null &&
+    sessionReset !== null &&
+    weeklyReset > cutoff &&
+    sessionReset > cutoff
+  ) {
+    if (sessionReset <= weeklyReset) {
+      resetsAt = spentWeekly.resetsAt;
+      refillPercent = 100;
+    } else if (reported.usedPercent >= 100) {
+      resetsAt = reported.resetsAt;
+      refillPercent = 100;
+    } else {
+      resetsAt = spentWeekly.resetsAt;
+      refillPercent = 100 - Math.max(0, Math.min(100, reported.usedPercent));
+    }
+  }
+  return {
+    account,
+    // Suppression is not session spending, so it has no session pace clock.
+    window: { ...reported, usedPercent: 100, resetsAt, windowDurationMins: undefined },
+    refillPercent,
+  };
+}
+
 function poolWindows(accounts: readonly LimitAccount[], now: number): readonly LimitPoolWindow[] {
   const byKey = new Map<string, LimitPoolMember[]>();
   for (const account of accounts) {
-    for (const window of account.limits.windows) {
+    for (const reported of account.limits.windows) {
+      const member = poolMember(account, reported, now);
+      const { window } = member;
       const pooled = poolKey(account.driver, window);
       const key = byKey.get(pooled)?.some((member) => member.account === account)
         ? `${window.kind}:${window.id}`
         : pooled;
       const list = byKey.get(key);
-      if (list) list.push({ account, window });
-      else byKey.set(key, [{ account, window }]);
+      if (list) list.push(member);
+      else byKey.set(key, [member]);
     }
   }
   const pools = [...byKey].map(([key, members]): LimitPoolWindow => {
@@ -447,7 +496,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
               {
                 member,
                 at,
-                restoresPercent: Math.round(member.window.usedPercent / members.length),
+                restoresPercent: Math.round(member.refillPercent / members.length),
               },
             ];
       })
