@@ -208,6 +208,13 @@ it("waits for nested work and retains the report across monitor acknowledgements
     assert.equal(
       delegatedTaskProgress({
         ...projection,
+        subagents: [{ status: "idle", completionDelivery: { state, observedByRunId: null } }],
+      }).state,
+      "result_available",
+    );
+    assert.equal(
+      delegatedTaskProgress({
+        ...projection,
         subagents: [{ status: "completed", completionDelivery: { state, observedByRunId: null } }],
       }).state,
       "waiting_for_children",
