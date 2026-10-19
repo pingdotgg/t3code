@@ -5,6 +5,7 @@ import {
   type OrchestrationV2DomainEvent,
   ProviderThreadId,
   ThreadId,
+  VcsProcessExitError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,10 +25,11 @@ import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
 } from "./CheckpointRestoreSafety.ts";
-import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import { CheckpointRestoreError, CheckpointServiceV2 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
+import { GIT_INDEX_LOCKED_DETAIL } from "../vcs/VcsProcess.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -70,6 +72,20 @@ export class CheckpointRollbackExecutionError extends Schema.TaggedError<Checkpo
 }
 
 const isCheckpointRollbackExecutionError = Schema.is(CheckpointRollbackExecutionError);
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
+
+/**
+ * The message clients see when a rollback fails. Only a held Git index lock
+ * gets its own explanation; other reasons carry internal ids or raw Git
+ * output, so they fall back to the generic message.
+ */
+export function rollbackFailureClientMessage(error: CheckpointRollbackExecutionError): string {
+  const restoreCause = isCheckpointRestoreError(error.cause) ? error.cause.cause : undefined;
+  return isVcsProcessExitError(restoreCause) && restoreCause.detail === GIT_INDEX_LOCKED_DETAIL
+    ? GIT_INDEX_LOCKED_DETAIL
+    : ROLLBACK_FAILED_MESSAGE;
+}
 
 export interface CheckpointRollbackServiceV2Shape {
   readonly execute: (input: {

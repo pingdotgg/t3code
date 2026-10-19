@@ -422,7 +422,10 @@ export const layerExecutor: Layer.Layer<
                           commandId: CommandId.make(`${effect.commandId}:rollback-failed`),
                           threadId: effect.threadId,
                           requestId: effect.commandId,
-                          message: CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                          message: Option.match(Cause.findErrorOption(cause), {
+                            onNone: () => CheckpointRollbackService.ROLLBACK_FAILED_MESSAGE,
+                            onSome: CheckpointRollbackService.rollbackFailureClientMessage,
+                          }),
                         })
                         .pipe(
                           Effect.catchCause((recordCause) =>

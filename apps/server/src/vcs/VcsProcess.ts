@@ -62,6 +62,10 @@ const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const VCS_PROCESS_CONCURRENCY = 8;
 const GITHUB_PROCESS_CONCURRENCY = 4;
 
+/** Shown to users when a Git command fails because another process holds the index lock. */
+export const GIT_INDEX_LOCKED_DETAIL =
+  "Git's index is locked. Wait for other Git operations to finish, then try again.";
+
 export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
 
 /**
@@ -263,7 +267,7 @@ export const make = Effect.gen(function* () {
 
     if (!input.allowNonZeroExit && result.code !== 0) {
       const failureKind = classifyNonZeroExit(input.command, result.stderr);
-      return yield* VcsProcessExitError.fromProcessExit(
+      const error = VcsProcessExitError.fromProcessExit(
         baseError,
         {
           exitCode: result.code,
@@ -275,6 +279,18 @@ export const make = Effect.gen(function* () {
           failureKind === "command-failed" &&
           isTransientGitExit(result.stderr),
       );
+      if (
+        input.command === "git" &&
+        /^fatal: unable to create ['"][^\r\n]*[/\\]index\.lock['"]: file exists\.?$/im.test(
+          result.stderr,
+        )
+      ) {
+        return yield* new VcsProcessExitError({
+          ...error,
+          detail: GIT_INDEX_LOCKED_DETAIL,
+        });
+      }
+      return yield* error;
     }
 
     return {
