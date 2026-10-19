@@ -415,6 +415,17 @@ it.layer(
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
           Effect.succeed(
             makeCodexProbeSnapshot({
+              rateLimits: {
+                snapshot: {
+                  limitId: "codex",
+                  primary: {
+                    usedPercent: 14,
+                    windowDurationMins: 10_080,
+                    resetsAt: 1_791_049_011,
+                  },
+                },
+                resetCredits: { availableCount: 1 },
+              },
               skills: [
                 {
                   name: "github:gh-fix-ci",
@@ -434,6 +445,18 @@ it.layer(
         assert.strictEqual(status.auth.type, "chatgpt");
         assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
         assert.strictEqual(status.auth.email, "test@example.com");
+        assert.deepStrictEqual(status.usageLimits?.windows, [
+          {
+            id: "primary",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 14,
+            windowDurationMins: 10_080,
+            resetsAt: "2026-10-03T17:36:51.000Z",
+          },
+        ]);
+        assert.deepStrictEqual(status.usageLimits?.resetCredits, { availableCount: 1 });
+        assert.strictEqual(status.usageLimits?.unavailable, undefined);
         assert.deepStrictEqual(status.models, [
           {
             slug: "gpt-live-codex",
@@ -518,6 +541,35 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+      }),
+    );
+
+    it.effect("does not report ChatGPT usage limits for a custom model provider", () =>
+      Effect.gen(function* () {
+        // A custom `model_provider` has no account, but Codex still answers
+        // the usage read from the ChatGPT login saved in its home.
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: { account: null, requiresOpenaiAuth: false },
+              rateLimits: {
+                snapshot: {
+                  limitId: "codex",
+                  primary: {
+                    usedPercent: 14,
+                    windowDurationMins: 10_080,
+                    resetsAt: 1_791_049_011,
+                  },
+                },
+                resetCredits: { availableCount: 1 },
+              },
+            }),
+          ),
+        );
+
+        assert.deepStrictEqual(status.usageLimits?.windows, []);
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+        assert.strictEqual(status.usageLimits?.resetCredits, undefined);
       }),
     );
 
