@@ -2248,6 +2248,79 @@ it.layer(
       }),
   );
 
+  it.effect("turns off fish terminal queries unless the user chose query-term", () =>
+    Effect.gen(function* () {
+      for (const [platform, env, runtimeEnv, expected] of [
+        ["linux", {}, {}, { fish_features: "no-query-term" }],
+        [
+          "linux",
+          { fish_features: "qmark-noglob" },
+          {},
+          { fish_features: "qmark-noglob,no-query-term" },
+        ],
+        [
+          "linux",
+          { fish_features: "qmark-noglob,query-term" },
+          {},
+          { fish_features: "qmark-noglob,query-term" },
+        ],
+        [
+          "linux",
+          { fish_features: "qmark-noglob,no-query-term" },
+          {},
+          { fish_features: "qmark-noglob,no-query-term" },
+        ],
+        [
+          "linux",
+          { fish_features: "query-term" },
+          { fish_features: "qmark-noglob" },
+          { fish_features: "qmark-noglob,no-query-term" },
+        ],
+        [
+          "win32",
+          { FISH_FEATURES: "qmark-noglob" },
+          {},
+          { FISH_FEATURES: "qmark-noglob,no-query-term" },
+        ],
+        [
+          "win32",
+          { Fish_Features: "qmark-noglob,query-term" },
+          {},
+          { Fish_Features: "qmark-noglob,query-term" },
+        ],
+        [
+          "win32",
+          { FISH_FEATURES: "qmark-noglob,no-query-term" },
+          {},
+          { FISH_FEATURES: "qmark-noglob,no-query-term" },
+        ],
+        [
+          "win32",
+          { Fish_Features: "query-term" },
+          { fish_features: "qmark-noglob" },
+          { Fish_Features: "qmark-noglob,no-query-term" },
+        ],
+        [
+          "win32",
+          { FISH_FEATURES: "no-query-term" },
+          { fish_features: "qmark-noglob,query-term" },
+          { FISH_FEATURES: "qmark-noglob,query-term" },
+        ],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env,
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput({ env: runtimeEnv }));
+        const fishFeatures = Object.fromEntries(
+          Object.entries(ptyAdapter.spawnInputs[0]!.env).filter(
+            ([key]) => key.toLowerCase() === "fish_features",
+          ),
+        );
+        expect.soft(fishFeatures, JSON.stringify({ platform, env, runtimeEnv })).toEqual(expected);
+      }
+    }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
