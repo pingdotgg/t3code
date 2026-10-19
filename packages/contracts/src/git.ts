@@ -218,6 +218,9 @@ const VcsStatusLocalShape = {
   refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
+    // Absolute worktree root on the environment that every files[].path is
+    // relative to. Absent when the server could not resolve it.
+    rootPath: Schema.optional(GitFilePath),
     files: Schema.Array(
       Schema.Struct({
         path: GitFilePath,
