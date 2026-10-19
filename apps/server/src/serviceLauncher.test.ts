@@ -372,7 +372,11 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     }),
   );
 
-  const commitUpdate = (render = renderBootServiceUnit, missingUnit = false) =>
+  const commitUpdate = (
+    render = renderBootServiceUnit,
+    missingUnit = false,
+    legacyInstall = false,
+  ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -388,6 +392,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+assert.equal(context.protocol, ${SERVICE_LAUNCHER_PROTOCOL});
 if (context.update?.status === "pending") {
   const state = JSON.parse(readFileSync(${JSON.stringify(statePath)}, "utf8"));
   assert.equal(state.activeVersion, "1.0.0");
@@ -400,6 +405,7 @@ if (context.update?.status === "pending") {
   process.on("message", (message) => {
     if (message.type === "committed") {
       const state = JSON.parse(readFileSync(${JSON.stringify(statePath)}, "utf8"));
+      assert.equal(state.protocol, ${SERVICE_LAUNCHER_PROTOCOL});
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update.status, "committed");
       writeFileSync(${JSON.stringify(activatedPath)}, message.updateId);
@@ -422,11 +428,17 @@ if (context.update?.status === "pending") {
           childSource,
         );
       }
-      yield* Effect.promise(() =>
-        writeServiceState(statePath, {
-          protocol: SERVICE_LAUNCHER_PROTOCOL,
-          activeVersion: "1.0.0",
-        }),
+      // The old CLI installs the new runtime but writes state with its own protocol.
+      yield* fs.writeFileString(
+        statePath,
+        `${JSON.stringify(
+          {
+            protocol: legacyInstall ? 3 : SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+          },
+          null,
+          2,
+        )}\n`,
       );
       const launcher = new Launcher(
         root,
@@ -459,23 +471,30 @@ if (context.update?.status === "pending") {
     });
 
   it.effect.each([
-    { name: "systemd", render: renderBootServiceUnit },
+    {
+      name: "systemd after a protocol-3 local upgrade",
+      render: renderBootServiceUnit,
+      legacyInstall: true,
+    },
     {
       name: "launchd",
+      legacyInstall: false,
       render: (plan: Parameters<typeof renderBootServicePlist>[0]) =>
         renderBootServicePlist(plan, {
           homeDir: "/Users/test & <user>",
           environmentPath: "/usr/bin:/custom/runtime/versions/1.0.0",
         }),
     },
-  ])("commits and repoints $name only after the trial reports prepared", ({ render }) =>
-    Effect.gen(function* () {
-      const { fs, root, unit } = yield* commitUpdate(render);
-      const expected = render(unitPlan(root, "1.1.0"));
-      assert.equal(yield* fs.readFileString(unit.path), expected);
-      assert.equal(unit.loadedContents, expected);
-      assert.equal(unit.reloads, 1);
-    }),
+  ])(
+    "commits and repoints $name only after the trial reports prepared",
+    ({ render, legacyInstall }) =>
+      Effect.gen(function* () {
+        const { fs, root, unit } = yield* commitUpdate(render, false, legacyInstall);
+        const expected = render(unitPlan(root, "1.1.0"));
+        assert.equal(yield* fs.readFileString(unit.path), expected);
+        assert.equal(unit.loadedContents, expected);
+        assert.equal(unit.reloads, 1);
+      }),
   );
 
   it.effect(
