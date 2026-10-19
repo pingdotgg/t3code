@@ -712,9 +712,9 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
     const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
       .atom(
-        followStreamInEnvironment(target.environmentId, options.subscribe(target.input)).pipe(
-          options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream,
-        ),
+        Stream.suspend(() =>
+          followStreamInEnvironment(target.environmentId, options.subscribe(target.input)),
+        ).pipe(options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream),
       )
       .pipe(
         Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
