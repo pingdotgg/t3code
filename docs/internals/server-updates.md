@@ -4,14 +4,34 @@ A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
 selected by systemd or launchd. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
+may replace the launcher and state, optionally deferring the restart. Both writers
+serialize state selection and unit writes across processes. The installer takes
+the state lease before the unit lease; the launcher never holds both, so unit
+failures cannot prevent durable commit. Manager stop/start commands stay outside
+both leases so stopping a launcher cannot deadlock. A running launcher refuses
+another update after a local command changes its selection. Foreground CLI
 processes do not self-update.
 
 Exact-version installs keep restarts independent of npm cache eviction or a moving
 release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+needs new rollback guarantees cannot safely run under an older launcher. After a
+commit the launcher points the unit at the committed runtime, so the next service
+start also runs that version's launcher; the protocol check is what makes that safe.
+Protocol 4 adds these guarantees and accepts valid protocol-3 durable state, whose
+format is unchanged. An installed protocol-3 launcher requires one local
+`t3 update --yes` or `t3 service install` that restarts the service before remote
+updates are accepted. Deferring the restart leaves the old launcher running; a
+child update cannot upgrade its supervising launcher. Terminal-state recovery
+retries reconciliation and reload even when the file already names the selected
+runtime, since a previous reload may have failed. A newer locally installed unit
+is preserved.
+
+launchd keeps its loaded definition until the next bootstrap; systemd keeps its
+loaded definition until daemon-reload. After a deferred protocol-3 upgrade, either
+manager can therefore respawn the old launcher, but the new runtime refuses to run
+under it. The service cannot recover until a local restart through
+`t3 update --yes` or `t3 service install` loads the updated launcher.
 
 ## Commit boundary
 

@@ -1,10 +1,14 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-// Protocol 3 requires the standalone executable layout. Bump when runtimePaths
-// or the installed runtime tree changes incompatibly; launchers survive self-updates.
-export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
+// Protocol 4 requires coordinated selection writes and unit reconciliation. An
+// installed protocol-3 launcher needs one local update or service install with a restart:
+// remote updates replace its child, so cannot add these launcher guarantees.
+export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_STATE_FILE = "service-state.json";
+/** Set by the unit or launch agent to its own file name, so the launcher can
+    find the definition that started it. */
+export const SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 /** Written by the launcher just before an explicit stop kills its child, so
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
@@ -14,6 +18,23 @@ export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
     it when it starts (whoever restarted the service), so while it exists the
     service is known to be behind its unit and status reports it that way. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
+
+export function serviceUnitBaseDirOf(contents: string): string | undefined {
+  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) {
+    const raw = systemd.trim();
+    const unquoted =
+      raw.startsWith('"') && raw.endsWith('"')
+        ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
+        : raw;
+    return unquoted.replaceAll("%%", "%");
+  }
+  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  if (plist !== undefined) {
+    return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  }
+  return undefined;
+}
 
 export interface PendingServiceUpdate {
   readonly id: string;
@@ -148,7 +169,8 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
   if (!isRecord(value)) return undefined;
   const update = value.update === undefined ? undefined : decodeServiceUpdate(value.update);
   if (
-    value.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
+    // Protocol 3 has the same durable format; its installer can select a protocol-4 runtime.
+    (value.protocol !== 3 && value.protocol !== SERVICE_LAUNCHER_PROTOCOL) ||
     typeof value.activeVersion !== "string" ||
     !isExactServiceVersion(value.activeVersion) ||
     (value.update !== undefined && update === undefined) ||
