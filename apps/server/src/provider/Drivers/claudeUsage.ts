@@ -12,6 +12,9 @@ import {
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+// Claude Code uses this model for local placeholders that never reached the API.
+export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
+
 /**
  * T3 Code writes one record per assistant *content block*, and every one of those records repeats
  * the same complete `usage` object for the parent message. Summing them overcounts by roughly
@@ -45,7 +48,7 @@ function parseClaudeRecord(parsed: unknown): UsageRecord | null {
   if (timestampMs === null) return null;
 
   const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
+  if (model.length === 0 || model === CLAUDE_SYNTHETIC_MODEL) return null;
 
   const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
   const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;
