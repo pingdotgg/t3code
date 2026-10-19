@@ -240,7 +240,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
         }
         return;
       }
-      if (result.value.status === "no-script" || !activeThreadRef) return;
+      if (result.value.status === "no-script") {
+        setThreadError(
+          activeThreadId,
+          `"${script.name}" is no longer saved with a reserved port. Check the action and try again.`,
+        );
+        return;
+      }
+      if (!activeThreadRef) return;
       previewPort = result.value.port;
       if (result.value.threadId === activeThreadId) {
         setTerminalUiLaunchContext({

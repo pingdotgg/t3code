@@ -226,7 +226,7 @@ export const make = Effect.gen(function* () {
       readonly terminalId: string;
       readonly sentinel: string;
       readonly sentinelPattern: RegExp;
-      /** The shell echoes typed input; lines ending with these are the wrapper, not output. */
+      /** The shell echoes typed input, alone or after its prompt; those lines are the wrapper, not output. */
       readonly echoedWrapperLines: ReadonlyArray<string>;
       readonly onOutputLine: ((line: string) => Effect.Effect<void>) | undefined;
     }) {
@@ -261,7 +261,9 @@ export const make = Effect.gen(function* () {
           if (
             cleaned.length === 0 ||
             cleaned.includes(input.sentinel) ||
-            input.echoedWrapperLines.some((echoed) => cleaned.endsWith(echoed)) ||
+            input.echoedWrapperLines.some(
+              (echoed) => cleaned === echoed || cleaned.endsWith(` ${echoed}`),
+            ) ||
             input.onOutputLine === undefined
           ) {
             return Effect.void;

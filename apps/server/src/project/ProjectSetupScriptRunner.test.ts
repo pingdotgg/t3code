@@ -279,6 +279,35 @@ it.effect("ReservedScript-overlappingStarts-reusesOwnerAndRetriesAfterCompletion
           T3CODE_PREVIEW_PORT: "43123",
         },
       });
+
+      script.reservePort = false;
+      const outputLines: string[] = [];
+      const observed = yield* runner.runForThread({
+        threadId: input.threadId,
+        projectId,
+        worktreePath: input.worktreePath,
+        preferredTerminalId: "setup-output",
+        observeCompletion: {
+          onOutputLine: (line) =>
+            Effect.sync(() => {
+              outputLines.push(line);
+            }),
+        },
+      });
+      assert.equal(observed.status, "started");
+      if (observed.status !== "started") return;
+      const wrapper = writes.at(-1)!;
+      const outputToken = /__T3_SETUP_DONE___(\w+):/.exec(wrapper)![1];
+      yield* Effect.forEach([...listeners], (listener) =>
+        listener({
+          type: "output",
+          threadId: input.threadId,
+          terminalId: "setup-output",
+          data: `${wrapper}\r\nReady (vite)\r\nbackend\r\n__T3_SETUP_DONE___${outputToken}:0\r\n$ `,
+        }),
+      );
+      assert.equal((yield* observed.completion!).exitCode, 0);
+      assert.deepEqual(outputLines, ["Ready (vite)", "backend"]);
     }).pipe(Effect.provide(layer));
     assert.equal(listeners.size, 0);
   }),
