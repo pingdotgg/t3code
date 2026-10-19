@@ -329,7 +329,7 @@ export const layer: Layer.Layer<
                       }).pipe(Effect.as(false)),
                     ),
                   )
-              : false;
+              : true;
             return makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
@@ -388,7 +388,7 @@ export const layer: Layer.Layer<
               ordinalWithinScope: input.ordinalWithinScope,
               appRunOrdinal: input.appRunOrdinal,
               ref: checkpointRef,
-              status: "missing",
+              status: "ready",
               files: [],
               capturedAt: input.capturedAt,
             });
@@ -519,6 +519,9 @@ export const layer: Layer.Layer<
               cause: `Checkpoint status is ${input.checkpoint.status}.`,
             });
           }
+          if (!(yield* isGitCheckpointable(input.scope.cwd))) {
+            return;
+          }
 
           const restored = yield* checkpointStore.restoreCheckpoint({
             cwd: input.scope.cwd,
@@ -548,9 +551,12 @@ export const layer: Layer.Layer<
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>
       withWorkspaceLock(
         input.scope.cwd,
-        checkpointStore.deleteCheckpointRefs({
-          cwd: input.scope.cwd,
-          checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+        Effect.gen(function* () {
+          if (!(yield* isGitCheckpointable(input.scope.cwd))) return;
+          yield* checkpointStore.deleteCheckpointRefs({
+            cwd: input.scope.cwd,
+            checkpointRefs: input.checkpoints.map((checkpoint) => checkpoint.ref),
+          });
         }),
       ).pipe(
         Effect.mapError(

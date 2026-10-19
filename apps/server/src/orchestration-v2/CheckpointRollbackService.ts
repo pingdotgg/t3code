@@ -237,30 +237,6 @@ export const layer: Layer.Layer<
         });
       }
 
-      const modelSelection = projection.thread.modelSelection;
-      const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
-        thread: projection.thread,
-        modelSelection,
-      });
-      const existingSession = projection.providerSessions.find(
-        (candidate) => candidate.id === providerThread.providerSessionId,
-      );
-      const session = yield* sessions.open({
-        threadId: input.threadId,
-        providerSessionId: providerThread.providerSessionId,
-        modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
-        ...(providerThread.nativeThreadRef?.nativeId == null
-          ? {}
-          : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
-        ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
-          ? {}
-          : {
-              initialProviderItemIdentityVersion: providerThread.nativeMetadata.itemIdentityVersion,
-            }),
-      });
-
       const runsToRollback = projection.runs.filter(
         (run) =>
           run.ordinal > targetOrdinal &&
@@ -285,14 +261,66 @@ export const layer: Layer.Layer<
           (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
       );
 
-      const snapshot =
-        runsToRollback.length === 0
-          ? { providerThread }
-          : yield* session.rollbackThread({
-              providerThread,
-              target: rollbackTarget,
-              providerThreadTurns,
-            });
+      let snapshot: { readonly providerThread: typeof providerThread };
+      if (providerThread.driver === "antigravity") {
+        if (runsToRollback.length === 0) {
+          snapshot = { providerThread };
+        } else {
+          if (
+            yield* Effect.try(() => sessions.isLive(providerThread.providerSessionId)).pipe(
+              Effect.flatten,
+              Effect.orElseSucceed(() => false),
+            )
+          ) {
+            yield* sessions.close(providerThread.providerSessionId);
+          }
+          snapshot = {
+            providerThread: {
+              ...providerThread,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              nativeMetadata: {
+                ...providerThread.nativeMetadata,
+                itemIdentityVersion: 2,
+              },
+              status: "idle",
+            },
+          };
+        }
+      } else {
+        const modelSelection = projection.thread.modelSelection;
+        const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+          thread: projection.thread,
+          modelSelection,
+        });
+        const existingSession = projection.providerSessions.find(
+          (candidate) => candidate.id === providerThread.providerSessionId,
+        );
+        const session = yield* sessions.open({
+          threadId: input.threadId,
+          providerSessionId: providerThread.providerSessionId,
+          modelSelection,
+          runtimePolicy: resolvedRuntimePolicy,
+          ...(existingSession === undefined ? {} : { resumeFromSession: existingSession }),
+          ...(providerThread.nativeThreadRef?.nativeId == null
+            ? {}
+            : { initialNativeThreadId: providerThread.nativeThreadRef.nativeId }),
+          ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+            ? {}
+            : {
+                initialProviderItemIdentityVersion:
+                  providerThread.nativeMetadata.itemIdentityVersion,
+              }),
+        });
+        snapshot =
+          runsToRollback.length === 0
+            ? { providerThread }
+            : yield* session.rollbackThread({
+                providerThread,
+                target: rollbackTarget,
+                providerThreadTurns,
+              });
+      }
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
       const staleCheckpoints = projection.checkpoints.filter(
         (candidate) =>

@@ -520,6 +520,98 @@ export const layer: Layer.Layer<
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
+      const isColdOrRestartingAcpConnect =
+        providerThread.driver === "antigravity"
+          ? !(yield* Effect.try(() => providerSessions.isLive(providerSessionId)).pipe(
+              Effect.flatten,
+              Effect.orElseSucceed(() => true),
+            )) ||
+            providerThread.nativeThreadRef === null ||
+            projection.runs.findLast(
+              (candidate) =>
+                candidate.ordinal < run.ordinal &&
+                candidate.providerThreadId === providerThread.id,
+            )?.status === "interrupted"
+          : false;
+      const connectStartedAt = isColdOrRestartingAcpConnect ? yield* DateTime.now : null;
+      const connectTurnItem: Extract<
+        OrchestrationV2TurnItem,
+        { readonly type: "dynamic_tool" }
+      > | null =
+        connectStartedAt === null
+          ? null
+          : {
+              id: idAllocator.derive.runSignalTurnItem({
+                runId: run.id,
+                signal: "provider-connect",
+              }),
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerThreadId: providerThread.id,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal:
+                Math.max(
+                  0,
+                  ...projection.turnItems
+                    .filter((item) => item.runId === run.id)
+                    .map((item) => item.ordinal),
+                ) + 1,
+              status: "running",
+              title: "Connecting to ACP…",
+              startedAt: connectStartedAt,
+              completedAt: null,
+              updatedAt: connectStartedAt,
+              type: "dynamic_tool",
+              toolName: "acp_connect",
+              input: {},
+            };
+      if (connectTurnItem !== null) {
+        yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "turn-item.updated",
+              threadId: projection.thread.id,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: connectStartedAt!,
+              payload: connectTurnItem,
+            },
+          ],
+        });
+      }
+      const dismissConnectTurnItem = (completedAt: DateTime.Utc) =>
+        connectTurnItem === null
+          ? Effect.void
+          : Effect.gen(function* () {
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                    type: "turn-item.updated",
+                    threadId: projection.thread.id,
+                    runId: run.id,
+                    nodeId: rootNode.id,
+                    providerInstanceId: run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: {
+                      ...connectTurnItem,
+                      status: "idle",
+                      completedAt,
+                      updatedAt: completedAt,
+                    },
+                  },
+                ],
+              });
+            });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -546,11 +638,13 @@ export const layer: Layer.Layer<
         readonly error: Error;
       }) =>
         Effect.gen(function* () {
+          const now = yield* DateTime.now;
+          yield* dismissConnectTurnItem(now);
           const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
-            now: yield* DateTime.now,
+            now,
             providerInstanceId: run.providerInstanceId,
             itemProviderThreadId: providerThread.id,
             item: {
@@ -570,7 +664,10 @@ export const layer: Layer.Layer<
           });
         });
       if (sessionResult._tag === "Failure") {
-        if (input.willRetry === true) return yield* sessionResult.failure;
+        if (input.willRetry === true) {
+          yield* dismissConnectTurnItem(yield* DateTime.now);
+          return yield* sessionResult.failure;
+        }
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",
@@ -585,7 +682,10 @@ export const layer: Layer.Layer<
         Effect.gen(function* () {
           const loaded = yield* Effect.result(load);
           if (loaded._tag === "Success") return loaded.success;
-          if (input.willRetry === true) return yield* loaded.failure;
+          if (input.willRetry === true) {
+            yield* dismissConnectTurnItem(yield* DateTime.now);
+            return yield* loaded.failure;
+          }
           yield* settleStartFailure({
             signal: "provider-thread-load-failure",
             title: "Provider turn failed to start",
@@ -714,12 +814,15 @@ export const layer: Layer.Layer<
           toProviderInstanceId: run.providerInstanceId,
           coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
           strategy: "full_thread_summary",
-          runs: projection.runs,
+          runs: projection.runs.filter((source) => source.status !== "rolled_back"),
           items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
             (item) =>
               item.runId === null ||
               projection.runs.some(
-                (source) => source.id === item.runId && source.ordinal < run.ordinal,
+                (source) =>
+                  source.id === item.runId &&
+                  source.ordinal < run.ordinal &&
+                  source.status !== "rolled_back",
               ),
           ),
           createdAt,
@@ -768,6 +871,7 @@ export const layer: Layer.Layer<
       });
       if (loadedProviderThread === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
+        yield* dismissConnectTurnItem(yield* DateTime.now);
         return;
       }
       const now = yield* DateTime.now;
@@ -840,6 +944,25 @@ export const layer: Layer.Layer<
         startedAt: now,
       };
       const events: Array<OrchestrationV2DomainEvent> = [
+        ...(connectTurnItem === null
+          ? []
+          : [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "turn-item.updated" as const,
+                threadId: projection.thread.id,
+                runId: run.id,
+                nodeId: rootNode.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...connectTurnItem,
+                  status: "idle" as const,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              },
+            ]),
         {
           id: yield* idAllocator.allocate.event({
             threadId: projection.thread.id,
@@ -926,6 +1049,7 @@ export const layer: Layer.Layer<
         events,
       });
       if (!runningWrite.committed) {
+        yield* dismissConnectTurnItem(now);
         return;
       }
       const routableSubagents = projection.subagents.filter((subagent) =>
@@ -1057,8 +1181,13 @@ export const layer: Layer.Layer<
         (source) =>
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
-          (source.status === "failed" || source.status === "interrupted") &&
-          !deliveredAttemptIds.has(source.activeAttemptId),
+          source.status !== "rolled_back" &&
+          (((source.status === "failed" || source.status === "interrupted") &&
+            !deliveredAttemptIds.has(source.activeAttemptId)) ||
+            (runningProviderThread.nativeThreadRef?.nativeId != null &&
+              !nativeInputRunIds.has(source.id) &&
+              !legacyInputRunIds.has(source.id) &&
+              !legacyRecoveredRunIds.has(source.id))),
       );
       const missedRunIds = new Set(missedRuns.map((source) => source.id));
       const missedItems =

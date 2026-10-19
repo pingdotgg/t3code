@@ -6859,16 +6859,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: "ACP runtime did not produce a session id",
                 });
               }
-              const providerThread = makeProviderThread({
-                driver,
-                providerInstanceId: options.instanceId,
-                idAllocator,
-                appThreadId: threadInput.threadId,
-                providerSessionId: input.providerSessionId,
-                nativeThreadId: sessionId,
-                ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
-                now,
-              });
+              const providerThread = {
+                ...makeProviderThread({
+                  driver,
+                  providerInstanceId: options.instanceId,
+                  idAllocator,
+                  appThreadId: threadInput.threadId,
+                  providerSessionId: input.providerSessionId,
+                  nativeThreadId: sessionId,
+                  ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
+                  now,
+                }),
+                ...(threadInput.existingProviderThread === undefined
+                  ? {}
+                  : { id: threadInput.existingProviderThread.id }),
+              };
               yield* Ref.update(providerThreadByNativeSessionId, (current) =>
                 new Map(current).set(sessionId, providerThread),
               );
