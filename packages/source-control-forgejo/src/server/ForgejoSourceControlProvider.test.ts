@@ -1046,7 +1046,9 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
                 input.cwd === "/no-remotes"
                   ? processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) })
                   : processOutput(
-                      `${input.cwd === "/upstream-only" ? "upstream" : "origin"}\thttp://forgejo.local:3000/maria/project.git (fetch)\nother\thttp://forgejo.local:3000/maria/other.git (fetch)\nunrelated\thttp://other.local:3000/maria/project.git (fetch)`,
+                      input.cwd === "/upstream-only"
+                        ? "upstream\thttp://forgejo.local:3000/maria/project.git (fetch) [blob:none]\nother\thttp://forgejo.local:3000/maria/other.git (fetch) [blob:none]\nunrelated\thttp://other.local:3000/maria/project.git (fetch) [blob:none]"
+                        : "origin\thttp://forgejo.local:3000/maria/project.git (fetch)\nother\thttp://forgejo.local:3000/maria/other.git (fetch)\nunrelated\thttp://other.local:3000/maria/project.git (fetch)",
                     ),
               );
             assert.strictEqual(input.command, "fj");

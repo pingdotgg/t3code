@@ -515,7 +515,10 @@ export const make = Effect.gen(function* () {
         const matchingUrls = [
           ...new Set(
             result.stdout.split("\n").flatMap((line) => {
-              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)$/.exec(line.trim())?.[1];
+              // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/.exec(
+                line.trim(),
+              )?.[1];
               return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
                 ? [url]
                 : [];
