@@ -2,6 +2,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import * as Schema from "effect/Schema";
 
 import {
+  GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
   pullRequestHostOf,
@@ -1093,6 +1094,20 @@ export function readableFailure(failure: unknown, hint: string): string {
       ? detail
       : `${detail.slice(0, FAILURE_DETAIL_MAX_LENGTH - 1)}…`;
   return bounded;
+}
+
+const isGitCommandError = Schema.is(GitCommandError);
+
+export function checkoutFailureDescription(failure: unknown): string {
+  const description = isGitCommandError(failure)
+    ? failure.reason === undefined
+      ? failure.detail
+      : `${failure.detail} (${failure.reason})`
+    : failure;
+  return readableFailure(
+    description,
+    "Check that the branch still exists and is not checked out elsewhere, then try again.",
+  );
 }
 
 export function resolveBaseFreshness(detail: {

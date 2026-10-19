@@ -2,6 +2,7 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
+  GitCommandError,
   ProjectId,
   PullRequestAction,
   type PullRequestCheck,
@@ -49,6 +50,7 @@ import {
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
+  checkoutFailureDescription,
   readableFailure,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
@@ -1048,6 +1050,28 @@ describe("what to say when an action fails", () => {
     ).toBe(hint);
     expect(readableFailure(new Error("exited with code 1"), hint)).toBe(hint);
     expect(readableFailure(undefined, hint)).toBe(hint);
+  });
+
+  it("uses bounded git diagnostics and falls back when checkout has no useful detail", () => {
+    const diagnostic = (detail: string, reason?: GitCommandError["reason"]) =>
+      new GitCommandError({
+        cwd: "/workspace",
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        detail,
+        reason,
+      });
+    expect(
+      checkoutFailureDescription(diagnostic("git worktree add failed", "path_already_exists")),
+    ).toBe("git worktree add failed (path_already_exists)");
+    const reason = "The worktree directory already exists. Choose another directory.";
+    expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
+    expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
+    for (const failure of [undefined, diagnostic(""), diagnostic("exited with code 1")]) {
+      expect(checkoutFailureDescription(failure)).toBe(
+        "Check that the branch still exists and is not checked out elsewhere, then try again.",
+      );
+    }
   });
 
   it("bounds a host that answers with a page of output", () => {
