@@ -512,7 +512,7 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
-const threadWorktreePathsReadActiveThreads = Effect.gen(function* () {
+const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
   const create = (id: string, input: { worktreePath: string | null; archived?: boolean }) => {
@@ -564,6 +564,10 @@ const threadWorktreePathsReadActiveThreads = Effect.gen(function* () {
 
   assert.deepEqual(yield* store.getThreadWorktreePaths(), [
     { threadId: ThreadId.make("thread:active"), worktreePath: "/worktrees/active" },
+  ]);
+  assert.deepEqual(yield* store.getThreadWorktreePaths({ includeArchived: true }), [
+    { threadId: ThreadId.make("thread:active"), worktreePath: "/worktrees/active" },
+    { threadId: ThreadId.make("thread:archived"), worktreePath: "/worktrees/archived" },
   ]);
 });
 
@@ -650,8 +654,10 @@ it.effect("memory command reads skip finished leaf nodes of finished runs", () =
   commandReadsSkipSettledLeafNodes.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
-it.effect("memory worktree path lookup reads only active threads", () =>
-  threadWorktreePathsReadActiveThreads.pipe(Effect.provide(ProjectionStore.layerMemory)),
+it.effect(
+  "memory worktree path lookup defaults to active threads and can include archived threads",
+  () =>
+    threadWorktreePathsIncludeArchivedOnRequest.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
 it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
@@ -878,8 +884,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     () => runlessNativeSubagentNeedsRecovery,
   );
   it.effect(
-    "worktree path lookup reads only active threads",
-    () => threadWorktreePathsReadActiveThreads,
+    "worktree path lookup defaults to active threads and can include archived threads",
+    () => threadWorktreePathsIncludeArchivedOnRequest,
   );
 
   it.effect(

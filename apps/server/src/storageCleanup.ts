@@ -291,11 +291,9 @@ const make = Effect.gen(function* () {
   // The snapshot takes seconds on large databases, so it runs on the reader
   // worker instead of the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
-    const { threads } = yield* projections
-      .getShellSnapshot({ location: "active" })
-      .pipe(NodeSqliteClient.readOnly);
+    const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
     const projects = yield* projectStore.listShells();
-    return { projects, threads };
+    return { projects, threads: [...snapshot.threads, ...snapshot.archivedThreads] };
   });
 
   const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (
@@ -740,9 +738,9 @@ const make = Effect.gen(function* () {
           const latestProjects = yield* projectStore.listShells();
           if (yield* containsProjectRoot(worktreePath, [project, ...latestProjects]))
             return "contains a project checkout";
-          const latest = (yield* projections.getThreadWorktreePaths()).filter(
-            (entry) => path.resolve(entry.worktreePath) === worktreePath,
-          );
+          const latest = (yield* projections.getThreadWorktreePaths({
+            includeArchived: true,
+          })).filter((entry) => path.resolve(entry.worktreePath) === worktreePath);
           if (hasTerminal(worktreePath)) return "open terminal";
           if (deleted) {
             if (
