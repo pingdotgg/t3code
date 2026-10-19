@@ -561,12 +561,11 @@ export const make = Effect.gen(function* () {
     listPullRequests: (input) =>
       withRepository(input.repository, (path) => {
         const search = input.query?.trim() ?? "";
-        // The boundary instant is read inclusively — the rows already sent at it come back and
-        // the caller drops them, which is what keeps their neighbours at the same instant from
-        // being skipped.
+        // Exclude already-sent IDs at the inclusive timestamp before applying the page limit.
         const predicates = [
           ...(search.length === 0 ? [] : [searchFilter(search)]),
           ...(input.cursor === undefined ? [] : [`updated_on <= ${input.cursor.updatedBefore}`]),
+          ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];
         return listPage({
           // Reviewers are not on a listing by default, and `viewerReviewRequested` needs them.
