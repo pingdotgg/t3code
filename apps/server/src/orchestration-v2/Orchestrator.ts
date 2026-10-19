@@ -90,7 +90,7 @@ import {
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import {
@@ -341,6 +341,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
+  readonly getSubagentChildThreads: (
+    ...args: Parameters<ProjectionStoreV2["Service"]["getSubagentChildThreads"]>
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, OrchestratorV2Error>;
   readonly getCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<ProjectionCheckpointContext, OrchestratorV2Error>;
@@ -3351,6 +3354,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      const children = yield* projectionStore
+        .getSubagentChildThreads(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (children.length > 0) {
+        const cascade = yield* EffectOutbox.subagentLifecycleEffect(
+          command.commandId,
+          command.threadId,
+          command.type === "thread.archive" ? "archive" : "unarchive",
+        );
+        yield* Ref.update(effects, (existing) => [...existing, cascade]);
+      }
+    }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
@@ -11081,6 +11098,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planThreadDeletion({
             command,
             projection,
+            cascadeToSubagents:
+              (yield* projectionStore
+                .getSubagentChildThreads(command.threadId, { includeDeleted: true })
+                .pipe(mapDispatchError(command))).length > 0,
             attachmentIds: yield* projectionStore
               .getThreadAttachmentIds(command.threadId)
               .pipe(mapDispatchError(command)),
@@ -11295,6 +11316,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  const lifecycleOwnedByAncestor = Effect.fnUntraced(function* (
+    lifecycle: CommandReceiptV2,
+    thread: OrchestrationV2AppThread,
+    ancestorThreadId: ThreadId,
+  ) {
+    const commandType = lifecycle.commandType;
+    const throughSequence = lifecycle.resultSequence;
+    const visited = new Set<ThreadId>();
+    // Follow retained receipts along actual subagent edges, stopping at an
+    // independent action. An ID suffix alone does not establish ownership.
+    while (thread.id !== ancestorThreadId) {
+      if (visited.has(thread.id)) return false;
+      visited.add(thread.id);
+      const parentId = thread.lineage.parentThreadId;
+      if (parentId === null || thread.lineage.relationshipToParent !== "subagent") return false;
+      const suffix = `:subagent:${thread.id}`;
+      let sourceCommandId: CommandId | undefined;
+      for (let retry = 0; retry < 32; retry++) {
+        const ending = retry === 0 ? suffix : `${suffix}:retry:${retry}`;
+        if (lifecycle.commandId.length > ending.length && lifecycle.commandId.endsWith(ending)) {
+          sourceCommandId = CommandId.make(lifecycle.commandId.slice(0, -ending.length));
+          const derived = `${sourceCommandId}${suffix}`;
+          for (let earlier = 0; earlier < retry; earlier++) {
+            const rejected = yield* commandReceipts.getByCommandId(
+              CommandId.make(earlier === 0 ? derived : `${derived}:retry:${earlier}`),
+            );
+            if (Option.isNone(rejected) || rejected.value.status !== "rejected") return false;
+          }
+          break;
+        }
+      }
+      if (sourceCommandId === undefined) return false;
+      const source = yield* commandReceipts.getByCommandId(sourceCommandId);
+      if (
+        Option.isNone(source) ||
+        source.value.status !== "accepted" ||
+        source.value.threadId !== parentId ||
+        (source.value.commandType !== commandType &&
+          source.value.commandType !== "subagent-threads.cascade") ||
+        source.value.resultSequence > throughSequence
+      )
+        return false;
+      const parent = yield* projectionStore.getThread(parentId);
+      if (parent.projectId !== thread.projectId) return false;
+      lifecycle = source.value;
+      thread = parent;
+    }
+    return lifecycle.commandType === commandType;
+  });
+
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
@@ -11365,6 +11436,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
+    const cascade = yield* EffectOutbox.SubagentLifecycle;
+    if (
+      cascade !== undefined &&
+      (command.type === "thread.archive" || command.type === "thread.unarchive")
+    ) {
+      const lifecycle = yield* commandReceipts
+        .getLatestLifecycle(command.threadId)
+        .pipe(mapDispatchError(command));
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      const owned =
+        lifecycle !== null &&
+        (yield* lifecycleOwnedByAncestor(lifecycle, thread, cascade.ancestorThreadId).pipe(
+          mapDispatchError(command),
+        ));
+      if (
+        thread.deletedAt !== null ||
+        (command.type === "thread.archive"
+          ? thread.archivedAt !== null ||
+            (lifecycle !== null && lifecycle.resultSequence > cascade.sourceSequence && !owned)
+          : thread.archivedAt === null || !owned)
+      ) {
+        const sequence = yield* eventSink
+          .latestSequence({ threadId: command.threadId })
+          .pipe(mapDispatchError(command));
+        // An acknowledgement must not become the child's latest lifecycle choice.
+        yield* commandReceipts
+          .insertIfAbsent({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            commandType: "subagent-threads.cascade",
+            acceptedAt: yield* DateTime.now,
+            resultSequence: sequence,
+            status: "accepted",
+            error: null,
+          })
+          .pipe(mapDispatchError(command));
+        return { sequence, storedEvents: [] };
+      }
     }
 
     const plan = yield* dispatchOnce(command).pipe(
@@ -11780,6 +11893,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projectionStore
         .getThreadRecords(threadId, fields, filter)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getSubagentChildThreads: (threadId, options) =>
+      projectionStore
+        .getSubagentChildThreads(threadId, options)
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getThreadProjection: (threadId) =>
       projectionStore
         .getThreadProjection(threadId)
@@ -11906,6 +12023,8 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
     getMessageCount: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getTurnItem: ({ threadId }) => Effect.fail(new OrchestratorProjectionError({ threadId })),
     getThreadRecords: (threadId) => Effect.fail(new OrchestratorProjectionError({ threadId })),
+    getSubagentChildThreads: (threadId) =>
+      Effect.fail(new OrchestratorProjectionError({ threadId })),
     getThreadProjection: (threadId) =>
       Effect.fail(
         new OrchestratorProjectionError({

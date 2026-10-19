@@ -7,6 +7,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
+import { subagentLifecycleEffect } from "./EffectOutbox.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 export interface ThreadDeletionPlan {
@@ -21,12 +22,16 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
+  /** Project removal already deletes every thread itself. */
+  readonly cascadeToSubagents?: boolean;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocator.IdAllocatorV2Error> {
   const { command, projection, now, idAllocator } = input;
   const events: Array<OrchestrationV2DomainEvent> = [];
-  const effects: Array<PendingOrchestrationEffectV2> = [];
+  const effects: Array<PendingOrchestrationEffectV2> = input.cascadeToSubagents
+    ? [yield* subagentLifecycleEffect(command.commandId, command.threadId, "delete")]
+    : [];
   let current = projection;
   const emitEvent = Effect.fn("ThreadDeletion.emitEvent")(function* <
     Event extends OrchestrationV2DomainEvent,

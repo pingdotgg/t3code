@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  NonNegativeInt,
   NodeId,
   ProviderSessionId,
   RunAttemptId,
@@ -10,7 +11,9 @@ import {
   ProviderUserInputAnswers,
   ProviderThreadId,
   ProviderTurnId,
+  ProviderInteractionMode,
   RunId,
+  RuntimeMode,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -27,6 +30,11 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
+import { DispatchModeLimit } from "./DispatchModeLimit.ts";
+
+export const SubagentLifecycle = Context.Reference<
+  { readonly sourceSequence: number; readonly ancestorThreadId: ThreadId } | undefined
+>("t3/orchestration-v2/SubagentLifecycle", { defaultValue: () => undefined });
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
@@ -104,6 +112,15 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     attachmentIds: Schema.Array(Schema.String),
   }),
   Schema.Struct({
+    type: Schema.Literal("subagent-threads.cascade"),
+    operation: Schema.Literals(["archive", "unarchive", "delete"]),
+    sourceSequence: Schema.optional(NonNegativeInt),
+    ancestorThreadId: Schema.optional(ThreadId),
+    limit: Schema.optional(
+      Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+    ),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
     kind: Schema.Union([
       Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
@@ -125,6 +142,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
+  "subagent-threads.cascade",
   "thread-title.generate",
   "delegated-tasks.stop",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -178,6 +196,33 @@ export interface PendingOrchestrationEffectV2 {
   readonly request: OrchestrationEffectRequestV2;
   readonly availableAt?: DateTime.Utc;
 }
+
+export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycleEffect")(function* (
+  commandId: CommandId,
+  threadId: ThreadId,
+  operation: "archive" | "unarchive" | "delete",
+) {
+  const limit = yield* DispatchModeLimit;
+  const cascade = yield* SubagentLifecycle;
+  return {
+    id: `effect:${commandId}:subagent-threads.cascade`,
+    commandId,
+    threadId,
+    request: {
+      type: "subagent-threads.cascade",
+      operation,
+      sourceSequence: cascade?.sourceSequence,
+      ancestorThreadId: cascade?.ancestorThreadId ?? threadId,
+      limit:
+        limit === undefined
+          ? undefined
+          : {
+              runtimeMode: limit.runtimeMode,
+              interactionMode: limit.interactionMode,
+            },
+    },
+  } satisfies PendingOrchestrationEffectV2;
+});
 
 export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
   "EffectOutboxError",

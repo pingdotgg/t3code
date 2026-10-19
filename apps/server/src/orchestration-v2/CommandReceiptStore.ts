@@ -31,9 +31,19 @@ export class CommandReceiptStoreReadError extends Schema.TaggedError<CommandRece
   }
 }
 
+class CommandReceiptStoreLifecycleReadError extends Schema.TaggedError<CommandReceiptStoreLifecycleReadError>()(
+  "CommandReceiptStoreLifecycleReadError",
+  { threadId: ThreadId, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to read orchestration V2 lifecycle receipt for thread ${this.threadId}.`;
+  }
+}
+
 export const CommandReceiptStoreV2Error = Schema.Union([
   CommandReceiptStoreWriteError,
   CommandReceiptStoreReadError,
+  CommandReceiptStoreLifecycleReadError,
 ]);
 export type CommandReceiptStoreV2Error = typeof CommandReceiptStoreV2Error.Type;
 
@@ -65,6 +75,9 @@ export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
 
 export interface CommandReceiptStoreV2Shape {
+  readonly getLatestLifecycle: (
+    threadId: ThreadId,
+  ) => Effect.Effect<CommandReceiptV2 | null, CommandReceiptStoreV2Error>;
   readonly insertIfAbsent: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
@@ -137,6 +150,15 @@ const layerBase: Layer.Layer<
     const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
 
     return CommandReceiptStoreV2.of({
+      getLatestLifecycle: (threadId) =>
+        receipts.getLatestLifecycle({ threadId }).pipe(
+          Effect.flatMap((receipt) =>
+            Option.isSome(receipt) ? fromApplicationReceipt(receipt.value) : Effect.succeed(null),
+          ),
+          Effect.mapError(
+            (cause) => new CommandReceiptStoreLifecycleReadError({ threadId, cause }),
+          ),
+        ),
       insertIfAbsent: (receipt) =>
         receipts.insertIfAbsent(toApplicationReceipt(receipt)).pipe(
           Effect.mapError(
