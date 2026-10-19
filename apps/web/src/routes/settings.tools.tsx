@@ -30,7 +30,9 @@ export const Route = createFileRoute("/settings/tools")({
         ? "mcp"
         : location.hash === "tools-skills"
           ? "skills"
-          : undefined;
+          : location.hash === "web-provider" || location.hash === "web-provider-api-key"
+            ? "web"
+            : undefined;
     if (tab !== undefined && search.tab !== tab) {
       throw redirect({
         to: "/settings/tools",

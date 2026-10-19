@@ -62,6 +62,15 @@ describe("buildCodexAdditionalContext", () => {
 });
 
 describe("buildCodexDeveloperInstructions", () => {
+  it("adds the web tool guidance as its own context entry only while a web provider is selected", () => {
+    const runtime = { model: "gpt-5.4", reasoningEffort: "medium" };
+    NodeAssert.equal(buildCodexAdditionalContext(runtime).t3_code_web_tools, undefined);
+    NodeAssert.match(
+      buildCodexAdditionalContext(runtime, true, true).t3_code_web_tools?.value ?? "",
+      /web_search/,
+    );
+  });
+
   it("appends runtime info after the mode instructions", () => {
     const instructions = runtimeInstructions({
       model: "gpt-5.3-codex",

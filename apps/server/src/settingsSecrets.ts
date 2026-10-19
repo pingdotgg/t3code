@@ -5,6 +5,7 @@ import {
   CodexSettings,
   type ServerSettings,
   UsageLimitSourceConfig,
+  WebSettings,
   secretSettingsFields,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
@@ -32,6 +33,10 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const webSecretFields = secretSettingsFields(WebSettings);
+/** `firecrawlApiKey` is stored as `web-firecrawl-api-key`. */
+const webSecretName = (field: string) =>
+  `web-${field.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`)}`;
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
 export interface SettingsSecret {
@@ -187,6 +192,8 @@ export function mapSettingsSecrets(
         ];
       }),
     ) as Record<string, Entry>;
+  const web = mapFields(settings.web, webSecretFields, webSecretName) as ServerSettings["web"];
+
   const mcpServers = mapServers(settings.mcpServers, "env");
   const projectSettingsOverrides = Object.fromEntries(
     Object.entries(settings.projectSettingsOverrides).map(([id, overrides]) => [
@@ -204,6 +211,7 @@ export function mapSettingsSecrets(
     providerInstances,
     sourceControlHosts,
     usageLimitSources,
+    web,
     mcpServers,
     projectSettingsOverrides,
   };

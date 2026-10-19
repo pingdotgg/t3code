@@ -17,6 +17,7 @@ import {
   type ProviderSessionId,
   ServerSettingsError,
   ThreadId,
+  type WebToolProvider,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -639,6 +640,7 @@ function runBrowserAccessScenario(input: {
   readonly projectExists?: boolean;
   readonly toolsOverride?: boolean;
   readonly settingsUnavailable?: boolean;
+  readonly webProvider?: WebToolProvider;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -691,6 +693,9 @@ function runBrowserAccessScenario(input: {
                 ),
               })
             : ServerSettings.layerTest({
+                ...(input.webProvider === undefined
+                  ? {}
+                  : { web: { provider: input.webProvider } }),
                 enableAgentBrowserAccess: input.enableAgentBrowserAccess,
                 ...(input.toolsOverride
                   ? {
@@ -2012,6 +2017,24 @@ it.effect("ProviderSessionManagerV2 honors a project browser-access opt-out", ()
     assert.isDefined(captured);
     assert.equal(captured?.browserToolsAvailable, false);
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 turns off native web tools only while a web provider is selected",
+  () =>
+    Effect.gen(function* () {
+      const byDefault = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+      });
+      assert.equal(byDefault?.webToolsPreferred, false);
+      const firecrawl = yield* runBrowserAccessScenario({
+        enableAgentBrowserAccess: true,
+        projectOverride: true,
+        webProvider: "firecrawl",
+      });
+      assert.equal(firecrawl?.webToolsPreferred, true);
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 honors a project browser-access opt-in", () =>

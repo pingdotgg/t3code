@@ -188,6 +188,7 @@ function SettingsIndexSections() {
           target="SettingsProviderAccounts"
           disabled={noServerTargets}
         />
+        <SettingsRow icon="globe" label="Web" target="SettingsWeb" disabled={noServerTargets} />
         <SettingsRow
           icon="text.bubble"
           label="New threads"

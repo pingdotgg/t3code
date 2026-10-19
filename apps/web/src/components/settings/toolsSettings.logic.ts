@@ -14,10 +14,10 @@ import {
   resolveProviderSkillsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 
-export type ToolsTab = "skills" | "mcp";
+export type ToolsTab = "skills" | "mcp" | "web";
 
 export function validateToolsSearch(raw: Record<string, unknown>): { tab?: ToolsTab } {
-  return raw.tab === "mcp" || raw.tab === "skills" ? { tab: raw.tab } : {};
+  return raw.tab === "mcp" || raw.tab === "skills" || raw.tab === "web" ? { tab: raw.tab } : {};
 }
 
 /** Where a skill lives, the groups the Skills tab shows in order. */

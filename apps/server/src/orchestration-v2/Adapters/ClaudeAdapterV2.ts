@@ -148,7 +148,10 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_WEB_TOOL_INSTRUCTIONS,
+} from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
   mcpToolPresentation,
@@ -1109,6 +1112,8 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** Asks Claude to use t3-code's web tools first; set while a web provider is selected. */
+  readonly webToolsPreferred?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1201,7 +1206,10 @@ export function makeClaudeQueryOptions(input: {
       preset: "claude_code" as const,
       append:
         buildRuntimeInstructions({ harness: "Claude Code" }) +
-        (input.mcpServers?.["t3-code"] === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS),
+        (input.mcpServers?.["t3-code"] === undefined ? "" : T3_CODE_ORCHESTRATION_INSTRUCTIONS) +
+        (input.mcpServers?.["t3-code"] === undefined || input.webToolsPreferred !== true
+          ? ""
+          : `\n${T3_CODE_WEB_TOOL_INSTRUCTIONS}\n`),
     },
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
@@ -1216,7 +1224,7 @@ export function makeClaudeQueryOptions(input: {
 
 export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 
-// Must stay in sync with the Tool.Readonly annotations on OrchestratorToolkit;
+// Must stay in sync with the Tool.Readonly annotations on the t3-code toolkits;
 // ClaudeAdapterV2.test.ts cross-checks this list against the toolkit.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
@@ -1238,6 +1246,8 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_queue_read",
   "mcp__t3-code__html_preview",
   "mcp__t3-code__html_render",
+  "mcp__t3-code__web_search",
+  "mcp__t3-code__web_fetch",
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")
@@ -1259,6 +1269,7 @@ export function claudeMcpQueryOverrides(input: {
   readonly allowedTools?: ReadonlyArray<string>;
 }): {
   readonly allowedTools?: ReadonlyArray<string>;
+  readonly webToolsPreferred?: boolean;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly sdkSettings?: ClaudeSdkSettings;
   readonly mcpEnvironment?: Readonly<Record<string, string>>;
@@ -1276,6 +1287,8 @@ export function claudeMcpQueryOverrides(input: {
   const userServers = claudeUserMcpServers(tools.servers);
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
+    // Claude Code keeps its own web tools as the fallback.
+    ...(session.webToolsPreferred === true ? { webToolsPreferred: true } : {}),
     mcpServers: {
       ...userServers.mcpServers,
       "t3-code": {
@@ -1984,6 +1997,7 @@ export function claudeEffectiveQueryPolicyKey(
   queryPolicy: ClaudeRuntimeQueryPolicy,
   mcpOverrides: {
     readonly allowedTools?: ReadonlyArray<string>;
+    readonly webToolsPreferred?: boolean;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
     readonly sdkSettings?: ClaudeSdkSettings;
     readonly mcpEnvironment?: Readonly<Record<string, string>>;
@@ -2000,6 +2014,8 @@ export function claudeEffectiveQueryPolicyKey(
     // Skill switches load at process start, so a change reopens the query.
     sdkSettings: mcpOverrides.sdkSettings,
     mcpEnvironment: mcpOverrides.mcpEnvironment,
+    // The web tool instructions are in the system prompt, which needs a new process.
+    webToolsPreferred: mcpOverrides.webToolsPreferred,
   });
 }
 
@@ -8608,6 +8624,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(mcpOverrides.sdkSettings === undefined
               ? {}
               : { sdkSettings: mcpOverrides.sdkSettings }),
+            ...(mcpOverrides.webToolsPreferred === true ? { webToolsPreferred: true } : {}),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}

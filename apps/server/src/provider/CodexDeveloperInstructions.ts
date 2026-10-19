@@ -5,6 +5,8 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 import {
   T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_ORCHESTRATION_SECTIONS,
+  T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_WEB_TOOL_INSTRUCTIONS,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 /**
@@ -207,6 +209,8 @@ export function buildCodexDeveloperInstructions(interactionMode: ProviderInterac
 export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
+  /** Set while a web provider is selected in Settings → Tools → Web. */
+  webToolsPreferred = false,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
   // Separate keys keep each value under Codex's per-entry cap. Codex emits
@@ -223,5 +227,8 @@ export function buildCodexAdditionalContext(
       value: buildRuntimeInstructions({ harness: "Codex", ...runtime }),
     },
     ...(tools ? { t3_code_tools: { kind: "application", value: tools } } : {}),
+    ...(webToolsPreferred
+      ? { t3_code_web_tools: { kind: "application", value: T3_CODE_WEB_TOOL_INSTRUCTIONS } }
+      : {}),
   };
 }

@@ -27,6 +27,10 @@
       "types": "./src/preview/serverBrowserStream.ts",
       "default": "./src/preview/serverBrowserStream.ts"
     },
+    "./web-tool-providers": {
+      "types": "./src/webToolProviders.ts",
+      "default": "./src/webToolProviders.ts"
+    },
     "./worktree-setup": {
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"

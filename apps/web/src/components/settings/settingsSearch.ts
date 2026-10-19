@@ -637,6 +637,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "web-provider",
+    title: "Web provider",
+    to: "/settings/tools",
+    searchTerms: [
+      "web search fetch scrape firecrawl exa tavily built-in agent tools web_search web_fetch internet browse",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "web-provider-api-key",
+    title: "Web provider API key",
+    to: "/settings/tools",
+    searchTerms: ["firecrawl exa tavily api key credentials secret token"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",

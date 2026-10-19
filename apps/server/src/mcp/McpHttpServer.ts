@@ -72,6 +72,9 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as WebHandlers from "./toolkits/web/handlers.ts";
+import { WebToolkit } from "./toolkits/web/tools.ts";
+import * as WebTools from "../web/WebTools.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
   HttpServerRequest.toURL(request).pipe(
@@ -1042,6 +1045,11 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const layerWebToolkit = McpServer.toolkit(WebToolkit).pipe(
+  Layer.provide(WebHandlers.layer),
+  Layer.provide(WebTools.layer),
+);
+
 export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -1062,4 +1070,5 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerWebToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

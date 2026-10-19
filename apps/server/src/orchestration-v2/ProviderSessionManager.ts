@@ -3,6 +3,7 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isOrchestrationV2WorkActive,
+  DEFAULT_WEB_TOOL_PROVIDER,
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -377,6 +378,19 @@ export const layerWithOptions = (
           );
         },
       );
+      // Built-in leaves agents on their own web tools; any other provider is preferred.
+      const webToolsPreferred = Option.match(serverSettings, {
+        onNone: () => Effect.succeed(DEFAULT_WEB_TOOL_PROVIDER !== "builtin"),
+        onSome: (service) =>
+          service.getSettings.pipe(
+            Effect.map((settings) => settings.web.provider !== "builtin"),
+            Effect.catch(() =>
+              Effect.logWarning(
+                "Could not read the web provider; not steering agents to T3 web tools.",
+              ).pipe(Effect.as(false)),
+            ),
+          ),
+      });
       const layerScope = yield* Effect.scope;
       // Ctrl+C, or a stop that signals the whole process group, reaches the
       // provider CLIs with the server. They report their own background work
@@ -469,6 +483,7 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
+                const webToolsSelected = yield* webToolsPreferred;
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before the async resolve so a release cannot
@@ -493,9 +508,13 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
-                    // The credential stays; the user's tools are re-read on
-                    // every prepare so a reopened process picks up an edit.
-                    yield* mcpSessions.set({ ...existing, tools });
+                    // The credential stays; the user's tools and web provider are
+                    // re-read on every prepare so a reopened process picks up an edit.
+                    yield* mcpSessions.set({
+                      ...existing,
+                      tools,
+                      webToolsPreferred: webToolsSelected,
+                    });
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
@@ -507,7 +526,11 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                 });
-                yield* mcpSessions.set({ ...credential.config, tools });
+                yield* mcpSessions.set({
+                  ...credential.config,
+                  tools,
+                  webToolsPreferred: webToolsSelected,
+                });
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),

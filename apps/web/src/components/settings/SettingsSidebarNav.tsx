@@ -14,6 +14,7 @@ import {
   createLucideIcon,
   CalendarClockIcon,
   GitBranchIcon,
+  GlobeIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
   KeyboardIcon,
