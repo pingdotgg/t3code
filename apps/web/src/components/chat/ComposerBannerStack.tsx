@@ -31,10 +31,10 @@ export type ComposerBannerStackContent = Pick<
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
 function bannerPriority(item: ComposerBannerStackEntry) {
-  if (item.priority === "activity") {
+  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
     return 0;
   }
-  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
+  if (item.priority === "activity") {
     return 1;
   }
   return 2;
