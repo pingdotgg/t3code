@@ -64,6 +64,7 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
+import { readToolOutputImage } from "@t3tools/shared/toolOutput";
 
 import {
   isProviderNativeImageAttachment,
@@ -500,6 +501,22 @@ const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
 
 const textOf = (content: ReadonlyArray<{ readonly type: string; readonly text?: string }>) =>
   content.flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n");
+
+const BASE64_DATA_URI = /^data:[^,]*;base64,(.+)$/s;
+
+/**
+ * An image tool such as `image_generation` answers with a file block, not text.
+ * Only raster images inlined as base64 are kept; anything else can't be served.
+ */
+const imagesOf = (
+  content: ReadonlyArray<{ readonly type: string; readonly uri?: string; readonly mime?: string }>,
+) =>
+  content.flatMap((part) => {
+    const data = part.type === "file" ? BASE64_DATA_URI.exec(part.uri ?? "")?.[1] : undefined;
+    const image =
+      data === undefined ? null : readToolOutputImage({ type: "image", mimeType: part.mime, data });
+    return image?.data === undefined ? [] : [{ mimeType: image.mimeType, data: image.data }];
+  });
 
 const stringField = (record: Readonly<Record<string, unknown>> | undefined, key: string) => {
   const value = record?.[key];
@@ -996,7 +1013,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       id: string,
       status: "running" | "completed" | "failed" | "interrupted",
-      result?: { readonly output: string | undefined; readonly metadata: unknown },
+      result?: {
+        readonly output: string | undefined;
+        readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
+        readonly metadata: unknown;
+      },
     ) {
       const tool = turn.tools.get(id);
       if (tool === undefined) return;
@@ -1018,6 +1039,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             name: tool.name,
             input: tool.input,
             output: result?.output,
+            ...(result?.images === undefined ? {} : { images: result.images }),
             completedMetadata: status === "completed" ? result?.metadata : undefined,
           },
         ),
@@ -2094,9 +2116,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
-          const output = textOf(event.data.content);
           yield* emitTool(state, turn, event.data.id, "completed", {
-            output,
+            output: textOf(event.data.content),
+            images: imagesOf(event.data.content),
             metadata: event.data.metadata,
           });
           turn.tools.delete(event.data.id);
@@ -2555,6 +2577,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (part.state.status === "completed") {
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
+              images: imagesOf(part.state.content),
               metadata: part.state.metadata,
             });
             turn.tools.delete(part.id);

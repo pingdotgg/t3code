@@ -98,9 +98,11 @@ export function openCodeToolTurnItem(
     readonly input: Record<string, unknown>;
     readonly output: string | undefined;
     readonly completedMetadata: unknown;
+    /** Only a dynamic tool can show these; other kinds stay text. */
+    readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
   },
 ): OrchestrationV2TurnItem {
-  const { input, output } = tool;
+  const { input, output, images } = tool;
   switch (openCodeToolProjectionKind(tool.name)) {
     case "command_execution": {
       const exitCode = recordNumber(tool.completedMetadata, "exit", "exitCode");
@@ -169,6 +171,17 @@ export function openCodeToolTurnItem(
       const readPath = recordString(input, "filePath", "path", "file");
       const cleanedOutput =
         tool.name === "read" && output !== undefined ? nativeReadOutput(output) : output;
+      // Text-only results stay a string; images take the block shape clients and
+      // the server already read tool-output images from.
+      const result =
+        images === undefined || images.length === 0
+          ? cleanedOutput
+          : {
+              content: [
+                ...(cleanedOutput ? [{ type: "text", text: cleanedOutput }] : []),
+                ...images.map((image) => ({ type: "image", ...image })),
+              ],
+            };
       return {
         ...base,
         title:
@@ -178,7 +191,7 @@ export function openCodeToolTurnItem(
         type: "dynamic_tool",
         toolName: tool.name,
         input,
-        ...(cleanedOutput === undefined ? {} : { output: cleanedOutput }),
+        ...(result === undefined ? {} : { output: result }),
       };
     }
   }

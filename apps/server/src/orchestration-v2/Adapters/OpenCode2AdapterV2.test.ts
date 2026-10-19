@@ -47,6 +47,7 @@ import {
   OPENCODE_PROVIDER,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
+import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
 import {
@@ -2296,6 +2297,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     active: Record<string, unknown>,
     ended?: "succeeded",
     assistant: Record<string, unknown> = {},
+    tool: { readonly name: string; readonly content: ReadonlyArray<unknown> } = {
+      name: "shell",
+      content: [{ type: "text", text: "GAP" }],
+    },
   ) => [
     { type: "runtime_exit", status: "success" } as const,
     out("event.subscribe"),
@@ -2318,12 +2323,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             {
               type: "tool",
               id: "call_gap",
-              name: "shell",
+              name: tool.name,
               executed: true,
               state: {
                 status: "completed",
                 input: { command: "echo GAP" },
-                content: [{ type: "text", text: "GAP" }],
+                content: tool.content,
                 metadata: {},
               },
               time: { created: 2, ran: 2, completed: 2 },
@@ -2446,6 +2451,127 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepInclude(usage, { usageStatus: "partial", inputTokens: 100, outputTokens: 10 });
       assert.notProperty(usage, "models");
     }).pipe(Effect.scoped),
+  );
+
+  const PNG =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=";
+  const generated = {
+    type: "file",
+    uri: `data:image/png;base64,${PNG}`,
+    mime: "image/png",
+    name: "generated.png",
+  };
+  const generatedBlock = { type: "image", mimeType: "image/png", data: PNG };
+  const caption = { type: "text", text: "Generated a cat." };
+
+  const completedToolOutputs = (collected: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    collected.flatMap((event) =>
+      event.type === "turn_item.updated" &&
+      event.turnItem.type === "dynamic_tool" &&
+      event.turnItem.status === "completed"
+        ? [event.turnItem.output]
+        : [],
+    );
+  const untilTerminal = (runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime) =>
+    runtime.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+
+  const liveToolOutputs = (content: ReadonlyArray<unknown>) =>
+    Effect.gen(function* () {
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call_image" };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...tool, name: "image_generation" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "image_generation",
+          input: { prompt: "a cat" },
+          executed: true,
+        }),
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_toolsuccess_call_image",
+              created: 1,
+              type: "session.tool.success",
+              data: { ...tool, content, metadata: {}, executed: true },
+              durable: { aggregateID: SESSION, seq: 1, version: 2 },
+            },
+          },
+        },
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* untilTerminal(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      return completedToolOutputs(yield* Fiber.join(events));
+    }).pipe(Effect.scoped);
+
+  const historyToolOutputs = (content: ReadonlyArray<unknown>) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        ...reconnected({}, "succeeded", {}, { name: "image_generation", content }),
+      ]);
+      const events = yield* untilTerminal(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      return completedToolOutputs(yield* Fiber.join(events));
+    }).pipe(Effect.scoped);
+
+  const toolResultSources = [
+    { source: "a live event", toolOutputs: liveToolOutputs },
+    { source: "the session history", toolOutputs: historyToolOutputs },
+  ];
+
+  it.effect.each(toolResultSources)(
+    "keeps an image a tool returned alone, read from $source",
+    ({ toolOutputs }) =>
+      Effect.gen(function* () {
+        const outputs = yield* toolOutputs([generated]);
+        assert.deepEqual(outputs, [{ content: [generatedBlock] }]);
+        assert.deepEqual(toolOutputImages(outputs[0]), [{ mimeType: "image/png", data: PNG }]);
+      }),
+  );
+
+  it.effect.each(toolResultSources)(
+    "keeps both the text and the image of a tool result, read from $source",
+    ({ toolOutputs }) =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* toolOutputs([caption, generated]), [
+          { content: [caption, generatedBlock] },
+        ]);
+      }),
+  );
+
+  it.effect.each(toolResultSources)(
+    "keeps a text-only tool result as text, read from $source",
+    ({ toolOutputs }) =>
+      Effect.gen(function* () {
+        assert.deepEqual(yield* toolOutputs([caption]), ["Generated a cat."]);
+      }),
+  );
+
+  it.effect.each(toolResultSources)(
+    "leaves files it cannot serve out of a tool result, read from $source",
+    ({ toolOutputs }) =>
+      Effect.gen(function* () {
+        const svg = `data:image/svg+xml;base64,${btoa("<svg/>")}`;
+        assert.deepEqual(
+          yield* toolOutputs([
+            caption,
+            { type: "file", uri: svg, mime: "image/svg+xml" },
+            { type: "file", uri: "file:///work/cat.png", mime: "image/png" },
+          ]),
+          ["Generated a cat."],
+        );
+      }),
   );
 
   it.effect("finishes a workspace command whose stream dropped before its inbox event", () =>
