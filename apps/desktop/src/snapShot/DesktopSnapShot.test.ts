@@ -2725,6 +2725,69 @@ it.each([
   }
 });
 
+it.each([
+  ["com.google.Chrome", "Google Chrome – Profile"],
+  ["org.chromium.Chromium", "Chromium"],
+])("reads macOS %s page context with an accessibility title suffix", async (bundleId, suffix) => {
+  const title = "Issues · pingdotgg/t3code";
+  const bounds = { x: 0, y: 33, width: 1470, height: 857 };
+  const window = {
+    role: "window",
+    name: `${title} - ${suffix}`,
+    bounds,
+    tree: async () => ({ name: title, children: [{ name: "New issue", children: [] }] }),
+    children: async () => [{ role: "button", name: "New issue", bounds, children: async () => [] }],
+  };
+  accessibilityByPidMock.mockReset().mockImplementation(async (pid: number) => ({
+    children: async () => (pid === 42 ? [window] : []),
+  }));
+
+  const context = await readAccessibleWindowContext(
+    { title, bounds, owner: { processId: 42, bundleId } },
+    "darwin",
+    title,
+  );
+
+  assert.equal(context?.accessibleText, `${title}\nNew issue`);
+  assert.equal(context?.accessibility?.format, "element-tree");
+  assert.equal(
+    context?.accessibility?.format === "element-tree"
+      ? context.accessibility.root.children[0]?.name
+      : undefined,
+    "New issue",
+  );
+});
+
+it("does not borrow another Chrome process context when the captured PID has no windows", async () => {
+  const title = "Issues · pingdotgg/t3code";
+  const bounds = { x: 0, y: 33, width: 1470, height: 857 };
+  const otherWindow = {
+    role: "window",
+    name: `${title} - Google Chrome – Profile`,
+    bounds,
+    tree: async () => ({
+      name: title,
+      children: [{ name: "Other process private text", children: [] }],
+    }),
+    children: async () => [],
+  };
+  accessibilityByPidMock.mockReset().mockResolvedValue({
+    pid: 42,
+    children: async () => [],
+  });
+  accessibilityListMock.mockResolvedValue([
+    { pid: 43, bundleId: "com.google.Chrome", children: async () => [otherWindow] },
+  ]);
+
+  assert.isUndefined(
+    await readAccessibleWindowContext(
+      { title, bounds, owner: { processId: 42, bundleId: "com.google.Chrome" } },
+      "darwin",
+      title,
+    ),
+  );
+});
+
 it("reads Flatpak app text from the AT-SPI proxy when the compositor PID misses", async () => {
   vi.stubEnv("XDG_SESSION_TYPE", "wayland");
   const bounds = { x: 0, y: 0, width: 1_920, height: 1_048 };
