@@ -24,7 +24,6 @@ const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
 const BUILD_TIMEOUT = Duration.minutes(5);
 const RUNTIME_INSTALL_TIMEOUT = Duration.minutes(2);
 const RUNTIME_PRUNE_TIMEOUT = Duration.seconds(30);
-const RUNTIME_INVALIDATE_TIMEOUT = Duration.seconds(15);
 const USER_HOME_TIMEOUT = Duration.seconds(5);
 const TOOLCHAIN_TRANSPORT_RETRY_LIMIT = 12;
 const BUILD_TRANSPORT_RETRY_LIMIT = 2;
@@ -44,6 +43,7 @@ export type PrepareWslRuntimeResult =
   | {
       readonly ok: true;
       readonly linuxAppRoot: string;
+      readonly resolvedPath: string;
     }
   | {
       readonly ok: false;
@@ -61,16 +61,6 @@ export type EnsureWslNodePtyResult =
       readonly reason: string;
       readonly fatal: boolean;
       readonly retryLimit?: number;
-    };
-
-export type ProbeWslRuntimeResult =
-  | {
-      readonly ok: true;
-      readonly resolvedPath: string;
-    }
-  | {
-      readonly ok: false;
-      readonly reason: string;
     };
 
 export class DesktopWslDistroListError extends Schema.TaggedError<DesktopWslDistroListError>()(
@@ -110,11 +100,6 @@ export class DesktopWslEnvironment extends Context.Service<
       archive: WslRuntimeArchive,
     ) => Effect.Effect<PrepareWslRuntimeResult>;
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-    readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-    readonly probeRuntime: (
-      distro: string | null,
-      linuxAppRoot: string,
-    ) => Effect.Effect<ProbeWslRuntimeResult>;
     readonly ensureNodePty: (
       distro: string | null,
       linuxAppRoot: string,
@@ -273,26 +258,38 @@ export const buildWslRuntimeInstallScript = (
     'runtime_parent="$HOME/.t3/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
-    "runtime_entry_runs() {",
-    '  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null 2>&1',
+    'runtime_check_pid=""',
+    'runtime_tmp=""',
+    "cleanup_runtime_install() {",
+    '  if [ -n "$runtime_check_pid" ]; then',
+    '    kill "$runtime_check_pid" 2>/dev/null || true',
+    '    wait "$runtime_check_pid" 2>/dev/null || true',
+    "  fi",
+    '  [ -z "$runtime_tmp" ] || rm -rf "$runtime_tmp"',
     "}",
-    // Hashing the entry is what tells a working cache from one whose `t3` was
-    // swapped or half-written after install: the file is still there and may
-    // even still run, and launch then picks an executable that is not what this
-    // install verified.
-    "runtime_server_entry_digest() {",
-    `  sha256sum "$1/t3" 2>/dev/null | cut -d ' ' -f 1`,
+    "trap cleanup_runtime_install EXIT",
+    "trap 'exit 1' HUP INT TERM",
+    "runtime_entry_runs() {",
+    '  [ -x "$1/t3" ] || return 1',
+    // Own the CLI's PID directly and keep the install lock in the parent.
+    '  exec "$1/t3" --help >/dev/null 2>&1 9>&- &',
+    "  runtime_check_pid=$!",
+    // Load CLI dependencies and hash the executable concurrently, including on cache hits.
+    `  runtime_entry_digest=$(sha256sum "$1/t3" 2>/dev/null | cut -d ' ' -f 1)`,
+    "  runtime_check_status=0",
+    '  wait "$runtime_check_pid" || runtime_check_status=$?',
+    '  runtime_check_pid=""',
+    '  return "$runtime_check_status"',
     "}",
     "runtime_is_ready() {",
-    '  [ -f "$ready_marker" ] &&',
-    '    runtime_entry_runs "$runtime_root" &&',
-    `    recorded_entry_digest=$(tr -d '[:space:]' < "$ready_marker" 2>/dev/null) &&`,
-    '    [ -n "$recorded_entry_digest" ] &&',
-    '    [ "$recorded_entry_digest" = "$(runtime_server_entry_digest "$runtime_root")" ]',
+    '  [ -f "$ready_marker" ] || return 1',
+    `  recorded_entry_digest=$(tr -d '[:space:]' < "$ready_marker" 2>/dev/null) || return 1`,
+    '  [ -n "$recorded_entry_digest" ] || return 1',
+    '  runtime_entry_runs "$runtime_root" || return 1',
+    '  [ "$recorded_entry_digest" = "$runtime_entry_digest" ]',
     "}",
     'mkdir -p "$runtime_parent"',
     `runtime_lock="$runtime_parent/.${safeRuntimeId}.install.lock"`,
-    "trap 'exit 1' HUP INT TERM",
     'exec 9> "$runtime_lock"',
     "flock -x 9",
     "if runtime_is_ready; then",
@@ -333,19 +330,16 @@ export const buildWslRuntimeInstallScript = (
     "  fi",
     "fi",
     `runtime_tmp=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.tmp.XXXXXX")`,
-    'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
-    "trap cleanup_runtime_install EXIT",
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp" --strip-components=1`,
     'if ! runtime_entry_runs "$runtime_tmp"; then',
     "  printf 'WSL runtime archive does not contain a working t3 executable\\n' >&2",
     "  exit 1",
     "fi",
-    'installed_entry_digest=$(runtime_server_entry_digest "$runtime_tmp")',
-    'if [ -z "$installed_entry_digest" ]; then',
+    'if [ -z "$runtime_entry_digest" ]; then',
     "  printf 'Could not hash the WSL runtime server entry\\n' >&2",
     "  exit 1",
     "fi",
-    `printf '%s\\n' "$installed_entry_digest" > "$runtime_tmp/${WSL_RUNTIME_READY_MARKER}"`,
+    `printf '%s\\n' "$runtime_entry_digest" > "$runtime_tmp/${WSL_RUNTIME_READY_MARKER}"`,
     'if mv -T "$runtime_tmp" "$runtime_root" 2>/dev/null; then',
     "  :",
     "elif runtime_is_ready; then",
@@ -416,18 +410,6 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
   ].join("\n");
 };
 
-// Readiness is decided inside the install script, so a cached tree that passes
-// there but fails the launch-time probe (a distro whose glibc the executable
-// needs, a tree copied from another machine) would stay ready forever and fail
-// on every launch.
-export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
-  const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
-  return [
-    "set -eu",
-    `rm -f "$HOME/.t3/wsl-runtime/${safeRuntimeId}/${WSL_RUNTIME_READY_MARKER}"`,
-  ].join("\n");
-};
-
 export const parseWslRuntimeRoot = (stdout: string): string | null => {
   const prefix = "runtimeRoot:";
   const line = stdout.split("\n").find((candidate) => candidate.startsWith(prefix));
@@ -479,13 +461,9 @@ if (!candidates.some((candidate) => fs.existsSync(candidate))) process.exit(${NO
 require("node-pty");
 NODE`;
 
-// Provider CLIs may still need version-managed Node, so resolve it before
-// capturing PATH without requiring it for runtime readiness.
-export const buildWslRuntimeProbeScript = (linuxAppRoot: string) =>
-  [
-    `bash -lc ${shellQuote(`${buildWslNodeEnvPreamble()}${RESOLVED_PATH_LINE}`)} 2>/dev/null || ${RESOLVED_PATH_LINE}`,
-    `${shellQuote(`${linuxAppRoot}/t3`)} --version >/dev/null 2>&1`,
-  ].join("\n");
+// The standalone runtime supplies Node, but provider CLIs may need the user's PATH.
+export const buildWslProviderPathScript = () =>
+  `bash -lc ${shellQuote(`${buildWslNodeEnvPreamble()}${RESOLVED_PATH_LINE}`)} 2>/dev/null || ${RESOLVED_PATH_LINE}`;
 
 const TOOLCHAIN_CHECK_SCRIPT = [
   "for tool in node make g++ python3; do",
@@ -597,43 +575,6 @@ export const formatMissingToolsReason = (
 
   return `WSL distro is missing required tools: ${issues.join(", ")}. Install ${remediations.join(" and ")}, then retry.`;
 };
-
-const probeWslRuntimeImpl = (
-  distro: string | null,
-  linuxAppRoot: string,
-): Effect.Effect<ProbeWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const probe = yield* runWslShell(
-      distro,
-      buildWslRuntimeProbeScript(linuxAppRoot),
-      PROBE_TIMEOUT,
-      {
-        resolveNode: false,
-      },
-    );
-    const transportFailureReason = formatWslShellTransportFailureReason(
-      probe.transportFailure,
-      "the staged runtime",
-    );
-    if (transportFailureReason !== null) {
-      return { ok: false, reason: transportFailureReason } as const;
-    }
-    if (probe.exitCode !== 0) {
-      const trimmedTail = probe.stderr.trim().slice(-500);
-      return {
-        ok: false,
-        reason: `${linuxAppRoot}/t3 --version failed (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
-      } as const;
-    }
-    const resolvedPath = parseResolvedPath(probe.stdout);
-    if (resolvedPath === null) {
-      return {
-        ok: false,
-        reason: "WSL login-shell PATH could not be resolved during backend preflight.",
-      } as const;
-    }
-    return { ok: true, resolvedPath } as const;
-  });
 
 const ensureNodePtyImpl = (
   distro: string | null,
@@ -817,11 +758,21 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
     } as const;
   }
 
-  const install = yield* runWslShell(
-    distro,
-    buildWslRuntimeInstallScript(linuxArchivePath.value, archive.runtimeId, archive.sha256),
-    RUNTIME_INSTALL_TIMEOUT,
-    { resolveNode: false },
+  // PATH discovery is independent of the standalone runtime. Keep its shorter
+  // timeout while installing/validating the runtime in parallel.
+  const { install, pathProbe } = yield* Effect.all(
+    {
+      install: runWslShell(
+        distro,
+        buildWslRuntimeInstallScript(linuxArchivePath.value, archive.runtimeId, archive.sha256),
+        RUNTIME_INSTALL_TIMEOUT,
+        { resolveNode: false },
+      ),
+      pathProbe: runWslShell(distro, buildWslProviderPathScript(), PROBE_TIMEOUT, {
+        resolveNode: false,
+      }),
+    },
+    { concurrency: 2 },
   );
   if (install.transportFailure !== null) {
     return {
@@ -840,13 +791,26 @@ const prepareWslRuntimeImpl = Effect.fn("desktop.wsl.prepareRuntimeImpl")(functi
     } as const;
   }
 
+  const pathFailure = formatWslShellTransportFailureReason(
+    pathProbe.transportFailure,
+    "the provider PATH",
+  );
+  if (pathFailure !== null) return { ok: false, reason: pathFailure };
+  if (pathProbe.exitCode !== 0) {
+    return {
+      ok: false,
+      reason: `WSL provider PATH discovery failed (exit ${pathProbe.exitCode}).`,
+    };
+  }
   const linuxAppRoot = parseWslRuntimeRoot(install.stdout);
-  return linuxAppRoot === null
-    ? {
-        ok: false,
-        reason: "WSL runtime installation completed without reporting its cache path.",
-      }
-    : { ok: true, linuxAppRoot };
+  const resolvedPath = parseResolvedPath(pathProbe.stdout);
+  if (linuxAppRoot === null || resolvedPath === null) {
+    return {
+      ok: false,
+      reason: "WSL runtime preparation did not report its cache path and provider PATH.",
+    };
+  }
+  return { ok: true, linuxAppRoot, resolvedPath };
 });
 
 const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function* (
@@ -863,26 +827,6 @@ const pruneWslRuntimesImpl = Effect.fn("desktop.wsl.pruneRuntimesImpl")(function
 
   const detail = `${result.stdout}${result.stderr}`.trim().slice(-500);
   yield* Effect.logWarning("Could not prune old WSL runtime caches.", {
-    distro,
-    runtimeId,
-    detail: detail || `exit ${result.exitCode}`,
-  });
-});
-
-const invalidateWslRuntimeImpl = Effect.fn("desktop.wsl.invalidateRuntimeImpl")(function* (
-  distro: string | null,
-  runtimeId: string,
-): Effect.fn.Return<void, never, ChildProcessSpawner.ChildProcessSpawner> {
-  const result = yield* runWslShell(
-    distro,
-    buildWslRuntimeInvalidateScript(runtimeId),
-    RUNTIME_INVALIDATE_TIMEOUT,
-    { resolveNode: false },
-  );
-  if (result.transportFailure === null && result.exitCode === 0) return;
-
-  const detail = `${result.stdout}${result.stderr}`.trim().slice(-500);
-  yield* Effect.logWarning("Could not invalidate the staged WSL runtime cache.", {
     distro,
     runtimeId,
     detail: detail || `exit ${result.exitCode}`,
@@ -1082,8 +1026,6 @@ export interface DesktopWslEnvironmentTestStub {
     archive: WslRuntimeArchive,
   ) => PrepareWslRuntimeResult;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-  readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
-  readonly probeRuntime?: (distro: string | null, linuxAppRoot: string) => ProbeWslRuntimeResult;
   readonly ensureNodePty?: (
     distro: string | null,
     linuxAppRoot: string,
@@ -1113,12 +1055,6 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
           },
         ),
       pruneRuntimes: (distro, runtimeId) => stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void,
-      invalidateRuntime: (distro, runtimeId) =>
-        stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void,
-      probeRuntime: (distro, linuxAppRoot) =>
-        Effect.succeed(
-          stub.probeRuntime?.(distro, linuxAppRoot) ?? { ok: true, resolvedPath: "/usr/bin:/bin" },
-        ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, linuxAppRoot, options) ?? {
@@ -1198,14 +1134,6 @@ export const layer = Layer.effect(
       pruneRuntimes: (distro, runtimeId) =>
         provideSpawner(pruneWslRuntimesImpl(distro, runtimeId)).pipe(
           Effect.withSpan("desktop.wsl.pruneRuntimes"),
-        ),
-      invalidateRuntime: (distro, runtimeId) =>
-        provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId)).pipe(
-          Effect.withSpan("desktop.wsl.invalidateRuntime"),
-        ),
-      probeRuntime: (distro, linuxAppRoot) =>
-        provideSpawner(probeWslRuntimeImpl(distro, linuxAppRoot)).pipe(
-          Effect.withSpan("desktop.wsl.probeRuntime"),
         ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(
