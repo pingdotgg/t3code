@@ -6,6 +6,7 @@ import type {
   RunResult,
   SDKUserMessage,
   SettingSource,
+  TokenUsage,
   ToolCall,
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
@@ -869,6 +870,7 @@ interface ActiveCursorTurn {
   readonly assistant: ActiveCursorTextStream;
   readonly assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
+  usage: Omit<TokenUsage, "totalTokens"> | null;
   interrupted: boolean;
   finalized: boolean;
 }
@@ -1947,10 +1949,28 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               yield* handleToolUpdate(context, update);
               return;
             case "step-completed":
-            case "turn-ended":
               yield* completeAssistant(context);
               yield* completeReasoning(context);
               return;
+            case "turn-ended": {
+              yield* completeAssistant(context);
+              yield* completeReasoning(context);
+              const added = update.usage;
+              const usage = context.usage;
+              if (added === undefined) return;
+              const reasoningTokens =
+                added.reasoningTokens === undefined && usage?.reasoningTokens === undefined
+                  ? undefined
+                  : (usage?.reasoningTokens ?? 0) + (added.reasoningTokens ?? 0);
+              context.usage = {
+                inputTokens: (usage?.inputTokens ?? 0) + added.inputTokens,
+                outputTokens: (usage?.outputTokens ?? 0) + added.outputTokens,
+                cacheReadTokens: (usage?.cacheReadTokens ?? 0) + added.cacheReadTokens,
+                cacheWriteTokens: (usage?.cacheWriteTokens ?? 0) + added.cacheWriteTokens,
+                ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+              };
+              return;
+            }
             case "shell-output-delta": {
               const shell = Array.from(context.tools.values())
                 .toReversed()
@@ -2003,6 +2023,39 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           completedAt: input.completedAt,
         });
 
+        const turnTokenUsage = (
+          context: ActiveCursorTurn,
+          status: OrchestrationV2ProviderTurn["status"],
+        ) => {
+          const hasSubagents = context.subagents.size > 0;
+          if (context.usage === null) {
+            return {
+              usageScope: "main_agent" as const,
+              usageStatus: "unavailable" as const,
+              hasSubagents,
+            };
+          }
+          const count = (tokens: number) => Math.max(0, Math.round(tokens));
+          // Cursor's inputTokens already includes cache reads and writes: every SDK run matched
+          // to its dashboard event had inputTokens = uncached + cacheRead + cacheWrite.
+          const inputTokens = count(context.usage.inputTokens);
+          const cachedInputTokens = Math.min(count(context.usage.cacheReadTokens), inputTokens);
+          const reasoningTokens = context.usage.reasoningTokens;
+          return {
+            usageScope: "main_agent" as const,
+            usageStatus: status === "completed" ? ("complete" as const) : ("partial" as const),
+            inputTokens,
+            cachedInputTokens,
+            cacheCreationTokens: Math.min(
+              count(context.usage.cacheWriteTokens),
+              inputTokens - cachedInputTokens,
+            ),
+            outputTokens: count(context.usage.outputTokens),
+            ...(reasoningTokens === undefined ? {} : { reasoningTokens: count(reasoningTokens) }),
+            hasSubagents,
+          };
+        };
+
         const finalizeTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveCursorTurn;
           readonly status: Extract<
@@ -2040,11 +2093,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
-            providerTurn: providerTurnPayload({
-              context: input.context,
-              status: input.status,
-              completedAt,
-            }),
+            providerTurn: {
+              ...providerTurnPayload({
+                context: input.context,
+                status: input.status,
+                completedAt,
+              }),
+              turnTokenUsage: turnTokenUsage(input.context, input.status),
+            },
           });
           yield* emitProviderEvent({
             type: "provider_thread.updated",
@@ -2312,6 +2368,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 current: null,
                 nextSegment: 0,
               },
+              usage: null,
               interrupted: false,
               finalized: false,
             };
