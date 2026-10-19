@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -61,7 +62,149 @@ function layerElectronApp(
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
+const layerCuaRouting = DesktopTelemetryPublisher.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerElectronApp([]),
+      layerHistory,
+      Layer.succeed(
+        ElectronPowerMonitor.ElectronPowerMonitor,
+        ElectronPowerMonitor.ElectronPowerMonitor.of({
+          isOnBatteryPower: Effect.succeed(false),
+          getSystemIdleTime: Effect.succeed(0),
+          getSystemIdleState: () => Effect.succeed("active"),
+          getCurrentThermalState: Effect.succeed("nominal"),
+          onSimpleEvent: () => Effect.void,
+          onThermalStateChange: () => Effect.void,
+          onSpeedLimitChange: () => Effect.void,
+        }),
+      ),
+    ),
+  ),
+);
+
+const collectTelemetry = Effect.fn(function* (stream: Stream.Stream<Uint8Array>) {
+  const messages = yield* Queue.unbounded<DesktopHostTelemetryMessage>();
+  const received: DesktopHostTelemetryMessage[] = [];
+  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(DesktopHostTelemetryMessage));
+  const fiber = yield* stream.pipe(
+    Stream.mapEffect((bytes) => decode(new TextDecoder().decode(bytes).trim())),
+    Stream.runForEach((message) => {
+      received.push(message);
+      return Queue.offer(messages, message);
+    }),
+    Effect.forkScoped,
+  );
+  const next = Effect.fn(function* (type: DesktopHostTelemetryMessage["type"]) {
+    let message = yield* Queue.take(messages);
+    while (message.type !== type) message = yield* Queue.take(messages);
+    return message;
+  });
+  yield* next("desktopTelemetryHello");
+  yield* next("desktopTelemetry");
+  return { fiber, received, next };
+});
+
 describe("DesktopTelemetryPublisher", () => {
+  it.effect("accepts CUA controls only from the attached primary and disables it on detach", () =>
+    Effect.gen(function* () {
+      const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+      const primary = yield* collectTelemetry(publisher.encodedForSource("primary"));
+      const request = (source: string, requestId: string) =>
+        publisher.handleControlForSource(source, {
+          version: 1,
+          type: "cuaDriverRequest",
+          requestId,
+          enabled: true,
+        });
+      yield* request("ssh:remote", "remote-ignored");
+      yield* publisher.removeControlSource("ssh:remote");
+      yield* request("primary", "accepted");
+      yield* publisher.removeControlSource("primary");
+      yield* request("primary", "detached-ignored");
+      yield* Fiber.interrupt(primary.fiber);
+      yield* request("primary", "stopped-ignored");
+
+      yield* collectTelemetry(publisher.encodedForSource("primary"));
+      yield* request("primary", "replacement");
+      const requests = yield* publisher.cuaRequests.pipe(Stream.take(3), Stream.runCollect);
+      assert.equal(requests[0]?.requestId, "accepted");
+      assert.equal(requests[0]?.enabled, true);
+      assert.equal(requests[1]?.enabled, false);
+      assert.equal(requests[2]?.requestId, "replacement");
+      assert.equal(requests[2]?.enabled, true);
+    }).pipe(Effect.provide(layerCuaRouting), Effect.scoped),
+  );
+
+  it.effect("sends private CUA descriptors only to the primary, with no replay after detach", () =>
+    Effect.gen(function* () {
+      const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+      const primary = yield* collectTelemetry(publisher.encodedForSource("primary"));
+      const remote = yield* collectTelemetry(publisher.encodedForSource("ssh:remote"));
+      const generic = yield* collectTelemetry(publisher.encoded);
+      const report = {
+        version: 1,
+        type: "cuaDriverReport",
+        requestId: "private-session",
+        status: "ready",
+        mcp: {
+          command: "/native/driver",
+          args: ["mcp", "--session", "private-session"],
+          environment: [{ name: "CUA_TOKEN", value: "private-token" }],
+          socketPath: "/private/driver.sock",
+        },
+      } as const;
+      yield* publisher.handleControlForSource("primary", {
+        version: 1,
+        type: "cuaDriverRequest",
+        requestId: report.requestId,
+        enabled: true,
+      });
+      yield* publisher.publishCuaReport(report);
+      assert.deepEqual(yield* primary.next("cuaDriverReport"), report);
+      yield* publisher.removeControlSource("primary");
+      yield* publisher.publishCuaReport({ ...report, requestId: "late-after-detach" });
+      const replacement = yield* collectTelemetry(publisher.encodedForSource("primary"));
+      yield* publisher.handleControlForSource("primary", {
+        version: 1,
+        type: "cuaDriverRequest",
+        requestId: "replacement-session",
+        enabled: true,
+      });
+      yield* publisher.publishCuaReport(report);
+      yield* publisher.handleControlForSource("primary", {
+        version: 1,
+        type: "setDiagnosticsDemand",
+        enabled: true,
+      });
+      yield* Effect.forEach([remote, generic, replacement], (source) =>
+        source.next("desktopTelemetry"),
+      );
+      assert.deepEqual(
+        primary.received.filter((message) => message.type === "cuaDriverReport"),
+        [report],
+      );
+      for (const source of [remote, generic, replacement]) {
+        assert.isEmpty(source.received.filter((message) => message.type === "cuaDriverReport"));
+      }
+      const superseding = yield* collectTelemetry(publisher.encodedForSource("primary"));
+      yield* Fiber.interrupt(replacement.fiber);
+      const latestReport = { ...report, requestId: "superseding-session" };
+      yield* publisher.handleControlForSource("primary", {
+        version: 1,
+        type: "cuaDriverRequest",
+        requestId: latestReport.requestId,
+        enabled: true,
+      });
+      yield* publisher.publishCuaReport(latestReport);
+      assert.deepEqual(yield* superseding.next("cuaDriverReport"), latestReport);
+      assert.deepEqual(
+        primary.received.filter((message) => message.type === "cuaDriverReport"),
+        [report],
+      );
+    }).pipe(Effect.provide(layerCuaRouting), Effect.scoped),
+  );
+
   it.effect("stops when its scope closes during an Electron telemetry sample", () =>
     Effect.gen(function* () {
       const pollStarted = yield* Deferred.make<void>();

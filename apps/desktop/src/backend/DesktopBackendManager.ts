@@ -870,11 +870,24 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
-          desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          desktopTelemetryStream: Stream.unwrap(
+            Ref.get(state).pipe(
+              Effect.map((current) =>
+                Option.getOrUndefined(current.active)?.id === runId
+                  ? desktopTelemetryPublisher.encodedForSource(spec.id)
+                  : Stream.empty,
+              ),
+            ),
+          ),
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
           onDesktopTelemetryControl: (message) =>
-            desktopTelemetryPublisher.handleControlForSource(spec.id, message),
+            Effect.gen(function* () {
+              const current = yield* Ref.get(state);
+              const active = Option.getOrUndefined(current.active);
+              if (active?.id !== runId || active.stopRequested || !current.desiredRunning) return;
+              yield* desktopTelemetryPublisher.handleControlForSource(spec.id, message);
+            }),
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,

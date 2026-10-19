@@ -1,5 +1,8 @@
 import {
   DesktopHostTelemetryMessage,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type DesktopCuaDriverRequest,
+  type DesktopCuaDriverReport,
   type DesktopHostTelemetrySnapshot,
   type DesktopTelemetryControlMessage,
   type DesktopTelemetryCancelDesktopUpdate,
@@ -64,6 +67,9 @@ export class DesktopTelemetryPublisher extends Context.Service<
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
     readonly encoded: Stream.Stream<Uint8Array>;
+    readonly encodedForSource: (sourceId: string) => Stream.Stream<Uint8Array>;
+    readonly cuaRequests: Stream.Stream<DesktopCuaDriverRequest>;
+    readonly publishCuaReport: (report: DesktopCuaDriverReport) => Effect.Effect<void>;
     readonly handleControlForSource: (
       sourceId: string,
       message: DesktopTelemetryControlMessage,
@@ -175,6 +181,24 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const updateRequestQueue = yield* Queue.unbounded<DesktopTelemetryRequestDesktopUpdate>();
   const updateCommitQueue = yield* Queue.unbounded<DesktopTelemetryCommitDesktopUpdate>();
   const updateCancellationQueue = yield* Queue.unbounded<DesktopTelemetryCancelDesktopUpdate>();
+  const cuaRequestQueue = yield* Queue.unbounded<DesktopCuaDriverRequest>();
+  interface CuaSource {
+    readonly reports: PubSub.PubSub<DesktopCuaDriverReport>;
+    requestId?: string;
+  }
+  let cuaSource: CuaSource | undefined;
+  const detachCuaSource = (source: CuaSource) =>
+    Effect.gen(function* () {
+      if (cuaSource !== source) return;
+      cuaSource = undefined;
+      if (source.requestId)
+        yield* Queue.offer(cuaRequestQueue, {
+          version: 1,
+          type: "cuaDriverRequest",
+          requestId: source.requestId,
+          enabled: false,
+        });
+    });
 
   const offer = (event: PowerEvent): void => {
     Queue.offerUnsafe(powerEvents, event);
@@ -321,7 +345,11 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   ) => {
     switch (message.type) {
       case "cuaDriverRequest":
-        return Effect.void;
+        return Effect.suspend(() => {
+          if (sourceId !== PRIMARY_LOCAL_ENVIRONMENT_ID || !cuaSource) return Effect.void;
+          cuaSource.requestId = message.requestId;
+          return Queue.offer(cuaRequestQueue, message).pipe(Effect.asVoid);
+        });
       case "setDiagnosticsDemand":
         return Ref.modify(diagnosticsDemandSources, (sources) => {
           const previous = sources.size > 0;
@@ -355,18 +383,23 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const removeControlSource: DesktopTelemetryPublisher["Service"]["removeControlSource"] = (
     sourceId,
   ) =>
-    Ref.modify(diagnosticsDemandSources, (sources) => {
-      const previous = sources.size > 0;
-      const next = new Set(sources);
-      next.delete(sourceId);
-      return [[previous, next.size > 0] as const, next] as const;
-    }).pipe(
-      Effect.flatMap(([previous, enabled]) =>
-        previous === enabled
-          ? Effect.void
-          : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
-      ),
-    );
+    Effect.gen(function* () {
+      if (sourceId === PRIMARY_LOCAL_ENVIRONMENT_ID && cuaSource) {
+        yield* detachCuaSource(cuaSource);
+      }
+      yield* Ref.modify(diagnosticsDemandSources, (sources) => {
+        const previous = sources.size > 0;
+        const next = new Set(sources);
+        next.delete(sourceId);
+        return [[previous, next.size > 0] as const, next] as const;
+      }).pipe(
+        Effect.flatMap(([previous, enabled]) =>
+          previous === enabled
+            ? Effect.void
+            : Queue.offer(sampleTriggers, undefined).pipe(Effect.asVoid),
+        ),
+      );
+    });
 
   const snapshots = Stream.unwrap(
     Effect.gen(function* () {
@@ -411,10 +444,41 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       Effect.asVoid,
     );
 
+  const encodedForSource = (sourceId: string): Stream.Stream<Uint8Array> => {
+    if (sourceId !== PRIMARY_LOCAL_ENVIRONMENT_ID) return encoded;
+    return Stream.unwrap(
+      Effect.gen(function* () {
+        const reports = yield* PubSub.unbounded<DesktopCuaDriverReport>();
+        const source: CuaSource = { reports };
+        yield* Effect.acquireRelease(
+          Effect.gen(function* () {
+            if (cuaSource) yield* detachCuaSource(cuaSource);
+            cuaSource = source;
+          }),
+          () => detachCuaSource(source),
+        );
+        const subscription = yield* PubSub.subscribe(reports);
+        const privateReports = Stream.fromSubscription(subscription).pipe(
+          Stream.filter(() => cuaSource === source),
+          Stream.map((message) => textEncoder.encode(`${encodeMessage(message)}\n`)),
+        );
+        return Stream.merge(encoded, privateReports);
+      }),
+    );
+  };
+
   return DesktopTelemetryPublisher.of({
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
     encoded,
+    encodedForSource,
+    cuaRequests: Stream.fromQueue(cuaRequestQueue),
+    publishCuaReport: (report) =>
+      Effect.suspend(() =>
+        cuaSource && cuaSource.requestId === report.requestId
+          ? PubSub.publish(cuaSource.reports, report).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
     handleControlForSource,
     removeControlSource,
     publishUpdateReport,

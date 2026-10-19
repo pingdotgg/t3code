@@ -1110,6 +1110,7 @@ export interface DesktopBridge {
   openExternal: (url: string) => Promise<boolean>;
   openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission?: (pane: SystemSettingsPane) => Promise<boolean>;
+  restartCuaDriver?: () => Promise<void>;
   /**
    * Optional: older desktop builds lack it; callers fall back to VS Code only.
    */
