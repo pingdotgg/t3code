@@ -113,3 +113,16 @@ export async function applyWslEnableSelection(input: {
   }
   return await bridge.setWslBackendEnabled(true);
 }
+
+// A failed self-probe or missing endpoint must not prevent disabling saved Serve configuration.
+export function resolveTailscaleHttpsRowState(input: {
+  readonly endpoint: AdvertisedEndpoint | null;
+  readonly serveEnabled: boolean;
+}) {
+  const { endpoint, serveEnabled } = input;
+  return {
+    showSwitch: endpoint !== null || serveEnabled,
+    checked: serveEnabled,
+    reachable: endpoint?.status === "available",
+  };
+}

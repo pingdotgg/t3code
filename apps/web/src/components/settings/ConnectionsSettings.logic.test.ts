@@ -6,6 +6,7 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
+  resolveTailscaleHttpsRowState,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -248,5 +249,40 @@ describe("missingTailscaleEndpointDescription", () => {
     expect(missingTailscaleEndpointDescription(state)).toBe(
       "Start Tailscale to set up HTTPS access through MagicDNS.",
     );
+  });
+});
+
+describe("resolveTailscaleHttpsRowState", () => {
+  const endpoint = makeEndpoint({
+    id: "tailscale-magicdns:https://machine.tailnet.ts.net",
+    label: "Tailscale HTTPS",
+    httpBaseUrl: "https://machine.tailnet.ts.net",
+    wsBaseUrl: "wss://machine.tailnet.ts.net",
+    reachability: "private-network",
+  });
+
+  it("keeps failed-probe HTTPS enabled and disableable", () => {
+    const unavailable = { ...endpoint, status: "unavailable" as const };
+    expect(
+      resolveTailscaleHttpsRowState({ endpoint: unavailable, serveEnabled: true }),
+    ).toMatchObject({
+      showSwitch: true,
+      checked: true,
+      reachable: false,
+    });
+  });
+
+  it("keeps enabled HTTPS disableable when its endpoint disappears", () => {
+    expect(resolveTailscaleHttpsRowState({ endpoint: null, serveEnabled: true })).toMatchObject({
+      showSwitch: true,
+      checked: true,
+    });
+  });
+
+  it("keeps HTTPS off when saved as disabled even if its endpoint is reachable", () => {
+    expect(resolveTailscaleHttpsRowState({ endpoint, serveEnabled: false })).toMatchObject({
+      showSwitch: true,
+      checked: false,
+    });
   });
 });

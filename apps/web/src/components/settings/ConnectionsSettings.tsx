@@ -71,6 +71,7 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   missingTailscaleEndpointDescription,
+  resolveTailscaleHttpsRowState,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -1287,7 +1288,7 @@ type AdvertisedEndpointListRowProps = {
   presentation?: AccessSectionPresentation;
   onSetDefault: (endpoint: AdvertisedEndpoint) => void;
   onSetupTailscaleServe: (endpoint: AdvertisedEndpoint) => void;
-  onDisableTailscaleServe: (endpoint: AdvertisedEndpoint) => void;
+  onDisableTailscaleServe: () => void;
   isUpdatingTailscaleServe: boolean;
 };
 
@@ -1354,7 +1355,7 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             <Button
               size="xs"
               variant="destructive-outline"
-              onClick={() => onDisableTailscaleServe(endpoint)}
+              onClick={onDisableTailscaleServe}
               disabled={isUpdatingTailscaleServe}
             >
               {isUpdatingTailscaleServe ? "Restarting…" : "Disable"}
@@ -2371,7 +2372,7 @@ export function ConnectionsSettings() {
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeDisable = (_endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeDisable = () => {
     setDisableTailscaleServeDialogOpen(true);
   };
 
@@ -2705,6 +2706,10 @@ export function ConnectionsSettings() {
   const visibleDesktopAdvertisedEndpoints = tailscaleHttpsEndpoint
     ? [...visibleDesktopNetworkAdvertisedEndpoints, tailscaleHttpsEndpoint]
     : visibleDesktopNetworkAdvertisedEndpoints;
+  const tailscaleHttpsRowState = resolveTailscaleHttpsRowState({
+    endpoint: tailscaleHttpsEndpoint,
+    serveEnabled: desktopServerExposureState?.tailscaleServeEnabled === true,
+  });
   const defaultDesktopNetworkAdvertisedEndpoint = selectPairingEndpoint(
     visibleDesktopNetworkAdvertisedEndpoints,
     defaultAdvertisedEndpointKey,
@@ -3266,23 +3271,31 @@ export function ConnectionsSettings() {
     <SettingsRow
       title={searchableSetting("tailscale-https").title}
       description={
-        tailscaleHttpsEndpoint
-          ? tailscaleHttpsEndpoint.status === "available"
-            ? tailscaleHttpsEndpoint.httpBaseUrl
-            : "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
-          : missingTailscaleEndpointDescription(desktopServerExposureState)
+        tailscaleHttpsRowState.checked
+          ? (tailscaleHttpsEndpoint?.httpBaseUrl ??
+            "Tailscale isn't reporting a MagicDNS name for this machine.")
+          : tailscaleHttpsEndpoint
+            ? "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
+            : missingTailscaleEndpointDescription(desktopServerExposureState)
+      }
+      status={
+        tailscaleHttpsRowState.checked &&
+        tailscaleHttpsEndpoint &&
+        !tailscaleHttpsRowState.reachable
+          ? "This machine can't reach that URL, so pairing links won't offer it."
+          : null
       }
       control={
-        tailscaleHttpsEndpoint ? (
+        tailscaleHttpsRowState.showSwitch ? (
           <Switch
-            checked={tailscaleHttpsEndpoint.status === "available"}
+            checked={tailscaleHttpsRowState.checked}
             disabled={isUpdatingTailscaleServe}
             onCheckedChange={(checked) => {
-              if (checked) {
+              if (!checked) {
+                handleStartTailscaleServeDisable();
+              } else if (tailscaleHttpsEndpoint) {
                 handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
-                return;
               }
-              handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
             }}
             aria-label="Enable Tailscale HTTPS"
           />
