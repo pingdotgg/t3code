@@ -19,7 +19,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -151,6 +151,10 @@ const RemoteLaunchResult = Schema.Struct({
 
 const RemotePairingResult = Schema.Struct({
   credential: Schema.String,
+});
+
+const RemotePairingServerDescriptor = Schema.Struct({
+  serverVersion: Schema.String,
 });
 
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
@@ -855,23 +859,23 @@ const resolveRemotePairingRunner = Effect.fn("ssh/tunnel.resolveRemotePairingRun
   if (isNodeScriptRunner(runner)) {
     return runner;
   }
-  const descriptor = yield* HttpClient.get(
-    new URL("/.well-known/t3/environment", httpBaseUrl).toString(),
-  ).pipe(
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap(
-      HttpClientResponse.schemaBodyJson(Schema.Struct({ serverVersion: Schema.String })),
-    ),
-    Effect.timeout(SSH_READY_TIMEOUT_MS),
-    Effect.mapError(
-      (cause) =>
-        new SshPairingError({
-          message: "Failed to discover the running SSH server version for pairing.",
-          stdout: "",
-          cause,
-        }),
-    ),
-  );
+  const client = HttpClient.withScope(yield* HttpClient.HttpClient);
+  const descriptor = yield* client
+    .get(new URL("/.well-known/t3/environment", httpBaseUrl).toString())
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(RemotePairingServerDescriptor)),
+      Effect.scoped,
+      Effect.timeout(SSH_READY_TIMEOUT_MS),
+      Effect.mapError(
+        (cause) =>
+          new SshPairingError({
+            message: "Failed to discover the running SSH server version for pairing.",
+            stdout: "",
+            cause,
+          }),
+      ),
+    );
   if (!EXACT_ARCHIVE_VERSION.test(descriptor.serverVersion)) {
     return yield* new SshPairingError({
       message: "The running SSH server did not report a valid release version for pairing.",
@@ -1739,18 +1743,17 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       key,
       Effect.gen(function* () {
         const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
-        const pairingRunner = requestOptions?.issuePairingToken
-          ? yield* resolveRemotePairingRunner(entry.httpBaseUrl, runner)
-          : runner;
-        const pairingResult = requestOptions?.issuePairingToken
-          ? yield* runWithSshAuth({
-              key,
-              target: entry.target,
-              operation: (authOptions) =>
-                issueRemotePairingToken(entry.target, authOptions, pairingRunner),
-            })
-          : null;
-        const pairingToken = pairingResult?.credential ?? null;
+        let pairingToken: string | null = null;
+        if (requestOptions?.issuePairingToken) {
+          const pairingRunner = yield* resolveRemotePairingRunner(entry.httpBaseUrl, runner);
+          const pairingResult = yield* runWithSshAuth({
+            key,
+            target: entry.target,
+            operation: (authOptions) =>
+              issueRemotePairingToken(entry.target, authOptions, pairingRunner),
+          });
+          pairingToken = pairingResult.credential;
+        }
 
         yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
           ...sshTargetLogFields(entry.target),
