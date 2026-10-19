@@ -5,19 +5,23 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestDetail,
   PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
+  PullRequestSubmitReviewInput,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
-const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
+const decodeListResult = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestListResult));
+const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
-const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+const decodeAction = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestActionInput));
+const decodeReview = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestSubmitReviewInput));
 const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
 
@@ -100,6 +104,18 @@ describe("PullRequestListResult", () => {
     const decoded = Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(LIST_RESULT));
 
     expect(decoded).toStrictEqual(LIST_RESULT);
+  });
+
+  it("loads a newer server's list response, dropping unknown provider actions in order", () => {
+    const decoded = decodeListResult({
+      ...LIST_RESULT,
+      providers: [{ ...LIST_RESULT.providers[0], actions: ["close", "archive", "merge"] }],
+    });
+
+    expect(decoded).toEqual({
+      ...LIST_RESULT,
+      providers: [{ ...LIST_RESULT.providers[0], actions: ["close", "merge"] }],
+    });
   });
 
   it("keys a viewer by host, so two hosts of one kind stay separate accounts", () => {
@@ -273,6 +289,63 @@ describe("PullRequestCapabilities", () => {
   it("only offers branch deletion when the server advertises it", () => {
     expect(decodeCapabilities(base).deleteBranch).toBeUndefined();
     expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
+  });
+
+  it("loads a newer server's detail response, dropping unknown options in order", () => {
+    const options = {
+      actions: ["close", "archive", "merge"],
+      verdicts: ["request-changes", "block", "approve"],
+      updateMethods: ["rebase", "fast-forward", "merge"],
+    };
+    const detail = {
+      ...LIST_RESULT.entries[0],
+      workspaceRoot: "/workspace/t3code",
+      body: "",
+      changedFiles: 1,
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      capabilities: {
+        ...base,
+        actions: options.actions,
+        mergeMethods: ["squash", "fast-forward", "merge"],
+        updateMethods: options.updateMethods,
+        review: { ...base.review, verdicts: options.verdicts },
+      },
+      viewerPermissions: { ...options, comment: true, resolve: true, requestReviewers: true },
+    };
+    const decoded = decodeDetail(detail);
+
+    expect(decoded.capabilities).toEqual({
+      ...base,
+      actions: ["close", "merge"],
+      mergeMethods: ["squash", "merge"],
+      updateMethods: ["rebase", "merge"],
+      review: { ...base.review, verdicts: ["request-changes", "approve"] },
+    });
+    expect(decoded.viewerPermissions).toEqual({
+      actions: ["close", "merge"],
+      verdicts: ["request-changes", "approve"],
+      updateMethods: ["rebase", "merge"],
+      comment: true,
+      resolve: true,
+      requestReviewers: true,
+    });
+    expect(decoded.title).toBe(detail.title);
+  });
+});
+
+describe("pull request mutation requests", () => {
+  it("still rejects unknown actions, merge methods, and review verdicts on the wire", () => {
+    const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
+
+    expect(() => decodeAction({ ...ref, action: "archive" })).toThrow();
+    expect(() => decodeAction({ ...ref, action: "merge", mergeMethod: "fast-forward" })).toThrow();
+    const review = { ...ref, body: "", comments: [], verdict: "approve" };
+    expect(decodeReview(review).verdict).toBe("approve");
+    expect(() => decodeReview({ ...review, verdict: "block" })).toThrow();
   });
 });
 
