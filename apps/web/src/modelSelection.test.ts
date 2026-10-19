@@ -16,6 +16,7 @@ import {
   getAppModelOptionsForInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
+  resolveEffectiveDefaultModelSelection,
 } from "./modelSelection";
 
 function provider(input: {
@@ -952,4 +953,71 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
       createModelSelection(instanceId, model, [{ id: "agent", value: "plan" }]),
     );
   });
+});
+
+describe("default model settings and new-thread composer parity", () => {
+  it.each([
+    ["hidden", "claudeAgent", "claude-opus-5", "claude-opus-5-5", "medium"],
+    ["visible", "claudeAgent", "claude-opus-5", "claude-opus-5", "max"],
+    ["unavailable", "opencode", "openrouter/kimi-k3", "openrouter/kimi-k3", null],
+  ] as const)(
+    "resolves the %s default and its traits",
+    (visibility, kind, model, expectedModel, effort) => {
+      const driver = ProviderDriverKind.make(kind);
+      const instanceId = ProviderInstanceId.make(`${kind}_work`);
+      const snapshot = provider({ provider: driver, instanceId });
+      const models: ServerProvider["models"] = ["claude-opus-5-5", "claude-opus-5"].map(
+        (slug, index) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Effort",
+                type: "select",
+                options: (index === 0 ? ["medium", "high"] : ["high", "max"]).map(
+                  (id, optionIndex) => ({ id, label: id, isDefault: optionIndex === 0 }),
+                ),
+              },
+            ],
+          },
+        }),
+      );
+      const providers = [{ ...snapshot, models }];
+      const stored = createModelSelection(instanceId, model, [{ id: "effort", value: "max" }]);
+      const settings: UnifiedSettings = {
+        ...settingsWithProviderInstances(),
+        providerModelPreferences: {
+          [instanceId]: { hiddenModels: visibility === "hidden" ? [model] : [], modelOrder: [] },
+        },
+      };
+      // ChatView builds the local draft with the project default as its thread selection.
+      const composer = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: stored,
+        projectModelSelection: stored,
+        settings,
+      });
+      const effective = resolveEffectiveDefaultModelSelection(settings, providers, stored);
+      const traits = (model: string, modelOptions: typeof stored.options) =>
+        getComposerProviderState({
+          provider: driver,
+          model,
+          models,
+          modelOptions,
+          planModeEnabled: settings.planModeEnabled,
+        });
+      const composerTraits = traits(composer.selectedModel, composer.modelOptions?.[instanceId]);
+
+      expect(composer.selectedModel).toBe(expectedModel);
+      expect(traits(effective.model, effective.options)).toEqual(composerTraits);
+      expect(effective).toEqual({ ...stored, model: composer.selectedModel });
+      expect(composerTraits.promptEffort).toBe(effort);
+    },
+  );
 });
