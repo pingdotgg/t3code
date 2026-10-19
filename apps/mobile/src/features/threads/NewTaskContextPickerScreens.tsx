@@ -438,7 +438,7 @@ export function BranchPickerScreen(props: {
     >
       <ToggleRow
         onValueChange={props.worktree.onChangeStartFromOrigin}
-        title="Start from origin"
+        title="Start from remote"
         value={props.worktree.startFromOrigin}
       />
     </View>

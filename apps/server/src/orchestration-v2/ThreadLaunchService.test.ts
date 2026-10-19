@@ -121,7 +121,7 @@ interface HarnessOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
-  readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
+  readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
   readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -198,13 +198,14 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
       renameBranch,
-      fetchRemote: options.fetchRemote ?? (() => Effect.void),
+      fetchWorktreeBaseCommit:
+        options.fetchWorktreeBaseCommit ??
+        (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
-      resolveRemoteTrackingCommit: () =>
-        Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
       ...options.git,
     }),
     Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
@@ -1735,11 +1736,139 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
   }),
 );
 
+it.effect.each(["stable", "upstream/release"])(
+  "launches from %s with the fetched commit and remote PR base",
+  (baseRef) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-remote-base-" });
+      const cwd = `${directory}/repo`;
+      const remote = `${directory}/remote.git`;
+      const worktreePath = `${directory}/worktree`;
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "launch-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "stable"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+      const localHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["init", "--bare", remote]);
+      yield* command(cwd, ["remote", "add", "upstream", remote]);
+      yield* command(cwd, ["push", "-u", "upstream", "stable:release"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "remote advance"]);
+      yield* command(cwd, ["push", "upstream", "stable:release"]);
+      const remoteHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["reset", "--hard", localHead]);
+      yield* command(cwd, ["update-ref", "-d", "refs/remotes/upstream/release"]);
+
+      const setupStarted = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        hasCommit: ({ refName }) =>
+          command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        git: {
+          resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+          hasRefNamed: () => Effect.succeed(false),
+        },
+        fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+        createWorktree: (input, options) =>
+          git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+        runSetup: () =>
+          Deferred.succeed(setupStarted, undefined).pipe(
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const workspace = {
+          type: "worktree" as const,
+          baseRef,
+          branch: "feature",
+          startFromOrigin: true,
+        };
+        yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: workspace });
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:remote-base",
+            thread: "thread:launch:remote-base",
+            workspace,
+          }),
+        );
+        yield* Deferred.await(setupStarted);
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(projection.thread.worktreePath, worktreePath);
+        assert.equal(
+          (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+          remoteHead,
+        );
+        const preview = yield* git.getReviewDiffPreview({ cwd: worktreePath });
+        const comparisonBase = preview.sources.find(
+          (source) => source.kind === "branch-range",
+        )!.baseRef;
+        assert.equal(
+          (yield* command(worktreePath, ["rev-parse", `${comparisonBase}^{commit}`])).stdout.trim(),
+          remoteHead,
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-remote-git-" })),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+);
+
+it.effect.each([false, true])(
+  "skips fetch only when no remote is selected (remote selected: %s)",
+  (remoteSelected) =>
+    Effect.gen(function* () {
+      const setupStarted = yield* Deferred.make<void>();
+      const fetchWorktreeBaseCommit = vi.fn(() => Effect.succeed(null));
+      const harness = makeHarness({
+        git: {
+          resolveWorktreeBaseRemote: () =>
+            Effect.succeed(remoteSelected ? { remoteName: "origin", branchName: "main" } : null),
+        },
+        fetchWorktreeBaseCommit,
+        runSetup: () =>
+          Deferred.succeed(setupStarted, undefined).pipe(
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:fetch-progress",
+            thread: "thread:launch:fetch-progress",
+            workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+          }),
+        );
+        yield* Deferred.await(setupStarted);
+        const snapshot = yield* tracker.get(launched.threadId);
+        assert.equal(
+          snapshot?.stages.find((stage) => stage.id === "fetch")?.status,
+          remoteSelected ? "done" : "skipped",
+        );
+        assert.equal(fetchWorktreeBaseCommit.mock.calls.length, remoteSelected ? 1 : 0);
+        assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, "main");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
   const harness = makeHarness({
-    fetchRemote: () =>
+    fetchWorktreeBaseCommit: () =>
       Effect.fail(
         new GitCommandError({
           operation: "GitVcsDriver.fetchRemote",
@@ -1787,7 +1916,7 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
 it.effect("retries a failed workspace preparation on the same run", () => {
   let fetchFailures = 1;
   const harness = makeHarness({
-    fetchRemote: () =>
+    fetchWorktreeBaseCommit: () =>
       fetchFailures-- > 0
         ? Effect.fail(
             new GitCommandError({
@@ -1798,7 +1927,7 @@ it.effect("retries a failed workspace preparation on the same run", () => {
               exitCode: 1,
             }),
           )
-        : Effect.void,
+        : Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
   });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -1861,9 +1990,9 @@ it.effect.each(["fails", "is interrupted"] as const)(
       const allowFetch = yield* Deferred.make<void>();
       let fetchFailures = 1;
       const harness = makeHarness({
-        fetchRemote: () =>
+        fetchWorktreeBaseCommit: () =>
           fetchFailures-- <= 0
-            ? Effect.void
+            ? Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })
             : Deferred.succeed(fetchEntered, undefined).pipe(
                 Effect.andThen(Deferred.await(allowFetch)),
                 Effect.andThen(
@@ -1943,7 +2072,7 @@ it.effect.each(["failed", "interrupted"] as const)(
   (ending) => {
     let fetchEntered: Deferred.Deferred<void> | null = null;
     const harness = makeHarness({
-      fetchRemote: () =>
+      fetchWorktreeBaseCommit: () =>
         ending === "interrupted"
           ? Deferred.succeed(fetchEntered!, undefined).pipe(Effect.andThen(Effect.never))
           : Effect.fail(
@@ -3034,7 +3163,8 @@ it.effect.each([
     const harness = makeHarness({
       hasCommit: ({ refName }) => Effect.succeed(refName === "HEAD"),
       git: {
-        remoteExists: () => Effect.succeed(testCase.origin),
+        resolveWorktreeBaseRemote: () =>
+          Effect.succeed(testCase.origin ? { remoteName: "origin", branchName: "main" } : null),
         hasRefNamed: () => Effect.succeed(false),
       },
     });

@@ -279,6 +279,11 @@ export interface GitResolveRemoteTrackingCommitResult {
   remoteRefName: string;
 }
 
+export interface GitFetchWorktreeBaseCommitInput {
+  cwd: string;
+  refName: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -372,6 +377,13 @@ export class GitVcsDriver extends Context.Service<
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
+    readonly resolveWorktreeBaseRemote: (
+      input: GitFetchWorktreeBaseCommitInput,
+    ) => Effect.Effect<{ remoteName: string; branchName: string } | null, GitCommandError>;
+    /** Fetches the configured upstream, explicit remote ref, or origin; null uses the local base. */
+    readonly fetchWorktreeBaseCommit: (
+      input: GitFetchWorktreeBaseCommitInput,
+    ) => Effect.Effect<GitResolveRemoteTrackingCommitResult | null, GitCommandError>;
     readonly fetchRemoteBranch: (
       input: GitFetchRemoteBranchInput,
     ) => Effect.Effect<void, GitCommandError>;

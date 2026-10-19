@@ -178,7 +178,7 @@ describe("resolveBranchToolbarValue", () => {
 });
 
 describe("resolveBranchTriggerLabel", () => {
-  it("shows the origin ref when a new worktree will start from origin", () => {
+  it("marks the remote base when a new worktree will start from remote", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -187,10 +187,10 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
       }),
-    ).toBe("From origin/main");
+    ).toBe("From main (remote)");
   });
 
-  it("shows the origin ref for local branch names that contain slashes", () => {
+  it("marks the remote base for local branch names that contain slashes", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -199,10 +199,10 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
       }),
-    ).toBe("From origin/feature/demo");
+    ).toBe("From feature/demo (remote)");
   });
 
-  it("shows the local ref when start from origin is disabled", () => {
+  it("shows the local ref when start from remote is disabled", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -214,7 +214,7 @@ describe("resolveBranchTriggerLabel", () => {
     ).toBe("From main");
   });
 
-  it("does not duplicate the origin prefix for an explicit remote ref", () => {
+  it("does not add a remote marker for an explicit remote ref", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -259,7 +259,7 @@ describe("resolveBranchTriggerLabel", () => {
     ).toBe("Select ref");
   });
 
-  it("does not fabricate an origin ref while branch metadata is loading", () => {
+  it("does not fabricate a remote marker while branch metadata is loading", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
