@@ -63,6 +63,7 @@ import {
   type ComposerDraftInsertion,
   type ComposerDraftWorkspaceSelection,
   clearComposerDraft,
+  composerContextImportsAtom,
   composerDraftsAtom,
   createNewTaskDraft,
   getComposerDraftSnapshot,
@@ -976,24 +977,31 @@ export function NewTaskFlowProvider(
       )
     : EMPTY_ENVIRONMENT_IDS;
   const loadBalancing = useLoadBalancedEnvironment(loadBalancingCandidates, loadBalancingWeights);
+  // A pasted context lands only after its files copy, and may reference a
+  // thread on this machine, so routing waits for it.
+  const contextImports = useAtomValue(composerContextImportsAtom);
+  const importingContext =
+    selectedProjectDraftKey !== null && contextImports[selectedProjectDraftKey] === true;
   useEffect(() => {
     if (
       !needsLoadBalancing ||
       loadBalancing.pending ||
       loadBalancing.environmentId === null ||
+      importingContext ||
       submitting
     ) {
       return;
     }
-    // A pin, pending-task edit, project change, or attachment made earlier in
-    // this commit has not rendered yet; the refs and the live draft show
-    // whether this render is still current.
+    // A pin, pending-task edit, project change, attachment, or context import
+    // begun earlier in this commit has not rendered yet; the refs and live
+    // state show whether this render is still current.
     if (
       environmentPinnedRef.current ||
       editingPendingTaskRef.current !== null ||
       selectedProjectKeyRef.current !== selectedProjectKey ||
       selectedProject === null ||
-      selectedProjectDraftKey === null
+      selectedProjectDraftKey === null ||
+      appAtomRegistry.get(composerContextImportsAtom)[selectedProjectDraftKey] === true
     ) {
       return;
     }
@@ -1038,6 +1046,7 @@ export function NewTaskFlowProvider(
     needsLoadBalancing,
     loadBalancing.pending,
     loadBalancing.environmentId,
+    importingContext,
     submitting,
     balancedProjects,
     carryDraftContentTo,
@@ -1055,8 +1064,9 @@ export function NewTaskFlowProvider(
     environmentPinned,
     hasAttachments: attachments.length > 0,
     loadBalancedEnvironmentId,
-    // Routing also waits for the workspace default it carries.
-    pending: loadBalancing.pending || !defaultWorkspaceModeSettled,
+    // Routing also waits for the workspace default it carries and a pasted
+    // context.
+    pending: loadBalancing.pending || !defaultWorkspaceModeSettled || importingContext,
   });
   const refreshLoadBalancing = loadBalancing.refresh;
   const selectAutoBalance = () => {
