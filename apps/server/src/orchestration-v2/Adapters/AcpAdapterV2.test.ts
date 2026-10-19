@@ -1944,6 +1944,144 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("coalesces streamed ACP text into bounded snapshots without delaying its start", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-text-coalescing");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            }),
+          }),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-text-coalescing");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-text-coalescing"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn(
+        makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now }),
+      );
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
+      assert.isDefined(sessionUpdateHandler);
+      const sendUpdate = (update: EffectAcpSchema.SessionNotification["update"]) =>
+        sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+      const chunk = "tok0 word ";
+
+      for (let index = 0; index < 1_000; index += 1) {
+        yield* sendUpdate({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: chunk },
+        });
+      }
+      yield* TestClock.adjust("50 millis");
+      yield* sendUpdate({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "end" },
+      });
+      // Another item closes the assistant segment while its next flush is pending.
+      yield* sendUpdate({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "next" },
+      });
+      yield* TestClock.adjust("50 millis");
+      yield* sendUpdate({
+        sessionUpdate: "plan_update",
+        plan: {
+          type: "items",
+          planId: "plan-sentinel",
+          entries: [{ content: "Continue", priority: "medium", status: "in_progress" }],
+        },
+      });
+      const streamed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      while (streamed.at(-1)?.type !== "plan.updated") {
+        streamed.push(yield* Queue.take(events));
+      }
+
+      const reply = chunk.repeat(1_000);
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+            ? [[event.turnItem.status, event.turnItem.text]]
+            : [],
+        ),
+        [
+          ["running", chunk],
+          ["running", reply],
+          ["completed", `${reply}end`],
+        ],
+      );
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [[event.message.streaming, event.message.text]]
+            : [],
+        ),
+        [
+          [true, chunk],
+          [true, reply],
+          [false, `${reply}end`],
+        ],
+      );
+      assert.deepEqual(
+        streamed.flatMap((event) =>
+          event.type === "node.updated" && event.node.kind === "assistant_message"
+            ? [event.node.status]
+            : [],
+        ),
+        ["running", "completed"],
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live(
     "loads the persisted ACP session during startup without creating a throwaway session",
     () =>
