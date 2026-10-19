@@ -54,6 +54,14 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(
       "bitbucket.org/workspace/repo",
     );
+    expect(normalizeGitRemoteUrl("code.example.test:team/repo.git")).toBe(
+      "code.example.test/team/repo",
+    );
+    expect(normalizeGitRemoteUrl("git@code.example.test:/team/repo.git")).toBe(
+      "code.example.test/team/repo",
+    );
+    expect(normalizeGitRemoteUrl("C:/repos/project")).toBe("c:/repos/project");
+    expect(normalizeGitRemoteUrl("git@x:team/project.git")).toBe("x/team/project");
   });
 
   it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
