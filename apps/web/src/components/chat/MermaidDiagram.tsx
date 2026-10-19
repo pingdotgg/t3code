@@ -270,7 +270,7 @@ export function MermaidDiagram({
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="chat-markdown-mermaid overflow-x-auto">
       <button
         type="button"
         aria-label="Expand diagram"

@@ -49,17 +49,27 @@ vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }) as never,
 }));
-// A rendered diagram is an SVG; real Mermaid layout is not what these tests exercise.
-vi.mock(import("./chat/MermaidDiagram"), async (original) => ({
-  ...(await original()),
-  MermaidDiagram: () => <svg aria-label="Diagram" />,
+const { renderDiagram } = vi.hoisted(() => ({
+  renderDiagram: vi.fn<(source: string) => Promise<string> | undefined>(),
 }));
+// Control rendering latency without running Mermaid layout.
+vi.mock(import("./chat/MermaidDiagram"), async (original) => {
+  const { use } = await import("react");
+  return {
+    ...(await original()),
+    MermaidDiagram: ({ source }: { source: string }) => {
+      const pending = renderDiagram(source);
+      return <svg role="img" aria-label={pending ? use(pending) : "Diagram"} />;
+    },
+  };
+});
 
 import ChatMarkdown from "./ChatMarkdown";
 
 const roots: Root[] = [];
 
 beforeEach(() => {
+  renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
   filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -152,6 +162,99 @@ describe("ChatMarkdown bare anchor placeholders", () => {
   });
 });
 
+describe("ChatMarkdown Mermaid streaming", () => {
+  it("reveals a completed fence while streaming and preserves it through later prose and stream end", async () => {
+    let finishRender!: (label: string) => void;
+    renderDiagram.mockReturnValue(
+      new Promise<string>((resolve) => {
+        finishRender = resolve;
+      }),
+    );
+    const source = "flowchart LR\nA --> B";
+    const open = `\`\`\`mermaid\n${source}`;
+    const closed = `${open}\n\`\`\`\n\n`;
+    const message = (text: string, isStreaming = true) => (
+      <ChatMarkdown cwd={undefined} text={text} isStreaming={isStreaming} />
+    );
+    const { container, rerender } = await render(message(open));
+    expect(container.querySelector("pre")?.textContent).toContain(source);
+    expect(renderDiagram).not.toHaveBeenCalled();
+
+    await rerender(message(closed));
+    expect(renderDiagram).toHaveBeenCalledWith(expect.stringContaining(source));
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
+    expect(container.querySelector(".chat-markdown-shiki")).toBeNull();
+    const placeholder = container.querySelector("pre");
+    expect(placeholder?.getAttribute("aria-hidden")).toBe("true");
+    expect(placeholder?.textContent).toContain(source);
+
+    await act(async () => finishRender("Completed diagram"));
+    const diagram = container.querySelector('svg[role="img"]');
+    expect(diagram?.getAttribute("aria-label")).toBe("Completed diagram");
+    for (const streaming of [true, false]) {
+      await rerender(message(`${closed}The remaining explanation.`, streaming));
+      expect(container.querySelector('svg[role="img"]')).toBe(diagram);
+      expect(container.textContent).toContain("The remaining explanation.");
+    }
+
+    await act(async () => buttonsLabelled(container, "Show code")[0]!.click());
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
+    expect(container.querySelector("pre")?.textContent).toContain(source);
+    await act(async () => buttonsLabelled(container, "Show diagram")[0]!.click());
+    expect(container.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBe(
+      "Completed diagram",
+    );
+  });
+
+  it.each([
+    ["short tilde marker", "~~~~mermaid\nflowchart LR\nA --> B\n~~~", "\n~~~~"],
+    [
+      "overindented blockquote marker",
+      "> ```mermaid\n> flowchart LR\n> A --> B\n>     ```",
+      "\n> ```",
+    ],
+    [
+      "overindented list marker",
+      "- Diagram\n\n  ```mermaid\n  flowchart LR\n  A --> B\n      ```",
+      "\n  ```",
+    ],
+  ])("keeps a %s in source until a real closer arrives", async (_, open, closing) => {
+    const message = (text: string) => <ChatMarkdown cwd={undefined} text={text} isStreaming />;
+    const { container, rerender } = await render(message(open));
+    expect(renderDiagram).not.toHaveBeenCalled();
+    expect(container.querySelector("pre")?.textContent).toContain("A --> B");
+
+    await rerender(message(`${open}${closing}`));
+    expect(container.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBe("Diagram");
+  });
+
+  it("does not mistake a CRLF stream cut after CR for a closed fence", async () => {
+    const open = "```mermaid\r\nflowchart LR\r\nA --> B\r\n\t```";
+    const message = (text: string) => <ChatMarkdown cwd={undefined} text={text} isStreaming />;
+    const { container, rerender } = await render(message(open));
+    expect(renderDiagram).not.toHaveBeenCalled();
+    await rerender(message(`${open}\r`));
+    expect(renderDiagram).not.toHaveBeenCalled();
+    expect(container.querySelector("pre")?.textContent).toContain("A --> B");
+
+    await rerender(message(`${open}\r\n\`\`\``));
+    expect(container.querySelector('svg[role="img"]')?.getAttribute("aria-label")).toBe("Diagram");
+  });
+
+  it("falls back to source when a completed diagram fails during streaming", async () => {
+    await getSyntaxHighlighterPromise("mermaid");
+    renderDiagram.mockImplementation(() => {
+      throw new Error("Invalid Mermaid diagram");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const container = await renderText("```mermaid\ninvalid diagram\n```", { isStreaming: true });
+    expect(renderDiagram).toHaveBeenCalledWith(expect.stringContaining("invalid diagram"));
+    expect(container.querySelector('svg[role="img"]')).toBeNull();
+    expect(container.querySelector("pre")?.textContent).toContain("invalid diagram");
+    expect(container.querySelector("pre")?.getAttribute("aria-hidden")).not.toBe("true");
+  });
+});
+
 describe("ChatMarkdown context references", () => {
   it("renders text and image references through the chip renderer, with readable fallback", async () => {
     const text =
@@ -235,6 +338,8 @@ describe("ChatMarkdown streaming", () => {
       "~~~bash\necho tilde\n~~~",
       "> ```bash\n> echo quote\n> ```",
       "````bash\necho four\n````",
+      "- Command\n\n  ```bash\n  echo list\n  ```",
+      "```bash\r\necho crlf\r\n```\r",
     ]) {
       await rerender(message(text));
       expect(runButtons()).toHaveLength(1);
