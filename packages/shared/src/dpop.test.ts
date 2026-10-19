@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import { assert, describe, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import {
   computeDpopAccessTokenHash,
@@ -53,6 +54,31 @@ describe("verifyDpopProof", () => {
     iat: 100,
     privateKey,
     publicJwk,
+  });
+
+  it("computes the RFC 7638 thumbprint whatever the host locale", () => {
+    // Latvian collation sorts "y" before "kty", which broke every remote client.
+    const latvian = new Intl.Collator("lv");
+    const localeCompare = vi.spyOn(String.prototype, "localeCompare").mockImplementation(function (
+      this: string,
+      that: string,
+    ) {
+      return latvian.compare(this, that);
+    });
+    try {
+      const rfc7638Input = JSON.stringify({
+        crv: publicJwk.crv,
+        kty: publicJwk.kty,
+        x: publicJwk.x,
+        y: publicJwk.y,
+      });
+      assert.equal(
+        computeDpopJwkThumbprint(publicJwk),
+        NodeCrypto.createHash("sha256").update(rfc7638Input).digest("base64url"),
+      );
+    } finally {
+      localeCompare.mockRestore();
+    }
   });
 
   it("verifies an ES256 DPoP proof and returns the RFC 7638 thumbprint", () => {
