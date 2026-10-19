@@ -28,6 +28,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
+  ServerSettingsError,
   ServerProvider,
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
@@ -3412,6 +3413,149 @@ it.layer(
           assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
         }).pipe(Effect.provide(runtimeServices));
       }),
+    );
+
+    const startupSettings = (instanceId?: string) =>
+      decodeServerSettings({
+        ...encodedDefaultServerSettings,
+        providerInstances: {
+          ...disabledDefaultSlots(
+            "codex",
+            "claudeAgent",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+            "pi",
+            "muse",
+          ),
+          ...(instanceId ? { [instanceId]: { driver: "ghostDriver" } } : {}),
+        },
+      });
+
+    const hydrateDuringSettingsChange = Effect.fnUntraced(function* (input: {
+      seed: ContractServerSettings;
+      saved: ContractServerSettings;
+      current: ContractServerSettings;
+      failCurrentRead?: boolean;
+    }) {
+      const changes = yield* PubSub.unbounded<ContractServerSettings | undefined>();
+      const consume = yield* Deferred.make<void>();
+      const drained: Array<Deferred.Deferred<void>> = [];
+      let readSeed = true;
+      let failCurrentRead = false;
+      const settings = yield* makeMutableServerSettingsService(input.current);
+      const serverSettings = {
+        ...settings,
+        getSettings: Effect.suspend(() => {
+          if (!readSeed) {
+            readSeed = true;
+            return PubSub.publish(changes, input.saved).pipe(Effect.as(input.seed));
+          }
+          return failCurrentRead
+            ? Effect.fail(
+                new ServerSettingsError({
+                  settingsPath: "<memory>",
+                  operation: "read-secret",
+                  cause: new Error("secret materialization failed"),
+                }),
+              )
+            : settings.getSettings;
+        }),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.gen(function* () {
+          const subscription = yield* PubSub.subscribe(changes);
+          const done = yield* Deferred.make<void>();
+          drained.push(done);
+          // The terminal marker acknowledges preceding reconciles, including no-op/failed reads.
+          return Stream.fromEffectRepeat(
+            Deferred.await(consume).pipe(Effect.andThen(PubSub.take(subscription))),
+          ).pipe(
+            Stream.takeWhile((next): next is ContractServerSettings => next !== undefined),
+            Stream.ensuring(Deferred.succeed(done, undefined)),
+          );
+        }),
+      } satisfies ServerSettingsModule.ServerSettingsService["Service"];
+      const dependencies = yield* Layer.build(
+        Layer.mergeAll(
+          AntigravityInstallation.AntigravityInstallation.layer,
+          ServerSecretStore.layer,
+          OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+        ).pipe(
+          Layer.provideMerge(
+            Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+          ),
+          Layer.provideMerge(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-" }),
+          ),
+          Layer.provideMerge(layerTestHttpClient),
+          Layer.provideMerge(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+          Layer.provideMerge(ProviderLatestVersions.layer),
+          Layer.provideMerge(McpProviderSessions.layer),
+          Layer.provideMerge(ResetCreditCoordinator.layerTest),
+          Layer.provideMerge(layerBackgroundPolicyAlwaysRun),
+        ),
+      );
+      readSeed = false;
+      const services = yield* Layer.build(ProviderInstanceRegistryHydration.layer).pipe(
+        Effect.provide(dependencies),
+      );
+      failCurrentRead = input.failCurrentRead ?? false;
+      yield* PubSub.publish(changes, undefined);
+      yield* Deferred.succeed(consume, undefined);
+      yield* Effect.forEach(drained, Deferred.await);
+      const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry.pipe(
+        Effect.provide(services),
+      );
+      return (yield* registry.listUnavailable).map(
+        (provider): string | undefined => provider.instanceId,
+      );
+    });
+
+    it.effect("applies a settings change saved while the provider registry starts", () =>
+      Effect.gen(function* () {
+        const saved = startupSettings("ghost_late");
+        const unavailable = yield* hydrateDuringSettingsChange({
+          seed: startupSettings(),
+          saved,
+          current: saved,
+        });
+        assert.include(unavailable, "ghost_late");
+      }),
+    );
+
+    it.effect("does not apply a queued settings change older than the registry seed", () =>
+      Effect.gen(function* () {
+        const seed = startupSettings("ghost_current");
+        const unavailable = yield* hydrateDuringSettingsChange({
+          seed,
+          saved: startupSettings("ghost_stale"),
+          current: seed,
+        });
+        assert.include(unavailable, "ghost_current");
+        assert.notInclude(unavailable, "ghost_stale");
+      }),
+    );
+
+    it.effect(
+      "retains the newer registry seed when a queued stale change cannot read current settings",
+      () =>
+        Effect.gen(function* () {
+          const seed = startupSettings("ghost_current");
+          const unavailable = yield* hydrateDuringSettingsChange({
+            seed,
+            saved: startupSettings("ghost_stale"),
+            current: seed,
+            failCurrentRead: true,
+          });
+          assert.include(unavailable, "ghost_current");
+          assert.notInclude(unavailable, "ghost_stale");
+        }),
     );
 
     it.effect(
