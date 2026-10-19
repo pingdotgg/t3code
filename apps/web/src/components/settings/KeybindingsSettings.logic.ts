@@ -244,12 +244,14 @@ export function groupKeybindingRows(
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
 ): ReadonlyArray<KeybindingRow> {
-  const rows = keybindings.map((binding, index) => {
+  const rowsById = new Map<string, KeybindingRow>();
+  for (const binding of keybindings) {
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
-    return {
-      id: `${keybindingRowId(binding.command, key, when)}\u0000${index}`,
+    const id = keybindingRowId(binding.command, key, when);
+    rowsById.set(id, {
+      id,
       command: binding.command,
       key,
       when,
@@ -258,8 +260,9 @@ export function buildKeybindingRows(
       defaultWhen: whenAstToExpression(defaultBinding?.whenAst),
       binding,
       conflicts: [],
-    } satisfies KeybindingRow;
-  });
+    });
+  }
+  const rows = [...rowsById.values()];
 
   const rowsWithConflicts = rows.map((row) => {
     const conflicts = keybindingConflictLabels(rows, {
