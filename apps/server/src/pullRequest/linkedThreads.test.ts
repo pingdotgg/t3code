@@ -106,16 +106,6 @@ it.effect(
           thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
           created_at, updated_at, payload_json
         ) VALUES (
-          'legacy-single', 'project-1', 'legacy-single', 'codex', 'full-access', 'default',
-          ${createdAt}, ${createdAt},
-          '{"linkedPullRequest":{"projectId":"project-1","repository":"acme/web","number":7,"url":"https://github.com/acme/web/pull/7"}}'
-        )
-      `;
-      yield* sql`
-        INSERT INTO orchestration_v2_projection_threads (
-          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
-          created_at, updated_at, payload_json
-        ) VALUES (
           'explicitly-unlinked', 'project-1', 'explicitly-unlinked', 'codex', 'full-access', 'default',
           ${createdAt}, ${createdAt},
           '{"linkedPullRequest":{"projectId":"project-1","repository":"acme/web","number":7,"url":"https://github.com/acme/web/pull/7"},"pullRequests":[]}'
@@ -169,7 +159,6 @@ it.effect(
         threads: [
           { id: "archived", projectId: "project-1", title: "archived", archivedAt },
           { id: "active", projectId: "project-1", title: "active", archivedAt: null },
-          { id: "legacy-single", projectId: "project-1", title: "legacy-single", archivedAt: null },
         ],
       });
       assert.deepStrictEqual(
