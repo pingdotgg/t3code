@@ -502,6 +502,56 @@ http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--p
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("keeps local Android and iOS available without ffmpeg", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ffmpeg-" });
+    yield* fs.makeDirectory(`${baseDir}/bin`);
+    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
+    for (const [directory, tool] of [
+      ["platform-tools", "adb"],
+      ["emulator", "emulator"],
+      ["cmdline-tools/latest/bin", "avdmanager"],
+    ]) {
+      yield* fs.makeDirectory(`${baseDir}/sdk/${directory}`, { recursive: true });
+      yield* fs.writeFileString(`${baseDir}/sdk/${directory}/${tool}`, "");
+    }
+    const onTestHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(HostProcess.Environment, {
+          HOME: baseDir,
+          PATH: `${baseDir}/bin`,
+          ANDROID_HOME: `${baseDir}/sdk`,
+        }),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
+    const host = yield* LocalDeviceHost.make().pipe(
+      Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+      onTestHost,
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
+      ),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Platform availability must not probe emulator video"),
+      }),
+    );
+    expect((yield* onTestHost(host.summary)).platforms).toEqual([
+      { platform: "ios", available: true },
+      { platform: "android", available: true },
+    ]);
+    expect(yield* onTestHost(host.platformAvailability("android"))).toEqual({
+      platform: "android",
+      available: true,
+    });
+    expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual({
+      platform: "ios",
+      available: true,
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect(
   "constructs and inspects an unconfigured host without installing or starting helpers",
   () =>

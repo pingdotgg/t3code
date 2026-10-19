@@ -5,6 +5,7 @@ import {
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
   ThreadId,
+  type DeviceSummary,
   type DeviceServiceState,
   type ServerSettings as Settings,
   type SshDeviceHostConfig,
@@ -90,13 +91,18 @@ const fixture = Effect.fn("fixture")(function* (
   const agentStarts: string[] = [];
   const agentStops: string[] = [];
   const requests: string[] = [];
+  const devices: Array<Omit<DeviceSummary, "hostId">> = [];
+  const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
   let booted = false;
   let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
-    run: () => Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" }),
+    run: (command) =>
+      command === "emulator"
+        ? Effect.succeed({ code: 0, stdout: "Pixel_API_35\n", stderr: "" })
+        : Ref.get(encoderResult),
   };
   const host: DeviceHost.DeviceHost["Service"] = {
     ...(inspectError
@@ -115,7 +121,10 @@ const fixture = Effect.fn("fixture")(function* (
       id: LOCAL_DEVICE_HOST_ID,
       kind: "local",
       label: "Test server",
-      platforms: [{ platform: "android", available: true }],
+      platforms: [
+        { platform: "android", available: true },
+        { platform: "ios", available: true },
+      ],
       hubInstalled: true,
       agentDeviceInstalled: false,
     }),
@@ -207,29 +216,35 @@ const fixture = Effect.fn("fixture")(function* (
               ),
             );
           }
+          if (request.url.endsWith("/grid/api/start")) {
+            return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+          }
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
-              simulators: [],
-              emulators: booted
-                ? [
-                    {
-                      id: "emulator-5554",
-                      name: "Pixel_API_35",
-                      platform: "android",
-                      version: "Android 15",
-                      booted: true,
-                      physical: false,
-                    },
-                  ]
-                : [],
+              simulators: devices.filter((device) => device.platform === "ios"),
+              emulators: [
+                ...devices.filter((device) => device.platform === "android"),
+                ...(booted
+                  ? [
+                      {
+                        id: "emulator-5554",
+                        name: "Pixel_API_35",
+                        platform: "android",
+                        version: "Android 15",
+                        booted: true,
+                        physical: false,
+                      },
+                    ]
+                  : []),
+              ],
             }),
           );
         }),
       ),
     ),
   );
-  return { service, starts, agentStarts, agentStops, requests, settings };
+  return { service, starts, agentStarts, agentStops, requests, settings, devices, encoderResult };
 });
 
 describe("device setup consent", () => {
@@ -346,6 +361,88 @@ describe("device setup consent", () => {
       const state = yield* service.state;
       expect(state.devices.map((device) => device.id)).toEqual(["emulator-5554"]);
       expect(state.bootingDevices).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
+    Effect.gen(function* () {
+      const { service, requests, devices, encoderResult } = yield* fixture();
+      devices.push(
+        {
+          id: DeviceId.make("physical-android"),
+          name: "Pixel",
+          platform: "android",
+          version: "Android 15",
+          booted: true,
+          physical: true,
+        },
+        {
+          id: DeviceId.make("ios-simulator"),
+          name: "iPhone",
+          platform: "ios",
+          version: "iOS 18",
+          booted: true,
+          physical: false,
+        },
+      );
+      yield* Ref.set(encoderResult, { code: 127, stdout: "", stderr: "spawn ffmpeg ENOENT" });
+      const state = yield* service.configure({ enabled: true });
+      expect(state.devices.map((device) => device.id)).toEqual([
+        "ios-simulator",
+        "physical-android",
+        "Pixel_API_35",
+      ]);
+      const threadId = ThreadId.make("emulator-video-readiness");
+      const physical = yield* service.open({
+        threadId,
+        deviceId: "physical-android",
+        platform: "android",
+      });
+      const ios = yield* service.open({ threadId, deviceId: "ios-simulator", platform: "ios" });
+      expect(physical.deviceId).toBe("physical-android");
+      expect(ios.deviceId).toBe("ios-simulator");
+
+      const openEmulator = service.open({
+        threadId,
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      const missing = yield* openEmulator.pipe(Effect.flip);
+      expect(missing.message).toMatch(/ffmpeg/i);
+      expect(missing.message).toMatch(/emulator/i);
+      expect(requests.filter((url) => url.endsWith("/boot"))).toEqual([]);
+      expect((yield* service.state).sessions).toEqual([physical, ios]);
+      expect((yield* service.state).bootingDevices ?? []).toEqual([]);
+
+      yield* Ref.set(encoderResult, { code: 1, stdout: "", stderr: "cannot execute ffmpeg" });
+      expect((yield* openEmulator.pipe(Effect.flip)).message).toMatch(/ffmpeg/i);
+      yield* Ref.set(encoderResult, {
+        code: 0,
+        stdout: " V....D libx264rgb   libx264 H.264 / AVC RGB (codec h264)",
+        stderr: "",
+      });
+      expect((yield* openEmulator.pipe(Effect.flip)).message).toMatch(/libx264/i);
+      expect(requests.filter((url) => url.endsWith("/boot"))).toEqual([]);
+      expect((yield* service.state).sessions).toEqual([physical, ios]);
+
+      devices.push({
+        id: DeviceId.make("emulator-5556"),
+        name: "Already_booted",
+        platform: "android",
+        version: "Android 15",
+        booted: true,
+        physical: false,
+      });
+      expect(
+        (yield* service
+          .open({ threadId, deviceId: "emulator-5556", platform: "android" })
+          .pipe(Effect.flip)).message,
+      ).toMatch(/libx264/i);
+
+      yield* Ref.set(encoderResult, { code: 0, stdout: " V....D libx264", stderr: "" });
+      const emulator = yield* openEmulator;
+      expect(emulator.deviceId).toBe("emulator-5554");
+      expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
     }).pipe(Effect.scoped),
   );
 

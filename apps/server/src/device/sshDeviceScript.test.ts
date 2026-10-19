@@ -111,7 +111,12 @@ else { const child=spawn(process.execPath,[path.join(path.dirname(process.argv[1
                 .replace(AGENT_DEVICE_VERSION, upgraded ? nextAgentVersion : AGENT_DEVICE_VERSION),
           );
           const result = await exec(process.execPath, [file], {
-            env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+            env: {
+              ...process.env,
+              HOME: home,
+              PATH: `${bin}:${process.env.PATH}`,
+              SERVE_EMU_FFMPEG: NodePath.join(home, "missing-ffmpeg"),
+            },
           });
           return result.stdout ? JSON.parse(result.stdout) : null;
         };
