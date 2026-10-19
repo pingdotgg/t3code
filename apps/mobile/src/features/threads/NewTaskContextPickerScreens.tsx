@@ -1,3 +1,4 @@
+import { SearchField } from "../../components/ui/SearchField";
 import { Button } from "../../components/ui/Button";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
@@ -15,7 +16,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { useNavigation } from "@react-navigation/native";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Platform, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
@@ -397,6 +398,7 @@ export function BranchPickerScreen(props: {
     readonly onChangeStartFromOrigin: (value: boolean) => void;
   };
 }) {
+  const searchRef = useRef<import("react-native").TextInputInstance>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
@@ -516,17 +518,13 @@ export function BranchPickerScreen(props: {
           onBack={() => navigation.goBack()}
         />
         <View className="bg-header px-4 pb-3 pt-1">
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
+          <SearchField
+            inputRef={searchRef}
+            autoFocus={false}
             accessibilityLabel="Find a branch"
-            className="h-12 rounded-full border border-input-border bg-input px-4 font-sans text-base text-foreground"
-            selectionColorClassName="accent-focus/32"
-            cursorColorClassName="accent-focus"
-            selectionHandleColorClassName="accent-focus"
+            clearAccessibilityLabel="Clear branch search"
             onChangeText={props.onQueryChange}
             placeholder="Find a branch"
-            placeholderTextColorClassName="accent-placeholder"
             value={props.query}
           />
         </View>

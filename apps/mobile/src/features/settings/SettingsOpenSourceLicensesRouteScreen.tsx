@@ -1,3 +1,4 @@
+import { SearchField } from "../../components/ui/SearchField";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { LegendList } from "@legendapp/list/react-native";
@@ -9,12 +10,12 @@ import {
   thirdPartyLicenseEntryKey,
   type ThirdPartyLicenseEntry,
 } from "@t3tools/shared/thirdPartyLicenses";
-import { useCallback, useMemo, useState } from "react";
-import { Linking, Platform, Pressable, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { Linking, Platform, Pressable, type TextInputInstance, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ListRow } from "../../components/ui/ListRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -52,6 +53,7 @@ function LicenseRow(props: {
 }
 
 export function SettingsOpenSourceLicensesRouteScreen() {
+  const searchRef = useRef<TextInputInstance>(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
@@ -153,14 +155,13 @@ export function SettingsOpenSourceLicensesRouteScreen() {
         ListHeaderComponent={
           Platform.OS !== "ios" ? (
             <View className="px-5 pt-4 pb-5">
-              <TextInput
+              <SearchField
+                inputRef={searchRef}
+                autoFocus={false}
                 accessibilityLabel="Search open-source licenses"
-                autoCapitalize="none"
-                autoCorrect={false}
-                clearButtonMode="while-editing"
+                clearAccessibilityLabel="Clear package search"
                 onChangeText={setQuery}
                 placeholder="Search packages"
-                returnKeyType="search"
                 value={query}
               />
             </View>
