@@ -2054,6 +2054,120 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    {
+      label: "delegated setup",
+      threadId:
+        "thread:delegated-task:command%3Amcp%3A00000000-0000-4000-8000-000000000000%3Adelegate-task%3Aexample-r4-workspace-prepare-engine3",
+      terminalId: "setup-setup-worktree-2",
+    },
+    { label: "long thread", threadId: "t".repeat(400), terminalId: DEFAULT_TERMINAL_ID },
+    { label: "Unicode thread", threadId: "项目😀".repeat(60), terminalId: "setup" },
+    { label: "long terminal", threadId: "short", terminalId: "t".repeat(128) },
+    { label: "142-byte boundary", threadId: "t".repeat(48), terminalId: "s".repeat(48) },
+    { label: "144-byte boundary", threadId: "t".repeat(49), terminalId: "s".repeat(48) },
+  ])("persists $label history with a 143-byte filename limit", ({ threadId, terminalId }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const check = (filePath: string) =>
+        Buffer.byteLength(path.basename(filePath)) <= 143
+          ? Effect.void
+          : Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "access",
+                pathOrDescriptor: filePath,
+                cause: { code: "ENAMETOOLONG" },
+              }),
+            );
+      const limited = FileSystem.FileSystem.of({
+        ...fs,
+        exists: (filePath) => Effect.andThen(check(filePath), fs.exists(filePath)),
+        open: (filePath, options) => Effect.andThen(check(filePath), fs.open(filePath, options)),
+        writeFileString: (filePath, data, options) =>
+          Effect.andThen(check(filePath), fs.writeFileString(filePath, data, options)),
+        remove: (filePath, options) =>
+          Effect.andThen(check(filePath), fs.remove(filePath, options)),
+      });
+      const { manager, ptyAdapter, logsDir } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, limited),
+      );
+      yield* manager.open(openInput({ threadId, terminalId }));
+      ptyAdapter.processes[0]!.emitData("setup output\n");
+      yield* manager.close({ threadId, terminalId });
+      const names = yield* fs.readDirectory(logsDir);
+      expect(names).toHaveLength(1);
+      expect(Buffer.byteLength(names[0]!)).toBeLessThanOrEqual(143);
+      expect((yield* manager.open(openInput({ threadId, terminalId }))).history).toBe(
+        "setup output\n",
+      );
+      const otherThread = `${threadId}-other`;
+      expect((yield* manager.open(openInput({ threadId: otherThread, terminalId }))).history).toBe(
+        "",
+      );
+      ptyAdapter.processes[2]!.emitData("other output\n");
+      yield* manager.close({ threadId: otherThread, terminalId });
+      expect(yield* fs.readDirectory(logsDir)).toHaveLength(2);
+      yield* manager.close({ threadId, terminalId, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toHaveLength(1);
+      yield* manager.close({ threadId: otherThread, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect.each([
+    { source: "encoded", terminalId: DEFAULT_TERMINAL_ID },
+    { source: "encoded", terminalId: "setup-setup-worktree-2" },
+    { source: "sanitized", terminalId: DEFAULT_TERMINAL_ID },
+  ])("migrates oversized $source history for $terminalId", ({ source, terminalId }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { manager, logsDir } = yield* createManager();
+      const threadId = "m".repeat(100);
+      const oldPath =
+        source === "encoded"
+          ? yield* multiTerminalHistoryLogPath(logsDir, threadId, terminalId)
+          : path.join(logsDir, `${threadId}.log`);
+      yield* fs.writeFileString(oldPath, "old output\n");
+      expect((yield* manager.open(openInput({ threadId, terminalId }))).history).toBe(
+        "old output\n",
+      );
+      const names = yield* fs.readDirectory(logsDir);
+      expect(names).toHaveLength(1);
+      expect(Buffer.byteLength(names[0]!)).toBeLessThanOrEqual(143);
+      expect(yield* fs.exists(oldPath)).toBe(false);
+      expect(yield* fs.readFileString(path.join(logsDir, names[0]!))).toBe("old output\n");
+      yield* manager.close({ threadId, terminalId, deleteHistory: true });
+      expect(yield* fs.readDirectory(logsDir)).toEqual([]);
+    }),
+  );
+
+  it.effect.each(["terminal", "thread"] as const)(
+    "deletes compact and older encoded history when closing a %s",
+    (scope) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { manager, logsDir } = yield* createManager();
+        const threadId = "d".repeat(100);
+        const terminalId = "setup-setup-worktree-2";
+        yield* manager.open(openInput({ threadId, terminalId }));
+        yield* manager.close({ threadId, terminalId });
+        const oldPath = yield* multiTerminalHistoryLogPath(logsDir, threadId, terminalId);
+        yield* fs.writeFileString(oldPath, "stale copy\n");
+        yield* fs.writeFileString(path.join(logsDir, "unrelated.log"), "keep\n");
+        if (scope === "terminal") {
+          yield* manager.close({ threadId, terminalId, deleteHistory: true });
+        } else {
+          yield* manager.close({ threadId, deleteHistory: true });
+        }
+        expect(yield* fs.readDirectory(logsDir)).toEqual(["unrelated.log"]);
+      }),
+  );
+
   it.effect("migrates legacy transcript filenames to terminal-scoped history path on open", () =>
     Effect.gen(function* () {
       const { manager, logsDir } = yield* createManager();
