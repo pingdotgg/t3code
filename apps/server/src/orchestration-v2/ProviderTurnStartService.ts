@@ -521,7 +521,7 @@ export const layer: Layer.Layer<
         (candidate) => candidate.id === providerSessionId,
       );
       const sessionResult = yield* Effect.result(
-        providerSessions.open({
+        providerSessions.openForTurn({
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
@@ -1264,6 +1264,7 @@ export const layer: Layer.Layer<
             : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
           if (providerTurn !== undefined) yield* providerTurn;
         }).pipe(
+          Effect.scoped,
           Effect.mapError((cause) =>
             isProviderTurnStartError(cause)
               ? cause
