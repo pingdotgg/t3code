@@ -47,6 +47,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
+import { environmentCatalog } from "~/connection/catalog";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -324,7 +325,18 @@ export function mergeEnvironmentSettings(
   };
 }
 
-const pendingModelPreferencesMigrations = new Set<EnvironmentId>();
+// Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
+const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
+const connectionGenerationAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) =>
+    environmentId === null
+      ? null
+      : Option.match(AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))), {
+          onNone: () => null,
+          onSome: (connection) => (connection.phase === "connected" ? connection.generation : null),
+        }),
+  ),
+);
 
 const selectLegacyModelPreferences = (settings: ClientSettings) => ({
   favorites: settings.favorites,
@@ -337,22 +349,22 @@ export function useMigrateModelPreferences(
 ) {
   const clientSettings = useClientSettings(selectLegacyModelPreferences);
   const hydrated = useClientSettingsHydrated();
+  const connectionGeneration = useAtomValue(connectionGenerationAtom(environmentId));
   const migrate = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   useEffect(() => {
     if (
       !environmentId ||
       !settings ||
       !hydrated ||
-      pendingModelPreferencesMigrations.has(environmentId)
+      connectionGeneration === null ||
+      attemptedMigrationGenerations.get(environmentId) === connectionGeneration
     )
       return;
     const patch = modelPreferencesMigrationPatch(settings, clientSettings);
     if (!patch) return;
-    pendingModelPreferencesMigrations.add(environmentId);
-    void migrate({ environmentId, input: { patch } }).finally(() =>
-      pendingModelPreferencesMigrations.delete(environmentId),
-    );
-  }, [clientSettings, environmentId, hydrated, migrate, settings]);
+    attemptedMigrationGenerations.set(environmentId, connectionGeneration);
+    void migrate({ environmentId, input: { patch } });
+  }, [clientSettings, connectionGeneration, environmentId, hydrated, migrate, settings]);
 }
 
 /** Selecting inside the client store keeps a client write from re-rendering unaffected readers. */
