@@ -891,6 +891,66 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      const idleError = process.env.T3_ACP_IDLE_ERROR;
+      if (idleError !== undefined && promptCount === 1) {
+        const toolCallId = "tool-call-idle-error-1";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            title: "Terminal",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["long-running-tool"] },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-monitor",
+            title: "Monitor",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["background-monitor"] },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-subagent",
+            title: "Subagent",
+            kind: "other",
+            status: "in_progress",
+            rawInput: {},
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: "mock-child-session-idle-error",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-idle-error-child",
+            title: "Child tool",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["child-tool"] },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: "error",
+            ...(idleError === "details"
+              ? { error: { code: -32000, message: "Missing Authentication header" } }
+              : {}),
+          },
+        });
+        return {};
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")

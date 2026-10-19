@@ -6090,10 +6090,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
+          status: "completed" | "failed",
         ) {
-          for (const tool of context.tools.values()) {
+          for (const [key, tool] of context.tools) {
+            // Child-session tools live under a `${nativeTaskId}:tool:` key and
+            // belong to a subagent that outlives this turn; emitTool would
+            // reproject them as new root tools.
+            if (key !== tool.toolCallId) continue;
             if (!acpCompletedTurnShouldTerminalizeTool(tool, flavor)) continue;
-            yield* emitTool(context, tool, "completed");
+            yield* emitTool(context, tool, status);
           }
         });
 
@@ -6117,6 +6122,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
           failure?: OrchestrationV2ProviderFailure,
+          options?: {
+            // The agent itself reported the turn over (ACP v2 idle state_update),
+            // so its open root tools are finished too. A failed RPC says nothing
+            // about the agent's tools, which may still run as pending background
+            // work the user can stop later.
+            readonly agentSettledOpenTools: boolean;
+          },
         ) {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
@@ -6137,8 +6149,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
-          if (settledStatus === "completed") {
-            yield* terminalizeOpenForegroundTools(context);
+          if (
+            settledStatus === "completed" ||
+            (settledStatus === "failed" && options?.agentSettledOpenTools === true)
+          ) {
+            yield* terminalizeOpenForegroundTools(context, settledStatus);
           } else if (settledStatus === "interrupted") {
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
@@ -6683,6 +6698,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    if (result.stopReason === "error") {
+                      yield* finalizeTurn(
+                        context,
+                        "failed",
+                        makeProviderFailure({
+                          class: "provider_error",
+                          message: result.error?.message,
+                          code: result.error == null ? null : String(result.error.code),
+                        }),
+                        { agentSettledOpenTools: true },
+                      );
+                      return;
+                    }
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted

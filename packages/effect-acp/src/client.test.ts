@@ -1403,6 +1403,53 @@ it.layer(NodeServices.layer)("effect-acp client", (it) => {
       }),
   );
 
+  it.effect.each(["before", "after"] as const)(
+    "preserves ACP v2 idle errors arriving %s the prompt acknowledgement",
+    (order) =>
+      Effect.gen(function* () {
+        const { stdio, input, output } = yield* makeInMemoryStdio();
+        const acp = yield* AcpClient.make(stdio);
+        const error = {
+          code: -32000,
+          message: "Missing Authentication header",
+          data: { kind: "auth", status: 401 },
+        };
+
+        for (const details of [error, null, undefined]) {
+          const prompt = yield* acp.agent
+            .prompt({ sessionId: "idle-error", prompt: [{ type: "text", text: "Hello" }] })
+            .pipe(Effect.forkScoped);
+          const request = yield* decodePromptRequestLine(yield* Queue.take(output));
+          const acknowledgement = yield* encodeJsonl(jsonRpcResponse(Schema.Unknown), {
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { messageId: `user-${request.id}` },
+          });
+          const idle = yield* encodeJsonl(SessionUpdateNotification, {
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "idle-error",
+              update: {
+                sessionUpdate: "state_update",
+                state: "idle",
+                stopReason: "error",
+                ...(details === undefined ? {} : { error: details }),
+              },
+            },
+          });
+          yield* Queue.offer(
+            input,
+            concatBytes(order === "before" ? [idle, acknowledgement] : [acknowledgement, idle]),
+          );
+          assert.deepEqual(yield* Fiber.join(prompt), {
+            stopReason: "error",
+            ...(details == null ? {} : { error: details }),
+          });
+        }
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("calls ACP v2 session deletion and provider-management methods", () =>
     Effect.gen(function* () {
       const handle = yield* makeHandle({ ACP_MOCK_V2_MANAGEMENT: "1" });

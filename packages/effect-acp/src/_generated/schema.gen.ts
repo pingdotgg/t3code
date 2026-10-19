@@ -6628,6 +6628,7 @@ export type SessionUpdate =
       readonly sessionUpdate: "state_update";
       readonly state: "idle";
       readonly stopReason?: StopReason | null;
+      readonly error?: Error | null;
       readonly usage?: Usage | null;
       readonly _meta?: { readonly [x: string]: Schema.Json } | null;
     }
@@ -6874,6 +6875,11 @@ export const SessionUpdate = Schema.Union([
     Schema.Struct({
       sessionUpdate: Schema.Literal("state_update"),
       state: Schema.Literal("idle"),
+      error: Schema.optionalKey(
+        Schema.Union([Error, Schema.Null]).annotate({
+          description: "Optional failure details as a JSON-RPC error object.",
+        }),
+      ),
       stopReason: Schema.optionalKey(
         Schema.Union([StopReason, Schema.Null]).annotate({
           description:
@@ -8724,10 +8730,16 @@ export const EmbeddedResource = Schema.Struct({
 
 export type IdleStateUpdate = {
   readonly stopReason?: StopReason | null;
+  readonly error?: Error | null;
   readonly usage?: Usage | null;
   readonly _meta?: { readonly [x: string]: Schema.Json } | null;
 };
 export const IdleStateUpdate = Schema.Struct({
+  error: Schema.optionalKey(
+    Schema.Union([Error, Schema.Null]).annotate({
+      description: "Optional failure details as a JSON-RPC error object.",
+    }),
+  ),
   stopReason: Schema.optionalKey(
     Schema.Union([StopReason, Schema.Null]).annotate({
       description:
@@ -9558,6 +9570,7 @@ export type StateUpdate =
   | {
       readonly state: "idle";
       readonly stopReason?: StopReason | null;
+      readonly error?: Error | null;
       readonly usage?: Usage | null;
       readonly _meta?: { readonly [x: string]: Schema.Json } | null;
     }
@@ -9581,6 +9594,11 @@ export const StateUpdate = Schema.Union([
   }).annotate({ description: "Foreground work is in progress." }),
   Schema.Struct({
     state: Schema.Literal("idle"),
+    error: Schema.optionalKey(
+      Schema.Union([Error, Schema.Null]).annotate({
+        description: "Optional failure details as a JSON-RPC error object.",
+      }),
+    ),
     stopReason: Schema.optionalKey(
       Schema.Union([StopReason, Schema.Null]).annotate({
         description:

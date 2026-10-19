@@ -796,6 +796,9 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
                 promptCompletions.delete(normalized.sessionId);
                 return Deferred.succeed(completion, {
                   stopReason: idle.stopReason ?? "end_turn",
+                  ...(idle.stopReason === "error" && idle.error != null
+                    ? { error: idle.error }
+                    : {}),
                   ...(idle.usage === undefined ? {} : { usage: idle.usage }),
                   ...(idle._meta === undefined ? {} : { _meta: idle._meta }),
                 }).pipe(Effect.asVoid);

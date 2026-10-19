@@ -459,7 +459,30 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
     Effect.flatMap(decodeUpstreamSchema),
   );
   const upstreamMeta = yield* readFileString(upstreamMetaPath).pipe(Effect.flatMap(decodeMetaJson));
-  const v2Schema = generateSchemaOutput(upstreamSchema, V2_SCHEMA_RELEASE);
+  // Backport alpha.8's optional idle error (#2281 upstream) without also
+  // migrating the intervening MCP changes. Remove when the v2 pin is updated.
+  const v2Schema = generateSchemaOutput(
+    {
+      $defs: {
+        ...upstreamSchema.$defs,
+        IdleStateUpdate: {
+          allOf: [
+            upstreamSchema.$defs.IdleStateUpdate!,
+            {
+              type: "object",
+              properties: {
+                error: {
+                  description: "Optional failure details as a JSON-RPC error object.",
+                  anyOf: [{ $ref: "#/$defs/Error" }, { type: "null" }],
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+    V2_SCHEMA_RELEASE,
+  );
   const v1Schema = generateSchemaOutput(upstreamV1Schema, V1_SCHEMA_RELEASE);
 
   const prelude = [

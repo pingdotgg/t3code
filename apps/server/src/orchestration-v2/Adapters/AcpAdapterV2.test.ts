@@ -604,6 +604,135 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
+  it.live.each(["details", "none"] as const)(
+    "fails the turn on an ACP v2 idle error with %s, settles its open tool, and accepts the next prompt",
+    (details) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make(`idle-error-${details}`);
+        const threadId = ThreadId.make(`thread-idle-error-${details}`);
+        const childSessionId = "mock-child-session-idle-error";
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-idle-error-monitor"
+                ? "idle-error-monitor"
+                : undefined,
+            extractSubagentUpdate: (toolCall) =>
+              toolCall.toolCallId === "tool-call-idle-error-subagent"
+                ? {
+                    nativeTaskId: "task-idle-error",
+                    prompt: "child work",
+                    title: "child work",
+                    model: null,
+                    status: "running",
+                    childSessionId,
+                    result: null,
+                    suppressNormalTool: true,
+                  }
+                : undefined,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              environment: { T3_ACP_IDLE_ERROR: details },
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-idle-error-${details}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runTurn = (ordinal: number) =>
+          Effect.gen(function* () {
+            yield* runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now: yield* DateTime.now,
+                ordinal,
+              }),
+            );
+            return yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            );
+          });
+
+        const failedEvents = yield* runTurn(1);
+        const failed = failedEvents.at(-1);
+        assert.equal(failed?.type, "turn.terminal");
+        if (failed?.type !== "turn.terminal") return;
+        assert.equal(failed.status, "failed");
+        assert.deepEqual(
+          failed.failure,
+          details === "details"
+            ? {
+                class: "provider_error",
+                message: "Missing Authentication header",
+                code: "-32000",
+                retryable: null,
+              }
+            : {
+                class: "provider_error",
+                message: "Provider turn failed.",
+                code: null,
+                retryable: null,
+              },
+        );
+        const toolItems = (nativeId: string) =>
+          failedEvents.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId
+              ? [event.turnItem]
+              : [],
+          );
+        const toolStatuses = toolItems("tool-call-idle-error-1").map((item) => item.status);
+        assert.include(toolStatuses, "running");
+        assert.equal(toolStatuses.at(-1), "failed");
+        assert.deepEqual(
+          toolItems("tool-call-idle-error-monitor").map((item) => item.status),
+          ["running"],
+          "a background monitor outlives the failed turn and keeps its running row",
+        );
+        const childItems = toolItems("task-idle-error:tool:tool-call-idle-error-child");
+        assert.deepEqual(
+          childItems.map((item) => item.status),
+          ["running"],
+          "a child-session tool keeps running in its own thread",
+        );
+        assert.isTrue(childItems.every((item) => item.threadId !== threadId));
+        assert.isEmpty(
+          toolItems("tool-call-idle-error-child"),
+          "the failed turn must not reproject the child tool as a root tool",
+        );
+
+        const nextEvents = yield* runTurn(2);
+        const next = nextEvents.at(-1);
+        assert.equal(next?.type === "turn.terminal" ? next.status : undefined, "completed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
     (outcome) =>
