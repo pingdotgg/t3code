@@ -47,6 +47,16 @@ RPC authorization middleware after the request succeeds.
 the methods and commands, and takes variants only from closed contract enums,
 so paths, ids, and text never reach analytics.
 
+Agent tool events report driver kinds, never instance ids: users name
+instances, so an instance id can identify an account or employer.
+[Provider dimensions](../../apps/server/src/telemetry/ProviderDimensions.ts)
+report a model only when it is a non-custom entry in a vendor catalog. OpenCode,
+Pi, and ACP agents list models from user configuration, such as local Ollama
+tags, so their models stay out. Handoff settings come from closed enums and
+booleans in tool arguments; prompts, titles, and ids are never read. Thread ids
+are used only to look up the threads on each side and never leave the server,
+which is also why tool events carry no per-thread sequence.
+
 ## Delivery
 
 The server sends batches to the ingest endpoint at `ingest.t3.codes`, which archives
