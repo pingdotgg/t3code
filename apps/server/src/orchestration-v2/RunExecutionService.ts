@@ -1175,7 +1175,19 @@ export const layer: Layer.Layer<
               terminal.status !== "completed" &&
               !childTurnsContinue(terminal)
             ) {
-              return true;
+              // Cascaded child/item projections can remain open here. Only the adapter's
+              // thread-scoped probe can confirm native work survives a reusable root.
+              if (
+                terminal.threadDisposition !== "reusable" ||
+                (yield* Ref.get(providerThreadOwnerLost)) ||
+                input.session.hasPendingBackgroundWorkForThread === undefined
+              ) {
+                return true;
+              }
+              const latestProviderThreadSnapshot = yield* Ref.get(latestProviderThread);
+              return !(yield* input.session
+                .hasPendingBackgroundWorkForThread(latestProviderThreadSnapshot)
+                .pipe(Effect.catchCause(() => Effect.succeed(false))));
             }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
             if (childProviderTurns.size > 0) {

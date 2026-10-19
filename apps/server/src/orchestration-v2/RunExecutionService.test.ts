@@ -1905,11 +1905,17 @@ it.effect("refreshes inherited background items after event subscription", () =>
   }),
 );
 
-it.effect(
-  "keeps ingesting a late empty provider-thread roster while thread-scoped pending work is true",
-  () =>
+it.effect.each([
+  { status: "completed", tool: false },
+  { status: "cancelled", tool: true },
+  { status: "failed", tool: true },
+  { status: "cancelled", tool: false },
+  { status: "failed", tool: false },
+] as const)(
+  "keeps ingesting background work through the late empty roster after a $status root (tool: $tool)",
+  ({ status, tool }) =>
     Effect.gen(function* () {
-      const key = "bg-roster-pending-work";
+      const key = `bg-roster-pending-work:${status}:${tool}`;
       const ids = backgroundScenarioIds(key);
       const providerInstanceId = ProviderInstanceId.make("codex");
       const now = yield* DateTime.now;
@@ -1983,6 +1989,12 @@ it.effect(
                     });
                     yield* Ref.update(observed, (current) => [...current, "roster-cleared"]);
                   }
+                  if (event.type === "turn_item.updated") {
+                    yield* Ref.update(observed, (current) => [
+                      ...current,
+                      `turn_item:${event.turnItem.status}`,
+                    ]);
+                  }
                   if (event.type === "turn.terminal") {
                     yield* Ref.update(observed, (current) => [...current, "terminal"]);
                   }
@@ -2035,12 +2047,16 @@ it.effect(
                     ...providerThreadBase,
                     status: "active" as const,
                     pendingBackgroundTasks: [
-                      { taskId: "bg-1", description: "sleep 20", kind: "command" },
+                      { taskId: "monitor-1", description: "monitor", kind: "background_task" },
                     ],
                     updatedAt: now,
                   },
                 } as ProviderAdapter.ProviderAdapterV2Event,
-                rootTerminalEvent(ids, "completed"),
+                ...(tool ? [backgroundTurnItemEvent(ids, "command_execution", "running", 1)] : []),
+                rootTerminalEvent(ids, status),
+                ...(tool
+                  ? [backgroundTurnItemEvent(ids, "command_execution", "completed", 2)]
+                  : []),
                 {
                   type: "provider_thread.updated",
                   driver,
@@ -2051,7 +2067,7 @@ it.effect(
                     updatedAt: now,
                   },
                 } as ProviderAdapter.ProviderAdapterV2Event,
-              ]),
+              ]).pipe(Stream.concat(Stream.never)),
               close: Deferred.succeed(ingestionDone, undefined),
             }),
             startTurn: () => Effect.void,
@@ -2095,9 +2111,14 @@ it.effect(
         });
       }).pipe(Effect.provide(layerTest));
 
-      const closed = yield* Deferred.await(ingestionDone).pipe(Effect.timeoutOption("2 seconds"));
-      assert.isTrue(Option.isSome(closed), "event subscription did not release");
-      assert.deepEqual(yield* Ref.get(observed), ["terminal", "root-finalized", "roster-cleared"]);
+      yield* Deferred.await(ingestionDone);
+      assert.deepEqual(yield* Ref.get(observed), [
+        ...(tool ? ["turn_item:running"] : []),
+        "terminal",
+        "root-finalized",
+        ...(tool ? ["turn_item:completed"] : []),
+        "roster-cleared",
+      ]);
       assert.isTrue((yield* Ref.get(scopedProbeArgs)).includes(ids.providerThreadId));
 
       const calls = yield* Ref.get(ingestCalls);
