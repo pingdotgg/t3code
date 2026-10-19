@@ -1953,6 +1953,12 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element(tagName))).toBe(false);
   });
 
+  it("leaves a focused device screen alone", () => {
+    expect(shouldRefocusComposerOnWindowFocus(element("DIV", { within: "application" }))).toBe(
+      false,
+    );
+  });
+
   it("leaves a focused terminal alone in the drawer and the right panel", () => {
     expect(
       shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "data-terminal-owner" })),
