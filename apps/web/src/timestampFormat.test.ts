@@ -1,3 +1,4 @@
+import { formatHourShort } from "@t3tools/shared/usageFormat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -40,17 +41,20 @@ describe("formatShortTimestamp", () => {
   });
 
   it.each([
-    ["en-GB", "15:44"],
-    ["en-US", "3:44 PM"],
-  ])("honors %s and the explicit hour-cycle settings", async (locale, localTime) => {
+    ["en-GB", "15:44", "15:00"],
+    ["en-US", "3:44 PM", "3 PM"],
+  ])("honors %s and the explicit hour-cycle settings", async (locale, localTime, localHour) => {
     vi.stubGlobal("window", { desktopBridge: { getSystemLocale: () => locale } });
     vi.resetModules();
-    const { formatShortTimestamp: format } = await import("./timestampFormat");
+    const { formatShortTimestamp: format, resolveHour12 } = await import("./timestampFormat");
     const date = new Date(2026, 3, 7, 15, 44).toISOString();
     // ICU can separate the day period with a narrow no-break space.
     expect(format(date, "locale").replace(/[  ]/g, " ")).toBe(localTime);
     expect(format(date, "12-hour").replace(/[  ]/g, " ")).toMatch(/^3:44 [ap]m$/i);
     expect(format(date, "24-hour")).toBe("15:44");
+    expect(formatHourShort(date, undefined, resolveHour12("locale"))).toBe(localHour);
+    expect(formatHourShort(date, undefined, resolveHour12("12-hour"))).toBe("3 PM");
+    expect(formatHourShort(date, undefined, resolveHour12("24-hour"))).toBe("15:00");
   });
 });
 

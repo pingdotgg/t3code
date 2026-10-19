@@ -33,6 +33,7 @@ interface UsageProviderChartProps {
   readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
+  readonly hour12: boolean;
 }
 
 export interface DayColumn {
@@ -417,6 +418,7 @@ export function UsageProviderChart({
   referenceTime,
   resolution,
   timeZone,
+  hour12,
 }: UsageProviderChartProps) {
   const periods = resolution === "hour" ? hours : days;
   const totals: readonly (DailyTotals | HourlyTotals)[] = resolution === "hour" ? hourly : daily;
@@ -436,10 +438,10 @@ export function UsageProviderChart({
     cn("transition-opacity", loading && "opacity-40 delay-150");
   const format = metric === "tokens" ? formatTokens : formatUsd;
   const formatPeriod = (period: string) =>
-    resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
+    resolution === "hour" ? formatHourShort(period, timeZone, hour12) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
-      ? formatRelativeHourShort(period, referenceTime, timeZone)
+      ? formatRelativeHourShort(period, referenceTime, timeZone, hour12)
       : formatPeriod(period);
 
   return (
