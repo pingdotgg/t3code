@@ -9,6 +9,7 @@ export interface ChangeRequestPresentation {
     | "azure-devops"
     | "bitbucket"
     | "gitcafe"
+    | "brnch"
     | "change-request";
   readonly providerName: string;
   readonly shortName: string;
@@ -89,6 +90,16 @@ const GITCAFE_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://git.cafe/owner/repo/pulls/42",
 };
 
+const BRNCH_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "brnch",
+  providerName: "Brnch",
+  shortName: "change",
+  longName: "change",
+  pluralLongName: "changes",
+  providerLongName: "Brnch change",
+  urlExample: "https://brnch.io/owner/repo/changes/42",
+};
+
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -116,6 +127,8 @@ export function resolveChangeRequestPresentation(
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
     case "gitcafe":
       return GITCAFE_CHANGE_REQUEST_PRESENTATION;
+    case "brnch":
+      return BRNCH_CHANGE_REQUEST_PRESENTATION;
     default:
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
@@ -216,6 +229,15 @@ export function detectSourceControlProviderFromRemoteUrl(
     return null;
   }
   const hostname = parseHostName(host);
+
+  // Brnch has no self-hosted installs.
+  if (hostname === "brnch.io") {
+    return {
+      kind: SourceControlProviderKind.make("brnch"),
+      name: "Brnch",
+      baseUrl: toBaseUrl(hostname),
+    };
+  }
 
   if (isGitCafeHost(hostname)) {
     return {

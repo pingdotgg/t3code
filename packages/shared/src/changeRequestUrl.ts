@@ -32,6 +32,11 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
+  // Brnch, only on brnch.io: /{owner}/{repo}/changes/{n}
+  if (host === "brnch.io") {
+    const match = /^\/([^/]+\/[^/]+)\/changes\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    return claim(host, match);
+  }
   if (isHostOf(host, "github.com", "github")) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
@@ -74,6 +79,8 @@ export function changeRequestUrlFor(
       return `https://${host}/${repository}/pull/${number}`;
     case "gitcafe":
       return `https://${host}/${repository}/pulls/${number}`;
+    case "brnch":
+      return `https://${host}/${repository}/changes/${number}`;
     case "forgejo": {
       try {
         const remote = new URL(remoteUrl ?? "");

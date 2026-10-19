@@ -1,0 +1,46 @@
+{
+  "name": "@t3tools/source-control-brnch",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client/definition": {
+      "types": "./src/client/definition.ts",
+      "import": "./src/client/definition.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/brnchCli": {
+      "types": "./src/server/brnchCli.ts",
+      "import": "./src/server/brnchCli.ts"
+    },
+    "./server/brnchChangeJson": {
+      "types": "./src/server/brnchChangeJson.ts",
+      "import": "./src/server/brnchChangeJson.ts"
+    },
+    "./server/BrnchPullRequestProvider": {
+      "types": "./src/server/BrnchPullRequestProvider.ts",
+      "import": "./src/server/BrnchPullRequestProvider.ts"
+    },
+    "./server/BrnchSourceControlProvider": {
+      "types": "./src/server/BrnchSourceControlProvider.ts",
+      "import": "./src/server/BrnchSourceControlProvider.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "@t3tools/source-control-core": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@t3tools/source-control-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

@@ -698,6 +698,20 @@ export const GitCafeIcon: Icon = (props) => (
   </svg>
 );
 
+// Brnch's own mark from https://brnch.io/favicon.svg, drawn in the current text color.
+export const BrnchIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
+    <path d="M6 3V21" stroke="currentColor" strokeWidth="3.5" fill="none" />
+    <path
+      d="M6 19.25a10.5 10.5 0 0 0 10.5-10.5"
+      stroke="currentColor"
+      strokeWidth="3.5"
+      fill="none"
+    />
+    <circle cx="16.5" cy="3.75" r="3" fill="currentColor" />
+  </svg>
+);
+
 export const MacScreenRecordingIcon: Icon = (props) => {
   const gradientId = useId();
   return (

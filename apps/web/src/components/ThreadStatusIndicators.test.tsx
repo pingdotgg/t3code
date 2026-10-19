@@ -50,6 +50,7 @@ describe("linked pull request snapshots", () => {
     ["https://codeberg.org/owner/repo/pulls/42", "forgejo"],
     ["https://gitlab.example.com/acme/web/-/merge_requests/42", "gitlab"],
     ["https://github.com/owner/repo/pull/42", "github"],
+    ["https://brnch.io/owner/repo/changes/42", "brnch"],
   ])("classifies %s as %s", (url, kind) => {
     const result = linkedPullRequestSnapshotStatus({
       ...link,

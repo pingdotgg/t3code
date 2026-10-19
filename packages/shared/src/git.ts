@@ -141,6 +141,16 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
     : `${organization}.visualstudio.com/${project}/_git/${repository}`;
 }
 
+/**
+ * Brnch serves git below `/git/` (`https://brnch.io/git/{owner}/{repo}.git`) and its web pages at
+ * `/{owner}/{repo}`, as SSH remotes name it. Both are keyed by the web spelling.
+ */
+function brnchRepositoryKey(host: string, segments: ReadonlyArray<string>): string | null {
+  const [marker, owner, repository] = segments;
+  if (host !== "brnch.io" || segments.length !== 3 || marker !== "git") return null;
+  return owner && repository ? `${host}/${owner}/${repository}` : null;
+}
+
 export function normalizeGitRemoteUrl(value: string): string {
   const normalized = value
     .trim()
@@ -155,6 +165,7 @@ export function normalizeGitRemoteUrl(value: string): string {
       if (url.hostname && repositorySegments.length > 1) {
         return (
           azureDevOpsRepositoryKey(url.hostname, repositorySegments) ??
+          brnchRepositoryKey(url.hostname, repositorySegments) ??
           `${url.hostname}/${repositorySegments.join("/")}`
         );
       }

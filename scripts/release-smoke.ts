@@ -39,6 +39,7 @@ const workspaceFiles = [
   "packages/provider-opencode/package.json",
   "packages/source-control-azure-devops/package.json",
   "packages/source-control-bitbucket/package.json",
+  "packages/source-control-brnch/package.json",
   "packages/source-control-core/package.json",
   "packages/source-control-forgejo/package.json",
   "packages/source-control-gitcafe/package.json",

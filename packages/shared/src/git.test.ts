@@ -56,6 +56,15 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
+  it("gives a Brnch repository the same key over HTTPS as over SSH", () => {
+    expect(normalizeGitRemoteUrl("https://brnch.io/git/T3Tools/T3Code.git")).toBe(
+      "brnch.io/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("git@brnch.io:T3Tools/T3Code.git")).toBe(
+      "brnch.io/t3tools/t3code",
+    );
+  });
+
   it("gives an Azure DevOps repository the same key over SSH as over HTTPS", () => {
     expect(normalizeGitRemoteUrl("git@ssh.dev.azure.com:v3/T3Tools/Platform/T3Code")).toBe(
       "dev.azure.com/t3tools/platform/_git/t3code",

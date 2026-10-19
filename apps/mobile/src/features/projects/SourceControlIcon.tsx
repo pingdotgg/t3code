@@ -255,6 +255,22 @@ export function SourceControlIcon(props: {
           <Rect x={4.8} y={4.8} width={54.4} height={54.4} fill="#a78bfa" />
         </Svg>
       );
+    case "brnch":
+      // Brnch's own mark from https://brnch.io/favicon.svg, drawn in the current text color.
+      return (
+        <ThemedSvg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          color={props.color}
+          colorClassName={props.colorClassName}
+          fill="none"
+        >
+          <Path d="M6 3V21" stroke="currentColor" strokeWidth={3.5} />
+          <Path d="M6 19.25a10.5 10.5 0 0 0 10.5-10.5" stroke="currentColor" strokeWidth={3.5} />
+          <Circle cx={16.5} cy={3.75} r={3} fill="currentColor" />
+        </ThemedSvg>
+      );
     default:
       return null;
   }

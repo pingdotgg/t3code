@@ -55,6 +55,15 @@ describe("parseChangeRequestUrl", () => {
     );
   });
 
+  it("reads a Brnch change on brnch.io only", () => {
+    expect(parseChangeRequestUrl("https://brnch.io/Team/Project/changes/12")).toEqual({
+      host: "brnch.io",
+      repository: "team/project",
+      number: 12,
+    });
+    expect(parseChangeRequestUrl("https://code.acme.test/team/project/changes/12")).toBeNull();
+  });
+
   it("reads Bitbucket and both Azure DevOps URL forms", () => {
     expect(parseChangeRequestUrl("https://bitbucket.org/workspace/repo/pull-requests/5")).toEqual({
       host: "bitbucket.org",

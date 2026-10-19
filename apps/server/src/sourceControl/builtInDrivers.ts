@@ -4,6 +4,7 @@ import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketPullRequestApi from "@t3tools/source-control-bitbucket/server/BitbucketPullRequestApi";
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
+import * as BrnchDriver from "@t3tools/source-control-brnch/server/driver";
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
 import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
@@ -27,6 +28,7 @@ const drivers = [
   BitbucketDriver.driver,
   ForgejoDriver.driver,
   GitCafeDriver.driver,
+  BrnchDriver.driver,
 ];
 
 export type BuiltInSourceControlDriversEnv =

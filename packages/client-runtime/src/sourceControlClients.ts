@@ -1,5 +1,6 @@
 import * as AzureDevOps from "@t3tools/source-control-azure-devops/client/definition";
 import * as Bitbucket from "@t3tools/source-control-bitbucket/client/definition";
+import * as Brnch from "@t3tools/source-control-brnch/client/definition";
 import {
   makeSourceControlClientRegistry,
   readSourceControlHostSettings,
@@ -29,6 +30,7 @@ const BUILT_IN_SOURCE_CONTROL_CLIENTS = [
   Forgejo.definition,
   Bitbucket.definition,
   AzureDevOps.definition,
+  Brnch.definition,
 ];
 
 export const sourceControlClients = makeSourceControlClientRegistry(

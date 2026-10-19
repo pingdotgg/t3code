@@ -1,7 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone
-and publish repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and
+Brnch to clone and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
@@ -113,6 +113,20 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 
 Line comments, reviewer requests, and labels are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
+
+### Brnch
+
+Install the Brnch CLI and sign in:
+
+```bash
+npm install -g brnch-cli
+brnch auth login
+```
+
+T3 Code works with repositories on `brnch.io` through `brnch`, so `BRNCH_TOKEN` in the server's
+environment works as well. Brnch calls pull requests changes. You can list, open, comment on, mark
+ready, close, reopen, and merge them. Diffs, reviews, and moving a change back to draft are not
+available yet.
 
 ## Start, clone, or publish a project
 

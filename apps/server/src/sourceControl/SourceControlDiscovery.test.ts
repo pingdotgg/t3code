@@ -223,6 +223,12 @@ it.effect("reports implemented tools separately from locally available executabl
           auth: "unknown",
           account: Option.none(),
         },
+        {
+          kind: SourceControlProviderKind.make("brnch"),
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
       ],
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
@@ -291,6 +297,11 @@ Logged in to gitlab.com as gitlab-user
           processOutput(
             encodeJson({ schemaVersion: 1, data: { host: "git.cafe", username: "cafe-user" } }),
           ),
+        );
+      }
+      if (input.command === "brnch" && input.args.slice(-2).join(" ") === "auth status") {
+        return Effect.succeed(
+          processOutput(encodeJson({ user: { id: "usr_1", handle: "brnch-user" } })),
         );
       }
       return Effect.fail(
@@ -372,6 +383,12 @@ Logged in to gitlab.com as gitlab-user
           kind: SourceControlProviderKind.make("gitcafe"),
           auth: "authenticated",
           account: Option.some("cafe-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: SourceControlProviderKind.make("brnch"),
+          auth: "authenticated",
+          account: Option.some("brnch-user"),
           detail: Option.none(),
         },
       ],
