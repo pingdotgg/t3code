@@ -21,6 +21,7 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const modes: string[] = [];
     const owners: string[] = [];
     const tunnelArgs: string[][] = [];
+    const tunnelStdins: unknown[] = [];
     const commandArgs: string[][] = [];
     let forwards = 0;
     let failForward = true;
@@ -28,8 +29,9 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
-        const forwarding = command.args.includes("-N");
+        const forwarding = command.args.includes("-L");
         (forwarding ? tunnelArgs : commandArgs).push([...command.args]);
+        if (forwarding) tunnelStdins.push(command.options.stdin);
         let output = "";
         if (forwarding) {
           if (failForward) {
@@ -143,7 +145,15 @@ it.effect("preserves installed status after probes and cleans failed agent activ
         expect(index).toBeGreaterThan(0);
         expect(args[index - 1]).toBe("-o");
       }
+      // The tunnel lives only as long as the server holds the write end of its stdin.
+      expect(args).not.toContain("-N");
+      expect(args.slice(args.indexOf("test.example") + 1)).toEqual([
+        "sh",
+        "-c",
+        "'exec cat >/dev/null'",
+      ]);
     }
+    expect(tunnelStdins).toEqual(tunnelArgs.map(() => "pipe"));
     expect(commandArgs.length).toBeGreaterThan(0);
     for (const args of commandArgs) {
       for (const option of multiplexingOff) expect(args).not.toContain(option);
