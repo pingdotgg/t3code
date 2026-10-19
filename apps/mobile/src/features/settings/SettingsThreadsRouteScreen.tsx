@@ -12,8 +12,6 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -24,6 +22,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useSettingsWriter } from "./useSettingsWriter";
 import {
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
@@ -67,10 +66,7 @@ function AutoSettleSettingsRows() {
   const [pendingTargets, setPendingTargets] = useState<
     readonly ScopedMobileSettingsTarget[] | null
   >(null);
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "server settings update",
-    reportFailure: true,
-  });
+  const writeSettings = useSettingsWriter();
 
   const syncEnvironments = selectedTargets.filter(supportsSharedSettingsSync);
   const syncTargets = resolveMobileSettingsTargets(
@@ -107,11 +103,7 @@ function AutoSettleSettingsRows() {
     writeInFlight.current = true;
     setPendingTargets(syncTargets);
     setPendingWrites((count) => count + 1);
-    void Promise.allSettled(
-      writes.map((entry) =>
-        updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
-      ),
-    ).finally(() => {
+    void writeSettings(syncTargets, writes).finally(() => {
       writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
@@ -161,11 +153,7 @@ function AutoSettleSettingsRows() {
     writeInFlight.current = true;
     setPendingTargets(syncTargets);
     setPendingWrites((count) => count + 1);
-    void Promise.allSettled(
-      writes.map((entry) =>
-        updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
-      ),
-    ).finally(() => {
+    void writeSettings(syncTargets, writes).finally(() => {
       writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);

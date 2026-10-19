@@ -18,8 +18,6 @@ import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RUNTIME_MODE_CHOICES } from "../threads/thread-settings-options";
-import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   AndroidSettingsEnvironmentFilter,
@@ -32,6 +30,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { useSettingsWriter } from "./useSettingsWriter";
 import {
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
@@ -172,10 +171,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "environment settings update",
-    reportFailure: true,
-  });
+  const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
       const queued = queuedPatch.current;
@@ -197,11 +193,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     writeInFlight.current = true;
     setPendingTargets(targets);
     setPendingWrites((count) => count + 1);
-    void Promise.allSettled(
-      writes.map((entry) =>
-        updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
-      ),
-    ).finally(() => {
+    void writeSettings(targets, writes).finally(() => {
       writeInFlight.current = false;
       setPendingTargets(null);
       setPendingWrites((count) => count - 1);
@@ -225,11 +217,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     writeInFlight.current = true;
     setPendingTargets(targets);
     setPendingWrites((count) => count + 1);
-    void Promise.allSettled(
-      writes.map((entry) =>
-        updateSettings({ environmentId: entry.environmentId, input: { patch: entry.patch } }),
-      ),
-    ).finally(() => {
+    void writeSettings(targets, writes).finally(() => {
       writeInFlight.current = false;
       // Resending a draft over these pre-clear targets would undo the clear.
       queuedPatch.current = null;
