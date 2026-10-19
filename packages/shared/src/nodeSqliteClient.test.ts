@@ -873,3 +873,134 @@ it.effect("does not warn when the client stops its checkpoint worker", () => {
     assert.lengthOf(warnings, 0);
   }).pipe(Effect.provide(logs));
 });
+it.effect("finishes masked database cleanup after its caller is interrupted", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE cleanup_writes(value INTEGER PRIMARY KEY)`;
+    const entered = yield* Deferred.make<void>();
+    const work = yield* Effect.forkChild(
+      Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO cleanup_writes VALUES (1)`;
+            yield* sql.withTransaction(sql`INSERT INTO cleanup_writes VALUES (2)`);
+          }),
+        ),
+      ),
+      { startImmediately: true },
+    );
+    yield* Deferred.await(entered);
+    yield* Fiber.interrupt(work);
+    assert.deepEqual(yield* sql`SELECT value FROM cleanup_writes ORDER BY value`.values, [
+      [1],
+      [2],
+    ]);
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
+const eventLoopTurn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+
+it.effect("owns the reader until a standalone statement has finished", () =>
+  withReaderClient((sql) =>
+    Effect.gen(function* () {
+      yield* countEntries(sql).pipe(SqliteClient.readOnly);
+      const worker = startedWorkers.at(-1)!;
+      const send = worker.postMessage.bind(worker);
+      let pending: Parameters<typeof worker.postMessage> | undefined;
+      let interleaved = false;
+      let announce = () => {};
+      const ready = new Promise<void>((resolve) => {
+        announce = resolve;
+      });
+      const spy = vi.spyOn(worker, "postMessage").mockImplementation((...args) => {
+        if (pending === undefined) {
+          pending = args;
+          announce();
+        } else {
+          interleaved = true;
+          send(...args);
+        }
+      });
+      const release = () => {
+        spy.mockRestore();
+        if (pending !== undefined) send(...pending);
+        pending = undefined;
+      };
+      yield* Effect.gen(function* () {
+        const read = yield* Effect.forkChild(countEntries(sql).pipe(SqliteClient.readOnly), {
+          startImmediately: true,
+        });
+        yield* Effect.promise(() => ready);
+        const entered = yield* Deferred.make<void>();
+        const transaction = yield* Effect.forkChild(
+          sql.withTransaction(Deferred.succeed(entered, undefined)).pipe(SqliteClient.readOnly),
+          { startImmediately: true },
+        );
+        // Let the competing acquisition run while the first request remains held.
+        yield* eventLoopTurn;
+        assert.isFalse(interleaved, "the transaction must wait for the standalone read");
+        assert.isFalse(yield* Deferred.isDone(entered));
+        release();
+        assert.equal(yield* Fiber.join(read), 1);
+        yield* Fiber.join(transaction);
+        assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
+      }).pipe(Effect.ensuring(Effect.sync(release)));
+    }),
+  ),
+);
+
+it.effect.each([
+  { reservation: false, masked: false },
+  { reservation: false, masked: true },
+  { reservation: true, masked: false },
+  { reservation: true, masked: true },
+])(
+  "preserves caller cancellation while waiting (reservation=$reservation, masked=$masked)",
+  ({ reservation, masked }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`CREATE TABLE entries(value INTEGER)`;
+      const held = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const holder = yield* Effect.forkChild(
+        sql.withTransaction(
+          Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(release))),
+        ),
+        { startImmediately: true },
+      );
+      yield* Deferred.await(held);
+      const entered = yield* Deferred.make<void>();
+      const body = sql`INSERT INTO entries VALUES (1)`.pipe(
+        Effect.andThen(Deferred.succeed(entered, undefined)),
+      );
+      const acquire = reservation
+        ? Effect.scoped(
+            Effect.gen(function* () {
+              const connection = yield* sql.reserve;
+              yield* connection.executeUnprepared("INSERT INTO entries VALUES (1)", [], undefined);
+              yield* Deferred.succeed(entered, undefined);
+            }),
+          )
+        : sql.withTransaction(body);
+      const waiter = yield* Effect.forkChild(masked ? Effect.uninterruptible(acquire) : acquire, {
+        startImmediately: true,
+      });
+      const cancelled = yield* Effect.forkChild(Fiber.interrupt(waiter), {
+        startImmediately: true,
+      });
+      yield* Effect.gen(function* () {
+        yield* eventLoopTurn;
+        assert.equal(cancelled.pollUnsafe() !== undefined, !masked);
+        assert.isFalse(yield* Deferred.isDone(entered));
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      yield* Fiber.join(holder);
+      yield* Fiber.join(cancelled);
+      assert.equal(yield* Deferred.isDone(entered), masked);
+      yield* sql.withTransaction(sql`INSERT INTO entries VALUES (2)`);
+      assert.deepEqual(
+        yield* sql`SELECT value FROM entries ORDER BY value`.values,
+        masked ? [[1], [2]] : [[2]],
+      );
+    }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
