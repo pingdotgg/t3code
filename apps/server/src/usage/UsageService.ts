@@ -399,16 +399,34 @@ export const make = Effect.gen(function* () {
             previous === undefined || entry.mtimeMs > previous.mtimeMs ? entry : previous;
           if (previous?.provider === "claude" && entry.provider === "claude") {
             const older = selected === entry ? previous : entry;
-            const snapshots = new Map(
-              dedupeWithinFile([...selected.records, ...older.records])
-                .filter((record) => record.dedupeKey !== null)
-                .map((record) => [record.dedupeKey, record]),
-            );
-            const records = selected.records.map((record) =>
-              record.dedupeKey === null ? record : (snapshots.get(record.dedupeKey) ?? record),
-            );
-            if (records.some((record, index) => record !== selected.records[index])) {
-              selected = { ...selected, records };
+            const reconcile = (
+              records: readonly UsageRecord[],
+              candidates: readonly UsageRecord[],
+            ) => {
+              const snapshots = new Map(
+                dedupeWithinFile([...records, ...candidates])
+                  .filter((record) => record.dedupeKey !== null)
+                  .map((record) => [record.dedupeKey, record]),
+              );
+              return records.map((record) =>
+                record.dedupeKey === null ? record : (snapshots.get(record.dedupeKey) ?? record),
+              );
+            };
+            const tailKeys = new Set(selected.tailRecords.map((record) => record.dedupeKey));
+            // A matching tail must stay replaceable, even when its key also has a committed row.
+            const records = reconcile(selected.records, [
+              ...older.records,
+              ...older.tailRecords.filter((record) => !tailKeys.has(record.dedupeKey)),
+            ]);
+            const tailRecords = reconcile(selected.tailRecords, [
+              ...older.records,
+              ...older.tailRecords,
+            ]);
+            if (
+              records.some((record, index) => record !== selected.records[index]) ||
+              tailRecords.some((record, index) => record !== selected.tailRecords[index])
+            ) {
+              selected = { ...selected, records, tailRecords };
             }
           }
           if (selected !== previous) {
