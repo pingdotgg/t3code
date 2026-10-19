@@ -4,7 +4,12 @@ A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
 selected by systemd or launchd. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
+may replace the launcher and state, optionally deferring the restart. Both writers
+serialize state selection and unit writes across processes. The installer takes
+the state lease before the unit lease; the launcher never holds both, so unit
+failures cannot prevent durable commit. Manager stop/start commands stay outside
+both leases so stopping a launcher cannot deadlock. A running launcher refuses
+another update after a local command changes its selection. Foreground CLI
 processes do not self-update.
 
 Exact-version installs keep restarts independent of npm cache eviction or a moving
@@ -13,6 +18,13 @@ immutable runtime. Preflight checks the launcher protocol because a target that
 needs new rollback guarantees cannot safely run under an older launcher. After a
 commit the launcher points the unit at the committed runtime, so the next service
 start also runs that version's launcher; the protocol check is what makes that safe.
+Protocol 4 adds these guarantees. An installed protocol-3 launcher requires one
+local `t3 update` or `t3 service install` before remote updates are accepted; a
+child update cannot upgrade its supervising launcher. Terminal-state recovery
+retries reconciliation and reload even when the file already names the selected
+runtime, since a previous reload may have failed. A newer locally installed unit
+is preserved.
+
 launchd reads the plist only at its next bootstrap, so a crash respawn before then
 still runs the loaded definition.
 

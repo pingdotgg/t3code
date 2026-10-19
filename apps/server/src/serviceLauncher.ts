@@ -7,6 +7,7 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
 
 import type {
   PendingServiceUpdate,
@@ -120,7 +121,7 @@ const SERVICE_UNIT_PROGRAMS = [
  * already at that version or a newer one is returned unchanged: `t3 update`
  * may have repointed it to a later version while this commit was in flight.
  */
-export function repointServiceUnit(contents: string, version: string): string {
+function repointServiceUnit(contents: string, version: string): string {
   for (const program of SERVICE_UNIT_PROGRAMS) {
     const match = program.exec(contents);
     if (match === null) continue;
@@ -612,13 +613,38 @@ export class Launcher {
     this.#timer = undefined;
   }
 
+  async #selectState(next: ServiceState): Promise<void> {
+    const release = await acquireServiceSelectionLock(this.#statePath);
+    try {
+      const selected = await readServiceState(this.#statePath);
+      // Local installs replace the selection and clear its update record. An old
+      // launcher must not restore its own selection when asked to update again.
+      if (
+        selected.activeVersion !== this.#state.activeVersion ||
+        selected.update?.id !== this.#state.update?.id ||
+        selected.update?.status !== this.#state.update?.status
+      ) {
+        throw new Error("Service selection changed. Restart the service before updating.");
+      }
+      await writeServiceState(this.#statePath, next);
+      this.#state = next;
+    } finally {
+      release();
+    }
+  }
+
   async #recover(): Promise<void> {
     // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
-    const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
-    if (awaitedVersion?.trim() === this.#state.activeVersion) {
-      await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
+    const release = await acquireServiceSelectionLock(this.#statePath);
+    try {
+      const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
+      if (awaitedVersion?.trim() === this.#state.activeVersion) {
+        await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
+      }
+    } finally {
+      release();
     }
     const update = this.#state.update;
     if (update?.status !== "pending") {
@@ -773,8 +799,12 @@ export class Launcher {
       status: "pending",
     };
     const next: ServiceState = { ...this.#state, update: pending };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    try {
+      await this.#selectState(next);
+    } catch (error) {
+      await reject(error instanceof Error ? error.message : String(error));
+      return;
+    }
     await sendMessage(child.process, { type: "update-accepted", updateId: pending.id });
     this.#timer = setTimeout(() => this.#enqueue(() => this.#beginTrial(child)), HANDOFF_DELAY_MS);
   }
@@ -811,8 +841,7 @@ export class Launcher {
       activeVersion: pending.targetVersion,
       update: committed,
     };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#selectState(next);
     child.role = "active";
     await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     try {
@@ -828,11 +857,16 @@ export class Launcher {
     const unit = this.#serviceUnit;
     if (unit === undefined) return;
     try {
-      const contents = await NodeFSP.readFile(unit.path, "utf8");
-      const repointed = repointServiceUnit(contents, version);
-      if (repointed === contents) return;
-      await replaceFileDurably(unit.path, repointed);
-      await unit.reload();
+      const release = await acquireServiceSelectionLock(unit.path);
+      try {
+        const contents = await NodeFSP.readFile(unit.path, "utf8");
+        const repointed = repointServiceUnit(contents, version);
+        if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+        // A previous rename may have succeeded before reload failed.
+        await unit.reload();
+      } finally {
+        release();
+      }
     } catch (error) {
       process.stderr.write(
         `[service-launcher] Could not point ${unit.path} at t3@${version}: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -893,8 +927,7 @@ export class Launcher {
         activeVersion: pending.fromVersion,
         update: terminalUpdate({ pending, status: "failed", reason: "state-dir-owned" }),
       };
-      await writeServiceState(this.#statePath, next);
-      this.#state = next;
+      await this.#selectState(next);
       await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     }
     // Signal listeners alone do not keep Node alive.
@@ -921,8 +954,7 @@ export class Launcher {
       activeVersion: pending.fromVersion,
       update: outcome,
     };
-    await writeServiceState(this.#statePath, next);
-    this.#state = next;
+    await this.#selectState(next);
     await discardDatabaseBackup(this.#baseDir, pending.id).catch(() => undefined);
     await this.#startChild(next.activeVersion, "active", outcome);
   }

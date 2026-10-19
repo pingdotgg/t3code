@@ -1,7 +1,9 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
-// Bump for incompatible runtime layout changes; launchers survive self-updates. Protocol 3 requires standalone executables.
-export const SERVICE_LAUNCHER_PROTOCOL = 3 as const;
+// Protocol 4 requires coordinated selection writes and unit reconciliation. An
+// installed protocol-3 launcher needs one local update or service install first:
+// remote updates replace its child, so cannot add these launcher guarantees.
+export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
 export const SERVICE_ENV_FILE = "service.env";
 export const SERVICE_STATE_FILE = "service-state.json";
