@@ -795,6 +795,62 @@ describe("MessagesTimeline attachments", () => {
 });
 
 describe("MessagesTimeline history and thread links", () => {
+  it.each([
+    ["imported runless", null],
+    ["standard", RunId.make("citation-run")],
+  ] as const)("reveals a cited response inside a folded %s turn", async (_label, runId) => {
+    const quote = "The imported response contains this cited detail.";
+    const props = {
+      ...baseProps(),
+      timelineEntries: [
+        message("Investigate the issue.", { runId }, "citation-prompt"),
+        message(quote, { role: "assistant", runId }, "citation-source"),
+        message("Investigation complete.", { role: "assistant", runId }, "citation-answer"),
+      ],
+    };
+    await renderElement(<MessagesTimeline {...props} />);
+    const source = () =>
+      container.querySelector<HTMLElement>('[data-assistant-citation-source="citation-source"]');
+    await vi.waitFor(() => expect(text()).toContain("Investigation complete."));
+    expect(buttons(/^Worked/)).toHaveLength(1);
+    expect(source()).toBeNull();
+
+    await act(async () =>
+      roots.at(-1)!.render(
+        <MessagesTimeline
+          {...props}
+          citationRequest={{
+            key: "open-citation",
+            citation: {
+              version: 1,
+              environmentId: ENVIRONMENT_ID,
+              threadId: ThreadId.make(`thread-${threadCount}`),
+              messageId: MessageId.make("citation-source"),
+              text: quote,
+              start: 0,
+              end: quote.length,
+              prefix: "",
+              suffix: "",
+            },
+          }}
+        />,
+      ),
+    );
+
+    await vi.waitFor(() => {
+      expect(source()?.textContent ?? "").toContain(quote);
+      const highlight = CSS.highlights.get("t3-assistant-citation");
+      expect(highlight).toBeDefined();
+      const range = [...highlight!][0] as Range;
+      expect(range.toString()).toBe(quote);
+      const viewport = container.querySelector<HTMLElement>("[data-assistant-citation-viewport]")!;
+      const bounds = range.getBoundingClientRect();
+      expect(bounds.height).toBeGreaterThan(0);
+      expect(bounds.top).toBeGreaterThanOrEqual(viewport.getBoundingClientRect().top);
+      expect(bounds.bottom).toBeLessThanOrEqual(viewport.getBoundingClientRect().bottom);
+    });
+  });
+
   it("loads earlier turns from a control ahead of the bounded timeline", async () => {
     const onLoadEarlier = vi.fn();
     await renderTimeline([message("Recent activity")], {
