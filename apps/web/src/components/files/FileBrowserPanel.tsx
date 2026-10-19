@@ -561,7 +561,14 @@ export default function FileBrowserPanel({
         </div>
       ) : null}
       {(!ready || pathSearch.isPending) && (
-        <div role="status" className="px-3 py-1 text-xs text-muted-foreground">
+        <div
+          role="status"
+          className={
+            entries.length > 0 && !hasNoSearchMatches
+              ? "sr-only"
+              : "px-3 py-1 text-xs text-muted-foreground"
+          }
+        >
           Loading files…
         </div>
       )}

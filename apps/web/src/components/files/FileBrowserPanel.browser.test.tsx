@@ -1,3 +1,5 @@
+import "../../index.css";
+
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,6 +9,8 @@ import FileBrowserPanel from "./FileBrowserPanel";
 
 const files = vi.hoisted(() => ({
   directoryEntries: [] as ProjectEntry[],
+  directoryReady: true,
+  directoryPending: false,
   searchEntries: [] as ProjectEntry[],
   searchPending: false,
   searchError: null as string | null,
@@ -21,9 +25,9 @@ vi.mock("./useDirectoryEntries", () => ({
     loadingDirectories: files.loadingDirectories,
     load: files.load,
     refresh: files.refresh,
-    ready: true,
+    ready: files.directoryReady,
     error: null,
-    isPending: false,
+    isPending: files.directoryPending,
   }),
 }));
 vi.mock("~/state/queries", () => ({
@@ -101,6 +105,25 @@ describe("Files panel search", () => {
     );
   }
 
+  function expectVisibleLoadingStatus() {
+    const status = container!.querySelector<HTMLElement>('[role="status"]');
+    expect(status?.textContent).toBe("Loading files…");
+    expect(status!.checkVisibility()).toBe(true);
+    const bounds = status!.getBoundingClientRect();
+    expect(bounds.width).toBeGreaterThan(1);
+    expect(bounds.height).toBeGreaterThan(1);
+  }
+
+  function rowTop(path: string) {
+    const row = container!
+      .querySelector("file-tree-container")
+      ?.shadowRoot!.querySelector(`[data-item-path="${CSS.escape(path)}"]`);
+    expect(row, `visible row ${path}`).not.toBeNull();
+    const bounds = row!.getBoundingClientRect();
+    expect(bounds.height).toBeGreaterThan(0);
+    return bounds.top;
+  }
+
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     files.directoryEntries = [
@@ -108,6 +131,8 @@ describe("Files panel search", () => {
       { path: "src/app.ts", kind: "file" },
       { path: "package.json", kind: "file" },
     ];
+    files.directoryReady = true;
+    files.directoryPending = false;
     files.searchEntries = [];
     files.searchPending = false;
     files.searchError = null;
@@ -119,6 +144,41 @@ describe("Files panel search", () => {
     root = undefined;
     container = undefined;
     vi.unstubAllGlobals();
+  });
+
+  it("keeps visible rows stationary during loading while showing initial loading status", async () => {
+    const entries = files.directoryEntries;
+    files.directoryEntries = [];
+    files.directoryReady = false;
+    files.directoryPending = true;
+    await render();
+    expect(visiblePaths()).toEqual([]);
+    expectVisibleLoadingStatus();
+
+    files.directoryEntries = entries;
+    files.directoryReady = true;
+    files.directoryPending = false;
+    await render();
+    expect(visiblePaths()).toEqual(["src/", "package.json"]);
+    const initialTop = rowTop("package.json");
+
+    files.directoryPending = true;
+    await render();
+    expect(rowTop("package.json")).toBe(initialTop);
+
+    files.directoryPending = false;
+    await search("pack");
+    expect(visiblePaths()).toEqual(["package.json"]);
+    const filteredTop = rowTop("package.json");
+
+    files.searchPending = true;
+    await search("package");
+    expect(visiblePaths()).toEqual(["package.json"]);
+    expect(rowTop("package.json")).toBe(filteredTop);
+
+    files.searchPending = false;
+    await render();
+    expect(rowTop("package.json")).toBe(filteredTop);
   });
 
   it("shows no matching files instead of the full tree when a filename is absent", async () => {
@@ -150,7 +210,7 @@ describe("Files panel search", () => {
     files.searchPending = true;
     await search("settings.ts");
     expect(visiblePaths()).toEqual([]);
-    expect(hasMessage("Loading files…")).toBe(true);
+    expectVisibleLoadingStatus();
     expect(hasMessage("No matching files.")).toBe(false);
 
     files.searchEntries = [{ path: "config/settings.ts", kind: "file" }];
