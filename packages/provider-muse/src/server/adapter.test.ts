@@ -30,6 +30,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1164,6 +1165,53 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(snapshot.providerThread.nativeThreadRef?.nativeId, "saved-session");
       assert.deepStrictEqual(snapshot.providerPayload, [nativeItem]);
       assert.strictEqual(snapshot.messages[0]?.text, "Previous answer");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps loading a long saved session past the command deadline", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const loaded = {
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: null },
+        history: { items: [] },
+      };
+      const resume = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/resume", resume.promise);
+      const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session").pipe(
+        Effect.forkScoped,
+      );
+      yield* fake.takeCall("session/resume");
+      yield* TestClock.adjust("1 minute");
+      resume.resolve(loaded);
+      const harness = yield* Fiber.join(opening);
+      assert.strictEqual(harness.providerThread.nativeThreadRef?.nativeId, "saved-session");
+
+      const read = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/read", read.promise);
+      const reading = yield* harness.runtime.readThreadSnapshot!({
+        providerThread: harness.providerThread,
+      }).pipe(Effect.forkScoped);
+      yield* fake.takeCall("session/read");
+      yield* TestClock.adjust("1 minute");
+      read.resolve(loaded);
+      yield* Fiber.join(reading);
+      assert.strictEqual(fake.closeCount(), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("closes the host when a saved session never finishes loading", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      fake.queueResponse("session/resume", pendingPromise<Record<string, unknown>>().promise);
+      const opening = yield* makeHarness(fake, INSTANCE_ID, "saved-session").pipe(
+        Effect.exit,
+        Effect.forkScoped,
+      );
+      yield* fake.takeCall("session/resume");
+      yield* TestClock.adjust("10 minutes");
+      const result = yield* Fiber.join(opening);
+      assert.strictEqual(result._tag, "Failure");
+      assert.strictEqual(fake.closeCount(), 1);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
