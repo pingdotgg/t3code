@@ -819,7 +819,14 @@ const make = Effect.gen(function* () {
   });
 
   const launch: ThreadLaunchService["Service"]["launch"] = Effect.fn("ThreadLaunchService.launch")(
-    function* (input) {
+    function* (request) {
+      // Scratch has no Git repository. Normalize before folder allocation so
+      // durable preparation and retries use the thread's own Scratch folder.
+      const input: ThreadLaunchInput =
+        request.workspaceStrategy.type === "worktree" &&
+        (yield* managedFolders.isScratchProject(request.projectId))
+          ? { ...request, workspaceStrategy: { type: "root" } }
+          : request;
       yield* ProjectCloneTracker.rejectCommandsDuringClone(cloneTracker, {
         type: "thread.create",
         projectId: input.projectId,

@@ -10,6 +10,7 @@ import { afterEach, vi } from "vite-plus/test";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import { ServerActivation } from "../serverActivation.ts";
@@ -22,6 +23,10 @@ const dependencies = Layer.mergeAll(
   Scheduler.layer,
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({
     launch: () => Effect.die("synthetic dispatch failure"),
+  }),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    isScratchProject: () => Effect.succeed(false),
   }),
   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
