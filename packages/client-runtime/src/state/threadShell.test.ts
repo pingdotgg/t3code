@@ -215,7 +215,13 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
-  it("leaves switched-off environments out of navigation", () => {
+  it.each([
+    { reason: "switched-off", state: { enabled: false } },
+    {
+      reason: "unsupported",
+      state: { enabled: true, unsupportedReason: "Use a compatible client." },
+    },
+  ])("leaves $reason environments out of navigation until restored", ({ state }) => {
     const { registry, threads, catalogValueAtom } = makeHarness([
       environmentId,
       remoteEnvironmentId,
@@ -225,15 +231,18 @@ describe("v2 thread shell lists", () => {
       new Set(registry.get(threads.navigationThreadShellsAtom).map((t) => t.environmentId));
     expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
 
-    const setRemoteEnabled = (enabled: boolean) => {
+    const setRemotePaused = (paused: boolean) => {
       const catalog = registry.get(catalogValueAtom);
       const entries = new Map(catalog.entries);
-      entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled });
+      entries.set(remoteEnvironmentId, {
+        ...entries.get(remoteEnvironmentId)!,
+        ...(paused ? state : { enabled: true, unsupportedReason: undefined }),
+      });
       registry.set(catalogValueAtom, { ...catalog, entries });
     };
-    setRemoteEnabled(false);
+    setRemotePaused(true);
     expect(environmentsOf()).toEqual(new Set([environmentId]));
-    setRemoteEnabled(true);
+    setRemotePaused(false);
     expect(environmentsOf()).toEqual(new Set([environmentId, remoteEnvironmentId]));
     dispose();
     registry.dispose();

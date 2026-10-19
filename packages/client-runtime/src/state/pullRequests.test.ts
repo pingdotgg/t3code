@@ -754,8 +754,15 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   return { runtime, atoms, registry, environmentRegistry, supervisor, localSupervisor };
 });
 
-it.effect.each(["default", "origin-off", "destination-off", "read-only"] as const)(
-  "does not probe another environment with %s routing permission",
+it.effect.each([
+  "default",
+  "origin-off",
+  "destination-off",
+  "read-only",
+  "destination-disabled",
+  "destination-unsupported",
+] as const)(
+  "preserves source requests when routing to another environment is blocked by %s",
   (permission) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -765,9 +772,10 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
           detail: "source failed",
         });
         const client = {
-          [WS_METHODS.pullRequestsSummary]: () =>
+          [WS_METHODS.pullRequestsSummary]: (input: { allowStale?: boolean }) =>
             Effect.suspend(() => {
               calls.push("source-read");
+              expect(input.allowStale).toBeUndefined();
               return Effect.fail(failure);
             }),
           [WS_METHODS.pullRequestsRunAction]: () =>
@@ -779,7 +787,31 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
           [WS_METHODS.pullRequestsRoutingIdentity]: () =>
             Effect.die("untrusted environment was contacted"),
         } as unknown as WsRpcProtocolClient;
-        const { environmentRegistry, supervisor } = yield* makeTestRuntime(client, alternate);
+        const { environmentRegistry, supervisor, localSupervisor } = yield* makeTestRuntime(
+          client,
+          alternate,
+        );
+        if (permission === "destination-disabled" || permission === "destination-unsupported") {
+          yield* SubscriptionRef.update(
+            environmentRegistry.entries,
+            (entries) =>
+              new Map(
+                [...entries].map(([id, entry]) => [
+                  id,
+                  id === TARGET.environmentId
+                    ? entry
+                    : {
+                        ...entry,
+                        enabled: permission !== "destination-disabled",
+                        ...(permission === "destination-unsupported"
+                          ? { unsupportedReason: "Protocol version mismatch" }
+                          : {}),
+                      },
+                ]),
+              ),
+          );
+          yield* SubscriptionRef.set(localSupervisor.session, Option.none());
+        }
         const ref = {
           projectId: ProjectId.make("project-1"),
           repository: "private/repo",
@@ -805,10 +837,13 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
                   Effect.succeed(
                     permission === "read-only"
                       ? "read"
-                      : (entry.target.environmentId === TARGET.environmentId) ===
-                          (permission === "origin-off")
-                        ? "off"
-                        : "read-write",
+                      : permission === "destination-disabled" ||
+                          permission === "destination-unsupported"
+                        ? "read-write"
+                        : (entry.target.environmentId === TARGET.environmentId) ===
+                            (permission === "origin-off")
+                          ? "off"
+                          : "read-write",
                   ),
               }),
             );
