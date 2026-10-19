@@ -125,8 +125,10 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
       stream.destroy();
     };
 
-    const finish = (result: Parameters<typeof resume>[0]) =>
-      resume(result.pipe(Effect.ensuring(Effect.sync(cleanup))));
+    const finish = (result: Parameters<typeof resume>[0]) => {
+      cleanup();
+      resume(result);
+    };
 
     const handleError = (error: Error) => {
       finish(
