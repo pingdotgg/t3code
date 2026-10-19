@@ -1,3 +1,4 @@
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
@@ -45,7 +46,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { Button } from "../../components/ui/Button";
 import { IconButton } from "../../components/ui/IconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
@@ -1157,7 +1157,6 @@ function ThreadSettingsModelsScreen() {
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const theme = useUniwindTheme();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
@@ -1201,7 +1200,7 @@ function ThreadSettingsModelsScreen() {
   return (
     <>
       {Platform.OS === "android" ? (
-        <AndroidScreenHeader
+        <SheetHeader
           trailing={
             <View className="flex-row items-center">
               <AndroidAnchoredMenu
@@ -1244,14 +1243,11 @@ function ThreadSettingsModelsScreen() {
                   />
                 )}
               </AndroidAnchoredMenu>
-              {session.pendingModel ? (
-                <Button label="Save" tone="text" onPress={commitAndClose} />
-              ) : null}
             </View>
           }
-          onBack={presentation.onClose}
+          onCancel={presentation.onClose}
           title="Thread settings"
-          hideBottomBorder
+          confirm={session.pendingModel ? { label: "Save", onPress: commitAndClose } : undefined}
         />
       ) : null}
       <NativeStackScreenOptions
@@ -1303,22 +1299,17 @@ function ThreadSettingsModelsScreen() {
           }}
         />
       </ScreenContent>
-      <Toolbar placement="left">
-        <Toolbar.Button
+      {Platform.OS === "ios" ? (
+        <SheetHeader
+          title="Thread settings"
+          onCancel={presentation.onClose}
           accessibilityLabel="Cancel thread settings"
-          icon="xmark"
-          onPress={presentation.onClose}
+          confirm={{
+            label: session.pendingModel ? "Save thread settings" : "Done",
+            onPress: commitAndClose,
+          }}
         />
-      </Toolbar>
-      <Toolbar placement="right">
-        <Toolbar.Button
-          accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
-          icon="checkmark"
-          variant="prominent"
-          tintColor={theme["--color-prominent-action"]}
-          onPress={commitAndClose}
-        />
-      </Toolbar>
+      ) : null}
       {Platform.OS === "ios" && !usesNativeMailSearchToolbar ? (
         <Toolbar placement="bottom">
           <Toolbar.Menu

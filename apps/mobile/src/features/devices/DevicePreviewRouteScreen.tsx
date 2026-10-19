@@ -1,3 +1,4 @@
+import { SheetCloseButton } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -296,11 +297,7 @@ function DevicePreviewScreen({
           ) : null}
           <View className="px-3" style={{ paddingTop: Math.max(insets.top, 12) }}>
             <GlassSurface className="flex-row items-center gap-1 p-1">
-              <ControlPill
-                accessibilityLabel="Close device preview"
-                icon="xmark"
-                onPress={onClose}
-              />
+              <SheetCloseButton accessibilityLabel="Close device preview" onClose={onClose} />
               <AppText numberOfLines={1} className="flex-1 text-center font-t3-medium text-base">
                 {preview?.name ?? "Devices"}
               </AppText>

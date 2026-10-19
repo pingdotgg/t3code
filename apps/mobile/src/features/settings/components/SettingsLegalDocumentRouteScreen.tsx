@@ -1,3 +1,4 @@
+import { SheetCloseButton } from "../../../components/ui/SheetHeader";
 import { type NavigationProp, type ParamListBase, useNavigation } from "@react-navigation/native";
 import { useCallback, useLayoutEffect, useState } from "react";
 import { Linking, Pressable, View } from "react-native";
@@ -15,10 +16,9 @@ export function SettingsLegalDocumentCloseHeaderButton() {
   const navigation = useNavigation();
 
   return (
-    <IconButton
+    <SheetCloseButton
       accessibilityLabel="Close legal document"
-      icon="xmark"
-      onPress={() => navigation.goBack()}
+      onClose={() => navigation.goBack()}
     />
   );
 }

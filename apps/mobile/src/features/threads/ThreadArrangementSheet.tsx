@@ -1,3 +1,4 @@
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -12,7 +13,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { IconButton } from "../../components/ui/IconButton";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells } from "../../state/threads";
@@ -377,14 +377,12 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
           className="flex-1 bg-screen"
           style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
         >
-          <View className="flex-row items-center justify-between gap-3 px-5 py-3">
-            <Text className="flex-1 text-xl font-t3-semibold">Arrange threads</Text>
-            <IconButton
-              accessibilityLabel="Close arrange threads"
-              icon="xmark"
-              onPress={props.onClose}
-            />
-          </View>
+          <SheetHeader
+            presentation="inline"
+            title="Arrange threads"
+            onClose={props.onClose}
+            accessibilityLabel="Close arrange threads"
+          />
           <Text className="px-5 pb-3 text-sm text-foreground-muted">
             Drag to reorder, pin, or settle. Changes save when you drop.
           </Text>

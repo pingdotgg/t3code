@@ -1,5 +1,6 @@
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { SheetHeader } from "../../components/ui/SheetHeader";
 import { Button } from "../../components/ui/Button";
-import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -54,7 +55,6 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
@@ -1784,7 +1784,11 @@ export function NewTaskDraftScreen(props: {
     return (
       <View className="flex-1 bg-sheet" collapsable={false}>
         <NativeStackScreenOptions options={{ headerShown: false }} />
-        <AndroidScreenHeader title="New thread" hideBottomBorder onBack={closeNewTask} />
+        <SheetHeader
+          title="New thread"
+          onCancel={closeNewTask}
+          accessibilityLabel="Cancel new task"
+        />
         <ScreenContent>
           {heroViewport}
 
@@ -1808,9 +1812,11 @@ export function NewTaskDraftScreen(props: {
           title: "New thread",
         }}
       />
-      <Toolbar placement="left">
-        <Toolbar.Button accessibilityLabel="Cancel new task" icon="xmark" onPress={closeNewTask} />
-      </Toolbar>
+      <SheetHeader
+        title="New thread"
+        onCancel={closeNewTask}
+        accessibilityLabel="Cancel new task"
+      />
 
       {heroViewport}
       <KeyboardStickyView

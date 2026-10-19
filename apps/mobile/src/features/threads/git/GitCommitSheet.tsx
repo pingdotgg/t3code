@@ -1,3 +1,4 @@
+import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
@@ -5,7 +6,6 @@ import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "reac
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { IconButton } from "../../../components/ui/IconButton";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/ui/AppText";
@@ -77,30 +77,13 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           options={{ sheetCornerRadius: 28, sheetAllowedDetents: "fitToContents" }}
         />
       ) : null}
-      <View className="flex-row items-center justify-between gap-3 px-5 pt-3 pb-2">
-        <View className="flex-1 gap-1">
-          <Text className="text-xl font-t3-bold text-foreground">Commit changes</Text>
-          <View className="flex-row items-center gap-1.5">
-            <SymbolView
-              name="arrow.branch"
-              size={14}
-              tintColorClassName="accent-foreground-muted"
-            />
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="middle"
-              className="flex-1 text-sm text-foreground-muted"
-            >
-              {gitStatus.data?.refName ?? "(detached HEAD)"}
-            </Text>
-          </View>
-        </View>
-        <IconButton
-          icon="xmark"
-          accessibilityLabel="Close commit sheet"
-          onPress={() => navigation.goBack()}
-        />
-      </View>
+      <SheetHeader
+        presentation="inline"
+        title="Commit changes"
+        subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
+        onCancel={() => navigation.goBack()}
+        accessibilityLabel="Cancel commit"
+      />
       <ScrollView
         nestedScrollEnabled
         className="android:shrink android:grow-0 ios:flex-1"
