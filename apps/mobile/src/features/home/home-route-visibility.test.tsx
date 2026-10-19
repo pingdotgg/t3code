@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { RegistryContext } from "@effect/atom-react";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { act, useEffect } from "react";

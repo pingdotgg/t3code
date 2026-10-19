@@ -43,7 +43,7 @@
     "sync:pierre-icons": "node scripts/sync-pierre-file-icons.mjs",
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
-    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "test": "vp test run --project unit --project react",
     "typecheck": "tsc-rs --noEmit"
   },
   "dependencies": {

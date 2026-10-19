@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { act, useEffect, useReducer } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { AsyncResult } from "effect/reactivity";

@@ -1,8 +1,10 @@
-// @vitest-environment jsdom
+import "../../index.css";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { Sidebar, SidebarProvider, SidebarTrigger } from "./sidebar";
 import { resolveSidebarState } from "./sidebarState";
@@ -10,14 +12,8 @@ import { resolveSidebarState } from "./sidebarState";
 let root: Root;
 let container: HTMLDivElement;
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: false,
-    media: query,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  }));
+beforeEach(async () => {
+  await page.viewport(1280, 900);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -26,7 +22,6 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  vi.unstubAllGlobals();
 });
 
 async function renderSidebar(open: boolean) {
@@ -73,11 +68,20 @@ describe("desktop sidebar focus", () => {
     await renderSidebar(false);
 
     expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    expect(sidebar.hasAttribute("inert")).toBe(true);
+    expect(sidebar.inert).toBe(true);
+    control.focus();
+    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(document.activeElement).not.toBe(element('[data-testid="internal-trigger"]'));
+    expect(document.activeElement).not.toBe(control);
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement).toBe(element('[data-testid="content-control"]'));
 
     await renderSidebar(true);
 
-    expect(sidebar.hasAttribute("inert")).toBe(false);
+    expect(sidebar.inert).toBe(false);
     control.focus();
     expect(document.activeElement).toBe(control);
   });
