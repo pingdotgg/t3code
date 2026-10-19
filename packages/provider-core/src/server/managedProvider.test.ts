@@ -730,4 +730,63 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  it.effect("keeps sparse usage unavailable after probe failure until a full probe recovers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const failedLimits = {
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed", message: "Usage probe timed out." },
+        } as const;
+        const probeSnapshot = yield* Ref.make<ServerProvider>({
+          ...refreshedSnapshot,
+          usageLimits: failedLimits,
+        });
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.get(probeSnapshot),
+          refreshOnInterval: false,
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+        const weekly = {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 20,
+        } as const;
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          windows: [weekly],
+        });
+        const partial = yield* provider.getSnapshot;
+        assert.deepStrictEqual(partial.usageLimits, {
+          checkedAt: "2026-04-10T00:00:02.000Z",
+          windows: [weekly],
+          unavailable: failedLimits.unavailable,
+        });
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:03.000Z",
+          windows: [{ ...weekly }],
+        });
+        assert.strictEqual(yield* provider.getSnapshot, partial);
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, failedLimits);
+
+        const completeLimits = {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          windows: [
+            { id: "five_hour", kind: "session", label: "Session", usedPercent: 10 },
+            { ...weekly, usedPercent: 25 },
+          ],
+        } as const;
+        yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: completeLimits });
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, completeLimits);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });

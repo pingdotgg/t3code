@@ -62,6 +62,12 @@ describe("applyUsageLimitsUpdate", () => {
     ).toBe(published);
   });
 
+  it("marks a first sparse update as unavailable", () => {
+    expect(
+      applyUsageLimitsUpdate({ previous: undefined, checkedAt, update: { windows: [weekly] } }),
+    ).toEqual({ checkedAt, windows: [weekly], unavailable: { reason: "probeFailed" } });
+  });
+
   it("preserves reset credits when a streamed window update changes usage", () => {
     const resetCredits = { availableCount: 2, nextExpiresAt: "2026-10-01T00:00:00.000Z" };
     const next = applyUsageLimitsUpdate({
