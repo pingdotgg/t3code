@@ -66,52 +66,65 @@ const lintBinding: ResolvedKeybindingsConfig = [
     },
   },
 ];
-const input = (keybinding: string | null): NewProjectScriptInput => ({
+const input: NewProjectScriptInput = {
   name: lint.name,
   command: lint.command,
   icon: lint.icon,
   runOnWorktreeCreate: false,
   waitForSetup: false,
   runOnSettle: false,
-  keybinding,
   previewUrl: null,
   autoOpenPreview: false,
-});
+};
 
 type ProjectScriptSettings = ReturnType<typeof useProjectScriptSettings>;
 
 function Probe(props: {
-  keybindings: ResolvedKeybindingsConfig;
+  targets: Parameters<typeof useProjectScriptSettings>[0];
   onResult: (settings: ProjectScriptSettings) => void;
 }) {
-  props.onResult(
-    useProjectScriptSettings([
-      {
-        environmentId,
-        settings: DEFAULT_SERVER_SETTINGS,
-        keybindings: props.keybindings,
-        project: { id: ProjectId.make("project"), scripts: [lint] },
-      },
-    ]),
-  );
+  props.onResult(useProjectScriptSettings(props.targets));
   return null;
 }
 
 let root: Root;
 let container: HTMLDivElement;
 
-async function renderSettings(keybindings: ResolvedKeybindingsConfig) {
+async function renderSettings(
+  keybindings: ResolvedKeybindingsConfig,
+  scope: "project" | "environment" = "project",
+) {
   let settings: ProjectScriptSettings | undefined;
   await act(async () =>
-    root.render(<Probe keybindings={keybindings} onResult={(next) => (settings = next)} />),
+    root.render(
+      <Probe
+        targets={[
+          {
+            environmentId,
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              defaultProjectScripts: scope === "environment" ? [lint] : [],
+            },
+            keybindings,
+            ...(scope === "project"
+              ? { project: { id: ProjectId.make("project"), scripts: [lint] } }
+              : {}),
+          },
+        ]}
+        onResult={(next) => (settings = next)}
+      />,
+    ),
   );
   return settings!;
 }
 
-async function submitInAct(submit: ProjectScriptSettings["submit"], keybinding: string | null) {
+async function submitInAct(
+  submit: ProjectScriptSettings["submit"],
+  changes: Partial<NewProjectScriptInput>,
+) {
   let result: Awaited<ReturnType<typeof submit>> | undefined;
   await act(async () => {
-    result = await submit(lint.id, input(keybinding));
+    result = await submit(lint.id, { ...input, ...changes });
   });
   return result!;
 }
@@ -134,10 +147,34 @@ afterEach(async () => {
 });
 
 describe("useProjectScriptSettings", () => {
+  it.each(["project", "environment"] as const)(
+    "preserves the shortcut for %s action name and command edits",
+    async (scope) => {
+      const { submit } = await renderSettings(lintBinding, scope);
+      const changes = { name: "Lint and fix", command: "vp lint --fix" };
+
+      const result = await submitInAct(submit, changes);
+
+      expect(result._tag).toBe("Success");
+      const scripts = [expect.objectContaining({ id: lint.id, ...changes })];
+      expect(commands.updateSettings).toHaveBeenCalledExactlyOnceWith({
+        environmentId,
+        input: {
+          patch:
+            scope === "project"
+              ? { projectSettingsOverrides: { project: { defaultProjectScripts: scripts } } }
+              : { defaultProjectScripts: scripts },
+        },
+      });
+      expect(commands.removeKeybinding).not.toHaveBeenCalled();
+      expect(commands.upsertKeybinding).not.toHaveBeenCalled();
+    },
+  );
+
   it("saves a recorded action shortcut", async () => {
     const { submit } = await renderSettings([]);
 
-    const result = await submitInAct(submit, "mod+shift+k");
+    const result = await submitInAct(submit, { keybinding: "mod+shift+k" });
 
     expect(result._tag).toBe("Success");
     expect(commands.upsertKeybinding).toHaveBeenCalledWith({
@@ -149,12 +186,47 @@ describe("useProjectScriptSettings", () => {
   it("removes a cleared action shortcut", async () => {
     const { submit } = await renderSettings(lintBinding);
 
-    const result = await submitInAct(submit, null);
+    const result = await submitInAct(submit, { keybinding: null });
 
     expect(result._tag).toBe("Success");
     expect(commands.removeKeybinding).toHaveBeenCalledWith({
       environmentId,
       input: expect.objectContaining({ key: "mod+shift+k", command: "script.lint.run" }),
+    });
+    expect(commands.upsertKeybinding).not.toHaveBeenCalled();
+  });
+
+  it("replaces an explicitly changed action shortcut", async () => {
+    const { submit } = await renderSettings(lintBinding);
+
+    const result = await submitInAct(submit, { keybinding: "mod+shift+l" });
+
+    expect(result._tag).toBe("Success");
+    expect(commands.upsertKeybinding).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        command: "script.lint.run",
+        key: "mod+shift+l",
+        replace: { command: "script.lint.run", key: "mod+shift+k" },
+      },
+    });
+    expect(commands.removeKeybinding).not.toHaveBeenCalled();
+  });
+
+  it("removes the shortcut when its action is deleted", async () => {
+    const { persist } = await renderSettings(lintBinding);
+
+    await act(async () => {
+      expect((await persist(() => []))._tag).toBe("Success");
+    });
+
+    expect(commands.updateSettings).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { patch: { projectSettingsOverrides: { project: { defaultProjectScripts: [] } } } },
+    });
+    expect(commands.removeKeybinding).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { key: "mod+shift+k", command: "script.lint.run" },
     });
     expect(commands.upsertKeybinding).not.toHaveBeenCalled();
   });
