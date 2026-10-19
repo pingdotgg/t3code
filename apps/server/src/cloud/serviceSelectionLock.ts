@@ -47,22 +47,27 @@ export async function acquireServiceSelectionLock(selectionPath: string): Promis
         const previous = owners[0]!;
         const pid = Number(previous.split(".", 1)[0]);
         if (!Number.isSafeInteger(pid) || pid <= 0)
-          throw new Error("Invalid service selection lock owner.");
+          throw new Error(`Invalid service selection lock owner at ${lock}.`);
         try {
           process.kill(pid, 0);
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-          // Remove only this dead owner's unique file, never a replacement owner's.
-          try {
-            NodeFS.unlinkSync(NodePath.join(lock, previous));
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ESRCH" && code !== "EPERM") throw error;
+          if (code === "ESRCH") {
+            // Remove only this dead owner's unique file, never a replacement owner's.
+            try {
+              NodeFS.unlinkSync(NodePath.join(lock, previous));
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
           }
         }
       }
       removeEmptyLock();
       if (Date.now() >= deadline)
-        throw new Error("Service selection is locked. Retry when the other operation finishes.");
+        throw new Error(
+          `Service selection is locked at ${lock}. Retry when the other operation finishes.`,
+        );
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
     }
   } finally {

@@ -18,15 +18,18 @@ immutable runtime. Preflight checks the launcher protocol because a target that
 needs new rollback guarantees cannot safely run under an older launcher. After a
 commit the launcher points the unit at the committed runtime, so the next service
 start also runs that version's launcher; the protocol check is what makes that safe.
-Protocol 4 adds these guarantees. An installed protocol-3 launcher requires one
-local `t3 update` or `t3 service install` before remote updates are accepted; a
+Protocol 4 adds these guarantees and accepts valid protocol-3 durable state, whose
+format is unchanged. An installed protocol-3 launcher requires one local
+`t3 update --yes` or `t3 service install` that restarts the service before remote
+updates are accepted. Deferring the restart leaves the old launcher running; a
 child update cannot upgrade its supervising launcher. Terminal-state recovery
 retries reconciliation and reload even when the file already names the selected
 runtime, since a previous reload may have failed. A newer locally installed unit
 is preserved.
 
 launchd reads the plist only at its next bootstrap, so a crash respawn before then
-still runs the loaded definition.
+still runs the loaded definition. After a deferred protocol-3 upgrade, that loaded
+launcher cannot read protocol-4 state; the local restart is required to recover.
 
 ## Commit boundary
 

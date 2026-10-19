@@ -639,8 +639,17 @@ export class Launcher {
     const restartPending = restartPendingPath(this.#baseDir);
     const release = await acquireServiceSelectionLock(this.#statePath);
     try {
+      const selected = await readServiceState(this.#statePath);
       const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
-      if (awaitedVersion?.trim() === this.#state.activeVersion) {
+      const awaited = awaitedVersion?.trim();
+      if (
+        selected.activeVersion === this.#state.activeVersion &&
+        selected.update?.id === this.#state.update?.id &&
+        selected.update?.status === this.#state.update?.status &&
+        awaited !== undefined &&
+        isExactServiceVersion(awaited) &&
+        compareExactServiceVersions(awaited, this.#state.activeVersion) <= 0
+      ) {
         await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
       }
     } finally {

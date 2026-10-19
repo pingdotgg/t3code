@@ -497,9 +497,12 @@ export class BootServicePrerequisiteError extends Schema.TaggedError<BootService
 
 export class BootServiceUpdatePendingError extends Schema.TaggedError<BootServiceUpdatePendingError>()(
   "BootServiceUpdatePendingError",
-  {},
+  { recoveryCommand: Schema.optional(Schema.String) },
 ) {
   override get message(): string {
+    if (this.recoveryCommand !== undefined) {
+      return `A remote server update is still pending, but its service definition is missing. With the service stopped, run this on the server machine: ${this.recoveryCommand}\nWait for the update to finish or roll back, stop the foreground launcher with Ctrl-C, then retry the install.`;
+    }
     return "A remote server update is still pending. Wait for it to finish, then retry.";
   }
 }
@@ -925,12 +928,19 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           const currentlyInstalled = yield* fs.exists(unitPath);
           const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
           if (Option.isSome(previousStateText)) {
+            const installedVersion = serviceStateActiveVersion(previousStateText.value);
             if (serviceStateHasPendingUpdate(previousStateText.value)) {
-              return yield* new BootServiceUpdatePendingError();
+              const quote = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;
+              return yield* new BootServiceUpdatePendingError(
+                !currentlyInstalled && installedVersion !== undefined
+                  ? {
+                      recoveryCommand: `T3CODE_HOME=${quote(input.baseDir)} ${quote(pinnedRuntimePaths(path, input.baseDir, installedVersion, platform).entryPath)} __service-launcher`,
+                    }
+                  : {},
+              );
             }
             // A remote update can finish after the CLI checks status. Read its
             // final version after the launcher stops and before changing files.
-            const installedVersion = serviceStateActiveVersion(previousStateText.value);
             if (
               installedVersion !== undefined &&
               options?.allowDowngrade !== true &&
@@ -981,8 +991,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               statePath,
               Effect.gen(function* () {
                 // A concurrent deferred install may now be waiting for a newer restart.
-                const awaited = yield* fs.readFileString(restartPendingPath).pipe(Effect.option);
-                if (Option.isSome(awaited) && awaited.value.trim() === input.cliVersion) {
+                const selected = parseServiceState(yield* fs.readFileString(statePath));
+                if (selected?.activeVersion === input.cliVersion && selected.update === undefined) {
                   yield* fs.remove(restartPendingPath, { force: true });
                 }
               }),

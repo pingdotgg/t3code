@@ -1,7 +1,7 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 
 // Protocol 4 requires coordinated selection writes and unit reconciliation. An
-// installed protocol-3 launcher needs one local update or service install first:
+// installed protocol-3 launcher needs one local update or service install with a restart:
 // remote updates replace its child, so cannot add these launcher guarantees.
 export const SERVICE_LAUNCHER_PROTOCOL = 4 as const;
 export const SERVICE_LAUNCHER_CONTEXT_ENV = "T3_SERVICE_LAUNCHER_CONTEXT";
@@ -148,7 +148,8 @@ export function decodeServiceState(value: unknown): ServiceState | undefined {
   if (!isRecord(value)) return undefined;
   const update = value.update === undefined ? undefined : decodeServiceUpdate(value.update);
   if (
-    value.protocol !== SERVICE_LAUNCHER_PROTOCOL ||
+    // Protocol 3 has the same durable format; its installer can select a protocol-4 runtime.
+    (value.protocol !== 3 && value.protocol !== SERVICE_LAUNCHER_PROTOCOL) ||
     typeof value.activeVersion !== "string" ||
     !isExactServiceVersion(value.activeVersion) ||
     (value.update !== undefined && update === undefined) ||
