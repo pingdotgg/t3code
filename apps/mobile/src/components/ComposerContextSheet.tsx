@@ -1,3 +1,4 @@
+import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
 import { useOpenPullRequest } from "../native/useOpenPullRequest";
 import { SourceFileSurface } from "../features/files/SourceFileSurface";
@@ -299,18 +300,17 @@ export function ComposerContextSheet(props: {
               <View className="gap-3">
                 <ContextField label="Thread" value={record.title} />
                 {props.onOpenThread ? (
-                  <Pressable
-                    accessibilityRole="button"
+                  <Button
+                    label="Open thread"
+                    tone="secondary"
                     onPress={() =>
                       props.onOpenThread?.({
                         environmentId: record.environmentId,
                         threadId: record.threadId,
                       })
                     }
-                    className="rounded-xl bg-subtle p-4"
-                  >
-                    <Text className="text-foreground">Open thread</Text>
-                  </Pressable>
+                    fullWidth
+                  />
                 ) : null}
               </View>
             ) : null}
@@ -322,13 +322,12 @@ export function ComposerContextSheet(props: {
                   value={props.skillDescription ?? "No description is available for this skill."}
                 />
                 {props.onOpenSkill ? (
-                  <Pressable
-                    accessibilityRole="button"
+                  <Button
+                    label="View instructions"
+                    tone="secondary"
                     onPress={props.onOpenSkill}
-                    className="rounded-xl bg-subtle p-4"
-                  >
-                    <Text className="text-foreground">View instructions</Text>
-                  </Pressable>
+                    fullWidth
+                  />
                 ) : null}
               </View>
             ) : null}
@@ -364,31 +363,23 @@ export function ComposerContextSheet(props: {
           </Pressable>
         ) : null}
         {props.onOpenAttachment ? (
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label="Open attachment"
+            tone="secondary"
             onPress={props.onOpenAttachment}
-            className="rounded-xl bg-subtle p-4"
-          >
-            <Text className="text-foreground">Open attachment</Text>
-          </Pressable>
+            fullWidth
+          />
         ) : null}
         {props.onOpenPullRequest && !pullRequestUrl ? (
-          <Pressable
-            accessibilityRole="button"
+          <Button
+            label="Open pull request"
+            tone="secondary"
             onPress={props.onOpenPullRequest}
-            className="rounded-xl bg-subtle p-4"
-          >
-            <Text className="text-foreground">Open pull request</Text>
-          </Pressable>
+            fullWidth
+          />
         ) : null}
         {props.onRemove ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={props.onRemove}
-            className="rounded-xl bg-subtle p-4"
-          >
-            <Text className="text-foreground">Remove from draft</Text>
-          </Pressable>
+          <Button label="Remove from draft" tone="secondary" onPress={props.onRemove} fullWidth />
         ) : null}
       </ScrollView>
     </Sheet>

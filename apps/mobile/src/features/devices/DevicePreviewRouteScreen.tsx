@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   deviceToolVersionLabels,
@@ -270,13 +271,9 @@ function DevicePreviewScreen({
               <AppText selectable className="text-center text-sm text-foreground-muted">
                 {state.error}
               </AppText>
-              <Pressable
-                accessibilityRole="button"
-                className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-                onPress={state.refresh}
-              >
-                <AppText className="text-secondary-foreground">Retry</AppText>
-              </Pressable>
+              <View className="items-center">
+                <Button label="Retry" tone="secondary" onPress={state.refresh} />
+              </View>
             </>
           ) : focused && foreground ? (
             <AppActivityIndicator color={themeVariables["--color-icon"]} />
@@ -399,13 +396,9 @@ function OpenDevicePreview({
           <AppText selectable className="text-center text-sm text-foreground-muted">
             {error}
           </AppText>
-          <Pressable
-            accessibilityRole="button"
-            className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-            onPress={refresh}
-          >
-            <AppText className="text-secondary-foreground">Retry</AppText>
-          </Pressable>
+          <View className="items-center">
+            <Button label="Retry" tone="secondary" onPress={refresh} />
+          </View>
         </>
       ) : (
         <>

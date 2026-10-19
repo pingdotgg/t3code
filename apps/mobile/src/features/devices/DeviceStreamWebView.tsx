@@ -1,3 +1,4 @@
+import { Button } from "../../components/ui/Button";
 import deviceStreamScript from "@t3tools/mobile-device-stream";
 import {
   useEffect,
@@ -8,7 +9,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
 import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
 
@@ -194,13 +195,9 @@ function DeviceStreamDocumentView({
             {status === "error" ? error : "Connecting to device..."}
           </AppText>
           {status === "error" ? (
-            <Pressable
-              accessibilityRole="button"
-              className="rounded-full border border-secondary-border bg-secondary px-6 py-3"
-              onPress={onRetry}
-            >
-              <AppText className="text-secondary-foreground">Reconnect</AppText>
-            </Pressable>
+            <View className="items-center">
+              <Button label="Reconnect" tone="secondary" onPress={onRetry} />
+            </View>
           ) : null}
         </View>
       ) : null}
