@@ -7,6 +7,7 @@ import {
   PreviewUrlNormalizationError,
   resolveAddressBarInput,
   previewPdfAssetUrl,
+  resolveSearchUrlTemplate,
 } from "./preview.ts";
 
 describe("previewPdfAssetUrl", () => {
@@ -116,6 +117,41 @@ describe("resolveAddressBarInput", () => {
       expect(() => resolveAddressBarInput(input)).toThrow(PreviewUrlNormalizationError);
     }
     expect(resolveAddressBarInput("devbox:8080")).toBe("https://devbox:8080/");
+  });
+
+  it("searches with the given template and still opens addresses directly", () => {
+    const google = resolveSearchUrlTemplate({
+      browserSearchEngine: "google",
+      browserCustomSearchUrl: "",
+    });
+    expect(resolveAddressBarInput("how to center a div", google)).toBe(
+      "https://www.google.com/search?q=how%20to%20center%20a%20div",
+    );
+    expect(resolveAddressBarInput("cnn.com", google)).toBe("https://cnn.com/");
+    expect(resolveAddressBarInput("a&b", "https://search.example/?q=%s&lang=en")).toBe(
+      "https://search.example/?q=a%26b&lang=en",
+    );
+  });
+});
+
+describe("resolveSearchUrlTemplate", () => {
+  it("uses a valid custom template and falls back to DuckDuckGo for an unusable one", () => {
+    expect(
+      resolveSearchUrlTemplate({
+        browserSearchEngine: "custom",
+        browserCustomSearchUrl: " https://search.example/?q=%s ",
+      }),
+    ).toBe("https://search.example/?q=%s");
+    for (const browserCustomSearchUrl of [
+      "https://search.example/?q=",
+      "javascript:alert('%s')",
+      "https://%s.example.com/",
+      "https://%s@search.example/?q=%s",
+    ]) {
+      expect(
+        resolveSearchUrlTemplate({ browserSearchEngine: "custom", browserCustomSearchUrl }),
+      ).toBe("https://duckduckgo.com/?q=%s");
+    }
   });
 });
 
