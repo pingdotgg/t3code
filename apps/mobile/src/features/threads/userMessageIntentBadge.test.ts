@@ -10,30 +10,25 @@ describe("user message intent badge", () => {
 
   it("explains the queued history without claiming delivery", () => {
     expect(resolveUserMessageIntentBadge("queued_turn")).toEqual({
-      label: "from queue",
+      label: "From queue",
       accessibilityLabel: "Queued while the agent was busy",
-      explanation:
-        "This badge records that the message was queued. It stays visible after the message leaves the queue.",
-      tone: "queued",
+      icon: null,
     });
   });
 
   it("explains the intent to steer without claiming delivery", () => {
     expect(resolveUserMessageIntentBadge("steer")).toEqual({
-      label: "steer",
+      label: "Steer",
       accessibilityLabel: "Steered the active turn",
-      explanation: "This message was intended to steer the agent while its turn was still running.",
-      tone: "steer",
+      icon: "arrow.uturn.forward",
     });
   });
 
   it("preserves the queued origin after promotion to steer", () => {
     expect(resolveUserMessageIntentBadge("promoted_queued_to_steer")).toEqual({
-      label: "queued → steer",
+      label: "Steer",
       accessibilityLabel: "Originally queued, then promoted to steer the active turn",
-      explanation:
-        "This message was originally queued, then promoted to steer the agent while its turn was still running.",
-      tone: "steer",
+      icon: "arrow.uturn.forward",
     });
   });
 });

@@ -1297,30 +1297,28 @@ function renderFeedEntry(
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             {intentBadge ? (
-              <Pressable
-                accessibilityRole="button"
+              <View
+                accessible
                 accessibilityLabel={intentBadge.accessibilityLabel}
-                accessibilityHint="Explains this message's badge"
-                hitSlop={8}
-                onPress={() => Dialog.alert("Message history", intentBadge.explanation)}
-                className={cn(
-                  "rounded-full border px-1.5 py-0.5",
-                  intentBadge.tone === "queued"
-                    ? "border-adaptive-amber-500-a25-400-a25 bg-adaptive-amber-500-a10-400-a10"
-                    : "border-adaptive-sky-500-a25-400-a25 bg-adaptive-sky-500-a10-400-a10",
-                )}
+                className="flex-row items-center gap-1"
               >
-                <Text
-                  className={cn(
-                    "font-t3-medium text-2xs tracking-wide",
-                    intentBadge.tone === "queued"
-                      ? "text-adaptive-amber-700-300"
-                      : "text-adaptive-sky-700-300",
-                  )}
-                >
+                {intentBadge.icon ? (
+                  <SymbolView name={intentBadge.icon} size={12} tintColor={iconSubtleColor} />
+                ) : null}
+                <Text className="font-t3-medium text-xs text-foreground-secondary">
                   {intentBadge.label}
                 </Text>
-              </Pressable>
+              </View>
+            ) : null}
+            {intentBadge ? (
+              <Text
+                accessible={false}
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+                className="font-t3-medium text-xs text-foreground-secondary"
+              >
+                ·
+              </Text>
             ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
               {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
