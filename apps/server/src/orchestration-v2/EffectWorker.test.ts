@@ -104,6 +104,7 @@ function layerExecutorFor(input: {
       ProviderSessionManager.ProviderSessionManagerV2.of({
         shutdown: Effect.void,
         open: () => Effect.die("unused open"),
+        openForTurn: () => Effect.die("unused openForTurn"),
         get: () => Effect.succeed(Option.none()),
         isLive: () => Effect.succeed(false),
         close: () => Effect.void,
