@@ -14,8 +14,18 @@ import {
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { createContext, Fragment, type ReactNode, use, useEffect, useState } from "react";
+import {
+  createContext,
+  Fragment,
+  type ReactNode,
+  type RefObject,
+  use,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -216,11 +226,13 @@ const SegmentPopoverContext = createContext<ReturnType<
 
 function ActiveSegmentPopover({
   handle,
+  actions,
   payload,
   pools,
   now,
 }: {
   readonly handle: ReturnType<typeof PopoverCreateHandle<SegmentPayload>>;
+  readonly actions: RefObject<PopoverPrimitive.Root.Actions | null>;
   readonly payload: SegmentPayload;
   readonly pools: readonly LimitPool[];
   readonly now: number;
@@ -236,9 +248,14 @@ function ActiveSegmentPopover({
       ),
     ),
   );
-  useEffect(() => {
-    if (!available) handle.close();
-  }, [available, handle]);
+  // The trigger is gone, so the popup has nothing to anchor to: an exit transition would
+  // slide it to the viewport origin. Unmount it outright, which also clears Base UI's
+  // active-trigger bookkeeping so the segment can open again when it comes back.
+  useLayoutEffect(() => {
+    if (available) return;
+    handle.close();
+    actions.current?.unmount();
+  }, [available, handle, actions]);
   return (
     <PopoverPopup side="top" sideOffset={6}>
       <SegmentPopover
@@ -582,6 +599,7 @@ export function UsageLimitsPooled({
   readonly cursorPrompt?: ReactNode;
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
+  const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
@@ -605,11 +623,12 @@ export function UsageLimitsPooled({
           </Fragment>
         ))}
       </SegmentPopoverContext>
-      <Popover handle={segmentPopover}>
+      <Popover handle={segmentPopover} actionsRef={segmentPopoverActions}>
         {({ payload }) =>
           payload ? (
             <ActiveSegmentPopover
               handle={segmentPopover}
+              actions={segmentPopoverActions}
               payload={payload}
               pools={pools}
               now={now}

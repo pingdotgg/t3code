@@ -100,6 +100,28 @@ async function click(label: string) {
   await act(() => userEvent.click(button!));
 }
 
+/**
+ * Runs `change`, which takes the open popup's trigger out of the page, then watches the popup
+ * leave. A detached trigger has no rect, so a popup that keeps positioning against it slides
+ * to the viewport origin on its way out.
+ */
+async function expectDismissedInPlace(change: () => Promise<void> | void) {
+  const positioner = () => document.querySelector('[data-slot="popover-positioner"]');
+  const place = (node: Element) => {
+    const rect = node.getBoundingClientRect();
+    return [rect.left, rect.top];
+  };
+  const before = place(positioner()!);
+  await change();
+  const seen: number[][] = [];
+  for (let frame = 0; frame < 60 && positioner(); frame += 1) {
+    seen.push(place(positioner()!));
+    await new Promise(requestAnimationFrame);
+  }
+  expect(positioner()).toBeNull();
+  expect(seen).toEqual(seen.map(() => before));
+}
+
 it.each([
   {
     label: "success",
@@ -221,8 +243,9 @@ it("moves the one limit popover between windows on hover", async () => {
   await act(() => userEvent.hover(session, { position: { x: 4, y: 4 } }));
   await expect.poll(popups).toEqual([expect.stringContaining("Left60%")]);
 
-  await act(() => root.render(<UsageLimitsPooled presentations={new Map()} now={0} />));
-  await expect.poll(popups).toEqual([]);
+  await expectDismissedInPlace(() =>
+    act(() => root.render(<UsageLimitsPooled presentations={new Map()} now={0} />)),
+  );
   await act(() => userEvent.hover(container, { position: { x: 4, y: 4 } }));
 
   await act(() => root.render(<UsageLimitsPooled presentations={twoWindows} now={0} />));
@@ -272,13 +295,15 @@ it("closes an open source-account popover when reset availability replaces its t
   await click("Alpha: 60%");
   await expect.poll(() => popup()?.textContent).toContain("Use reset");
 
-  await act(() => root.render(<UsageLimitsPooled presentations={source()} now={0} />));
-  await expect.poll(popup).toBeNull();
+  await expectDismissedInPlace(() =>
+    act(() => root.render(<UsageLimitsPooled presentations={source()} now={0} />)),
+  );
   await click("Alpha: 60%");
   await expect.poll(() => popup()?.textContent).toContain("Left60%");
 
-  await act(() => root.render(<UsageLimitsPooled presentations={source("credit-2")} now={0} />));
-  await expect.poll(popup).toBeNull();
+  await expectDismissedInPlace(() =>
+    act(() => root.render(<UsageLimitsPooled presentations={source("credit-2")} now={0} />)),
+  );
   await click("Alpha: 60%");
   await expect.poll(() => popup()?.textContent).toContain("Use reset");
   await click("Use reset");
