@@ -55,7 +55,8 @@ export function PullRequestMarkdownRepository(props: {
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const media = cwd ? { environmentId: target.environmentId, cwd } : null;
+  const repository = props.params.repository;
+  const media = cwd ? { environmentId: target.environmentId, cwd, repository } : null;
   return (
     <AutolinksContext value={autolinks}>
       <LineBreaksContext value={lineBreaks}>
@@ -76,7 +77,7 @@ function MarkdownImage(props: {
   return (
     <ThreadMarkdownImageView
       uri={media.uri}
-      sourceKey={props.href}
+      sourceKey={JSON.stringify(media.source)}
       cacheKey={media.cacheKey}
       unavailable={media.unavailable || !/^https?:\/\//i.test(props.href)}
       alt={props.alt}

@@ -243,6 +243,10 @@ function pullRequestMarkdownContext(
     remarkPlugins: pullRequestAutolinkPlugins(detail),
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
+    repository:
+      detail === null
+        ? null
+        : (sourceControlClients.parseChangeRequestUrl(detail.url)?.link.repository ?? null),
   };
 }
 

@@ -10,6 +10,7 @@ async function renderBody(host: string, options: { lineBreaks?: boolean } = {}) 
     remarkPlugins: [],
     lineBreaks: sourceControlClients.get(host).hardLineBreaks ?? false,
     threadRef: null,
+    repository: null,
   };
   return render(
     <PullRequestMarkdownContext value={context}>
