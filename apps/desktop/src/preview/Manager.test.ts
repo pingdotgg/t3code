@@ -1886,6 +1886,8 @@ describe("PreviewManager", () => {
     const sendCommand = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
       async () => undefined,
     );
+    const detachListeners = new Set<() => void>();
+    let chromiumDetaches = 0;
     let destroyed = false;
     const wc = {
       id,
@@ -1914,19 +1916,30 @@ describe("PreviewManager", () => {
       setIgnoreMenuShortcuts: vi.fn(),
       setWindowOpenHandler: vi.fn(),
       debugger: {
-        isAttached: () => attach.mock.calls.length > detach.mock.calls.length,
+        isAttached: () => attach.mock.calls.length > detach.mock.calls.length + chromiumDetaches,
         attach,
         detach,
         sendCommand,
-        on: vi.fn(),
-        off: vi.fn(),
+        on: (event: string, listener: () => void) => {
+          if (event === "detach") detachListeners.add(listener);
+        },
+        off: (event: string, listener: () => void) => {
+          if (event === "detach") detachListeners.delete(listener);
+        },
       },
+    };
+    /** Chromium dropping the debugger without a detach() call. */
+    const chromiumDetach = () => {
+      chromiumDetaches += 1;
+      // Snapshot like an EventEmitter, so a listener added during emit waits for the next one.
+      for (const listener of Array.from(detachListeners)) listener();
     };
     return {
       wc: wc as unknown as Electron.WebContents,
       attach,
       detach,
       sendCommand,
+      chromiumDetach,
       destroy: () => {
         destroyed = true;
         listeners.get("destroyed")?.();
@@ -1961,6 +1974,24 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         expect(unclaimed.detach).toHaveBeenCalledTimes(1);
         expect(claimed.detach).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("reattaches a debugger that Chromium dropped on its own", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAttachingGuest(48);
+        fromId.mockReturnValue(guest.wc);
+        yield* manager.createTab("tab_detached");
+        yield* manager.registerWebview("tab_detached", 48);
+        yield* Effect.yieldNow;
+        expect(guest.attach).toHaveBeenCalledTimes(1);
+
+        guest.chromiumDetach();
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(guest.attach).toHaveBeenCalledTimes(2);
       }),
     ),
   );
