@@ -311,23 +311,24 @@ export const make = Effect.gen(function* () {
         const pageSize = first.rows.length || 50;
         const firstIndex = Math.floor(offset / pageSize) + 1;
         // The cursor counts every row read, kept or not, so a continuation resumes after the
-        // last one. A page of excluded rows yields nothing to anchor a continuation on, so the
-        // walk goes on until it has a full slice or the list ends.
+        // last one. A slice reads about `limit` rows whatever it keeps, since each page can be
+        // slow on a large server. One that has kept nothing reads on, because an empty slice
+        // gives the service no row to continue from.
         let consumed = 0;
         let more = true;
-        for (let index = firstIndex; more && items.length < input.limit; index++) {
+        const full = () => consumed >= input.limit && items.length > 0;
+        for (let index = firstIndex; more && !full(); index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
           const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
-          let read = start;
+          const countBefore = consumed;
           for (const row of rows.slice(start)) {
-            if (items.length >= input.limit) break;
-            read++;
+            if (full()) break;
+            consumed++;
             if (row && keeps(row)) items.push(forgejoChangeRequest(row));
           }
-          consumed += read - start;
-          more = result.more || rows.length > read;
+          more = result.more || rows.length - start > consumed - countBefore;
         }
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },

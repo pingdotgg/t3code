@@ -761,46 +761,36 @@ it.effect.each([
 it.effect("reads past a Forgejo page whose rows are all filtered out of the view", () =>
   Effect.gen(function* () {
     const requests: Array<string> = [];
-    const first = yield* listClosedPulls("closed", 2, undefined, requests);
-    assert.deepStrictEqual(first.numbers, [2, 7]);
-    assert.strictEqual(first.truncated, true);
-    // Counts the merged rows read on the way, through the last pull request it kept.
-    assert.strictEqual(first.cursorAdvance, 7);
+    // Starts at #3. Its row budget runs out on the all-merged second page with nothing kept, so
+    // it reads on to #7 rather than end on a slice the service cannot continue from.
+    const list = yield* listClosedPulls("closed", 2, 2, requests);
+    assert.deepStrictEqual(list.numbers, [7]);
+    assert.strictEqual(list.truncated, true);
+    assert.strictEqual(list.cursorAdvance, 5);
     assert.deepStrictEqual(requests, ["closed:1", "closed:2", "closed:3"]);
   }),
 );
 
 it.effect.each([
-  [
-    "closed",
-    2,
-    [
-      [2, 7],
-      [9, 10],
-    ],
-  ],
-  [
-    "merged",
-    4,
-    [
-      [1, 3, 4, 5],
-      [6, 8],
-    ],
-  ],
+  ["closed", 3, [[2], [7], [9, 10]], [3, 4, 3]],
+  ["merged", 4, [[1, 3, 4], [5, 6, 8], []], [4, 4, 2]],
 ] as const)(
   "continues the %s Forgejo list after the rows already consumed",
-  ([state, limit, slices]) =>
+  ([state, limit, slices, advances]) =>
     Effect.gen(function* () {
       const seen: Array<ReadonlyArray<number>> = [];
+      const consumed: Array<number | undefined> = [];
       let delivered: number | undefined;
       for (;;) {
         const list = yield* listClosedPulls(state, limit, delivered);
         seen.push(list.numbers);
+        consumed.push(list.cursorAdvance);
         if (!list.truncated) break;
-        assert.ok(list.cursorAdvance !== undefined && list.cursorAdvance > 0);
-        delivered = (delivered ?? 0) + list.cursorAdvance;
+        delivered = (delivered ?? 0) + (list.cursorAdvance ?? 0);
       }
       assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number>>>(seen, slices);
+      // Each slice reads about `limit` rows however few of them it keeps.
+      assert.deepStrictEqual<ReadonlyArray<number | undefined>>(consumed, advances);
     }),
 );
 
