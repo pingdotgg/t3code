@@ -55,7 +55,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     homePath: runtime.homeLayout.sharedHomePath,
     shadowHomePath: runtime.homeLayout.mode === "authOverlay" ? runtime.homePath : null,
   };
-  const pending = makePendingCodexProvider({ ...config, customModels: [] }).pipe(
+  const pending = makePendingCodexProvider({ ...config, enabled, customModels: [] }).pipe(
     Effect.map((draft) =>
       stamp({
         ...draft,

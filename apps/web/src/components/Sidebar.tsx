@@ -299,6 +299,7 @@ type SidebarProviderEntry = Pick<
   ProviderInstanceEntry,
   | "instanceId"
   | "driverKind"
+  | "enabled"
   | "displayName"
   | "accentColor"
   | "acpRegistryAgentId"
@@ -316,6 +317,7 @@ function sameSidebarProviderEntries(
     if (
       other === undefined ||
       other.driverKind !== entry.driverKind ||
+      other.enabled !== entry.enabled ||
       other.displayName !== entry.displayName ||
       other.accentColor !== entry.accentColor ||
       other.acpRegistryAgentId !== entry.acpRegistryAgentId ||

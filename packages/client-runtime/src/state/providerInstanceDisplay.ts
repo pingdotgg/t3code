@@ -47,16 +47,20 @@ export function shouldShowInstanceBadge(
     readonly driverKind: ProviderDriverKind;
     readonly accentColor?: string | undefined;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   },
   entries: Iterable<{
     readonly driverKind: ProviderDriverKind;
     readonly acpRegistryAgentId?: string | undefined;
+    readonly enabled: boolean;
   }>,
 ): boolean {
   if (entry.accentColor) return true;
   let sharedProviderCount = 0;
   for (const candidate of entries) {
     if (candidate.driverKind !== entry.driverKind) continue;
+    // Historical threads still need to distinguish accounts that are all disabled.
+    if (entry.enabled && !candidate.enabled) continue;
     if (
       entry.driverKind === "acpRegistry" &&
       candidate.acpRegistryAgentId !== entry.acpRegistryAgentId
