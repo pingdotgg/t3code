@@ -6,6 +6,10 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
+  isActiveBackgroundTurnItem,
+  turnItemUpdateCanEndBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
 } from "@t3tools/shared/orchestrationV2Timeline";
@@ -293,12 +297,20 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
-      if (
+      const loaded = projection.turnItems.some((candidate) => candidate.id === event.payload.id);
+      const belowWindow =
         partialTimeline &&
-        !projection.turnItems.some((candidate) => candidate.id === event.payload.id) &&
-        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal)
-      ) {
-        return projection;
+        (!loaded || turnItemUpdateCanEndBackgroundWork(event.payload)) &&
+        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal);
+      // Running work from before the window still counts toward the waiting state, but is not
+      // timeline, so it is kept only while it runs.
+      if (belowWindow) {
+        if (isActiveBackgroundTurnItem(event.payload)) {
+          return { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
+        }
+        return loaded
+          ? { ...base, turnItems: base.turnItems.filter((item) => item.id !== event.payload.id) }
+          : projection;
       }
       const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
       // Only interrupt requests can change another item's visibility. Streaming

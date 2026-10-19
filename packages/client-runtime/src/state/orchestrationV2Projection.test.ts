@@ -7,6 +7,7 @@ import {
   type OrchestrationV2TurnItem,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   NodeId,
   ProviderThreadId,
@@ -422,6 +423,71 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       } else {
         expect(next).toBe(projection);
       }
+    });
+
+    const subagentItem = (status: OrchestrationV2TurnItem["status"]): OrchestrationV2TurnItem => ({
+      id: TurnItemId.make("item-old-subagent"),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 3_000_002,
+      status,
+      title: "Old subagent",
+      startedAt: now,
+      completedAt: status === "running" ? null : now,
+      updatedAt: now,
+      type: "subagent",
+      subagentId: NodeId.make("node-old-subagent"),
+      origin: "provider_native",
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      childThreadId: null,
+      prompt: "Old subagent",
+      result: null,
+    });
+    const oldSubagentWindow = () =>
+      windowOf(
+        [run, steerRun],
+        [
+          runItem("item-first", steerRunId, 3_000_001),
+          runItem("item-later", steerRunId, 3_000_003),
+        ],
+      );
+    const applyOldSubagent = (status: OrchestrationV2TurnItem["status"]) =>
+      applyOrchestrationV2ProjectionEvent(oldSubagentWindow(), itemEvent(subagentItem(status)), {
+        partialTimeline: true,
+        latestLocalTurnOrdinal: 3_000_003,
+      });
+
+    it("tracks a running subagent of a finished run below the window outside the timeline", () => {
+      const next = applyOldSubagent("running");
+      expect(next?.turnItems.map((item) => item.id)).toContain(subagentItem("running").id);
+      expect(next?.visibleTurnItems).toEqual(oldSubagentWindow().visibleTurnItems);
+    });
+
+    it("stops tracking a below-window subagent once it finishes", () => {
+      const running = applyOldSubagent("running")!;
+      const next = applyOrchestrationV2ProjectionEvent(
+        running,
+        itemEvent(subagentItem("completed")),
+        {
+          partialTimeline: true,
+          latestLocalTurnOrdinal: 3_000_003,
+        },
+      );
+
+      expect(next?.turnItems.map((item) => item.id)).toEqual(
+        oldSubagentWindow().turnItems.map((item) => item.id),
+      );
+    });
+
+    it("still drops a finished subagent below the window", () => {
+      const projection = oldSubagentWindow();
+      expect(applyOldSubagent("completed")).toEqual(projection);
     });
   });
 

@@ -1,6 +1,8 @@
 import {
   MessageId,
   NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -8,6 +10,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -795,5 +798,82 @@ describe("threadHistoryPaging", () => {
       detailInTurnItem: true,
     });
     expect(bounded.payloadBudgetExceeded).toBe(false);
+  });
+});
+
+describe("bounded snapshot background work", () => {
+  const userTurnRow = (index: number): OrchestrationV2ProjectedTurnItem => {
+    const row = makeRow(index);
+    if (row.item.type !== "command_execution") throw new Error("Expected command fixture");
+    return {
+      ...row,
+      item: {
+        ...row.item,
+        type: "user_message",
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        messageId: MessageId.make(`prompt-${index}`),
+        text: `Prompt ${index}`,
+        attachments: [],
+      },
+    };
+  };
+
+  const runningSubagentRow = (index: number): OrchestrationV2ProjectedTurnItem => {
+    const row = makeRow(index);
+    if (row.item.type !== "command_execution") throw new Error("Expected command fixture");
+    return {
+      ...row,
+      item: {
+        ...row.item,
+        type: "subagent",
+        status: "running",
+        completedAt: null,
+        subagentId: NodeId.make(`subagent-${index}`),
+        origin: "provider_native",
+        driver: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+        childThreadId: null,
+        prompt: `Subagent ${index}`,
+        result: null,
+      },
+    };
+  };
+
+  const projectionWithOldRunningSubagent = () => {
+    const turns = Array.from({ length: 12 }, (_, turn) => [
+      userTurnRow(turn * 2 + 1),
+      makeRow(turn * 2 + 2),
+    ]);
+    const rows = [runningSubagentRow(0), ...turns.flat()].map((row, position) => ({
+      ...row,
+      position,
+    }));
+    return makeProjection(rows);
+  };
+
+  const pendingSubagentIds = (turnItems: ReadonlyArray<OrchestrationV2TurnItem>) =>
+    derivePendingBackgroundWork({
+      latestRun: { id: RUN, ordinal: 1, status: "completed" },
+      providerThreads: [],
+      turnItems,
+      runs: [{ id: RUN, ordinal: 1, status: "completed" }],
+    }).map((task) => task.taskId);
+
+  it("keeps a running subagent from before the window in the snapshot's turn items", () => {
+    const projection = projectionWithOldRunningSubagent();
+    const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
+
+    expect(bounded.hasMoreHistory).toBe(true);
+    expect(bounded.projection.turnItems.map((item) => item.id)).toContain("item-0");
+  });
+
+  it("reports the same pending background work as the unbounded projection", () => {
+    const projection = projectionWithOldRunningSubagent();
+    const bounded = buildBoundedThreadProjection({ projection, snapshotSequence: 1 });
+
+    expect(pendingSubagentIds(projection.turnItems)).toEqual(["item-0"]);
+    expect(pendingSubagentIds(bounded.projection.turnItems)).toEqual(["item-0"]);
   });
 });

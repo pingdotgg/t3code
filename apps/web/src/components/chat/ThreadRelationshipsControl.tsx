@@ -27,6 +27,7 @@ import {
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  isOrchestrationV2WorkActive,
   NodeId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
@@ -173,7 +174,7 @@ function relationshipThreadTitle(input: {
   return formatSubagentDisplayTitle(input.title);
 }
 
-function currentSubagent<Agent extends RuntimeSubagent>(
+export function currentSubagent<Agent extends RuntimeSubagent>(
   agent: Agent | undefined,
   childThread: OrchestrationV2ThreadShell | null | undefined,
 ): Agent | undefined {
@@ -184,7 +185,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
     childThread.latestRunRequestedAt &&
     DateTime.toEpochMillis(childThread.latestRunRequestedAt) >
       Date.parse(agent.completedAt ?? agent.startedAt ?? agent.updatedAt);
-  if (!liveStatus && !newerRun) return agent;
+  if (!liveStatus && (!newerRun || isOrchestrationV2WorkActive(agent.status))) return agent;
   const status = liveStatus ?? childThread.status;
   const startedAt = liveStatus ? childThread.activityRunStartedAt : childThread.latestRunStartedAt;
   const completedAt = liveStatus ? null : childThread.latestRunCompletedAt;

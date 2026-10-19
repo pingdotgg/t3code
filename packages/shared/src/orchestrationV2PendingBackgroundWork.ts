@@ -161,6 +161,17 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
   return String(item.id);
 }
 
+/** Active work the pending-work list can name, whatever run it belongs to. */
+export function isActiveBackgroundTurnItem(
+  item: Pick<PendingBackgroundWorkTurnItem, "type" | "status" | "input">,
+): boolean {
+  return (
+    BACKGROUND_TURN_ITEM_TYPES.has(item.type) &&
+    isOrchestrationV2WorkActive(item.status) &&
+    !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input))
+  );
+}
+
 /**
  * The turn items the pending-work list names, without its settled-run gate.
  * Stop ends exactly these, so the list and Stop cannot disagree.
@@ -174,9 +185,7 @@ export function pendingBackgroundTurnItems<Item extends PendingBackgroundWorkTur
   );
   return input.turnItems.filter(
     (item) =>
-      BACKGROUND_TURN_ITEM_TYPES.has(item.type) &&
-      isOrchestrationV2WorkActive(item.status) &&
-      !(item.type === "dynamic_tool" && isPersistentDynamicToolInput(item.input)) &&
+      isActiveBackgroundTurnItem(item) &&
       (item.runId === undefined ||
         item.runId === null ||
         !rolledBackRunIds.has(String(item.runId))),

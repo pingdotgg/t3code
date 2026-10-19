@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ThreadShell,
   ThreadId,
 } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 export type ThreadRelationshipKind = "parent" | "fork" | "subagent" | "transfer";
@@ -102,8 +103,13 @@ export function deriveThreadRelationshipGraph(input: {
         sourceThreadId: ownerThreadId,
         targetThreadId: subagent.childThreadId,
         kind: "subagent",
+        // A subagent stays active while its child's monitors and commands are pending, after
+        // the child's own run settled.
         status:
-          child?.activityRunStatus ?? (child?.latestRunId != null ? child.status : subagent.status),
+          child?.activityRunStatus ??
+          (child?.latestRunId != null && !isOrchestrationV2WorkActive(subagent.status)
+            ? child.status
+            : subagent.status),
       });
     }
     for (const transfer of input.projection.contextTransfers) {

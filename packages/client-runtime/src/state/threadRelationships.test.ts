@@ -187,6 +187,37 @@ describe("thread relationships", () => {
     );
   });
 
+  // A delegated subagent stays running while its child's monitors and commands are pending,
+  // so a settled child run must not move it to "Previous agents".
+  it.each(["running", "waiting", "pending"])(
+    "keeps an unfinished %s subagent when its child has no live run",
+    (subagentStatus) => {
+      const parent = ThreadId.make("thread-parent");
+      const child = ThreadId.make("thread-child");
+      const graph = deriveThreadRelationshipGraph({
+        threads: [
+          { id: parent, status: "completed", forkedFrom: null, lineage: { parentThreadId: null } },
+          {
+            id: child,
+            status: "completed",
+            activityRunStatus: null,
+            latestRunId: "run-child",
+            forkedFrom: null,
+            lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+          },
+        ] as never,
+        projection: {
+          thread: { id: parent },
+          subagents: [{ childThreadId: child, status: subagentStatus }],
+          contextTransfers: [],
+        } as never,
+      });
+
+      const row = immediateThreadRelationships(graph, parent)[0]!;
+      expect(threadRelationshipRowStatus(graph, row)).toBe(subagentStatus);
+    },
+  );
+
   it.each([
     ["running", "running", "running"],
     ["waiting", "completed", "waiting"],
