@@ -314,14 +314,6 @@ export function DraftHeroHeadline({
     </button>
   );
 
-  const headingLabel = isScratchDraft
-    ? "What should we work on?"
-    : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
-      : canChooseProject
-        ? `${activeProjectDisplayName ?? "Choose a project"} to start`
-        : "Add a project to start";
-
   const noProjectShortcut = shortcutLabelForCommand(keybindings, "chat.newWithoutProject");
   const orStartWithoutProject =
     scratchWorkspaceRoot !== null && !isScratchDraft && (hasResolvedProject || canChooseProject) ? (
@@ -349,10 +341,8 @@ export function DraftHeroHeadline({
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      <h1
-        aria-label={headingLabel}
-        className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl"
-      >
+      {/* An explicit heading label hides the inline project picker in NVDA browse mode. */}
+      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
         {isScratchDraft ? (
           <>What should we work on?</>
         ) : hasResolvedProject ? (
