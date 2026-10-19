@@ -282,7 +282,7 @@ describe("thread notifications", () => {
     expect(state.notification).toHaveBeenCalledTimes(1);
     expect(state.notification).toHaveBeenCalledWith(title, {
       body: "Fix the login form",
-      tag: "env-1:thread-1",
+      tag: expect.any(String),
       silent: true,
     });
   });
@@ -355,7 +355,7 @@ describe("thread notifications", () => {
     expect(state.add).not.toHaveBeenCalled();
     expect(state.notification).toHaveBeenCalledWith("Thread completed", {
       body: "Fix the login form",
-      tag: "env-1:thread-1",
+      tag: expect.any(String),
       silent: true,
     });
   });

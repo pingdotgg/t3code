@@ -145,10 +145,14 @@ function toV2ThreadShell(input: typeof thread) {
   };
 }
 
-function shell(overrides: Partial<typeof thread> = {}) {
+function shell(overrides: Partial<typeof thread> = {}, ...others: Partial<typeof thread>[]) {
   return {
     status: "live",
-    snapshot: Option.some({ threads: [toV2ThreadShell({ ...thread, ...overrides })] }),
+    snapshot: Option.some({
+      threads: [overrides, ...others].map((override) =>
+        toV2ThreadShell({ ...thread, ...override }),
+      ),
+    }),
   };
 }
 function complete(environment = "one", completedAt = "2026-09-13T08:00:00Z") {
@@ -197,16 +201,43 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("counts notifying threads across environments, replaces repeat alerts, and clears on focus", async () => {
+it("uses bounded tags across threads and environments, replaces repeat alerts, and clears on focus", async () => {
+  const environmentId = "fd6fff30-f90b-4ee7-9812-4cf497791b90";
+  const otherEnvironmentId = "25b62992-b996-4ee3-8d82-d988840e45c1";
+  const threadId = "a8395a98-a186-4fe7-9d4c-fb8ba63b7588";
+  const otherThreadId = "257598ad-ae4f-4422-a073-e03f4b4f5f0d";
+  const completed = (id: string, completedAt = "2026-09-13T08:00:00Z") => ({
+    id,
+    latestTurn: { turnId: "turn", state: "completed", completedAt },
+  });
+  state.environmentIds = [environmentId, otherEnvironmentId];
+  state.shells.set(environmentId, shell({ id: threadId }, { id: otherThreadId }));
+  state.shells.set(otherEnvironmentId, shell({ id: threadId }));
   await render();
-  complete();
+  state.shells.set(environmentId, shell(completed(threadId), { id: otherThreadId }));
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
-  complete("one", "2026-09-13T08:01:00Z");
-  complete("two");
+  state.shells.set(environmentId, shell(completed(threadId), completed(otherThreadId)));
+  state.shells.set(otherEnvironmentId, shell(completed(threadId)));
   await render();
-  expect(state.badge).toHaveBeenLastCalledWith(2);
-  expect(TestNotification.sent[0]!.close).toHaveBeenCalledOnce();
+  expect(state.badge).toHaveBeenLastCalledWith(3);
+  state.shells.set(
+    environmentId,
+    shell(completed(threadId, "2026-09-13T08:01:00Z"), completed(otherThreadId)),
+  );
+  await render();
+  expect(state.badge).toHaveBeenLastCalledWith(3);
+  expect(TestNotification.sent).toHaveLength(4);
+  const [first, otherThread, otherEnvironment, replacement] = TestNotification.sent;
+  for (const notification of TestNotification.sent) {
+    expect(notification.tag).toMatch(/^[0-9a-f]{16}$/);
+  }
+  expect(new Set([first!.tag, otherThread!.tag, otherEnvironment!.tag]).size).toBe(3);
+  expect(replacement!.tag).toBe(first!.tag);
+  expect(first!.close).toHaveBeenCalledOnce();
+  expect(otherThread!.close).not.toHaveBeenCalled();
+  expect(otherEnvironment!.close).not.toHaveBeenCalled();
+  expect(replacement!.close).not.toHaveBeenCalled();
   focused = true;
   window.dispatchEvent(new Event("focus"));
   expect(state.badge).toHaveBeenLastCalledWith(0);
@@ -214,7 +245,7 @@ it("counts notifying threads across environments, replaces repeat alerts, and cl
     TestNotification.sent.every((notification) => notification.close.mock.calls.length > 0),
   ).toBe(true);
   focused = false;
-  complete("two", "2026-09-13T08:02:00Z");
+  state.shells.set(otherEnvironmentId, shell(completed(threadId, "2026-09-13T08:02:00Z")));
   await render();
   expect(state.badge).toHaveBeenLastCalledWith(1);
 });
