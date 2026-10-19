@@ -4703,6 +4703,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      if (projection.thread.lastVisitedAt === null && !isNativeMaintenanceCommand(command)) {
+        const now = yield* DateTime.now;
+        // Null keeps imported history read. The first fresh dispatch establishes
+        // a read watermark so its completion can be unread on every client.
+        // Offset it so a completion in the same millisecond is still unread.
+        const event = yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            lastVisitedAt: DateTime.subtract(now, { milliseconds: 1 }),
+          },
+        });
+        projection = applyToProjection(projection, event);
+      }
+
       const continuedTaskId = projection.runs.find(
         (run) => run.id === command.restartContinuationOfRunId,
       )?.delegatedTaskId;

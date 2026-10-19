@@ -734,6 +734,7 @@ it.effect.each([" /COMPACT ", "/logout"])(
         assert.isUndefined(
           (yield* threads.getThreadProjection(launched.threadId)).thread.titleRegeneration,
         );
+        assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.lastVisitedAt);
         assert.isFalse(
           (yield* outbox.listByCommandId(CommandId.make("compact-title:initial-message"))).some(
             (effect) => effect.request.type === "thread-title.generate",
@@ -3217,17 +3218,20 @@ it.effect.each(
         assert.equal(parent.thread.worktreePath, parentWorktree);
         assert.equal(parent.thread.branch, "parent-feature");
         if (cancelSetup) {
+          const afterSequence = yield* threads.getThreadEventSequence(delegated.childThreadId);
           yield* service.cancelTask(scope, { taskId: delegated.taskId });
           yield* Deferred.await(terminalClosed);
           if (!cancelAsync) {
-            yield* threads.streamStoredEventsFrom({ threadId: delegated.childThreadId }).pipe(
-              Stream.filter(
-                (stored) =>
-                  stored.event.type === "thread.metadata-updated" &&
-                  stored.event.payload.worktreePath === null,
-              ),
-              Stream.runHead,
-            );
+            yield* threads
+              .streamStoredEventsFrom({ threadId: delegated.childThreadId, afterSequence })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.event.type === "thread.metadata-updated" &&
+                    stored.event.payload.worktreePath === null,
+                ),
+                Stream.runHead,
+              );
           }
           assert.equal(harness.closeTerminal.mock.calls.length, 1);
           assert.equal(harness.removeWorktree.mock.calls.length, cancelAsync ? 0 : 1);

@@ -316,6 +316,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
       });
       const projection = yield* projections.getThreadProjection(threadId);
       assert.equal(projection.thread.title, "Renamed after shell import");
+      assert.isNull(projection.thread.lastVisitedAt);
       assert.equal(projection.thread.runtimeMode, "approval-required");
       assert.equal(projection.thread.interactionMode, "plan");
       assert.deepEqual(projection.thread.archivedAt, renamedAt);

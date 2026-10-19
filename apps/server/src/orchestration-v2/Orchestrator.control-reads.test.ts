@@ -54,6 +54,68 @@ const layerTest = Layer.mergeAll(
   ),
 );
 
+it.effect("marks a never-visited thread's first completion unread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:completion-watermark");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-completion-watermark"),
+      threadId,
+      projectId: ProjectId.make("project:completion-watermark"),
+      title: "Background task",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.isNull((yield* projections.getThreadShell(threadId))?.lastVisitedAt);
+    const dispatch = (id: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "Run in the background",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    yield* TestClock.adjust("1 second");
+    const dispatchedAt = yield* DateTime.now;
+    yield* dispatch("first-completion-watermark");
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("interrupt-completion-watermark"),
+      threadId,
+      runId: (yield* projections.getThreadProjection(threadId)).runs[0]!.id,
+    });
+    // The run ends in the dispatch's millisecond and must still be unread.
+    const ended = yield* projections.getThreadShell(threadId);
+    assert.ok(ended?.lastVisitedAt && ended.latestRunCompletedAt);
+    assert.equal(
+      DateTime.toEpochMillis(ended.lastVisitedAt),
+      DateTime.toEpochMillis(dispatchedAt) - 1,
+    );
+    assert.isAbove(
+      DateTime.toEpochMillis(ended.latestRunCompletedAt),
+      DateTime.toEpochMillis(ended.lastVisitedAt),
+    );
+
+    yield* TestClock.adjust("1 second");
+    yield* dispatch("second-completion-watermark");
+    assert.deepEqual(
+      (yield* projections.getThreadShell(threadId))?.lastVisitedAt,
+      ended.lastVisitedAt,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
