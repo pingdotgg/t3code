@@ -22,6 +22,7 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { StackActions, useIsFocused, useNavigation } from "@react-navigation/native";
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useRef,
@@ -624,7 +625,9 @@ function ThreadWorkGroupList(props: {
       void listRef.current?.scrollToEnd({ animated: false });
     }
   };
-  const onContentSizeChange = (nextHeight: number) => {
+  // LegendList notifies from child layout effects. Effect Events see the
+  // committed rows before those effects run, unlike a parent layout-effect ref.
+  const onContentSizeChange = useEffectEvent((nextHeight: number) => {
     const previous = previousContent.current;
     const detailsChanged = previous.expandedRows !== props.expandedRows;
     const followAppend =
@@ -658,25 +661,21 @@ function ThreadWorkGroupList(props: {
     }
     finishPendingAppend();
     rememberPosition();
-  };
+  });
   // The native ScrollView reports its content size a frame or more after
   // LegendList has laid the rows out, so a detail toggle rendered the group
   // at its old height while the rows below already moved. Read the size
   // LegendList computes on the JS thread instead; it settles in the same
   // commit as the row measurement that changed it.
-  const onContentSizeChangeRef = useRef(onContentSizeChange);
   useLayoutEffect(() => {
-    onContentSizeChangeRef.current = onContentSizeChange;
-  }, [onContentSizeChange]);
-  const subscribeToContentSize = (list: LegendListRef | null) => {
-    listRef.current = list;
+    const list = listRef.current;
     if (!list) return;
     const unsubscribe = list.getState().listen("totalSize", () => {
-      onContentSizeChangeRef.current(list.getState().contentLength);
+      onContentSizeChange(list.getState().contentLength);
     });
-    onContentSizeChangeRef.current(list.getState().contentLength);
+    onContentSizeChange(list.getState().contentLength);
     return unsubscribe;
-  };
+  }, []);
   const getFixedItemSize = (row: ThreadFeedActivity, index: number) =>
     props.expandedRows[row.id] || props.rowSizing.fixedRowHeight === undefined
       ? undefined
@@ -690,7 +689,7 @@ function ThreadWorkGroupList(props: {
   return (
     <View style={{ height, overflow: "hidden" }}>
       <AnimatedLegendList
-        ref={subscribeToContentSize}
+        ref={listRef}
         data={props.activities}
         keyExtractor={workLogRowKey}
         estimatedItemSize={props.rowSizing.estimatedRowHeight + WORK_ROW_GAP}
