@@ -2,8 +2,8 @@ import { pullRequestViewNameError } from "@t3tools/client-runtime/pull-request-s
 import { useState } from "react";
 import { Alert } from "react-native";
 
-import { showTextInputDialog } from "../../components/ConfirmDialogHost";
-import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
+import { prompt as showTextInputDialog } from "../../components/ui/Dialog";
+import type { MenuProps } from "../../components/ui/Menu.types";
 import { uuidv4 } from "../../lib/uuid";
 import type { PullRequestSavedView } from "../../persistence/mobile-preferences";
 import { ListFilterMenu } from "../workspace/ListFilterMenu";
@@ -80,7 +80,7 @@ export function PullRequestSavedViewsMenu({
     });
   }
 
-  const actions: ControlPillMenuProps["actions"] = [
+  const actions: MenuProps["actions"] = [
     ...views.map((view) => ({
       id: `apply:${view.id}`,
       title: view.name,

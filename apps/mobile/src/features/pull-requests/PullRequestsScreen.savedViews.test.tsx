@@ -64,8 +64,9 @@ vi.mock("react-native-screens", () => ({ ScrollViewMarker: "ScrollViewMarker" })
 vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 24, bottom: 0 }),
 }));
-vi.mock("../../components/AppText", () => ({ AppText: "Text" }));
-vi.mock("../../components/EmptyState", () => ({ EmptyState: "EmptyState" }));
+vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: "ActivityIndicator" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "Text" }));
+vi.mock("../../components/ui/EmptyState", () => ({ EmptyState: "EmptyState" }));
 vi.mock("../../native/v5-workspace-context", async () => ({
   NativePrimaryColumnContext: (await import("react")).createContext(null),
 }));
@@ -106,7 +107,7 @@ vi.mock("./usePullRequestListActions", () => ({ usePullRequestListActions: () =>
 vi.mock("../workspace/useAndroidWorkspaceSelection", () => ({
   useAndroidWorkspaceSelection: () => vi.fn(),
 }));
-vi.mock("../../components/ConfirmDialogHost", () => ({ showTextInputDialog: vi.fn() }));
+vi.mock("../../components/ui/Dialog", () => ({ prompt: vi.fn() }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "new-view" }));
 vi.mock("./usePullRequestListControls", () => ({
   usePullRequestListControls: () => ({
