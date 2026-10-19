@@ -85,7 +85,7 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { useScopedModelDisabledReason, useScopedModelSettings } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
@@ -102,8 +102,6 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
-import { useEnvironmentProviders } from "../../state/environments";
-import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { RelativeTime } from "../RelativeTime";
 import { Button } from "../ui/button";
@@ -2049,7 +2047,7 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments, target } = useSettingsScope();
+  const { scope, environment, connectedEnvironments } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
@@ -2058,11 +2056,8 @@ export function GeneralSettingsPanel() {
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
-  const providersByEnvironment = useEnvironmentProviders();
-  const serverProviders =
-    (environment?.serverConfig
-      ? providersByEnvironment.get(environment.environmentId)
-      : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const textGeneration = useScopedModelSettings(settings, "textGenerationModelSelection");
+  const textGenerationEnvironmentId = textGeneration.target?.environmentId ?? null;
   const supportsAutoSettlement =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every(
@@ -2077,11 +2072,11 @@ export function GeneralSettingsPanel() {
       (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
     );
 
-  const textGenerationProviders = serverProviders.filter(
+  const textGenerationProviders = textGeneration.providers.filter(
     (provider) => provider.supportsTextGeneration !== false,
   );
   const textGenerationModelSelection = resolveAppModelSelectionState(
-    settings,
+    textGeneration.settings,
     textGenerationProviders,
   );
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -2090,8 +2085,8 @@ export function GeneralSettingsPanel() {
   const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(textGenerationProviders),
-      settings,
-      target?.projectId ?? null,
+      textGeneration.settings,
+      textGeneration.target?.projectId ?? null,
     ),
   );
   const hasTextGenerationProvider = textGenerationModelInstanceEntries.some(
@@ -2103,7 +2098,7 @@ export function GeneralSettingsPanel() {
   const textGenProvider: ProviderDriverKind =
     textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
-    settings,
+    textGeneration.settings,
     textGenerationProviders,
     textGenInstanceId,
     textGenModel,
@@ -2113,9 +2108,27 @@ export function GeneralSettingsPanel() {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const textGenerationModelDisabledReason = useScopedModelDisabledReason(
-    settings,
+    textGeneration.settings,
     textGenerationModelInstanceEntries,
+    "textGenerationModelSelection",
   );
+  const setTextGenerationModel = (selection: typeof textGenerationModelSelection) => {
+    const reason = textGenerationModelDisabledReason(selection.instanceId, selection.model);
+    if (reason) {
+      toastManager.add({
+        type: "error",
+        title: "Text generation model not saved",
+        description: reason,
+      });
+      return;
+    }
+    updateSettings({
+      textGenerationModelSelection: resolveAppModelSelectionState(
+        { ...textGeneration.settings, textGenerationModelSelection: selection },
+        textGenerationProviders,
+      ),
+    });
+  };
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
@@ -3150,7 +3163,7 @@ export function GeneralSettingsPanel() {
             ) : (
               <div className="flex flex-wrap items-center justify-end gap-1.5">
                 <ProviderModelPicker
-                  environmentId={environmentId}
+                  environmentId={textGenerationEnvironmentId}
                   activeInstanceId={textGenInstanceId}
                   model={textGenModel}
                   lockedProvider={null}
@@ -3159,36 +3172,19 @@ export function GeneralSettingsPanel() {
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   {...(mixedTextGenerationModel ? { triggerLabel: "Mixed" } : {})}
                   getModelDisabledReason={textGenerationModelDisabledReason}
-                  {...(environmentId
+                  {...(textGenerationEnvironmentId
                     ? {
                         onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
                           void navigate({
                             to: "/settings/providers",
-                            search: { environmentId, instanceId },
+                            search: { environmentId: textGenerationEnvironmentId, instanceId },
                           });
                         },
                       }
                     : {})}
-                  onInstanceModelChange={(instanceId, model) => {
-                    const reason = textGenerationModelDisabledReason(instanceId, model);
-                    if (reason) {
-                      toastManager.add({
-                        type: "error",
-                        title: "Text generation model not saved",
-                        description: reason,
-                      });
-                      return;
-                    }
-                    updateSettings({
-                      textGenerationModelSelection: resolveAppModelSelectionState(
-                        {
-                          ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
-                        },
-                        textGenerationProviders,
-                      ),
-                    });
-                  }}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setTextGenerationModel(createModelSelection(instanceId, model))
+                  }
                 />
                 {textGenInstanceEntry ? (
                   <TraitsPicker
@@ -3200,24 +3196,15 @@ export function GeneralSettingsPanel() {
                     modelOptions={textGenModelOptions}
                     allowPromptInjectedEffort={false}
                     planModeEnabled={
-                      settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
+                      textGeneration.settings.planModeEnabled ||
+                      selectsPlanAgent(textGenModelOptions)
                     }
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(nextOptions) => {
-                      updateSettings({
-                        textGenerationModelSelection: resolveAppModelSelectionState(
-                          {
-                            ...settings,
-                            textGenerationModelSelection: createModelSelection(
-                              textGenInstanceId,
-                              textGenModel,
-                              nextOptions,
-                            ),
-                          },
-                          textGenerationProviders,
-                        ),
-                      });
-                    }}
+                    onModelOptionsChange={(nextOptions) =>
+                      setTextGenerationModel(
+                        createModelSelection(textGenInstanceId, textGenModel, nextOptions),
+                      )
+                    }
                   />
                 ) : null}
               </div>

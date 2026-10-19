@@ -406,20 +406,24 @@ export function StorageSettingsPanel() {
   const { scope, environments, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
-  const settings = {
-    ...scopedSettings.storageCleanup,
-    ...resolveWorktreeCleanup(scopedSettings, null),
-  };
   const projectMode = (entry: ScopedSettingsTarget | null) =>
     entry?.sources.worktreeCleanup === "project"
       ? (entry.settings.worktreeCleanup?.mode ?? "inherit")
       : "inherit";
-  const mode = projectMode(target);
-  const mixedModes = targets.some((entry) => projectMode(entry) !== mode);
+  const cleanupKey = isProjectScope ? "worktreeCleanup" : "storageCleanup";
+  const cleanupTargets = targets.filter((entry) => !entry.unsupportedSettingKeys?.has(cleanupKey));
+  const cleanupTarget =
+    cleanupTargets.find((entry) => entry === target) ?? cleanupTargets[0] ?? null;
+  const settings = {
+    ...scopedSettings.storageCleanup,
+    ...resolveWorktreeCleanup(cleanupTarget?.settings ?? scopedSettings, null),
+  };
+  const mode = projectMode(cleanupTarget);
+  const mixedModes = cleanupTargets.some((entry) => projectMode(entry) !== mode);
   const updateSettings = useUpdateScopedSettings();
   const clearSettings = useClearScopedSettings();
   const ruleStatus = (key: keyof StorageCleanupSettings) =>
-    targets.some(
+    cleanupTargets.some(
       (target) =>
         ({ ...target.settings.storageCleanup, ...resolveWorktreeCleanup(target.settings, null) })[
           key
@@ -449,6 +453,7 @@ export function StorageSettingsPanel() {
   }
 
   if (
+    (targets.length > 0 && cleanupTargets.length === 0) ||
     connectedEnvironments.some(
       (environment) => environment.serverConfig?.environment.capabilities.storageCleanup !== true,
     )
@@ -459,7 +464,8 @@ export function StorageSettingsPanel() {
         eligibleEnvironmentIds={connectedEnvironments
           .filter(
             (environment) =>
-              environment.serverConfig?.environment.capabilities.storageCleanup === true,
+              environment.serverConfig?.environment.capabilities.storageCleanup === true &&
+              cleanupTargets.some((target) => target.environmentId === environment.environmentId),
           )
           .map((environment) => environment.environmentId)}
       >

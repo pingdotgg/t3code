@@ -1,15 +1,33 @@
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { act, StrictMode, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "../../index.css";
-import type { ScopedSettingsPatch } from "./scopedSettings";
+import {
+  planScopedSettingsPatch,
+  resolveScopedSettingsTargets,
+  resolveUnsupportedSettingKeys,
+  scopedDisplaySettings,
+  scopedSettingsAreMixed,
+  type ScopedSettingsPatch,
+} from "./scopedSettings";
+import { resolveSettingsScope } from "./settingsScope";
 
 type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
+  unsupported: new Set<number>(),
+  environments: [] as Array<Parameters<typeof resolveScopedSettingsTargets>[1][number]>,
+  providers: new Map<EnvironmentId, readonly ServerProvider[]>(),
   updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
 }));
 
@@ -21,31 +39,29 @@ vi.mock(import("./useScopedSettings"), async (original) => ({
   ...(await original()),
   useScopedSettings: (() => ({
     ...DEFAULT_UNIFIED_SETTINGS,
-    sourceControlWritingStyle: state.styles[0],
+    ...scopedDisplaySettings(targets()[0]!, targets()),
   })) as never,
-  useScopedSettingsMixed: (keys) =>
-    !keys.includes("reviewGuidesEnabled") &&
-    JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
+  useScopedSettingsMixed: (keys) => scopedSettingsAreMixed(targets(), keys),
   useUpdateScopedSettings: () => state.updateSettings,
 }));
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
   useSettingsScope: (() => ({
-    scope: { kind: "all", environmentIds: [] },
-    environment: null,
-    connectedEnvironments: [],
-    targets: state.styles.map((style) => ({
-      settings: { ...DEFAULT_UNIFIED_SETTINGS, sourceControlWritingStyle: style },
-    })),
-    target: null,
+    scope: scope(),
+    environment: state.environments[0] ?? null,
+    environments: state.environments,
+    connectedEnvironments: state.environments,
+    targets: targets(),
+    target: targets()[0] ?? null,
   })) as never,
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironmentProviders: () => new Map(),
+  useEnvironmentProviders: () => state.providers,
+  useEnvironments: (() => ({ environments: state.environments })) as never,
 }));
 // The real row reads write permission and overrides from live environment state; this
-// suite is about how the section writes mixed writing styles.
+// suite exercises the section's controls and scoped writes without a live connection.
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsRow: ({ title, control, resetAction, children }) => (
@@ -60,6 +76,21 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 }));
 
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
+
+function targets() {
+  if (state.environments.length > 0)
+    return resolveScopedSettingsTargets(scope(), state.environments);
+  return state.styles.map((style, index) => ({
+    settings: { ...DEFAULT_UNIFIED_SETTINGS, sourceControlWritingStyle: style },
+    unsupportedSettingKeys: new Set(
+      state.unsupported.has(index) ? ["sourceControlWritingStyle"] : [],
+    ),
+  }));
+}
+
+function scope() {
+  return resolveSettingsScope({}, [], state.environments);
+}
 
 let root: Root;
 let container: HTMLDivElement;
@@ -84,6 +115,9 @@ async function render() {
 }
 
 beforeEach(async () => {
+  state.environments = [];
+  state.providers = new Map();
+  state.unsupported = new Set();
   state.styles = [
     {
       ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle,
@@ -114,6 +148,143 @@ afterEach(async () => {
 });
 
 describe("mixed source control instructions", () => {
+  it("chooses and saves writer models using only environments that can store the setting", async () => {
+    const primaryId = EnvironmentId.make("primary");
+    const siblingId = EnvironmentId.make("sibling");
+    const codexId = ProviderInstanceId.make("codex");
+    const claudeId = ProviderInstanceId.make("claudeAgent");
+    const codex: ServerProvider = {
+      instanceId: codexId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-08-28T00:00:00.000Z",
+      models: [
+        { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null },
+        { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex", isCustom: false, capabilities: null },
+      ],
+      slashCommands: [],
+      skills: [],
+    };
+    const claude: ServerProvider = {
+      ...codex,
+      instanceId: claudeId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [
+        { slug: "claude-sonnet-4-6", name: "Sonnet 4.6", isCustom: false, capabilities: null },
+      ],
+    };
+    state.environments = [primaryId, siblingId].map((environmentId) => ({
+      environmentId,
+      label: environmentId,
+      connection: { phase: "connected" },
+      serverConfig: {
+        settings: {
+          ...DEFAULT_UNIFIED_SETTINGS,
+          sourceControlWriterModelSelection: { instanceId: codexId, model: "gpt-5.4" },
+        },
+      },
+    }));
+    state.providers = new Map([
+      [primaryId, [codex]],
+      [siblingId, [claude]],
+    ]);
+    const writes: ReturnType<typeof planScopedSettingsPatch>["serverWrites"] = [];
+    state.updateSettings.mockImplementation((patch) => {
+      const plan = planScopedSettingsPatch(scope(), state.environments, patch);
+      writes.push(...plan.serverWrites);
+      state.environments = state.environments.map((environment) => {
+        const write = plan.serverWrites.find(
+          (write) => write.environmentId === environment.environmentId,
+        );
+        return write && environment.serverConfig
+          ? {
+              ...environment,
+              serverConfig: {
+                ...environment.serverConfig,
+                settings: applyServerSettingsPatch(environment.serverConfig.settings, write.patch),
+              },
+            }
+          : environment;
+      });
+      void render();
+    });
+    await render();
+
+    const picker = page.getByRole("button", { name: "Source control writer model", exact: true });
+    const choice = page.getByRole("option", { name: /GPT-5.3 Codex/ });
+    await userEvent.click(picker);
+    await expect.element(choice).toHaveAttribute("aria-disabled", "true");
+    expect(writes).toEqual([]);
+    await userEvent.keyboard("{Escape}");
+
+    // The primary now represents an older Claude host that cannot store this row.
+    state.environments = state.environments.map((environment) =>
+      environment.environmentId === primaryId
+        ? {
+            ...environment,
+            unsupportedSettingKeys: resolveUnsupportedSettingKeys(
+              undefined,
+              new Set(["sourceControlWriterModelSelection"]),
+            ),
+            serverConfig: {
+              settings: {
+                ...DEFAULT_UNIFIED_SETTINGS,
+                sourceControlWriterModelSelection: {
+                  instanceId: claudeId,
+                  model: "claude-sonnet-4-6",
+                },
+              },
+            },
+          }
+        : environment,
+    );
+    state.providers = new Map([
+      [primaryId, [claude]],
+      [siblingId, [codex]],
+    ]);
+    await render();
+
+    await expect.element(picker).toHaveTextContent("GPT-5.4");
+    await expect.element(picker).not.toHaveTextContent("Mixed");
+    await userEvent.click(picker);
+    await expect.element(choice).not.toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(choice);
+    expect(writes.map(({ environmentId, patch }) => ({ environmentId, patch }))).toEqual([
+      {
+        environmentId: siblingId,
+        patch: {
+          sourceControlWriterModelSelection: { instanceId: codexId, model: "gpt-5.3-codex" },
+        },
+      },
+    ]);
+    await expect.element(picker).toHaveTextContent("GPT-5.3 Codex");
+    expect(state.environments[0]!.serverConfig!.settings.sourceControlWriterModelSelection).toEqual(
+      {
+        instanceId: claudeId,
+        model: "claude-sonnet-4-6",
+      },
+    );
+  });
+
+  it("shows the supported environment's editor when the representative cannot store writing style", async () => {
+    state.unsupported.add(0);
+    state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
+    await render();
+
+    await expect.element(writeForAll()).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("textbox", { name: "Custom source control writing instructions" }))
+      .toHaveValue("Second environment instructions");
+    const templates = page.getByRole("switch", { name: "Follow change request templates" });
+    await expect.element(templates).not.toBeChecked();
+    await expect.element(templates).toHaveAttribute("aria-checked", "false");
+    expect(state.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("resets mixed template preferences without replacing each environment's instructions", async () => {
     const initialInstructions = state.styles.map(({ mode, customInstructions }) => ({
       mode,

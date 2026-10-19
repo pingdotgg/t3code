@@ -34,6 +34,9 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { NewProjectScriptInput } from "../projectScriptEditor";
 import { toastManager } from "../ui/toast";
+import { recordDroppedSettingKeys } from "./droppedSettingKeys";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { droppedSettingPaths } from "./scopedSettings";
 
 function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -47,6 +50,18 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
   return mapAtomCommandResult(result, () => undefined);
 }
 
+function normalizedProjectScript(script: ProjectScript) {
+  return {
+    ...script,
+    name: script.name.trim(),
+    command: script.command.trim(),
+    async: script.async ?? true,
+    runOnSettle: script.runOnSettle ?? false,
+    previewUrl: script.previewUrl?.trim(),
+    autoOpenPreview: script.autoOpenPreview ?? false,
+  };
+}
+
 export function useProjectScriptSettings(
   targets: readonly {
     environmentId: EnvironmentId;
@@ -56,6 +71,7 @@ export function useProjectScriptSettings(
   }[],
 ) {
   const projects = useProjects();
+  const scope = useOptionalSettingsScope();
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "project actions update");
@@ -134,6 +150,48 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
+      const savedScripts = project
+        ? result.value.projectSettingsOverrides[project.id]?.defaultProjectScripts
+        : result.value.defaultProjectScripts;
+      const settingPath = project
+        ? "projectSettingsOverrides.defaultProjectScripts"
+        : "defaultProjectScripts";
+      const droppedKeys = droppedSettingPaths(
+        nextScripts,
+        project
+          ? settings.projectSettingsOverrides[project.id]?.defaultProjectScripts
+          : settings.defaultProjectScripts,
+        savedScripts,
+        settingPath,
+      );
+      if (droppedKeys.length === 0 && nextScripts !== null) {
+        for (const script of nextScripts) {
+          const saved = savedScripts?.find((entry) => entry.id === script.id);
+          const scriptPath = `${settingPath}.${script.id}`;
+          if (!saved) {
+            droppedKeys.push(scriptPath);
+            continue;
+          }
+          const expected = normalizedProjectScript(script);
+          const actual = normalizedProjectScript(saved);
+          for (const key of Object.keys(expected) as (keyof ProjectScript)[]) {
+            if (expected[key] !== actual[key]) droppedKeys.push(`${scriptPath}.${key}`);
+          }
+        }
+      }
+      if (droppedKeys.length > 0) {
+        const serverVersion = scope?.environments.find(
+          (environment) => environment.environmentId === environmentId,
+        )?.serverConfig?.environment.serverVersion;
+        if (serverVersion) recordDroppedSettingKeys(environmentId, serverVersion, droppedKeys);
+        return reportScriptFailure(
+          AsyncResult.failure(
+            Cause.fail(
+              new Error("This environment does not support this setting. Update T3 Code on it."),
+            ),
+          ),
+        );
+      }
       const changedIds = scriptId
         ? [scriptId]
         : current

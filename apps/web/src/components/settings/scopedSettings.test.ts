@@ -19,11 +19,20 @@ import {
   planScopedSettingsClear,
   planScopedSettingsPatch,
   resolveScopedSettingsTargets,
+  resolveUnsupportedSettingKeys,
+  scopedDisplaySettings,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  scopedSettingsUnsupportedTargets,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import {
+  droppedSettingKeysAtom,
+  droppedSettingKeysFor,
+  recordDroppedSettingKeys,
+} from "./droppedSettingKeys";
 
 function environment(
   id: string,
@@ -259,13 +268,51 @@ describe("scoped settings writes", () => {
       },
     ];
 
-    it("reports a dropped toggle", async () => {
-      expect(
-        await outcome(
+    it("learns a dropped toggle until the server updates, so the next click can turn it off", async () => {
+      appAtomRegistry.set(droppedSettingKeysAtom, new Map());
+      try {
+        const result = await persistScopedSettingsPatch(
           planScopedSettingsPatch(all, environments, { reviewGuidesEnabled: true }),
           upgradedLaptop({ reviewGuidesEnabled: true }),
-        ),
-      ).toEqual({ saved: [laptop.label], failed: unsupported });
+          vi.fn(),
+        );
+        expect(result.failedEnvironments.map(({ label, message }) => ({ label, message }))).toEqual(
+          unsupported,
+        );
+        for (const failure of result.failedEnvironments) {
+          recordDroppedSettingKeys(failure.environmentId, "old", failure.droppedKeys);
+        }
+        const learned = (version: string, advertised?: readonly string[]) => ({
+          ...server,
+          unsupportedSettingKeys: resolveUnsupportedSettingKeys(
+            advertised,
+            droppedSettingKeysFor(
+              appAtomRegistry.get(droppedSettingKeysAtom),
+              server.environmentId,
+              version,
+            ),
+          ),
+        });
+        const enabledLaptop = environment("Laptop", { settings: { reviewGuidesEnabled: true } });
+        const pair = [enabledLaptop, learned("old")];
+        const targets = resolveScopedSettingsTargets(all, pair);
+        expect(scopedSettingsAreMixed(targets, ["reviewGuidesEnabled"])).toBe(false);
+        expect(scopedDisplaySettings(targets[1]!, targets).reviewGuidesEnabled).toBe(true);
+        expect(
+          planScopedSettingsPatch(all, pair, { reviewGuidesEnabled: false }).serverWrites.map(
+            ({ environmentId, patch }) => ({ environmentId, patch }),
+          ),
+        ).toEqual([{ environmentId: laptop.environmentId, patch: { reviewGuidesEnabled: false } }]);
+        for (const updated of [learned("new"), learned("old", ["reviewGuidesEnabled"])]) {
+          expect(
+            planScopedSettingsPatch(named, [updated], { reviewGuidesEnabled: true }).serverWrites,
+          ).toMatchObject([
+            { environmentId: server.environmentId, patch: { reviewGuidesEnabled: true } },
+          ]);
+        }
+      } finally {
+        appAtomRegistry.set(droppedSettingKeysAtom, new Map());
+      }
     });
 
     it("reports dropped text but accepts the server trimming it", async () => {
@@ -288,21 +335,185 @@ describe("scoped settings writes", () => {
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
-    it("reports a nested key dropped beside one that saved", async () => {
+    it("learns a dropped project key without disabling its environment setting", async () => {
       const patch = { defaultAutoPull: true, enableAgentBrowserAccess: false };
-      const persistServer = vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
-        _tag: "Success" as const,
-        value: {
-          ...DEFAULT_SERVER_SETTINGS,
-          projectSettingsOverrides:
-            environmentId === laptop.environmentId
-              ? { [laptopProjectId]: patch }
-              : { [projectId]: { defaultAutoPull: true } },
+      const before = [
+        environment("Laptop", { settings: { enableAgentBrowserAccess: false } }),
+        environment("Server", { settings: { enableAgentBrowserAccess: true } }),
+      ];
+      const saved = before.map((environment) => ({
+        ...environment,
+        serverConfig: {
+          ...environment.serverConfig!,
+          settings: {
+            ...environment.serverConfig!.settings,
+            projectSettingsOverrides:
+              environment.environmentId === laptop.environmentId
+                ? { [laptopProjectId]: patch }
+                : { [projectId]: { defaultAutoPull: true } },
+          },
         },
       }));
-      expect(
-        await outcome(planScopedSettingsPatch(project, environments, patch), persistServer),
-      ).toEqual({ saved: [laptop.label], failed: unsupported });
+      const previousDropped = appAtomRegistry.get(droppedSettingKeysAtom);
+      try {
+        for (const advertised of [
+          undefined,
+          ["defaultAutoPull", "enableAgentBrowserAccess", "projectSettingsOverrides"],
+        ]) {
+          appAtomRegistry.set(droppedSettingKeysAtom, new Map());
+          const withSupport = (environment: (typeof before)[number]) => ({
+            ...environment,
+            unsupportedSettingKeys: resolveUnsupportedSettingKeys(
+              advertised,
+              droppedSettingKeysFor(
+                appAtomRegistry.get(droppedSettingKeysAtom),
+                environment.environmentId,
+                "old",
+              ),
+            ),
+          });
+          const result = await persistScopedSettingsPatch(
+            planScopedSettingsPatch(project, before.map(withSupport), patch),
+            async ({ environmentId }) => ({
+              _tag: "Success",
+              value: saved.find((environment) => environment.environmentId === environmentId)!
+                .serverConfig.settings,
+            }),
+            vi.fn(),
+          );
+          expect(result.savedEnvironments.map(({ label }) => label)).toEqual([laptop.label]);
+          expect(
+            result.failedEnvironments.map(({ label, droppedKeys }) => ({ label, droppedKeys })),
+          ).toEqual([
+            {
+              label: server.label,
+              droppedKeys: ["projectSettingsOverrides.enableAgentBrowserAccess"],
+            },
+          ]);
+          for (const failure of result.failedEnvironments) {
+            recordDroppedSettingKeys(failure.environmentId, "old", failure.droppedKeys);
+          }
+          const learned = saved.map(withSupport);
+          const metadata = advertised ? "advertised support" : "legacy support";
+
+          for (const scope of [project, checkout]) {
+            const retry = planScopedSettingsPatch(scope, learned, patch);
+            expect
+              .soft(
+                retry.serverWrites.find(
+                  ({ environmentId }) => environmentId === server.environmentId,
+                )?.patch,
+                `${metadata}: ${scope.kind} retry skips only the dropped override`,
+              )
+              .toEqual({
+                projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+              });
+          }
+          for (const scope of [project, checkout]) {
+            expect(
+              planScopedSettingsClear(scope, learned, [
+                "enableAgentBrowserAccess",
+              ]).serverWrites.map(({ environmentId }) => environmentId),
+            ).toEqual(scope.kind === "project" ? [laptop.environmentId] : []);
+          }
+          const overrides = listProjectOverrides(learned, ["enableAgentBrowserAccess"]);
+          expect(overrides).toEqual([
+            { environmentId: laptop.environmentId, projectId: laptopProjectId },
+          ]);
+          expect(
+            planProjectOverridesClear(
+              learned,
+              [{ environmentId: server.environmentId, projectId }],
+              ["enableAgentBrowserAccess"],
+            ).serverWrites,
+          ).toEqual([]);
+          const projectTargets = resolveScopedSettingsTargets(project, learned);
+          expect
+            .soft(
+              scopedSettingsAreMixed(projectTargets, ["enableAgentBrowserAccess"]),
+              `${metadata}: unsupported override does not make the project row mixed`,
+            )
+            .toBe(false);
+          expect
+            .soft(
+              scopedDisplaySettings(projectTargets[0]!, projectTargets).enableAgentBrowserAccess,
+              `${metadata}: project display uses the supported laptop override`,
+            )
+            .toBe(false);
+
+          for (const scope of [named, all]) {
+            const selected = selectScopedSettingsEnvironments(scope, learned, server.environmentId);
+            const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments);
+            const representative = targets.find(
+              ({ environmentId }) => environmentId === server.environmentId,
+            )!;
+            expect
+              .soft(
+                scopedSettingsUnsupportedTargets(targets, ["enableAgentBrowserAccess"]).map(
+                  ({ label }) => label,
+                ),
+                `${metadata}: ${scope.kind} keeps the top-level setting supported`,
+              )
+              .toEqual([]);
+            expect
+              .soft(
+                scopedDisplaySettings(representative, targets).enableAgentBrowserAccess,
+                `${metadata}: ${scope.kind} displays the server's true top-level value`,
+              )
+              .toBe(true);
+            expect
+              .soft(
+                scopedSettingsAreMixed(targets, ["enableAgentBrowserAccess"]),
+                `${metadata}: ${scope.kind} compares genuine top-level values`,
+              )
+              .toBe(scope.kind === "all");
+            expect
+              .soft(
+                planScopedSettingsPatch(scope, learned, {
+                  enableAgentBrowserAccess: false,
+                }).serverWrites.map(({ environmentId, patch }) => ({ environmentId, patch })),
+                `${metadata}: ${scope.kind} can still write the top-level setting`,
+              )
+              .toEqual(
+                selected.connectedEnvironments.map(({ environmentId }) => ({
+                  environmentId,
+                  patch: { enableAgentBrowserAccess: false },
+                })),
+              );
+          }
+          const reset = planScopedSettingsClear(checkout, learned, ["defaultAutoPull"]);
+          expect(reset.serverWrites[0]?.patch).toEqual({
+            projectSettingsOverrides: { [projectId]: null },
+          });
+          const resetResult = await persistScopedSettingsPatch(
+            reset,
+            async () => ({ _tag: "Success", value: saved[1]!.serverConfig.settings }),
+            vi.fn(),
+          );
+          expect(resetResult.failedEnvironments[0]?.droppedKeys).toEqual([
+            "projectSettingsOverrides.defaultAutoPull",
+          ]);
+          for (const failure of resetResult.failedEnvironments) {
+            recordDroppedSettingKeys(failure.environmentId, "old", failure.droppedKeys);
+          }
+          const afterReset = saved.map(withSupport);
+          expect(
+            planScopedSettingsClear(checkout, afterReset, ["defaultAutoPull"]).serverWrites,
+          ).toEqual([]);
+          expect(
+            planScopedSettingsPatch(named, afterReset, { defaultAutoPull: false }).serverWrites,
+          ).toHaveLength(1);
+          expect(
+            droppedSettingKeysFor(
+              appAtomRegistry.get(droppedSettingKeysAtom),
+              server.environmentId,
+              "new",
+            ),
+          ).toBeUndefined();
+        }
+      } finally {
+        appAtomRegistry.set(droppedSettingKeysAtom, previousDropped);
+      }
     });
 
     it("accepts a write that matches what the environment already had", async () => {
@@ -553,6 +764,39 @@ describe("scoped settings writes", () => {
 });
 
 describe("scoped settings mixed values", () => {
+  it.each([
+    ["no project override capability", environment("Server", { projectOverrides: false })],
+    [
+      "no project override container support",
+      { ...server, unsupportedSettingKeys: new Set(["projectSettingsOverrides"]) },
+    ],
+  ])("excludes a checkout with %s from project values and sources", (_reason, incapable) => {
+    const supported = environment("Laptop", {
+      settings: {
+        projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
+      },
+    });
+    const selected = [incapable, supported];
+    const targets = resolveScopedSettingsTargets(project, selected);
+    expect.soft(scopedSettingsAreMixed(targets, ["defaultAutoPull"])).toBe(false);
+    expect.soft(scopedDisplaySettings(targets[0]!, targets).defaultAutoPull).toBe(true);
+    expect.soft(scopedSettingsSource(targets, ["defaultAutoPull"])).toBe("project");
+    expect(
+      planScopedSettingsPatch(project, selected, { defaultAutoPull: false }).serverWrites.map(
+        ({ environmentId }) => environmentId,
+      ),
+    ).toEqual([laptop.environmentId]);
+
+    const environmentTargets = resolveScopedSettingsTargets(all, [
+      incapable,
+      environment("Laptop", { settings: { defaultAutoPull: true } }),
+    ]);
+    expect(scopedSettingsAreMixed(environmentTargets, ["defaultAutoPull"])).toBe(true);
+    expect(scopedDisplaySettings(environmentTargets[0]!, environmentTargets).defaultAutoPull).toBe(
+      false,
+    );
+  });
+
   it("compares only requested settings across connected targets", () => {
     const changed = environment("Changed", { settings: { enableAgentBrowserAccess: false } });
     const targets = resolveScopedSettingsTargets(all, [laptop, changed]);
@@ -763,6 +1007,154 @@ it("routes legacy model preference keys exclusively to the selected environment"
       patch,
     },
   ]);
+});
+
+describe("environments that cannot store a setting", () => {
+  it.each([
+    ["environment", all],
+    ["project", project],
+  ] as const)("excludes unsupported environments from %s reads and writes", (_label, scope) => {
+    const enabledLaptop = environment("Laptop", {
+      settings: {
+        defaultAutoPull: true,
+        projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
+      },
+    });
+    const outdatedServer = {
+      ...server,
+      unsupportedSettingKeys: new Set(["defaultAutoPull"]),
+    };
+    const pair = [enabledLaptop, outdatedServer];
+    const targets = resolveScopedSettingsTargets(scope, pair);
+    expect(scopedSettingsAreMixed(targets, ["defaultAutoPull"])).toBe(false);
+    expect(
+      scopedDisplaySettings(
+        targets.find(({ environmentId }) => environmentId === server.environmentId)!,
+        targets,
+      ).defaultAutoPull,
+    ).toBe(true);
+    if (scope.kind === "project") {
+      expect(scopedSettingsSource(targets, ["defaultAutoPull"])).toBe("project");
+    }
+    const plan = planScopedSettingsPatch(scope, pair, {
+      defaultAutoPull: false,
+      branchNamePrefix: "feat",
+    });
+    expect(
+      plan.serverWrites
+        .map(({ environmentId, patch }) => ({ environmentId, patch }))
+        .sort((a, b) => a.environmentId.localeCompare(b.environmentId)),
+    ).toEqual([
+      {
+        environmentId: laptop.environmentId,
+        patch:
+          scope.kind === "project"
+            ? {
+                projectSettingsOverrides: {
+                  [laptopProjectId]: { defaultAutoPull: false, branchNamePrefix: "feat" },
+                },
+              }
+            : { defaultAutoPull: false, branchNamePrefix: "feat" },
+      },
+      {
+        environmentId: server.environmentId,
+        patch:
+          scope.kind === "project"
+            ? { projectSettingsOverrides: { [projectId]: { branchNamePrefix: "feat" } } }
+            : { branchNamePrefix: "feat" },
+      },
+    ]);
+    const unsupported = planScopedSettingsPatch(scope, [outdatedServer], { defaultAutoPull: true });
+    expect(unsupported.serverWrites).toEqual([]);
+    expect(unsupported.unavailableReason).toBe("Update T3 Code on Server to use this setting.");
+    expect(
+      planScopedSettingsPatch(
+        scope,
+        [
+          {
+            ...server,
+            unsupportedSettingKeys: resolveUnsupportedSettingKeys(["branchNamePrefix"], undefined),
+          },
+        ],
+        { defaultAutoPull: true },
+      ).serverWrites,
+    ).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "writing style",
+      scope: named,
+      patch: { sourceControlWritingStyle: { mode: "custom", followChangeRequestTemplates: false } },
+      accepted: { sourceControlWritingStyle: { mode: "custom" } },
+      retry: { sourceControlWritingStyle: { customInstructions: "Keep it short." } },
+    },
+    {
+      name: "storage cleanup",
+      scope: named,
+      patch: { storageCleanup: { logsAfterDays: 7, browserArtifactsAfterDays: 3 } },
+      accepted: { storageCleanup: { logsAfterDays: 7 } },
+      retry: { storageCleanup: { logsAfterDays: 14 } },
+    },
+    {
+      name: "project worktree cleanup",
+      scope: checkout,
+      patch: {
+        worktreeCleanup: {
+          mode: "custom",
+          rules: { worktreeOnDelete: true, worktreeSettledAfterDays: 3 },
+        },
+      },
+      accepted: { worktreeCleanup: { mode: "custom", rules: { worktreeOnDelete: true } } },
+      retry: { worktreeCleanup: { mode: "custom", rules: { worktreeOnDelete: false } } },
+    },
+  ] as const)(
+    "keeps supported $name fields writable after a sibling is dropped",
+    async ({ scope, patch, accepted, retry }) => {
+      const original =
+        scope.kind === "checkout"
+          ? environment("Server", {
+              settings: {
+                projectSettingsOverrides: {
+                  [projectId]: {
+                    worktreeCleanup: {
+                      mode: "custom",
+                      rules: resolveWorktreeCleanup(DEFAULT_SERVER_SETTINGS, null),
+                    },
+                  },
+                },
+              },
+            })
+          : server;
+      const plan = planScopedSettingsPatch(scope, [original], patch);
+      const acceptedWrite = planScopedSettingsPatch(scope, [original], accepted).serverWrites[0]!;
+      const saved = applyServerSettingsPatch(acceptedWrite.previous, acceptedWrite.patch);
+      const result = await persistScopedSettingsPatch(
+        plan,
+        async () => ({ _tag: "Success", value: saved }),
+        vi.fn(),
+      );
+      const learned = {
+        ...server,
+        serverConfig: { ...server.serverConfig!, settings: saved },
+        unsupportedSettingKeys: resolveUnsupportedSettingKeys(
+          undefined,
+          new Set(result.failedEnvironments.flatMap(({ droppedKeys }) => droppedKeys)),
+        ),
+      };
+      const next = planScopedSettingsPatch(scope, [learned], retry);
+      expect(next.unavailableReason).toBeNull();
+      expect(next.serverWrites).toMatchObject([
+        {
+          environmentId: server.environmentId,
+          patch:
+            scope.kind === "checkout"
+              ? { projectSettingsOverrides: { [projectId]: retry } }
+              : retry,
+        },
+      ]);
+    },
+  );
 });
 
 describe("model selection patches at project scope", () => {
