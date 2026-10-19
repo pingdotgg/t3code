@@ -88,22 +88,39 @@ describe("DesktopUpdates", () => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
+  it.effect("updates Linux .deb installs and explains why unsupported installs stay disabled", () =>
     Effect.gen(function* () {
-      const linuxState = (packageType: string | undefined) =>
-        Effect.scoped(
+      const linuxState = (packageType: string | undefined) => {
+        const harness = makeHarness({ platform: "linux", packageType });
+        return Effect.scoped(
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
             yield* updates.configure;
-            return yield* updates.getState;
+            const initial = yield* updates.getState;
+            const changed = yield* updates.setChannel("nightly");
+            assert.deepEqual(harness.sentStates.at(-1), changed);
+            return { initial, changed, checks: harness.checkCount() };
           }),
-        ).pipe(Effect.provide(makeHarness({ platform: "linux", packageType }).layer));
+        ).pipe(Effect.provide(harness.layer));
+      };
 
       const deb = yield* linuxState("deb\n");
-      assert.equal(deb.status, "idle");
+      assert.equal(deb.initial.status, "idle");
+      assert.isTrue(deb.initial.enabled);
+      assert.isNull(deb.initial.message);
+      assert.isTrue(deb.changed.enabled);
+      assert.equal(deb.changed.channel, "nightly");
+      assert.equal(deb.checks, 1);
 
       const unmarked = yield* linuxState(undefined);
-      assert.equal(unmarked.status, "disabled");
+      assert.isFalse(unmarked.initial.enabled);
+      assert.equal(unmarked.initial.status, "disabled");
+      assert.equal(
+        unmarked.initial.message,
+        "Automatic updates on Linux require the AppImage or the .deb package.",
+      );
+      assert.deepEqual(unmarked.changed, { ...unmarked.initial, channel: "nightly" });
+      assert.equal(unmarked.checks, 0);
     }),
   );
 
@@ -694,6 +711,9 @@ describe("DesktopUpdates", () => {
         const state = yield* updates.getState;
         assert.equal(state.status, "available");
         assert.equal(state.notAppliedVersion, "1.2.4");
+
+        const changedState = yield* updates.setChannel("nightly");
+        assert.equal(changedState.notAppliedVersion, "1.2.4");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

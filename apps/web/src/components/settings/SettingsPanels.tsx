@@ -294,7 +294,8 @@ function AboutVersionSection() {
     if (
       !bridge ||
       typeof bridge.setUpdateChannel !== "function" ||
-      channel === selectedUpdateChannel
+      channel === selectedUpdateChannel ||
+      !updateState?.enabled
     ) {
       return;
     }
@@ -448,7 +449,11 @@ function AboutVersionSection() {
       {hasDesktopBridge ? (
         <SettingsRow
           {...searchableSetting("update-track")}
-          description="Use stable releases or nightly builds. Switch back anytime."
+          description={
+            updateState && !updateState.enabled
+              ? getDesktopUpdateButtonTooltip(updateState)
+              : "Use stable releases or nightly builds. Switch back anytime."
+          }
           control={
             <Select
               value={selectedUpdateChannel}
@@ -460,7 +465,7 @@ function AboutVersionSection() {
                 size="sm"
                 className="w-full sm:w-40"
                 aria-label="Update track"
-                disabled={isChangingUpdateChannel}
+                disabled={isChangingUpdateChannel || !updateState?.enabled}
               >
                 <SelectValue>
                   {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
