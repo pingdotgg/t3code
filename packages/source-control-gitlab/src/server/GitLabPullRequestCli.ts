@@ -440,7 +440,6 @@ function actionArgs(
         "--auto-merge=false",
         "--yes",
         ...(mergeMethod === "squash" ? ["--squash"] : []),
-        ...(mergeMethod === "rebase" ? ["--rebase"] : []),
       ];
     case "enable-auto-merge":
       return [
@@ -448,7 +447,6 @@ function actionArgs(
         "--auto-merge=true",
         "--yes",
         ...(mergeMethod === "squash" ? ["--squash"] : []),
-        ...(mergeMethod === "rebase" ? ["--rebase"] : []),
       ];
     case "disable-auto-merge":
       return [];
@@ -772,10 +770,6 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  /**
-   * GitLab resolves a comment's line against these three shas, so a review with line
-   * comments cannot be sent without them.
-   */
   const getDiffRefs = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -1277,25 +1271,34 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
 
-    runMergeRequestAction: (input) => {
-      // `glab mr merge` arms auto-merge and never disarms it, so the one direction the CLI has
-      // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
-      // this module writes with.
-      if (input.action === "disable-auto-merge") {
-        return api({
-          cwd: input.cwd,
-          path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/cancel_merge_when_pipeline_succeeds`,
-          method: "POST",
-        }).pipe(Effect.asVoid);
-      }
-      const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
-      return gitlab
-        .execute({
-          cwd: input.cwd,
-          args: ["mr", subcommand!, String(input.number), "--repo", input.repository, ...flags],
-        })
-        .pipe(Effect.asVoid);
-    },
+    runMergeRequestAction: (input) =>
+      Effect.gen(function* () {
+        // `glab mr merge` arms auto-merge and never disarms it, so the one direction the CLI has
+        // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
+        // this module writes with.
+        if (input.action === "disable-auto-merge") {
+          return yield* api({
+            cwd: input.cwd,
+            path: `projects/${projectPath(input.repository)}/merge_requests/${input.number}/cancel_merge_when_pipeline_succeeds`,
+            method: "POST",
+          }).pipe(Effect.asVoid);
+        }
+        const executeMr = (subcommand: string, ...flags: ReadonlyArray<string>) =>
+          gitlab.execute({
+            cwd: input.cwd,
+            args: ["mr", subcommand, String(input.number), "--repo", input.repository, ...flags],
+          });
+        const [subcommand, ...flags] = actionArgs(input.action, input.mergeMethod);
+        if (input.action === "merge" || input.action === "enable-auto-merge") {
+          if (input.mergeMethod === "rebase") {
+            // A rebase changes the source SHA, so wait for it before reading the merge guard.
+            yield* executeMr("rebase");
+          }
+          const refs = yield* getDiffRefs(input);
+          flags.push("--sha", refs.headSha);
+        }
+        yield* executeMr(subcommand!, ...flags);
+      }),
 
     updateMergeRequest: (input) =>
       api({
