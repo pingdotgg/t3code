@@ -22,6 +22,16 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => noConfig) as never },
   };
 });
+// Loading the real Shiki WASM and grammar can take seconds on a busy runner; the block only
+// needs to hand its script to the markdown code block that highlights it.
+vi.mock(import("../../lib/syntaxHighlighting"), async (original) => ({
+  ...(await original()),
+  getSyntaxHighlighterPromise: async () =>
+    ({
+      codeToHtml: (code: string) =>
+        Object.assign(document.createElement("pre"), { textContent: code }).outerHTML,
+    }) as never,
+}));
 
 const SHORT_SCRIPT =
   "export const meta = { name: 'repo-check' }\nagent('Run SCRIPTONLY with Bash')";
