@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -138,6 +139,64 @@ it.layer(
     Layer.succeed(HostProcess.Environment, { PATH: "" }),
   ),
 )("providerMaintenance", (it) => {
+  it.effect.each([
+    { registry: undefined, origin: "https://registry.npmjs.org" },
+    { registry: " http://127.0.0.1:4321/npm/// ", origin: "http://127.0.0.1:4321/npm" },
+  ])("fetches npm latest from $origin", ({ registry, origin }) =>
+    Effect.gen(function* () {
+      const requests: Array<string> = [];
+      const provider = yield* enrichProviderSnapshotWithVersionAdvisory(
+        installedPackageToolProvider,
+        manualPackageTool,
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ProviderLatestVersions.layer,
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: registry === undefined ? {} : { npm_config_registry: registry },
+              }),
+            ),
+          ),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push(request.url);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, Response.json({ version: "2.0.0" })),
+            );
+          }),
+        ),
+      );
+
+      expect(requests).toEqual([`${origin}/%40example%2Fpackage-tool/latest`]);
+      expect(provider.versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        currentVersion: "1.0.0",
+        latestVersion: "2.0.0",
+      });
+    }),
+  );
+
+  it.effect("reads cached versions through ProviderLatestVersions", () =>
+    resolveLatestProviderVersion(manualPackageTool).pipe(
+      Effect.provideServiceEffect(
+        ProviderLatestVersions.ProviderLatestVersions,
+        ProviderLatestVersions.make([["@example/package-tool", "9.9.9"]]),
+      ),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() =>
+          Effect.die("cached provider version should not make an HTTP request"),
+        ),
+      ),
+      Effect.map((version) => {
+        expect(version).toBe("9.9.9");
+      }),
+    ),
+  );
+
   it.effect("prefers the installer's own latest version over the npm registry", () =>
     resolveLatestProviderVersion({ ...manualPackageTool, latestVersion: "1.2.0" }).pipe(
       Effect.provide(ProviderLatestVersions.layer),
