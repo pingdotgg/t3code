@@ -3354,13 +3354,9 @@ export function claudeUserInputQuestions(
           const optionRecord = option as Record<string, unknown>;
           const label = typeof optionRecord.label === "string" ? optionRecord.label.trim() : "";
           if (label.length === 0) return [];
-          return [
-            {
-              label,
-              description:
-                typeof optionRecord.description === "string" ? optionRecord.description.trim() : "",
-            },
-          ];
+          const description =
+            typeof optionRecord.description === "string" ? optionRecord.description.trim() : "";
+          return [{ label, description: description || label }];
         })
       : [];
     return [
