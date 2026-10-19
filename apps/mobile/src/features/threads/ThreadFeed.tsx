@@ -1302,9 +1302,7 @@ function renderFeedEntry(
                 accessibilityLabel={intentBadge.accessibilityLabel}
                 className="flex-row items-center gap-1"
               >
-                {intentBadge.icon ? (
-                  <SymbolView name={intentBadge.icon} size={12} tintColor={iconSubtleColor} />
-                ) : null}
+                <SymbolView name="arrow.uturn.forward" size={12} tintColor={iconSubtleColor} />
                 <Text className="font-t3-medium text-xs text-foreground-secondary">
                   {intentBadge.label}
                 </Text>

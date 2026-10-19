@@ -3,24 +3,16 @@ import { describe, expect, it } from "@effect/vitest";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 
 describe("user message intent badge", () => {
-  it("does not label ordinary turn-start messages", () => {
+  it("does not label turn-start or queued messages", () => {
     expect(resolveUserMessageIntentBadge(undefined)).toBeNull();
     expect(resolveUserMessageIntentBadge("turn_start")).toBeNull();
-  });
-
-  it("explains the queued history without claiming delivery", () => {
-    expect(resolveUserMessageIntentBadge("queued_turn")).toEqual({
-      label: "From queue",
-      accessibilityLabel: "Queued while the agent was busy",
-      icon: null,
-    });
+    expect(resolveUserMessageIntentBadge("queued_turn")).toBeNull();
   });
 
   it("explains the intent to steer without claiming delivery", () => {
     expect(resolveUserMessageIntentBadge("steer")).toEqual({
       label: "Steer",
       accessibilityLabel: "Steered the active turn",
-      icon: "arrow.uturn.forward",
     });
   });
 
@@ -28,7 +20,6 @@ describe("user message intent badge", () => {
     expect(resolveUserMessageIntentBadge("promoted_queued_to_steer")).toEqual({
       label: "Steer",
       accessibilityLabel: "Originally queued, then promoted to steer the active turn",
-      icon: "arrow.uturn.forward",
     });
   });
 });
