@@ -2860,7 +2860,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   if (platform === "win") {
     buildConfig.npmRebuild = false;
-    buildConfig.nsis = { differentialPackage: true };
+    buildConfig.nsis = {
+      differentialPackage: true,
+      include: "apps/desktop/resources/installer.nsh",
+    };
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",

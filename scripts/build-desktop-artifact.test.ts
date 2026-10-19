@@ -687,7 +687,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ...DESKTOP_EXTRA_RESOURCES,
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
-      assert.deepStrictEqual(win.nsis, { differentialPackage: true });
+      assert.deepStrictEqual(win.nsis, {
+        differentialPackage: true,
+        include: "apps/desktop/resources/installer.nsh",
+      });
       assert.deepStrictEqual(WINDOWS_SERVER_ASAR_IGNORE_GLOBS, [
         "**/node_modules/@cursor/sdk-*",
         "**/node_modules/@cursor/sdk-*/**",
