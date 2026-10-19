@@ -262,7 +262,11 @@ export const make = Effect.gen(function* () {
           });
         }
       } else {
-        yield* fileSystem.makeDirectory(path.dirname(normalizedDestination), { recursive: true });
+        // Skip existing parents: recursive mkdir on a Windows drive root fails with EPERM.
+        const parentPath = path.dirname(normalizedDestination);
+        if (!(yield* fileSystem.exists(parentPath))) {
+          yield* fileSystem.makeDirectory(parentPath, { recursive: true });
+        }
       }
 
       return {
