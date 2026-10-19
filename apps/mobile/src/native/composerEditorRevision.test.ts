@@ -5,6 +5,7 @@ import {
   assumeComposerControlledState,
   isComposerNativeEcho,
   pruneAcknowledgedComposerNativeEvents,
+  reconcileComposerSubmitSnapshot,
   resolveComposerControlledEventCount,
 } from "./composerEditorRevision";
 
@@ -201,5 +202,65 @@ describe("typing immediately before an intercepted paste", () => {
     );
     expect(isComposerNativeEcho("pasted", { start: 6, end: 6 }, 2, snapshots)).toBe(false);
     expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
+  });
+});
+
+describe("submit preparation", () => {
+  it("accepts the correction and lets Send clear it without delayed events restoring it", () => {
+    const correction = { eventCount: 8, value: "The", selection: { start: 3, end: 3 } };
+    const submitted = { ...correction, eventCount: 9 };
+    const accepted = reconcileComposerSubmitSnapshot(
+      8,
+      [
+        { eventCount: 6, value: "", selection: null },
+        { eventCount: 7, value: "Teh", selection: { start: 3, end: 3 } },
+        correction,
+      ],
+      submitted,
+      true,
+    );
+    expect(accepted).not.toBeNull();
+    if (!accepted) throw new Error("The current submission was rejected");
+
+    expect(
+      isComposerNativeEcho("The", submitted.selection, accepted.eventCount, accepted.snapshots),
+    ).toBe(true);
+    expect(
+      resolveComposerControlledEventCount("", null, accepted.eventCount, accepted.snapshots),
+    ).toBe(submitted.eventCount);
+    expect(isComposerNativeEcho("", null, accepted.eventCount, accepted.snapshots)).toBe(false);
+    expect(acknowledgeComposerNativeEvent(accepted.eventCount, correction.eventCount)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(accepted.eventCount, 7)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(accepted.eventCount, 10)).toBe(10);
+  });
+
+  it("lets a restored draft replace a cancelled preparation without rolling back newer typing", () => {
+    const replacement = "previous draft";
+    const prepared = { eventCount: 9, value: "corrected edit", selection: null };
+    const recovered = reconcileComposerSubmitSnapshot(
+      8,
+      [
+        { eventCount: 7, value: replacement, selection: null },
+        { eventCount: 8, value: "queued edit", selection: null },
+      ],
+      prepared,
+      false,
+    );
+    expect(recovered).not.toBeNull();
+    if (!recovered) throw new Error("The cancelled preparation was not acknowledged");
+
+    const controlledCount = resolveComposerControlledEventCount(
+      replacement,
+      null,
+      recovered.eventCount,
+      recovered.snapshots,
+    );
+    expect(controlledCount).toBe(prepared.eventCount);
+    expect(isComposerNativeEcho(replacement, null, controlledCount, recovered.snapshots)).toBe(
+      false,
+    );
+    expect(acknowledgeComposerNativeEvent(recovered.eventCount, 8)).toBeNull();
+    expect(acknowledgeComposerNativeEvent(recovered.eventCount, 10)).toBe(10);
+    expect(reconcileComposerSubmitSnapshot(10, [], prepared, false)).toBeNull();
   });
 });

@@ -21,6 +21,8 @@ export type ComposerTextPaste = {
 export interface ComposerEditorHandle {
   focus: () => void;
   blur: () => void;
+  /** iOS: commit corrections only while isCurrent; false means submission must stop. */
+  prepareForSubmit?: (isCurrent: () => boolean) => Promise<boolean>;
   setSelection: (selection: ComposerEditorSelection) => void;
 }
 

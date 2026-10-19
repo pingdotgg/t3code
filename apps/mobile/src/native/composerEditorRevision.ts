@@ -121,3 +121,22 @@ export function pruneAcknowledgedComposerNativeEvents(
       index === latestAcknowledgedIndex || snapshot.eventCount > acknowledgedEventCount,
   );
 }
+
+/** Acknowledge submit preparation even when its text no longer belongs to the draft. */
+export function reconcileComposerSubmitSnapshot(
+  mostRecentEventCount: number,
+  snapshots: ReadonlyArray<ComposerNativeEventSnapshot>,
+  snapshot: ComposerNativeEventSnapshot,
+  isCurrent: boolean,
+): { eventCount: number; snapshots: ComposerNativeEventSnapshot[] } | null {
+  const eventCount = acknowledgeComposerNativeEvent(mostRecentEventCount, snapshot.eventCount);
+  if (eventCount === null) return null;
+  // A submit snapshot supersedes older history: both clearing after Send and
+  // replacing a cancelled edit must be fresh controlled updates.
+  return {
+    eventCount,
+    snapshots: isCurrent
+      ? pruneAcknowledgedComposerNativeEvents([...snapshots, snapshot], eventCount)
+      : [],
+  };
+}
