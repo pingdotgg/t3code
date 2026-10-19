@@ -2598,11 +2598,7 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
-  // Claude approves what its mode allows before the callback runs (edits in
-  // acceptEdits, classifier-approved actions in auto) and sends the rest,
-  // including user ask rules, to the callback, which must ask rather than
-  // allow. Only Full access answers it without asking, unless it was
-  // downgraded to a mode Claude allows here.
+  // Claude handles mode-approved actions before the callback; escalations still need approval.
   const installPermissionCallback =
     downgraded ||
     (runtimePolicy.approvalPolicy === undefined
@@ -3191,32 +3187,6 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
-// Builds the approval prompt. The user approves the command itself; Claude's
-// title and description only summarize it. The reason the ask escalated (such
-// as a PreToolUse hook's message) follows on its own line instead of being
-// dropped. It may carry ANSI escapes.
-function claudeApprovalPrompt(
-  options: {
-    readonly title?: string;
-    readonly description?: string;
-    readonly decisionReason?: string;
-  },
-  toolName: string,
-  input: ClaudeNativeToolInput,
-): string {
-  const command = inputRecordValue(input, "command");
-  const base =
-    (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
-    options.title ??
-    options.description ??
-    summarizeClaudeToolRequest(toolName, input);
-  const reason =
-    options.decisionReason === undefined
-      ? ""
-      : NodeUtil.stripVTControlCharacters(options.decisionReason).trim();
-  return reason === "" || reason === base ? base : `${base}\n${reason}`;
-}
-
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -3524,8 +3494,7 @@ function toSessionPermissionUpdates(
   if (updates.length > 0) {
     return updates;
   }
-  // A bare Bash rule would allow every later command, including the ones Auto
-  // mode or a hook escalated for a reason.
+  // Shell tools need an SDK-scoped suggestion to avoid allowing unrelated commands.
   if (toolName === "Bash" || toolName === "Monitor") {
     return [];
   }
@@ -9934,7 +9903,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          const prompt = claudeApprovalPrompt(callbackOptions, toolName, nativeToolInput);
+          // The user approves the command itself; Claude's title and description only summarize it.
+          const command = inputRecordValue(nativeToolInput, "command");
+          const prompt =
+            (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
+            callbackOptions.title ??
+            callbackOptions.description ??
+            callbackOptions.decisionReason ??
+            summarizeClaudeToolRequest(toolName, nativeToolInput);
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,

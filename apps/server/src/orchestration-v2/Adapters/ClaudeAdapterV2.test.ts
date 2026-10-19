@@ -39,7 +39,6 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
-  type OrchestrationV2RuntimeRequest,
   ProjectId,
   ProviderInstanceId,
   type ResolvedProviderInstanceEnvironment,
@@ -456,21 +455,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
-  it("maps Auto runtime mode to Claude's AI-reviewed permission mode and asks about escalations", () => {
-    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
-      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "auto",
-        interactionMode: "default",
-        cwd: "/workspace",
-      }),
-    );
-
-    assert.deepEqual(queryPolicy, {
-      permissionMode: "auto",
-      installPermissionCallback: true,
-    });
-  });
-
   it("keeps approval checks when Full access must fall back to an allowed Claude mode", () => {
     const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
       runtimeMode: "full-access",
@@ -819,6 +803,22 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.equal(result.interrupt, undefined);
   });
 
+  it.each(["Bash", "Monitor"])(
+    "does not grant all %s commands without an SDK suggestion",
+    (toolName) => {
+      const result = ClaudeAdapterV2.permissionResultFromDecision({
+        toolName,
+        decision: "acceptForSession",
+        toolInput: { command: "git push" },
+        toolUseID: "escalated-command",
+      });
+      assert.equal(result.behavior, "allow");
+      if (result.behavior !== "allow") return;
+      assert.deepEqual(result.updatedInput, { command: "git push" });
+      assert.deepEqual(result.updatedPermissions ?? [], []);
+    },
+  );
+
   it("forces suggested permission updates to session scope", () => {
     const result = ClaudeAdapterV2.permissionResultFromDecision({
       toolName: "Bash",
@@ -875,21 +875,6 @@ describe("ClaudeAdapterV2 session permissions", () => {
     ]);
   });
 
-  it("adds no session rule for Bash when Claude offers no suggestion", () => {
-    const result = ClaudeAdapterV2.permissionResultFromDecision({
-      toolName: "Bash",
-      decision: "acceptForSession",
-      toolInput: { command: "git push" },
-      toolUseID: "tool-3",
-    });
-
-    assert.equal(result.behavior, "allow");
-    if (result.behavior !== "allow") {
-      return;
-    }
-    assert.deepEqual(result.updatedPermissions, []);
-  });
-
   it("adds a whole-tool session rule when Claude offers no suggestion", () => {
     const result = ClaudeAdapterV2.permissionResultFromDecision({
       toolName: "mcp__t3__custom_tool",
@@ -913,244 +898,132 @@ describe("ClaudeAdapterV2 session permissions", () => {
   });
 });
 
-// Opens a Claude turn in the given permission mode and returns the runtime
-// with the permission callback the SDK query was opened with.
-const openClaudePermissionTurn = Effect.fn("openClaudePermissionTurn")(function* (
-  runtimeMode: "auto-accept-edits" | "auto" | "full-access",
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const idAllocator = yield* IdAllocator.IdAllocatorV2;
-  const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-    prefix: "t3-claude-permission-callback-",
-  });
-  let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
-  const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-    instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-    settings: DEFAULT_CLAUDE_SETTINGS,
-    environment: {},
-    attachmentsDir,
-    fileSystem,
-    path: yield* Path.Path,
-    crypto: yield* Crypto.Crypto,
-    idAllocator,
-    queryRunner: {
-      allocateSessionId: Effect.succeed(`native-thread-claude-${runtimeMode}`),
-      open: (input) =>
-        Effect.sync(() => {
-          openedOptions = input.options;
-          return {
-            messages: Stream.never,
-            offer: () => Effect.void,
-            setModel: () => Effect.void,
-            setPermissionMode: () => Effect.void,
-            applyFlagSettings: () => Effect.void,
-            backgroundTasks: () => Effect.succeed(false),
-            stopTask: () => Effect.void,
-            interrupt: Effect.void,
-            close: Effect.void,
-          };
-        }),
-      forkSession: () => Effect.die("unused"),
-      subagentLaunchToolUseId: () => Effect.succeed(null),
-      assertComplete: Effect.void,
-    },
-  });
-  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode,
-    interactionMode: "default",
-    cwd: "/workspace",
-  });
-  const threadId = ThreadId.make(`thread-claude-${runtimeMode}`);
-  const runtime = yield* adapter.openSession({
-    threadId,
-    providerSessionId: ProviderSessionId.make(`provider-session-claude-${runtimeMode}`),
-    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-    runtimePolicy,
-  });
-  const providerThread = yield* runtime.ensureThread({
-    threadId,
-    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-    runtimePolicy,
-  });
-  const now = yield* DateTime.now;
-  yield* runtime.startTurn(
-    makeClaudeTestTurnInput({
-      threadId,
-      providerThread,
-      now,
-      attemptId: RunAttemptId.make(`attempt-claude-${runtimeMode}`),
-      text: "Run the command.",
-      attachments: [],
-      runtimePolicy,
-    }),
-  );
-  const canUseTool = openedOptions?.canUseTool;
-  assert.isFunction(canUseTool);
-  return { runtime, permissionMode: openedOptions?.permissionMode, canUseTool: canUseTool! };
-});
-
-// Sends a Bash command through the permission callback and reports whichever
-// comes first: an approval request raised to the user, or the callback's own
-// answer. A raised request also carries the prompt from its turn item.
-const requestClaudeCommandPermission = Effect.fn("requestClaudeCommandPermission")(function* (
-  turn: Effect.Success<ReturnType<typeof openClaudePermissionTurn>>,
-  command: string,
-  callbackOptions: { readonly title?: string; readonly decisionReason?: string } = {},
-) {
-  // The runtime's events come off one queue, so a single subscriber collects
-  // both the request and the approval turn item emitted right after it.
-  const requestEvents = yield* turn.runtime.events.pipe(
-    Stream.filter(
-      (event) =>
-        event.type === "runtime_request.updated" ||
-        (event.type === "turn_item.updated" && event.turnItem.type === "approval_request"),
-    ),
-    Stream.take(2),
-    Stream.runCollect,
-    Effect.forkScoped,
-  );
-  const decision = yield* Effect.promise(() =>
-    turn.canUseTool(
-      "Bash",
-      { command },
-      {
-        signal: new AbortController().signal,
-        toolUseID: `tool-bash-${command}`,
-        requestId: `request-bash-${command}`,
-        ...callbackOptions,
-      },
-    ),
-  ).pipe(Effect.forkScoped);
-  const first = yield* Effect.raceFirst(
-    Fiber.join(requestEvents).pipe(
-      Effect.map((events) => {
-        let runtimeRequest: OrchestrationV2RuntimeRequest | undefined;
-        let prompt: string | undefined;
-        for (const event of events) {
-          if (event.type === "runtime_request.updated") runtimeRequest = event.runtimeRequest;
-          if (event.type === "turn_item.updated" && event.turnItem.type === "approval_request") {
-            prompt = event.turnItem.prompt;
-          }
-        }
-        return runtimeRequest === undefined
-          ? ({ type: "none" } as const)
-          : ({ type: "request", runtimeRequest, prompt } as const);
-      }),
-    ),
-    Fiber.join(decision).pipe(Effect.map((result) => ({ type: "decision", result }) as const)),
-  );
-  return { first, decision };
-});
-
-describe("ClaudeAdapterV2 permission callback", () => {
-  it.effect("asks before a command in Auto-accept edits instead of allowing it", () =>
+describe("ClaudeAdapterV2 escalated permissions", () => {
+  it.effect.each([
+    { mode: "auto", response: "accept" },
+    { mode: "auto", response: "decline" },
+    { mode: "auto-accept-edits", response: "accept" },
+  ] as const)("asks in $mode ($response)", ({ mode, response }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const turn = yield* openClaudePermissionTurn("auto-accept-edits");
-        assert.equal(turn.permissionMode, "acceptEdits");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-accept-edits-",
+        });
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-accept-edits"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: mode,
+          interactionMode: "default",
+          cwd: "/workspace",
+        });
+        const threadId = ThreadId.make("thread-claude-accept-edits");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-accept-edits"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-accept-edits"),
+            text: "Run node.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        assert.equal(openedOptions?.permissionMode, mode === "auto" ? "auto" : "acceptEdits");
+        const canUseTool = openedOptions?.canUseTool;
+        assert.isFunction(canUseTool);
 
-        const { first, decision } = yield* requestClaudeCommandPermission(
-          turn,
-          "node -e 'console.log(42)'",
+        const requestEvent = yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+          ),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const command = { command: "node -e 'console.log(42)'" };
+        const decision = yield* Effect.promise(() =>
+          canUseTool!("Bash", command, {
+            signal: new AbortController().signal,
+            toolUseID: "tool-bash-accept-edits",
+            requestId: "request-bash-accept-edits",
+            title: "Claude wants to run node",
+            decisionReason: "\u001b[33mHook needs confirmation\u001b[0m",
+          }),
+        ).pipe(Effect.forkScoped);
+        const first = yield* Effect.raceFirst(
+          Fiber.join(requestEvent).pipe(
+            Effect.map((event) => ({ type: "request", event }) as const),
+          ),
+          Fiber.join(decision).pipe(
+            Effect.map((result) => ({ type: "decision", result }) as const),
+          ),
         );
         assert.equal(first.type, "request", "the command ran without asking");
         if (first.type !== "request") return;
-        assert.equal(first.runtimeRequest.kind, "command");
-        assert.equal(first.prompt, "node -e 'console.log(42)'");
+        const event = first.event;
+        assert.isTrue(Option.isSome(event));
+        if (
+          Option.isNone(event) ||
+          event.value.type !== "turn_item.updated" ||
+          event.value.turnItem.type !== "approval_request"
+        )
+          return;
+        assert.equal(event.value.turnItem.requestKind, "command");
+        assert.equal(event.value.turnItem.prompt, command.command);
+        assert.equal(event.value.turnItem.reason, "Hook needs confirmation");
 
-        yield* turn.runtime.respondToRuntimeRequest({
-          requestId: first.runtimeRequest.id,
-          decision: "accept",
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event.value.turnItem.requestId,
+          decision: response,
         });
-        assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  // Claude's auto mode only calls the callback for actions it will not
-  // approve itself, such as a command matching a user `ask` rule.
-  it.effect("asks before a command Claude escalates in Auto", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const turn = yield* openClaudePermissionTurn("auto");
-        assert.equal(turn.permissionMode, "auto");
-
-        const { first, decision } = yield* requestClaudeCommandPermission(turn, "git push");
-        assert.equal(first.type, "request", "the escalated command ran without asking");
-        if (first.type !== "request") return;
-        assert.equal(first.runtimeRequest.kind, "command");
-
-        yield* turn.runtime.respondToRuntimeRequest({
-          requestId: first.runtimeRequest.id,
-          decision: "accept",
-        });
-        assert.equal((yield* Fiber.join(decision))?.behavior, "allow");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  // A PreToolUse hook that returns `ask` explains itself in `decisionReason`;
-  // the SDK's title alone would hide why the request was raised.
-  it.effect("shows a hook's escalation reason after the command in Auto", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const turn = yield* openClaudePermissionTurn("auto");
-
-        const { first } = yield* requestClaudeCommandPermission(turn, "git push", {
-          title: "Claude wants to run git push",
-          decisionReason: "\u001b[33mPushing needs confirmation\u001b[0m",
-        });
-        assert.equal(first.type, "request", "the escalated command ran without asking");
-        if (first.type !== "request") return;
-        assert.equal(first.prompt, "git push\nPushing needs confirmation");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("denies an escalated command in Auto when the user declines it", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const turn = yield* openClaudePermissionTurn("auto");
-
-        const { first, decision } = yield* requestClaudeCommandPermission(turn, "git push");
-        assert.equal(first.type, "request", "the escalated command ran without asking");
-        if (first.type !== "request") return;
-
-        yield* turn.runtime.respondToRuntimeRequest({
-          requestId: first.runtimeRequest.id,
-          decision: "decline",
-        });
-        assert.equal((yield* Fiber.join(decision))?.behavior, "deny");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("allows an escalated command in Full access without asking", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const turn = yield* openClaudePermissionTurn("full-access");
-        assert.equal(turn.permissionMode, "bypassPermissions");
-
-        const { first } = yield* requestClaudeCommandPermission(turn, "git push");
-        assert.equal(first.type, "decision", "Full access raised an approval request");
-        if (first.type !== "decision") return;
-        assert.equal(first.result?.behavior, "allow");
+        assert.equal(
+          (yield* Fiber.join(decision))?.behavior,
+          response === "accept" ? "allow" : "deny",
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
