@@ -615,7 +615,7 @@ if (context.update?.status === "pending") {
           activeVersion: "1.0.0",
         }),
       );
-      const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0");
+      const unit = yield* fakeServiceUnit(fs, path, root, "0.9.0");
 
       const launcher = new Launcher(
         root,
@@ -638,7 +638,7 @@ if (context.update?.status === "pending") {
         yield* fs.readFileString(unit.path),
         renderBootServiceUnit(unitPlan(root, "1.0.0")),
       );
-      assert.equal(unit.reloads, 0);
+      assert.equal(unit.reloads, 1);
       assert.equal(
         state.update?.status === "rolled-back" ? state.update.reason : undefined,
         "invalid-prepared",
