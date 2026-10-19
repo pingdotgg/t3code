@@ -807,8 +807,10 @@ export function NewTaskDraftScreen(props: {
 
   // An attachment is checked against the machine on screen and keeps the
   // draft there, so auto balance must not move it while one is on its way.
+  // Routing can become eligible mid-pick, when another machine's copy of the
+  // project loads, so only a draft that has already been balanced is exempt.
   const keepMachineForAttachment = () => {
-    if (flow.autoBalanceStatus === "checking" || flow.autoBalanceStatus === "unavailable") {
+    if (flow.autoBalanceStatus !== "balanced") {
       flow.pinEnvironment();
     }
   };
