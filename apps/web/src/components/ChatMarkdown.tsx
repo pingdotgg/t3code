@@ -2,6 +2,7 @@ import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
+  formatFilePathPosition,
   resolvePathLinkTarget,
 } from "@t3tools/shared/fileLinks";
 import {
@@ -14,6 +15,7 @@ import {
 import { isAbsolutePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -195,9 +197,10 @@ import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
+import { filesystemMetadata } from "../state/filesystem";
 import {
-  claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
+  runWorkspaceFileAction,
+  normalizeWorkspaceLookupPath,
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
@@ -2386,6 +2389,10 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
+  const getFilesystemMetadata = useAtomQueryRunner(filesystemMetadata, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -2587,9 +2594,13 @@ function useChatMarkdownState({
       return result;
     });
   };
-  const openMarkdownFileInPreview = (path: string) => {
+  const openMarkdownFileInPreview = (path: string, isCurrent: () => boolean) => {
     const preparedConnection = threadRef ? readPreparedConnection(threadRef.environmentId) : null;
-    if (!threadRef || !canOperatePreview || preparedConnection === null) {
+    if (
+      !threadRef ||
+      !readEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope) ||
+      preparedConnection === null
+    ) {
       return Promise.resolve(
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
@@ -2606,55 +2617,95 @@ function useChatMarkdownState({
       workspaceRoot: cwd,
       httpBaseUrl: preparedConnection.httpBaseUrl,
       createAssetUrl,
-      openPreview,
+      openPreview: async (input) => {
+        if (!isCurrent()) return AsyncResult.failure(Cause.interrupt());
+        const result = await openPreview(input);
+        return isCurrent() ? result : AsyncResult.failure(Cause.interrupt());
+      },
     });
   };
   const findWorkspaceBasenameMatch = async (workspaceRelativePath: string) => {
+    const lookupPath = normalizeWorkspaceLookupPath(workspaceRelativePath);
     if (
       !cwd ||
       environmentId === null ||
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
-      !needsWorkspaceBasenameLookup(workspaceRelativePath)
+      !lookupPath
     ) {
       return null;
+    }
+    if (lookupPath.includes("/")) {
+      // Literal files can be unindexed and must not wait for a cold workspace index.
+      const literal = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolvePathLinkTarget(lookupPath, cwd)] },
+      });
+      if (
+        literal._tag !== "Success" ||
+        literal.value.entries[0]?.kind === "file" ||
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+      ) {
+        return null;
+      }
     }
     const result = await searchProjectEntries({
       environmentId,
       input: {
         cwd,
-        query: workspaceRelativePath,
+        query: lookupPath,
         limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
         kind: "file",
       },
     });
     return result._tag === "Success"
-      ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
+      ? pickWorkspaceBasenameMatch(lookupPath, result.value.entries)
       : null;
   };
+  const fileActionScope = threadRef ? scopedThreadKey(threadRef) : undefined;
   const openFileInPanel = (panelPath: string, line: number | undefined) => {
     if (!threadRef) return;
-    // Claimed on every open so a synchronous one supersedes a lookup already
-    // in flight.
-    const isLatestLookup = claimWorkspaceBasenameLookup();
-    const openAt = (path: string) => useRightPanelStore.getState().openFile(threadRef, path, line);
-    if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
-      openAt(panelPath);
-      return;
-    }
-    void (async () => {
+    void runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
       const match = await findWorkspaceBasenameMatch(panelPath);
-      if (!isLatestLookup()) return;
-      openAt(match ?? panelPath);
-    })();
+      if (isCurrent()) useRightPanelStore.getState().openFile(threadRef, match ?? panelPath, line);
+    });
   };
-  const revealMarkdownFileInFileManager = async (fileLinkMeta: MarkdownFileLinkMeta) => {
-    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-    const match = workspaceRelativePath
-      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-      : null;
-    const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-    return revealFileInFileManager(filePath);
-  };
+  const revealMarkdownFileInFileManager = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
+      const match = fileLinkMeta.workspaceRelativePath
+        ? await findWorkspaceBasenameMatch(fileLinkMeta.workspaceRelativePath)
+        : null;
+      if (!isCurrent()) return AsyncResult.success(undefined);
+      return revealFileInFileManager(
+        match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
+      );
+    });
+  const openMarkdownFileInEditor = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
+      const relativePath = fileLinkMeta.workspaceRelativePath;
+      const match =
+        relativePath && normalizeWorkspaceLookupPath(relativePath).includes("/")
+          ? await findWorkspaceBasenameMatch(relativePath)
+          : null;
+      if (!isCurrent()) return AsyncResult.success(undefined);
+      return openInPreferredEditor(
+        match && cwd
+          ? formatFilePathPosition({ ...fileLinkMeta, path: resolvePathLinkTarget(match, cwd) })
+          : fileLinkMeta.targetPath,
+      );
+    });
+  const openMarkdownFileInBrowser = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
+      const relativePath = fileLinkMeta.workspaceRelativePath;
+      const match =
+        relativePath && normalizeWorkspaceLookupPath(relativePath).includes("/")
+          ? await findWorkspaceBasenameMatch(relativePath)
+          : null;
+      if (!isCurrent()) return AsyncResult.success(undefined);
+      return openMarkdownFileInPreview(
+        match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
+        isCurrent,
+      );
+    });
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
@@ -2689,7 +2740,7 @@ function useChatMarkdownState({
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
-        {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+        {...(canUseShellActions ? { onOpen: () => openMarkdownFileInEditor(fileLinkMeta) } : {})}
         onOpenInPanel={openFileInPanel}
         onOpenMedia={
           threadRef && canPreviewMedia
@@ -2708,7 +2759,7 @@ function useChatMarkdownState({
           canOperatePreview &&
           isPreviewAvailableFor(threadRef.environmentId) &&
           isBrowserPreviewFile(fileLinkMeta.filePath)
-            ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+            ? () => openMarkdownFileInBrowser(fileLinkMeta)
             : undefined
         }
       />

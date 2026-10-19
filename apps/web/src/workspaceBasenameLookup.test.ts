@@ -1,25 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
-  pickWorkspaceBasenameMatch,
-} from "./workspaceBasenameLookup";
-
-describe("needsWorkspaceBasenameLookup", () => {
-  it("flags bare filenames", () => {
-    expect(needsWorkspaceBasenameLookup("ChatView.tsx")).toBe(true);
-    expect(needsWorkspaceBasenameLookup("Makefile")).toBe(true);
-  });
-
-  it("leaves anything with a directory alone", () => {
-    expect(needsWorkspaceBasenameLookup("apps/web/src/components/ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("apps\\web\\ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup(".")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("..")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("   ")).toBe(false);
-  });
-});
+import { pickWorkspaceBasenameMatch } from "./workspaceBasenameLookup";
 
 describe("pickWorkspaceBasenameMatch", () => {
   const entries = [
@@ -28,9 +9,13 @@ describe("pickWorkspaceBasenameMatch", () => {
   ];
 
   it("takes the first exact filename match, not the closest fuzzy one", () => {
-    expect(pickWorkspaceBasenameMatch("ChatView.tsx", entries)).toBe(
-      "apps/web/src/components/ChatView.tsx",
-    );
+    expect(
+      pickWorkspaceBasenameMatch("ChatView.tsx", [
+        ...entries,
+        { path: "ChatView.tsx", kind: "file" },
+        { path: "apps/desktop/src/ChatView.tsx", kind: "file" },
+      ]),
+    ).toBe("apps/web/src/components/ChatView.tsx");
   });
 
   it("ignores directories", () => {
@@ -42,22 +27,16 @@ describe("pickWorkspaceBasenameMatch", () => {
     ).toBe("apps/web/src/components/components");
   });
 
-  it("prefers the exactly-cased file over a case-only twin", () => {
+  it("prefers exact casing, otherwise requires a unique case-insensitive match", () => {
     expect(
       pickWorkspaceBasenameMatch("foo.ts", [
         { path: "src/Foo.ts", kind: "file" },
         { path: "src/foo.ts", kind: "file" },
       ]),
     ).toBe("src/foo.ts");
-  });
-
-  it("falls back to case-insensitive when only the casing differs", () => {
     expect(pickWorkspaceBasenameMatch("chatview.tsx", entries)).toBe(
       "apps/web/src/components/ChatView.tsx",
     );
-  });
-
-  it("returns null when the case-insensitive fallback is ambiguous", () => {
     expect(
       pickWorkspaceBasenameMatch("FOO.ts", [
         { path: "src/Foo.ts", kind: "file" },
@@ -73,20 +52,5 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
       ]),
     ).toBeNull();
-  });
-});
-
-describe("claimWorkspaceBasenameLookup", () => {
-  it("keeps only the newest claim, whatever order the lookups settle in", () => {
-    const first = claimWorkspaceBasenameLookup();
-    const second = claimWorkspaceBasenameLookup();
-
-    expect(second()).toBe(true);
-    expect(first()).toBe(false);
-  });
-
-  it("stays valid while it is the only claim", () => {
-    const only = claimWorkspaceBasenameLookup();
-    expect(only()).toBe(true);
   });
 });
