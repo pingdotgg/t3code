@@ -60,11 +60,11 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
-  return (
+  return async (
     environments: Parameters<typeof writeScopedSettings>[0],
     planner: Parameters<typeof writeScopedSettings>[1],
     onFailed?: () => void,
-  ) => {
+  ): Promise<{ readonly saved: boolean; readonly message: string | null }> => {
     const plan = planner(environments);
     if (plan.unavailableReason) {
       toastManager.add({
@@ -73,7 +73,7 @@ function useRunScopedPlan() {
         description: plan.unavailableReason,
       });
       onFailed?.();
-      return;
+      return { saved: false, message: plan.unavailableReason };
     }
     const save = {};
     const settle = (environmentId: EnvironmentId, saved?: ServerSettings) =>
@@ -89,55 +89,69 @@ function useRunScopedPlan() {
       ...writes,
       ...plan.serverWrites.map(({ environmentId, patch }) => ({ save, environmentId, patch })),
     ]);
-    void writeScopedSettings(
-      environments,
-      planner,
-      async (request) => {
-        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
-          (scope) => !readEnvironmentScope(request.environmentId, scope),
+    try {
+      const { failedEnvironments, savedEnvironments, savedEnvironmentCount } =
+        await writeScopedSettings(
+          environments,
+          planner,
+          async (request) => {
+            const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+              (scope) => !readEnvironmentScope(request.environmentId, scope),
+            );
+            const result = missing
+              ? AsyncResult.failure(
+                  Cause.fail(
+                    new EnvironmentAuthorizationError({
+                      requiredScope: missing,
+                      message: m(msg("This connection lacks permission to change these settings.")),
+                    }),
+                  ),
+                )
+              : await persistServer(request).catch((error: unknown) => {
+                  settle(request.environmentId);
+                  throw error;
+                });
+            settle(request.environmentId, result._tag === "Success" ? result.value : undefined);
+            return result;
+          },
+          persistClientSettingsPatch,
         );
-        const result = missing
-          ? AsyncResult.failure(
-              Cause.fail(
-                new EnvironmentAuthorizationError({
-                  requiredScope: missing,
-                  message: m(msg("This connection lacks permission to change these settings.")),
+      if (failedEnvironments.length === 0) return { saved: true, message: null };
+      onFailed?.();
+      const message = [
+        ...failedEnvironments.map(({ label, message }) =>
+          m(msg("Could not save on {label}: {message}", { label, message })),
+        ),
+        ...(savedEnvironmentCount > 0
+          ? [
+              m(
+                msg("Saved on {environments}.", {
+                  environments: savedEnvironments.map(({ label }) => label).join(", "),
                 }),
               ),
-            )
-          : await persistServer(request).catch((error: unknown) => {
-              settle(request.environmentId);
-              throw error;
-            });
-        settle(request.environmentId, result._tag === "Success" ? result.value : undefined);
-        return result;
-      },
-      persistClientSettingsPatch,
-    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-      if (failedEnvironments.length === 0) return;
-      onFailed?.();
+            ]
+          : []),
+      ].join("\n");
       toastManager.add({
         type: "error",
         title:
           savedEnvironmentCount > 0
             ? m(msg("Setting saved on some environments"))
             : m(msg("Setting not saved")),
-        description: [
-          ...failedEnvironments.map(({ label, message }) =>
-            m(msg("Could not save on {label}: {message}", { label, message })),
-          ),
-          ...(savedEnvironmentCount > 0
-            ? [
-                m(
-                  msg("Saved on {environments}.", {
-                    environments: savedEnvironments.map(({ label }) => label).join(", "),
-                  }),
-                ),
-              ]
-            : []),
-        ].join("\n"),
+        description: message,
       });
-    });
+      return { saved: false, message };
+    } catch (error) {
+      onFailed?.();
+      const message =
+        error instanceof Error ? error.message : m(msg("The save failed. Try again."));
+      toastManager.add({
+        type: "error",
+        title: m(msg("Setting not saved")),
+        description: message,
+      });
+      return { saved: false, message };
+    }
   };
 }
 
@@ -158,7 +172,7 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
+    void run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
   };
 }
 
@@ -170,7 +184,7 @@ export function useClearProjectOverrides() {
     keys: readonly ProjectScopedServerSettingKey[],
   ) => {
     if (context === null) return;
-    run(context.environments, (current) => planProjectOverridesClear(current, entries, keys));
+    void run(context.environments, (current) => planProjectOverridesClear(current, entries, keys));
   };
 }
 

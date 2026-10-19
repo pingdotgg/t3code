@@ -1543,7 +1543,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:provider:install-remove",
       tag: WS_METHODS.providerInstallRemove,
     }),
-    /** Whether the host can run computer use; rechecked when the switch flips. */
     computerUse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:computer-use",
       tag: WS_METHODS.serverCheckComputerUse,

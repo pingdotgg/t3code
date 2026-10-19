@@ -414,7 +414,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     subtitle={managedSubtitle(
                       "enableCua",
                       gt(
-                        "Allow agents to use apps on this environment's computer through Cua Driver. On a Mac, grant Accessibility and Screen Recording from T3 Code on that Mac.",
+                        "Allow agents to use apps on the selected environments' computers through Cua Driver. On macOS, grant Accessibility and Screen Recording on each host.",
                       ),
                     )}
                     value={uniform("enableCua")}

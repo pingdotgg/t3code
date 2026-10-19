@@ -5,6 +5,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceSourcesSettings } from "./DeviceSourcesSettings";
 import { CuaSetupDialog } from "./CuaSetupDialog";
+import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import {
   AuthSettingsWriteScope,
   BrowserImportFailureReason,
@@ -42,7 +43,7 @@ import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m as resolveNow, type MessageResolver } from "../../i18n/messages";
 
@@ -1143,23 +1144,61 @@ function AgentBrowserAccessSetting() {
   );
 }
 
-/**
- * Cua computer use for the selected environment. The switch records intent;
- * the host status shows whether the driver can actually start there.
- */
 function ComputerUseSettings() {
+  const { scope, environment, search } = useSettingsScope();
+  const singleHost =
+    scope.kind === "environment" || (scope.kind === "all" && scope.environmentIds.length === 1);
+  return (
+    <SettingsSection id="computer" title="Computer">
+      {singleHost && environment ? (
+        <ComputerUseControls key={`${environment.environmentId}:${JSON.stringify(search)}`} />
+      ) : (
+        <SettingsScopeNotice target="environment" targetId="cua-computer-use">
+          {singleHost
+            ? "Connect the selected environment to configure computer use."
+            : "Choose one environment to configure computer use on its host."}
+        </SettingsScopeNotice>
+      )}
+    </SettingsSection>
+  );
+}
+
+function ComputerUseControls() {
   const { environment: selected } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const [setupOpen, setSetupOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const environmentId =
     selected?.connection.phase === "connected" && selected.serverConfig !== null
       ? selected.environmentId
       : null;
   const hostLabel = selected?.label ?? "this computer";
-  const { data: status, refresh } = useEnvironmentQuery(
+  const {
+    data: status,
+    error,
+    isPending,
+    refresh,
+  } = useEnvironmentQuery(
     environmentId === null ? null : serverEnvironment.computerUse({ environmentId, input: {} }),
   );
+  const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  if (setupOpen && !canConfigure) setSetupOpen(false);
+  const refreshVisible = useEffectEvent(() => {
+    if (!isPending && document.visibilityState !== "hidden") refresh();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Polls the host's Cua status through a timer and focus/visibility listeners while this row is mounted.
+  useEffect(() => {
+    if (environmentId === null) return;
+    const timer = window.setInterval(refreshVisible, 3000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [environmentId]);
   const platform = status?.platform ?? "other";
   // Only the Mac that runs the environment can grant it macOS permissions.
   const localMac =
@@ -1168,51 +1207,76 @@ function ComputerUseSettings() {
     window.desktopBridge?.getClientPlatform() === "darwin" &&
     selected?.entry.target._tag === "PrimaryConnectionTarget";
   const enabled = settings.enableCua;
-  const statusText = !enabled
-    ? null
-    : status?.running
-      ? "Running"
-      : status?.failure
-        ? status.failure
-        : "Starts with the next agent session";
+  const statusText = error
+    ? `Could not check computer use: ${error}`
+    : status === null
+      ? "Checking host…"
+      : platform === "other"
+        ? "Computer use is not supported on this host."
+        : !enabled
+          ? null
+          : status.running
+            ? "Running"
+            : (status.failure ?? "Starts with the next agent session");
+
+  const save = async (enableCua: boolean) => {
+    setSaving(true);
+    try {
+      const result = await updateSettings({ enableCua });
+      refresh();
+      return result;
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <SettingsSection id="computer" title="Computer">
+    <>
       <SettingsRow
         {...searchableSetting("cua-computer-use")}
         serverScoped
         settingKeys={["enableCua"]}
-        description={`Let agents see and use apps on ${hostLabel} through Cua Driver, in the background without moving your cursor. Applies to agent sessions started afterwards.`}
+        description={`Let agents see and use apps on ${hostLabel} through Cua Driver, in the background without moving your cursor. New agent sessions get the tools; turning this off stops the driver.`}
         status={statusText}
         resetAction={
-          enabled !== DEFAULT_SERVER_SETTINGS.enableCua ? (
+          enabled !== DEFAULT_SERVER_SETTINGS.enableCua && !saving && !setupOpen ? (
             <SettingResetButton
               label="computer use"
-              onClick={() => void updateSettings({ enableCua: DEFAULT_SERVER_SETTINGS.enableCua })}
+              onClick={() => void save(DEFAULT_SERVER_SETTINGS.enableCua)}
             />
           ) : null
         }
         control={
           <>
-            {enabled && platform !== "other" ? (
-              <Button size="xs" variant="outline" onClick={() => setSetupOpen(true)}>
+            {enabled && status !== null && !error && platform !== "other" ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={saving || !canConfigure}
+                onClick={() => setSetupOpen(true)}
+              >
                 Setup
               </Button>
             ) : null}
             <ScopedSwitch
               settingKeys={["enableCua"]}
-              checked={enabled || setupOpen}
-              disabled={environmentId === null || platform === "other"}
+              checked={enabled}
+              disabled={
+                saving ||
+                !canConfigure ||
+                environmentId === null ||
+                (!enabled && (status === null || !!error || platform === "other"))
+              }
               aria-label="Computer use"
               onCheckedChange={(checked) => {
                 if (checked) setSetupOpen(true);
-                else void updateSettings({ enableCua: false });
+                else void save(false);
               }}
             />
           </>
         }
       />
-      {setupOpen ? (
+      {setupOpen && canConfigure && environmentId !== null ? (
         <CuaSetupDialog
           enabled={enabled}
           hostLabel={hostLabel}
@@ -1227,9 +1291,24 @@ function ComputerUseSettings() {
             await api.shell.openSystemSettings(permission);
           }}
           onEnable={async () => {
-            if (!enabled) await updateSettings({ enableCua: true });
+            if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
+              throw new Error("This connection cannot change settings on this host.");
+            }
+            if (!enabled) {
+              const result = await save(true);
+              if (!result.saved)
+                throw new Error(result.message ?? "Could not save the setting. Try again.");
+            }
             // A driver started before the grants keeps macOS's cached denial.
-            if (localMac) await window.desktopBridge?.restartCuaDriver();
+            if (localMac) {
+              try {
+                await window.desktopBridge?.restartCuaDriver();
+              } catch {
+                throw new Error(
+                  "Computer use is on, but Cua Driver could not restart. Try Setup again.",
+                );
+              }
+            }
           }}
           onClose={() => {
             setSetupOpen(false);
@@ -1237,7 +1316,7 @@ function ComputerUseSettings() {
           }}
         />
       ) : null}
-    </SettingsSection>
+    </>
   );
 }
 

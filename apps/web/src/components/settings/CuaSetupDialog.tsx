@@ -1,5 +1,5 @@
 import type { CuaHostStatus } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { MacAccessibilityIcon, MacScreenRecordingIcon } from "../Icons";
 import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
@@ -19,25 +19,19 @@ export type CuaPermission = "accessibility" | "screen-recording";
 
 const CUA_PERMISSIONS: readonly CuaPermission[] = ["accessibility", "screen-recording"];
 
-/** What the host itself needs before computer use can work there. */
 function hostRequirements(platform: CuaHostStatus["platform"], hostLabel: string): string {
   switch (platform) {
     case "darwin":
-      return `T3 Code on ${hostLabel} needs Accessibility and Screen Recording. Open T3 Code on that Mac to grant them; the setting turns on from here either way.`;
+      return `${hostLabel} needs Accessibility and Screen Recording. Finish setup at that Mac: in System Settings → Privacy & Security, grant access to the app or process running this environment. You can turn the setting on from here.`;
     case "linux":
-      return `${hostLabel} needs a signed-in graphical session. On Wayland, someone at ${hostLabel} approves the screen capture prompt the first time an agent looks at the screen.`;
+      return `${hostLabel} needs a signed-in graphical session. On Wayland, someone at ${hostLabel} may need to approve a screen capture prompt.`;
     case "win32":
-      return `${hostLabel} needs a signed-in desktop session. No permissions are needed; Windows Defender may ask once before Cua Driver first runs.`;
+      return `${hostLabel} needs a signed-in desktop session. If Windows shows a security prompt for Cua Driver, someone at that computer must respond.`;
     default:
       return `Computer use needs a desktop on ${hostLabel}.`;
   }
 }
 
-/**
- * Setup for Cua computer use. On the Mac that hosts the environment it walks
- * through Accessibility and Screen Recording, which macOS grants to T3 Code;
- * elsewhere it explains what the host needs, since only someone at it can act.
- */
 export function CuaSetupDialog({
   enabled,
   hostLabel,
@@ -51,7 +45,6 @@ export function CuaSetupDialog({
   enabled: boolean;
   hostLabel: string;
   platform: CuaHostStatus["platform"];
-  /** This desktop is the Mac that runs the environment, so it can grant access here. */
   localMac: boolean;
   onCheck: (permission: CuaPermission) => Promise<boolean>;
   onAllow: (permission: CuaPermission) => Promise<void>;
@@ -59,6 +52,7 @@ export function CuaSetupDialog({
   onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const pending = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const permission = usePermissionStatus(
     async () => ({
@@ -69,24 +63,32 @@ export function CuaSetupDialog({
     localMac && !busy,
   );
   const ready = !localMac || permission.isReady(CUA_PERMISSIONS);
-  const allow = (target: CuaPermission) => {
-    if (busy) return;
+  const allow = async (target: CuaPermission) => {
+    if (pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError(null);
-    void onAllow(target)
-      .catch(() => setError("Could not open System Settings. Try Allow again."))
-      .finally(() => setBusy(false));
+    try {
+      await onAllow(target);
+    } catch {
+      setError("Could not open System Settings. Try Allow again.");
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
   };
   const finish = async () => {
-    if (busy) return;
+    if (pending.current || !ready) return;
+    pending.current = true;
     setBusy(true);
     setError(null);
     try {
       await onEnable();
       onClose();
-    } catch {
-      setError("Could not save the setting. Try again.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not save the setting. Try again.");
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   };
@@ -94,7 +96,7 @@ export function CuaSetupDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+        if (!open && !pending.current) onClose();
       }}
     >
       <DialogPopup showCloseButton={!busy}>
@@ -116,7 +118,7 @@ export function CuaSetupDialog({
                   title: "Accessibility",
                   description: "Click, type, and read controls in other apps.",
                   granted: permission.status.accessibility,
-                  onAllow: () => allow("accessibility"),
+                  onAllow: () => void allow("accessibility"),
                 },
                 {
                   id: "screen-recording",
@@ -124,7 +126,7 @@ export function CuaSetupDialog({
                   title: "Screen Recording",
                   description: "See the screen to decide what to do next.",
                   granted: permission.status["screen-recording"],
-                  onAllow: () => allow("screen-recording"),
+                  onAllow: () => void allow("screen-recording"),
                 },
               ]}
             />
@@ -143,7 +145,13 @@ export function CuaSetupDialog({
           ) : null}
         </DialogPanel>
         <DialogFooter>
-          <Button variant="ghost" disabled={busy} onClick={onClose}>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              if (!pending.current) onClose();
+            }}
+          >
             {enabled ? "Close" : "Finish later"}
           </Button>
           <PermissionContinueButton ready={ready} busy={busy} onClick={() => void finish()}>

@@ -150,7 +150,6 @@ export class CuaDriver extends Context.Service<
     readonly acquire: Effect.Effect<Option.Option<CuaDriverMcpConfiguration>>;
     /** Why the last start failed, until a later start succeeds. */
     readonly lastFailure: Effect.Effect<Option.Option<string>>;
-    /** What setup flows show: the host OS, and whether the driver runs or why not. */
     readonly status: Effect.Effect<CuaHostStatus>;
   }
 >()("t3/cua/CuaDriver") {}
