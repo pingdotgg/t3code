@@ -1,3 +1,4 @@
+import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
@@ -116,6 +117,21 @@ describe("buildComposerPromptHistoryEntries", () => {
       { id: "m3", prompt: "other" },
       { id: "m4", prompt: "same" },
     ]);
+  });
+
+  it("skips messages sent by automations, agents, and T3 Code", () => {
+    const typed = buildComposerPromptHistoryEntries([
+      { id: "m1", role: "user", text: "typed" },
+      { id: "m2", role: "user", text: "scheduled", scheduledTaskId: ScheduledTaskId.make("task") },
+      {
+        id: "scheduled-task-message:task:1:scheduled",
+        role: "user",
+        text: "[Triggered by schedule task: Daily]\n\nlegacy scheduled",
+      },
+      { id: "m3", role: "user", text: "from agent", createdBy: "agent", creationSource: "mcp" },
+      { id: "m4", role: "user", text: "from server", createdBy: "agent", creationSource: "server" },
+    ]);
+    expect(typed).toEqual([{ id: "m1", prompt: "typed" }]);
   });
 });
 

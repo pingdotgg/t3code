@@ -1,3 +1,4 @@
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -9,11 +10,9 @@ const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_c
 const TRAILING_LEGACY_CONTEXT =
   /\n*<(terminal_context|element_context|preview_annotation)>\n([\s\S]*?)\n<\/\1>\s*$/;
 
-export interface ComposerPromptHistoryMessage {
+export type ComposerPromptHistoryMessage = Parameters<typeof resolveUserMessagePresentation>[0] & {
   readonly id: string;
-  readonly role: string;
-  readonly text: string;
-}
+};
 
 export interface ComposerPromptHistoryEntry {
   readonly id: string;
@@ -129,6 +128,8 @@ export function buildComposerPromptHistoryEntries(
   const entries: ComposerPromptHistoryEntry[] = [];
   for (const message of messages) {
     if (message.role !== "user") continue;
+    // Automations and other agents send user-role messages; recall only what the user typed.
+    if (resolveUserMessagePresentation(message).attribution !== null) continue;
     const prompt = recallableComposerPrompt(message.text);
     if (prompt.length === 0) continue;
     const previous = entries[entries.length - 1];
