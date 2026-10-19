@@ -4,11 +4,7 @@ import {
   mergeDirectPreviewAnnotation,
   resolveVisibleWorktreeSetup,
 } from "./ChatView.logic";
-import {
-  recallCheckoutIsRepo,
-  rememberCheckoutIsRepo,
-  threadShellHasStarted,
-} from "./ChatView.logic";
+import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -1988,38 +1984,6 @@ describe("checkout Git memory", () => {
   it("does not confuse an environment id containing the separator with a path", () => {
     rememberCheckoutIsRepo(EnvironmentId.make("env"), "a:b", false);
     expect(recallCheckoutIsRepo(EnvironmentId.make("env:a"), "b")).toBeUndefined();
-  });
-});
-
-describe("threadShellHasStarted", () => {
-  it("counts a thread that has a user message but no latest turn", () => {
-    expect(
-      threadShellHasStarted({ latestRun: null, latestUserMessageAt: now, runtime: null }),
-    ).toBe(true);
-  });
-
-  it("counts a thread with a live runtime and nothing else", () => {
-    expect(
-      threadShellHasStarted({
-        latestRun: null,
-        latestUserMessageAt: null,
-        runtime: {
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          status: "starting",
-          providerName: "codex",
-          activeRunId: null,
-          lastError: null,
-          updatedAt: now,
-        },
-      }),
-    ).toBe(true);
-  });
-
-  it("does not count a thread that never sent anything", () => {
-    expect(
-      threadShellHasStarted({ latestRun: null, latestUserMessageAt: null, runtime: null }),
-    ).toBe(false);
-    expect(threadShellHasStarted(null)).toBe(false);
   });
 });
 

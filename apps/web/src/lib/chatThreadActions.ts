@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -64,6 +65,33 @@ export function hasExplicitComposerModelSelection(
     activeProvider !== null &&
     activeProvider !== undefined &&
     draft.modelSelectionByProvider[activeProvider] !== undefined
+  );
+}
+
+/**
+ * A started thread keeps the model it ran on. Its draft still carries the seed
+ * from sticky state or the default model, which only a pick made for this
+ * thread may override. A draft thread sends its seed.
+ */
+export function draftModelSelectionApplies(
+  draft: Pick<ComposerThreadDraftState, "modelSelectionExplicit"> | null | undefined,
+  threadStarted: boolean,
+): boolean {
+  return !threadStarted || draft?.modelSelectionExplicit === true;
+}
+
+export function threadShellHasStarted(
+  shell:
+    | Pick<EnvironmentThreadShell, "latestRun" | "latestUserMessageAt" | "runtime" | "itemCount">
+    | null
+    | undefined,
+): boolean {
+  return Boolean(
+    shell &&
+    (shell.latestRun !== null ||
+      shell.latestUserMessageAt !== null ||
+      shell.runtime !== null ||
+      shell.itemCount > 0),
   );
 }
 

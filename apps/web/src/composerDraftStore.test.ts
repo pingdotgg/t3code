@@ -17,7 +17,9 @@ import {
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   collectAssistantCitations,
@@ -73,6 +75,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  deriveEffectiveComposerModelState,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
@@ -2022,6 +2025,102 @@ describe("composerDraftStore modelSelection", () => {
       replaceOptions: true,
     });
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+  });
+
+  describe("effective selection on a started thread", () => {
+    const codexModels = ["gpt-5.4", "gpt-5.3-codex"];
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId: CODEX_INSTANCE,
+        driver: CODEX_DRIVER,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: codexModels.map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    const threadSelection = modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
+      reasoningEffort: "low",
+    });
+    const effective = (threadStarted: boolean) =>
+      deriveEffectiveComposerModelState({
+        draft: useComposerDraftStore.getState().getComposerDraft(threadRef),
+        threadStarted,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        selectedInstanceId: CODEX_INSTANCE,
+        threadModelSelection: threadSelection,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      });
+
+    it("follows the thread until the user picks a model", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(
+        threadRef,
+        modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+      );
+
+      expect(effective(false)).toEqual({
+        selectedModel: "gpt-5.4",
+        modelOptions: { [CODEX_INSTANCE]: toSelections({ reasoningEffort: "high" }) },
+      });
+      expect(effective(true)).toEqual({
+        selectedModel: "gpt-5.3-codex",
+        modelOptions: { [CODEX_INSTANCE]: toSelections({ reasoningEffort: "low" }) },
+      });
+
+      store.setModelSelection(
+        threadRef,
+        modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+        { explicit: true },
+      );
+      expect(effective(true).selectedModel).toBe("gpt-5.4");
+    });
+
+    it("keeps the shown model when the user changes traits over a seed", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+      store.setProviderModelOptions(
+        threadRef,
+        CODEX_DRIVER,
+        toSelections({ reasoningEffort: "high" }),
+        { instanceId: CODEX_INSTANCE, model: "gpt-5.3-codex", persistSticky: true },
+      );
+
+      expect(effective(true)).toEqual({
+        selectedModel: "gpt-5.3-codex",
+        modelOptions: { [CODEX_INSTANCE]: toSelections({ reasoningEffort: "high" }) },
+      });
+    });
+
+    it("does not bring back the thread's traits after the user clears them", () => {
+      for (const seeded of [false, true]) {
+        resetComposerDraftStore();
+        const store = useComposerDraftStore.getState();
+        if (seeded) {
+          store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+        }
+        store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
+          instanceId: CODEX_INSTANCE,
+          model: "gpt-5.3-codex",
+        });
+
+        const state = effective(true);
+        expect(state.selectedModel).toBe("gpt-5.3-codex");
+        expect(state.modelOptions?.[CODEX_INSTANCE] ?? []).toEqual([]);
+      }
+    });
   });
 
   it("persists the explicit marker through storage round-trips", async () => {

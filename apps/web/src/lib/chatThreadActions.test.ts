@@ -12,6 +12,7 @@ import {
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
   startNewThreadFromContext,
+  threadShellHasStarted,
   type ChatThreadActionContext,
 } from "./chatThreadActions";
 
@@ -167,5 +168,61 @@ describe("chatThreadActions", () => {
 
     expect(didStart).toBe(false);
     expect(handleNewThread).not.toHaveBeenCalled();
+  });
+});
+
+const now = "2026-03-29T00:00:00.000Z";
+
+describe("threadShellHasStarted", () => {
+  it("counts a thread that has a user message but no latest turn", () => {
+    expect(
+      threadShellHasStarted({
+        latestRun: null,
+        latestUserMessageAt: now,
+        runtime: null,
+        itemCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("counts a thread with a live runtime and nothing else", () => {
+    expect(
+      threadShellHasStarted({
+        latestRun: null,
+        latestUserMessageAt: null,
+        runtime: {
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "starting",
+          providerName: "codex",
+          activeRunId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        itemCount: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("counts a thread whose items arrived before any run", () => {
+    expect(
+      threadShellHasStarted({
+        latestRun: null,
+        latestUserMessageAt: null,
+        runtime: null,
+        itemCount: 2,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not count a thread that never sent anything", () => {
+    expect(
+      threadShellHasStarted({
+        latestRun: null,
+        latestUserMessageAt: null,
+        runtime: null,
+        itemCount: 0,
+      }),
+    ).toBe(false);
+    expect(threadShellHasStarted(null)).toBe(false);
   });
 });
