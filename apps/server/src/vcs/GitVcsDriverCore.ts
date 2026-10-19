@@ -11,6 +11,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Request from "effect/Request";
+import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -24,6 +26,7 @@ import {
   T3_PROJECT_FILE_NAME,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
+  type ReviewDiffPreviewResult,
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
   type VcsRef,
@@ -63,6 +66,12 @@ const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // totals are reported incomplete instead.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+class ReviewFileDiffRequest extends Request.Class<
+  { input: ReviewDiffPreviewInput & { file: NonNullable<ReviewDiffPreviewInput["file"]> } },
+  ReviewDiffPreviewResult,
+  GitCommandError
+> {}
+
 // Patches the clients render are parsed against git's default a/ and b/ path
 // prefixes. A repository or global diff.noprefix or diff.mnemonicPrefix would
 // otherwise leak into the patch and leave every parsed file unnamed.
@@ -2701,7 +2710,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
-    onlyPath?: string,
+    onlyPaths?: ReadonlySet<string>,
   ) {
     const untracked = yield* executeGit(
       "GitVcsDriver.review.listUntracked",
@@ -2716,7 +2725,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     if (untracked === null) return null;
     const paths = splitNullSeparatedGitStdoutPaths(untracked).filter(
-      (candidate) => onlyPath === undefined || candidate === onlyPath,
+      (candidate) => onlyPaths === undefined || onlyPaths.has(candidate),
     );
     if (paths.length === 0) return { env: undefined };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
@@ -2829,8 +2838,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { baseRef, insertions, deletions };
   }, Effect.scoped);
 
-  const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
+  type PreparedReviewDiff = {
+    repository: Effect.Success<ReturnType<typeof resolveRepositoryPathsUncached>>;
+    review: { baseRef: string | null; mergeBase: string | null };
+    untracked: Effect.Success<ReturnType<typeof prepareUntrackedReviewIndex>>;
+  };
+
+  const readReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
+    prepared?: PreparedReviewDiff,
   ) {
     const pathArgs = input.file
       ? [input.file.path, ...(input.file.previousPath ? [input.file.previousPath] : [])].map(
@@ -2840,12 +2856,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const patchLimit = input.file
       ? REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES
       : REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES;
-    const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
-      Effect.catchTags({
-        GitCommandError: (error) =>
-          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-      }),
-    );
+    const repository = prepared
+      ? prepared.repository
+      : yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+          Effect.catchTags({
+            GitCommandError: (error) =>
+              isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+          }),
+        );
     if (!repository?.worktreeRoot) {
       return {
         cwd: input.cwd,
@@ -2856,8 +2874,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const cwd = repository.worktreeRoot;
     const dirtyRef = input.file?.sourceKind === "branch-range" ? null : "HEAD";
-    const review =
-      input.file?.sourceKind === "working-tree"
+    const review = prepared
+      ? prepared.review
+      : input.file?.sourceKind === "working-tree"
         ? { baseRef: input.baseRef ?? null, mergeBase: null }
         : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
 
@@ -2911,7 +2930,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
-      const untracked = yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path);
+      const untracked = prepared
+        ? prepared.untracked
+        : yield* prepareUntrackedReviewIndex(
+            cwd,
+            pathArgs,
+            input.file ? new Set([input.file.path]) : undefined,
+          );
       const [dirty, base] =
         review.mergeBase === dirtyRef
           ? yield* readTrackedDiff(dirtyRef, untracked?.env).pipe(
@@ -2983,6 +3008,68 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       sources,
     };
   });
+
+  // Share preparation only within a pending batch; a later read must observe Git changes.
+  const reviewFileDiffResolver = RequestResolver.makeWith<ReviewFileDiffRequest>({
+    batchKey: ({ request: { input } }) =>
+      JSON.stringify([
+        input.cwd,
+        input.baseRef,
+        input.ignoreWhitespace ?? false,
+        input.file.sourceKind,
+      ]),
+    delay: Effect.yieldNow,
+    collectWhile: (entries) => entries.size < 4,
+    runAll: Effect.fnUntraced(function* (entries) {
+      const input = entries[0].request.input;
+      const repository = yield* resolveRepositoryPathsUncached(input.cwd).pipe(
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+        }),
+      );
+      let prepared: PreparedReviewDiff = {
+        repository,
+        review: { baseRef: null, mergeBase: null },
+        untracked: null,
+      };
+      if (repository?.worktreeRoot) {
+        const cwd = repository.worktreeRoot;
+        const review =
+          input.file.sourceKind === "working-tree"
+            ? { baseRef: input.baseRef ?? null, mergeBase: null }
+            : yield* resolveReviewMergeBase(cwd, repository.currentBranch, input.baseRef);
+        const files = entries.map((entry) => entry.request.input.file);
+        const paths = [
+          ...new Set(
+            files.flatMap((file) => [file.path, ...(file.previousPath ? [file.previousPath] : [])]),
+          ),
+        ];
+        const untracked = yield* prepareUntrackedReviewIndex(
+          cwd,
+          paths.map((path) => `:(top,literal)${path}`),
+          new Set(files.map((file) => file.path)),
+        );
+        prepared = { repository, review, untracked };
+      }
+      yield* Effect.forEach(
+        entries,
+        (entry) =>
+          readReviewDiffPreview(entry.request.input, prepared).pipe(
+            Effect.exit,
+            Effect.map((exit) => entry.completeUnsafe(exit)),
+          ),
+        { concurrency: 4, discard: true },
+      );
+    }, Effect.scoped),
+  });
+  const getReviewDiffPreview = (input: ReviewDiffPreviewInput) =>
+    input.file
+      ? Effect.request(
+          new ReviewFileDiffRequest({ input: { ...input, file: input.file } }),
+          reviewFileDiffResolver,
+        )
+      : readReviewDiffPreview(input);
 
   const reviewDiffFileError = (
     input: ReviewDiffFileContentsInput,
