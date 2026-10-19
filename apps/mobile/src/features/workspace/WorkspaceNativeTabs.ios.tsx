@@ -1,4 +1,4 @@
-import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
+import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Keyboard, Platform, View, type NativeSyntheticEvent } from "react-native";
 import {
@@ -13,7 +13,6 @@ import type { WorkspaceTab } from "./workspace-tabs-state";
 import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 
-// Tabler's git-pull-request geometry, rasterized at 1x/2x/3x for UIKit template images.
 const PULL_REQUEST_ICON = require("../../../assets/icons/pull-request.png");
 const COMPOSE_TAB = "compose";
 
@@ -45,11 +44,6 @@ function RetainedWorkspaceTab(props: {
   ) : null;
 }
 
-/**
- * UIKit retains both controller trees and displays the system tab bar or sidebar for the current size class.
- * On phones, compose is UIKit's own search-role tab, detached like Photos' search button; it never
- * becomes selected and opens a new chat instead.
- */
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
@@ -58,8 +52,11 @@ export function WorkspaceNativeTabs(props: {
 }) {
   const workspace = useWorkspaceTabs()!;
   const metrics = useNativeLayoutMetrics();
+  const deviceType = useDeviceType();
   const phoneBar =
-    Platform.OS === "ios" && !Platform.isPad && (metrics?.verticalBarEdge ?? "none") === "none";
+    Platform.OS === "ios" &&
+    deviceType !== "pad" &&
+    (metrics?.verticalBarEdge ?? "none") === "none";
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
   const selectedTab = workspace.state.selectedTab;

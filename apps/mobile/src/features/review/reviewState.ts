@@ -97,7 +97,6 @@ interface CachedReviewParsedDiff {
   readonly sourceCharacterCount: number;
 }
 
-// The factory keeps this mutable cache local to the registry and releases it on reset or disposal.
 const reviewParsedDiffCacheAtom = Atom.make(() => ({
   entries: new Map<string, CachedReviewParsedDiff>(),
   sourceCharacterCount: 0,
@@ -265,7 +264,6 @@ export function updateReviewViewedFileIds(
   });
 }
 
-/** Returns the larger of current input and matching cached source, without changing recency. */
 export function getReviewParsedDiffSourceCharacterCount(input: {
   readonly threadKey: string;
   readonly sectionId: string;

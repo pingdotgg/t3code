@@ -10,10 +10,7 @@ import {
 } from "./mobileTheme";
 
 /**
- * The theme an HTML render styles against. Its background is the feed's own canvas.
- * Material You has no shared palette: it starts from the default one and takes the
- * roles its system colors replace. WebViews cannot load the app's bundled fonts, so
- * renders use system stacks.
+ * WebViews cannot load the app's bundled fonts, so renders use system stacks.
  */
 export function mobileHtmlRenderTheme(input: {
   readonly themeId: MobileThemeId;
@@ -56,7 +53,6 @@ export function mobileHtmlRenderTheme(input: {
         }
       : palette,
   );
-  // Android paints the thread on its own canvas role; iOS uses the screen.
   const canvas = v[input.platform === "android" ? "--color-thread-canvas" : "--color-screen"];
   return htmlRenderTheme({ ...colors, canvas }, input.appearance, HTML_RENDER_DEFAULT_FONTS);
 }

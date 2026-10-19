@@ -24,16 +24,17 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   private var controller: UIViewController?
   private let completion: (Error?) -> Void
   private weak var sources: T3PresentationSources?
-  private let sourceIdentifier: String
+  private let sourceIdentifiers: [String]
   private var items: [FilePreviewItem] = []
   private var loading: Task<Void, Never>?
   private var dismissRequested = false
   private var finished = false
 
-  init(identifier: String, sources: T3PresentationSources, sourceIdentifier: String, completion: @escaping (Error?) -> Void) {
+  init(identifier: String, sources: T3PresentationSources, sourceIdentifiers: [String],
+       completion: @escaping (Error?) -> Void) {
     self.identifier = identifier
     self.sources = sources
-    self.sourceIdentifier = sourceIdentifier
+    self.sourceIdentifiers = sourceIdentifiers
     self.completion = completion
     super.init()
   }
@@ -107,14 +108,21 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     items[index]
   }
 
+  private func sourceView(for item: QLPreviewItem) -> UIView? {
+    guard !UIAccessibility.isReduceMotionEnabled,
+      let index = items.firstIndex(where: { $0 === item }),
+      sourceIdentifiers.indices.contains(index)
+    else { return nil }
+    return sources?.view(for: sourceIdentifiers[index])
+  }
+
   func previewController(_ controller: QLPreviewController, transitionViewFor item: QLPreviewItem) -> UIView? {
-    guard !UIAccessibility.isReduceMotionEnabled else { return nil }
-    return sources?.view(for: sourceIdentifier)
+    sourceView(for: item)
   }
 
   func previewController(_ controller: QLPreviewController, frameFor item: QLPreviewItem,
                          inSourceView view: AutoreleasingUnsafeMutablePointer<UIView?>) -> CGRect {
-    guard !UIAccessibility.isReduceMotionEnabled, let source = sources?.view(for: sourceIdentifier) else { return .zero }
+    guard let source = sourceView(for: item) else { return .zero }
     view.pointee = source
     return source.bounds
   }

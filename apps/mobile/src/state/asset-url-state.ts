@@ -1,19 +1,13 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { AssetUrlState as SharedAssetUrlState } from "@t3tools/client-runtime/state/assets";
 
-export type AssetUrlFailureReason = "disconnected" | "failed";
+export type AssetUrlFailureReason = "disconnected" | "failed" | "missing-file-access";
 
-/** The shared state plus a reason on failure, so previews can offer the right retry. */
 export type AssetUrlState =
   | { readonly _tag: "Loading" }
   | { readonly _tag: "Failure"; readonly reason: AssetUrlFailureReason }
   | Extract<SharedAssetUrlState, { readonly _tag: "Success" }>;
 
-/**
- * Folds the shared asset URL state with the environment connection phase. A
- * dead environment wins over everything else: even a resolved URL is
- * unreachable there, and a failed query is caused by the outage, not the file.
- */
 export function deriveAssetUrlState(input: {
   readonly connectionPhase: EnvironmentConnectionPhase;
   readonly shared: SharedAssetUrlState;
@@ -42,7 +36,7 @@ export function deriveAssetUrlState(input: {
       return { _tag: "Loading" };
     case "connected":
       return input.shared._tag === "Failure"
-        ? { _tag: "Failure", reason: "failed" }
+        ? { _tag: "Failure", reason: input.shared.reason ?? "failed" }
         : { _tag: "Loading" };
   }
 }

@@ -9,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import {
   ProjectId,
+  GitCommandError,
   type PullRequestActivity,
   type PullRequestDetail,
   type PullRequestStack,
@@ -29,7 +30,6 @@ import * as PullRequestReviewGuideService from "./PullRequestReviewGuideService.
 import * as PullRequestService from "./PullRequestService.ts";
 
 const projectId = ProjectId.make("project-1");
-/** The test project is a checkout of the repository its pull requests come from. */
 const ACME_APP = {
   canonicalKey: "github.com/acme/app",
   locator: {
@@ -57,10 +57,6 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     return result.stdout.trim();
   });
 
-/**
- * A remote whose `main` has moved on past where the change's base branch left it, with the
- * change stacked on that base branch. A guide for the change must see only its own commit.
- */
 const makeRepositories = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-guide-" });
@@ -82,13 +78,11 @@ const makeRepositories = Effect.gen(function* () {
   yield* git(remote, ["checkout", "--quiet", "-b", "stack-base"]);
   const lowerSha = yield* commit("lower.txt", "lower layer");
   yield* git(remote, ["checkout", "--quiet", "-b", "feature"]);
-  // Ten lines, so an excerpt reaching past them has something to be clamped to.
   const headSha = yield* commit(
     "feature.txt",
     "the change",
     Array.from({ length: 10 }, (_, index) => `line ${index + 1}`).join("\n") + "\n",
   );
-  // A layer above the change, which uses what the change adds.
   yield* git(remote, ["checkout", "--quiet", "-b", "upper"]);
   const upperSha = yield* commit("upper.txt", "upper layer");
   yield* git(remote, ["checkout", "--quiet", "main"]);
@@ -116,7 +110,6 @@ const activity: PullRequestActivity = {
   commits: [],
 };
 
-/** The change as the middle layer of three; the top layer's head is not on any fetched branch. */
 const stack = (repositories: {
   readonly headSha: string;
   readonly lowerSha: string;
@@ -144,7 +137,7 @@ const stack = (repositories: {
     {
       number: 8,
       title: "Upper",
-      headSha: repositories.upperSha,
+      headSha: repositories.upperSha.slice(0, 12),
       headBranch: "upper",
       state: "open",
     },
@@ -159,13 +152,9 @@ const makeLayer = (input: {
   readonly lowerSha: string;
   readonly upperSha: string;
   readonly generate: TextGeneration.TextGeneration["Service"]["generateReviewGuide"];
-  /** Completed when a run stores its guide, which is the last thing a run does but forget it. */
   readonly stored: Deferred.Deferred<void>;
-  /** The server's beta switch; on unless a test is about it being off. */
   readonly enabled?: boolean;
-  /** The head the host reports now, for a test that pushes between runs. */
   readonly currentHead?: Ref.Ref<string>;
-  /** The project's own repository; defaults to the one the test reference names. */
   readonly identity?: typeof ACME_APP;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
@@ -228,8 +217,326 @@ const layerBase = Layer.mergeAll(
   SqlitePersistence.layerMemory,
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
+type Repositories = Effect.Success<typeof makeRepositories>;
+
+const awaitRunFailure = (
+  service: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"],
+  input: PullRequestRef,
+) =>
+  service.get(input).pipe(
+    Effect.flatMap((result) =>
+      result.run?._tag === "Failed"
+        ? Effect.succeed(result.run.detail)
+        : Effect.fail("still running" as const),
+    ),
+    Effect.retry(Schedule.spaced("20 millis")),
+  );
+
+const startSingleBranchRun = (input: {
+  readonly repositoryName: string;
+  readonly reportedHead: (repositories: Repositories) => string;
+  readonly refuseCommitFetch: boolean;
+  readonly prepare: (
+    repositories: Repositories,
+    workspace: string,
+  ) => Effect.Effect<void, GitCommandError, GitVcsDriver.GitVcsDriver>;
+  readonly onBranchFetch?:
+    | ((
+        repositories: Repositories,
+      ) => Effect.Effect<void, GitCommandError, GitVcsDriver.GitVcsDriver>)
+    | undefined;
+}) =>
+  Effect.gen(function* () {
+    const repositories = yield* makeRepositories;
+    const workspace = `${repositories.root}/single-branch`;
+    yield* git(repositories.root, [
+      "clone",
+      "--quiet",
+      "--no-local",
+      "--single-branch",
+      "--branch",
+      "main",
+      `${repositories.root}/remote`,
+      workspace,
+    ]);
+    yield* input.prepare(repositories, workspace);
+    const reportedHead = input.reportedHead(repositories);
+    const stored = yield* Deferred.make<void>();
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const fetchedRefs: Array<string> = [];
+    const observed: Array<{ cwd: string; head: string; changed: string }> = [];
+    const onBranchFetch = input.onBranchFetch;
+    const observedDriver = {
+      ...driver,
+      execute: (call: GitVcsDriver.ExecuteGitInput) =>
+        Effect.gen(function* () {
+          const ref = call.args.at(-1);
+          if (call.args[0] !== "fetch" || ref === undefined) return yield* driver.execute(call);
+          fetchedRefs.push(ref);
+          if (input.refuseCommitFetch && ref === repositories.headSha) {
+            return yield* new GitCommandError({
+              operation: call.operation,
+              command: "git",
+              cwd: call.cwd,
+              detail: "The test remote refuses fetches by commit.",
+              exitCode: 128,
+            });
+          }
+          if (ref === "refs/heads/feature" && onBranchFetch !== undefined) {
+            yield* onBranchFetch(repositories).pipe(
+              Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+            );
+          }
+          return yield* driver.execute(call);
+        }),
+    };
+    const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
+      driver
+        .execute({ operation: "test.readCheckout", cwd, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    const context = yield* Layer.build(
+      makeLayer({
+        ...repositories,
+        headSha: reportedHead,
+        workspace,
+        stored,
+        identity: {
+          ...ACME_APP,
+          canonicalKey: `github.com/acme/${input.repositoryName}`,
+          displayName: `acme/${input.repositoryName}`,
+          name: input.repositoryName,
+        },
+        generate: (generation) =>
+          Effect.gen(function* () {
+            observed.push({
+              cwd: generation.cwd,
+              head: yield* readCheckout(generation.cwd, ["rev-parse", "HEAD"]),
+              changed: yield* readCheckout(generation.cwd, [
+                "diff",
+                "--name-only",
+                `${generation.baseCommit}...HEAD`,
+              ]),
+            });
+            return { stops: [] };
+          }).pipe(Effect.orDie),
+      }).pipe(Layer.provide(Layer.succeed(GitVcsDriver.GitVcsDriver, observedDriver))),
+    );
+    const service = Context.get(
+      context,
+      PullRequestReviewGuideService.PullRequestReviewGuideService,
+    );
+    const guideReference = { ...reference, repository: `acme/${input.repositoryName}` };
+    yield* service.generate(guideReference);
+    return {
+      repositories,
+      reportedHead,
+      service,
+      reference: guideReference,
+      stored,
+      fetchedRefs,
+      observed,
+    };
+  });
+
 // Runs drive real git, which the test clock does not advance, so waits use real time.
 it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideService", (it) => {
+  it.effect.each([
+    {
+      name: "a short head already fetched",
+      shortHash: true,
+      prepare: "fetch-feature",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: [],
+    },
+    {
+      name: "a short head on its branch",
+      shortHash: true,
+      prepare: "none",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: ["refs/heads/feature"],
+    },
+    {
+      name: "a short head whose branch moves during the fetch",
+      shortHash: true,
+      prepare: "none",
+      pushDuringFetch: true,
+      refuseCommitFetch: true,
+      expectedFetches: ["refs/heads/feature"],
+    },
+    {
+      name: "a full head served by commit",
+      shortHash: false,
+      prepare: "none",
+      pushDuringFetch: false,
+      refuseCommitFetch: false,
+      expectedFetches: ["<head>"],
+    },
+    {
+      name: "a full head on its branch",
+      shortHash: false,
+      prepare: "none",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: ["<head>", "refs/heads/feature"],
+    },
+    {
+      name: "a full head only on its pull ref",
+      shortHash: false,
+      prepare: "refs/pull/7/head",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: ["<head>", "refs/heads/feature", "refs/pull/7/head"],
+    },
+    {
+      name: "a full head only on its merge request ref",
+      shortHash: false,
+      prepare: "refs/merge-requests/7/head",
+      pushDuringFetch: false,
+      refuseCommitFetch: true,
+      expectedFetches: [
+        "<head>",
+        "refs/heads/feature",
+        "refs/pull/7/head",
+        "refs/merge-requests/7/head",
+      ],
+    },
+  ])(
+    "writes a guide for the reported commit: $name",
+    ({ shortHash, prepare, pushDuringFetch, refuseCommitFetch, expectedFetches }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const run = yield* startSingleBranchRun({
+            repositoryName: "fetched-head",
+            reportedHead: (repositories) =>
+              shortHash ? repositories.headSha.slice(0, 12) : repositories.headSha,
+            refuseCommitFetch,
+            prepare: (repositories, workspace) => {
+              const remote = `${repositories.root}/remote`;
+              if (prepare === "fetch-feature") {
+                return git(workspace, ["fetch", "--quiet", "origin", "feature"]).pipe(
+                  Effect.asVoid,
+                );
+              }
+              if (prepare === "none") return Effect.void;
+              return git(remote, ["update-ref", prepare, repositories.headSha]).pipe(
+                Effect.andThen(
+                  git(remote, ["update-ref", "refs/heads/feature", repositories.lowerSha]),
+                ),
+                Effect.asVoid,
+              );
+            },
+            onBranchFetch: pushDuringFetch
+              ? (repositories) => {
+                  const remote = `${repositories.root}/remote`;
+                  return git(remote, ["checkout", "--quiet", "feature"]).pipe(
+                    Effect.andThen(
+                      git(remote, [
+                        "commit",
+                        "--quiet",
+                        "--allow-empty",
+                        "-m",
+                        "push during fetch",
+                      ]),
+                    ),
+                    Effect.asVoid,
+                  );
+                }
+              : undefined,
+          });
+          yield* Effect.raceFirst(
+            Deferred.await(run.stored),
+            awaitRunFailure(run.service, run.reference).pipe(
+              Effect.flatMap((detail) => Effect.die(`run failed: ${detail}`)),
+            ),
+          );
+          const { headSha } = run.repositories;
+          const result = yield* run.service.get(run.reference);
+          assert.strictEqual(result.guide?.headSha, run.reportedHead);
+          assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+          assert.deepStrictEqual(run.observed, [
+            { cwd: run.observed[0]?.cwd, head: headSha, changed: "feature.txt" },
+          ]);
+          const headRefs = new Set([
+            headSha,
+            run.reportedHead,
+            "refs/heads/feature",
+            "refs/pull/7/head",
+            "refs/merge-requests/7/head",
+          ]);
+          assert.deepStrictEqual(
+            run.fetchedRefs.filter((ref) => headRefs.has(ref)),
+            expectedFetches.map((ref) => (ref === "<head>" ? headSha : ref)),
+          );
+          const fs = yield* FileSystem.FileSystem;
+          assert.isFalse(yield* fs.exists(run.observed[0]?.cwd ?? ""));
+        }),
+      ),
+  );
+
+  it.effect.each([
+    {
+      name: "a branch named like the short head",
+      reportedHead: (repositories: Repositories) => repositories.headSha.slice(0, 12),
+      shadow: "branch",
+      expected: ["a branch or tag rather than the commit"],
+    },
+    {
+      name: "a tag named like the short head",
+      reportedHead: (repositories: Repositories) => repositories.headSha.slice(0, 12),
+      shadow: "tag",
+      expected: ["a branch or tag rather than the commit"],
+    },
+    {
+      name: "a head that is not a commit hash",
+      reportedHead: (repositories: Repositories) =>
+        `--upload-pack=touch ${repositories.root}/injected`,
+      shadow: "none",
+      expected: ["not a commit hash"],
+    },
+    {
+      name: "a head no source has",
+      reportedHead: () => "e".repeat(40),
+      shadow: "none",
+      expected: [
+        "local objects:",
+        "the commit:",
+        "branch feature:",
+        "refs/pull/7/head:",
+        "refs/merge-requests/7/head:",
+      ],
+    },
+  ])("refuses to write a guide for $name", ({ reportedHead, shadow, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* startSingleBranchRun({
+          repositoryName: "refused-head",
+          reportedHead,
+          refuseCommitFetch: false,
+          prepare: (repositories, workspace) =>
+            git(workspace, ["fetch", "--quiet", "origin", "feature"]).pipe(
+              Effect.andThen(
+                shadow === "none"
+                  ? Effect.void
+                  : git(workspace, [shadow, repositories.headSha.slice(0, 12), "HEAD"]),
+              ),
+              Effect.asVoid,
+            ),
+        });
+        const detail = yield* Effect.raceFirst(
+          awaitRunFailure(run.service, run.reference),
+          Deferred.await(run.stored).pipe(Effect.andThen(Effect.die("a guide was written"))),
+        );
+        for (const part of expected) assert.include(detail, part);
+        assert.deepStrictEqual(run.observed, []);
+        assert.isFalse(run.fetchedRefs.some((ref) => ref.startsWith("-")));
+        const fs = yield* FileSystem.FileSystem;
+        assert.isFalse(yield* fs.exists(`${run.repositories.root}/injected`));
+      }),
+    ),
+  );
+
   it.effect("briefs the change against its own base in a checkout it then removes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -241,7 +548,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           readonly upper: string;
         }>();
         const finish = yield* Deferred.make<void>();
-        // The fake model reads the checkout with the same driver, captured so it needs nothing.
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const readCheckout = (cwd: string, args: ReadonlyArray<string>) =>
           git(cwd, args).pipe(
@@ -264,15 +570,12 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
                   `${input.baseCommit}...HEAD`,
                 ]);
                 const head = yield* readCheckout(input.cwd, ["rev-parse", "HEAD"]);
-                // Another layer's head is readable from the checkout, to check a seam.
                 const upper = yield* readCheckout(input.cwd, [
                   "show",
                   `${repositories.upperSha}:upper.txt`,
                 ]);
                 yield* Deferred.succeed(seen, { input, changed, head, upper });
                 yield* Deferred.await(finish);
-                // Written the way a model gets it wrong: an excerpt past the end of the file, a
-                // note outside what is left of it, and a changed file left off the tour.
                 return {
                   stops: [
                     {
@@ -299,13 +602,11 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
 
-        // Generate returns while the run is still reading the change.
         const started = yield* service.generate(reference);
         assert.strictEqual(started.run?._tag, "Running");
         assert.strictEqual(started.guide, null);
         assert.isTrue(started.started);
 
-        // A run that fails before reaching the model reports why rather than leaving this waiting.
         const failedRun = service.get(reference).pipe(
           Effect.flatMap((result) =>
             result.run?._tag === "Failed"
@@ -318,8 +619,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         assert.strictEqual(observed.head, repositories.headSha);
         assert.strictEqual(observed.changed, "feature.txt");
         assert.strictEqual(observed.input.baseBranch, "stack-base");
-        // The stack comes along, bottom first; a layer whose head could not be fetched is named
-        // without one.
         assert.deepStrictEqual(observed.input.stack, [
           { number: 6, title: "Lower", state: "open", headSha: repositories.lowerSha },
           { number: 7, title: "Add the feature", state: "open", headSha: repositories.headSha },
@@ -328,7 +627,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
         ]);
         assert.strictEqual(observed.upper, "upper layer");
 
-        // A second press while running joins the run instead of starting another.
         const joined = yield* service.generate(reference);
         assert.strictEqual(joined.run, started.run);
         assert.isFalse(joined.started);
@@ -347,7 +645,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           story?.notes.map((note) => note.title),
           ["Kept"],
         );
-        // lower.txt is below the change's base, so it is neither in the change nor on the tour.
         assert.strictEqual(guide.stops.length, 1);
 
         const fs = yield* FileSystem.FileSystem;
@@ -389,7 +686,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           const repositories = yield* makeRepositories;
           const stored = yield* Deferred.make<void>();
           const currentHead = yield* Ref.make(repositories.headSha);
-          // The old run waits on this; the new one answers at once.
           const releaseOld = yield* Deferred.make<void>();
           const oldStarted = yield* Deferred.make<void>();
           const answer = (title: string) => ({
@@ -440,12 +736,10 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             Effect.retry(Schedule.spaced("20 millis")),
           );
           yield* Effect.raceFirst(Deferred.await(oldStarted), firstFailed);
-          // A push: the host reports the upper layer's commit as the head now, and a new run starts.
           yield* Ref.set(currentHead, repositories.upperSha);
           const second = yield* service.generate(reference);
           assert.strictEqual(second.run?._tag, "Running");
           assert.strictEqual(second.run?.headSha, repositories.upperSha);
-          // A run that fails reports why rather than leaving this waiting.
           const failedRun = service.get(reference).pipe(
             Effect.flatMap((result) =>
               result.run?._tag === "Failed"
@@ -456,7 +750,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           );
           yield* Effect.raceFirst(Deferred.await(stored), failedRun);
 
-          // The old run finishes last. Its guide is for a head nobody is looking at any more.
           yield* Deferred.succeed(releaseOld, undefined);
           const settled = yield* service.get(reference).pipe(
             Effect.filterOrFail(
@@ -466,7 +759,6 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
             Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 250 }),
           );
           assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
-          // Give the late run every chance to write over the newer guide; it must not.
           yield* Effect.sleep("200 millis");
           const after = yield* service.get(reference);
           assert.isNull(after.run);

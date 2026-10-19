@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  isOrchestrationV2WorkActive,
   ModelSelection,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
@@ -45,6 +46,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as EventSink from "./EventSink.ts";
+import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -56,7 +58,6 @@ const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
-/** The identity a turn's start and its `turn.terminal` share. */
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
@@ -69,14 +70,6 @@ export const ProviderSessionReleaseReason = Schema.Literals([
 ]);
 export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.Type;
 
-/**
- * ProviderSessionManager owns live session residency: open sessions, idle release,
- * explicit shutdown, and release-on-runtime-failure.
- *
- * It intentionally does not resurrect persisted sessions. Process-loss recovery
- * terminalizes provider-bound work and retires non-replayable effects; a later
- * user command or durable replay-safe operation opens a session lazily.
- */
 export class ProviderSessionOpenError extends Schema.TaggedError<ProviderSessionOpenError>()(
   "ProviderSessionOpenError",
   {
@@ -169,10 +162,10 @@ export interface ProviderSessionManagerV2Shape {
     Option.Option<ProviderAdapter.ProviderAdapterV2SessionRuntime>,
     ProviderSessionManagerV2Error
   >;
+  readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
-  /** Closes every live runtime owned by one provider instance. */
   readonly closeInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -185,11 +178,6 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
     readonly detail?: string;
-    /**
-     * True for terminal detaches (thread archived or deleted): the thread's
-     * MCP credentials are revoked immediately instead of surviving for a
-     * potential re-attach.
-     */
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
 }
@@ -203,11 +191,10 @@ interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /**
-   * MCP credential session id issued for each attached thread. Revocation on
-   * detach/release is scoped to these ids so tearing down a superseded
-   * session cannot revoke a replacement session's credential for the same
-   * thread (the workspace-handoff sequence opens the replacement before the
-   * outbox executes the old session's detach).
+   * Revocation on detach/release is scoped to these ids so tearing down a
+   * superseded session cannot revoke a replacement session's credential for the
+   * same thread (the workspace-handoff sequence opens the replacement before
+   * the outbox executes the old session's detach).
    */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
@@ -219,21 +206,10 @@ interface LiveSessionEntry {
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
-  /**
-   * Turns this session is running, keyed by `busyTurnKey`. A turn's start adds
-   * it and its `turn.terminal` (or a failed start) removes it, so a turn can
-   * only clear itself and the session is idle when the set is empty.
-   */
   readonly busyTurns: ReadonlySet<string>;
   readonly lastActivityAtMs: number;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
-  /** Set when idle release is deferred for pending background work; bounds total deferral. */
   readonly pinnedSinceMs: number | null;
-  /**
-   * Shared runtimes only: the provider thread each attached app thread last
-   * started a turn on, and the timer that unloads it once it has been idle
-   * for `idleTimeoutMs`.
-   */
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
 }
 
@@ -252,9 +228,7 @@ type ProviderSessionEventSignal =
 
 export interface ProviderSessionManagerV2LayerOptions {
   readonly idleTimeoutMs?: number;
-  /** Cap on how long idle release may be deferred for pending background work. */
   readonly maxIdlePinMs?: number;
-  /** Test replay harnesses can omit T3's MCP server from provider protocol fixtures. */
   readonly configureMcp?: boolean;
 }
 
@@ -274,11 +248,6 @@ function sessionKey(providerSessionId: ProviderSessionId): string {
   return String(providerSessionId);
 }
 
-/**
- * Runtime requests with no provider turn belong to the live session itself.
- * Their node and transcript item are runless too, so they bypass the normal
- * per-run subscriber and are persisted by the session event pump.
- */
 function sessionScopedRuntimeRequestThreadId(
   event: ProviderAdapter.ProviderAdapterV2Event,
 ): ThreadId | undefined {
@@ -329,6 +298,7 @@ export const layerWithOptions = (
 ): Layer.Layer<
   ProviderSessionManagerV2,
   never,
+  | CommandOutputHub.CommandOutputHub
   | EventSink.EventSinkV2
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
@@ -346,16 +316,15 @@ export const layerWithOptions = (
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /**
-       * Optional so the many focused tests that assemble this layer by hand do
-       * not each need a settings stub; the production composition always
-       * provides it. When present, an unreadable settings file withholds
-       * browser access rather than granting it — an explicit "off" silently
-       * becoming "on" would violate the user's stated choice, whereas the
-       * reverse costs an agent one toolset and is visible immediately (#7083).
+       * When present, an unreadable settings file withholds browser access
+       * rather than granting it — an explicit "off" silently becoming "on"
+       * would violate the user's stated choice, whereas the reverse costs an
+       * agent one toolset and is visible immediately (#7083).
        */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
+      const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -424,7 +393,6 @@ export const layerWithOptions = (
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
       const sessionOpen = yield* KeyedLock.make<ProviderSessionId>();
-      // Orders a thread's attach against a detach unloading it on the same session.
       const threadAttachment = yield* KeyedLock.make<string>();
       const threadAttachmentKey = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -434,17 +402,12 @@ export const layerWithOptions = (
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
         readonly mcpCredentialId: string | undefined;
-        /** True when this call minted the credential (vs reusing a live one). */
         readonly issued: boolean;
       }
       /**
-       * Reservations protect a credential between prepareMcpSession handing it
-       * out and the owning session entry becoming visible in `sessions`.
        * Adapters like ACP and OpenCode consume the credential eagerly during
        * openSession, so a racing release must not revoke it in that window
        * (rotating afterwards cannot repair an already-configured process).
-       * The holder MUST drop the reservation once the entry is recorded or the
-       * open fails.
        */
       const mcpCredentialReservations = new Map<string, number>();
       const mcpReservationKey = (threadId: ThreadId, mcpCredentialId: string) =>
@@ -466,8 +429,6 @@ export const layerWithOptions = (
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /**
-       * Resolves (or mints) the thread's MCP credential and returns it with a
-       * reservation held; the caller must drop the reservation exactly once.
        * Serialized per thread so two concurrent prepares cannot interleave
        * their rotate steps and revoke each other's freshly minted credential.
        */
@@ -516,8 +477,6 @@ export const layerWithOptions = (
                     resolved !== undefined &&
                     resolved.thread.threadId === threadId &&
                     resolved.thread.providerInstanceId === providerInstanceId &&
-                    // A flipped browser-access setting must not survive through
-                    // credential reuse: rotate so the new scope reflects it.
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable
                   ) {
@@ -537,12 +496,6 @@ export const layerWithOptions = (
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
             );
-      /**
-       * With a credential id, revocation is scoped to that credential and the
-       * config slot is cleared only while it still holds it; a replacement
-       * session's newer credential survives. Without one (attach failed before
-       * a credential was recorded), fall back to thread-wide revocation.
-       */
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
         mcpCredentialId === undefined
           ? mcpSessionRegistry
@@ -591,17 +544,19 @@ export const layerWithOptions = (
           );
         });
 
-      const closeSubscribers = (entry: LiveSessionEntry) =>
+      // Server shutdown interrupts subscribers rather than ending them: a
+      // cleanly ended stream without a terminal fails its run, while an
+      // interrupted one leaves run settlement to restart recovery.
+      const interruptSubscribers = (entry: LiveSessionEntry) =>
         Effect.gen(function* () {
           const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
           yield* Effect.forEach(
             subscribers.values(),
-            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.end(queue))),
+            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.interrupt(queue))),
             { discard: true },
           );
         });
 
-      // Preserve already-published terminal events while ending subscriptions.
       // Server shutdown intentionally clears them; a provider-announced Stop
       // must let consumers drain them before the stream completes.
       const endSubscribers = (entry: LiveSessionEntry) =>
@@ -671,7 +626,6 @@ export const layerWithOptions = (
       const writeReleasedRuntimeRequestEvents = (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
-        /** Requests created later belong to a replacement session with the same id. */
         readonly releasedAt: DateTime.Utc;
       }) =>
         Effect.gen(function* () {
@@ -774,14 +728,113 @@ export const layerWithOptions = (
           }
         });
 
-      // Records a released session as stopped and resolves the live runtime
-      // requests it left. Each write runs even if the other fails. Once a
-      // replacement session opens with the same id, it owns the session status,
-      // so only the requests are settled.
+      // Read as soon as the session leaves the live map: after that, a
+      // replacement session with the same id can open and report tasks of its
+      // own on the same provider threads. OpenCode's background subagents run
+      // on a server shared by its sessions and can outlive this one, so their
+      // roster stays.
+      const readReleasedBackgroundTasks = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly detachedThreadId?: ThreadId;
+      }) =>
+        Effect.gen(function* () {
+          if (
+            input.reason === "server_shutdown" ||
+            input.entry.runtime.backgroundTasksEndWithProcess !== true
+          ) {
+            return [];
+          }
+          const providerSessionId = input.entry.runtime.providerSessionId;
+          const threadIds = new Set(input.entry.attachedThreadIds);
+          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+          const released = [];
+          for (const threadId of threadIds) {
+            const projection = yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ]);
+            for (const providerThread of projection.providerThreads) {
+              const tasks = providerThread.pendingBackgroundTasks ?? [];
+              if (providerThread.providerSessionId !== providerSessionId || tasks.length === 0) {
+                continue;
+              }
+              released.push({
+                threadId,
+                providerSessionId,
+                providerThreadId: providerThread.id,
+                taskIds: new Set(tasks.map((task) => task.taskId)),
+              });
+            }
+          }
+          return released;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-session-release-roster-read-failed", {
+              providerSessionId: input.entry.runtime.providerSessionId,
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        );
+      type ReleasedBackgroundTasks = Effect.Success<
+        ReturnType<typeof readReleasedBackgroundTasks>
+      >[number];
+
+      // Their process is gone, so nothing will report them ending, and a
+      // leftover roster keeps the thread Waiting (#15239).
+      const writeReleasedBackgroundWorkEvents = (
+        released: ReadonlyArray<ReleasedBackgroundTasks>,
+      ) =>
+        Effect.forEach(
+          released,
+          ({ threadId, providerSessionId, providerThreadId, taskIds }) =>
+            Effect.gen(function* () {
+              for (let attempt = 0; attempt < 3; attempt++) {
+                const projection = yield* projectionStore.getThreadRecords(threadId, [
+                  "providerThreads",
+                ]);
+                const providerThread = projection.providerThreads.find(
+                  (candidate) => candidate.id === providerThreadId,
+                );
+                const tasks = providerThread?.pendingBackgroundTasks ?? [];
+                const remaining = tasks.filter((task) => !taskIds.has(task.taskId));
+                if (providerThread === undefined || remaining.length === tasks.length) return;
+                const now = yield* DateTime.now;
+                const { committed } = yield* eventSink.writeIfProviderThreadUnchanged({
+                  expected: providerThread,
+                  events: [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                      type: "provider-thread.updated",
+                      threadId,
+                      driver: providerThread.driver,
+                      providerInstanceId: providerThread.providerInstanceId,
+                      occurredAt: now,
+                      payload: {
+                        ...providerThread,
+                        pendingBackgroundTasks: remaining,
+                        updatedAt: now,
+                      },
+                    },
+                  ],
+                });
+                if (committed) return;
+              }
+              yield* Effect.logWarning(
+                "orchestration-v2.provider-session-release-roster-conflict",
+                {
+                  providerSessionId,
+                  providerThreadId,
+                },
+              );
+            }),
+          { discard: true },
+        );
+
       const writeReleaseRecords = (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
+        readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
         readonly replaced: boolean;
       }) =>
@@ -795,14 +848,14 @@ export const layerWithOptions = (
                 input.entry.requestEventPermit.withPermits(1),
               ),
             ),
+            Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
 
-      // The session already left the live map, so a later release finds
-      // nothing to do. Without a retry the UI would keep a ready session and
-      // answerable approvals until a server restart. Each attempt holds the
-      // session's open lock, so it sees a replacement that opened meanwhile.
+      // The session already left the live map, so a later release finds nothing
+      // to do. Without a retry the UI would keep a ready session and answerable
+      // approvals until a server restart.
       const retryReleaseRecords = (
         input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
       ) => {
@@ -851,11 +904,9 @@ export const layerWithOptions = (
             ),
           );
 
-      // Removes the live entry and reads the request cleanup cutoff while
-      // holding the entry's request permit. A request the event pump is
-      // persisting for this runtime lands before the cutoff, and once the
-      // entry is gone the pump persists no more for it. A replacement's
-      // requests come after its own open.
+      // A request the event pump is persisting for this runtime lands before
+      // the cutoff, and once the entry is gone the pump persists no more for
+      // it.
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
@@ -886,7 +937,6 @@ export const layerWithOptions = (
             DateTime.now,
           ).pipe(candidate.requestEventPermit.withPermits(1));
           const [outcome, releasedAt] = removed;
-          // Another entry took this id while the permit was held; release it instead.
           if (outcome === "changed") return yield* removeLiveEntry(input);
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
@@ -895,9 +945,7 @@ export const layerWithOptions = (
         });
 
       // Scope close can wedge on a misbehaving adapter finalizer (e.g. a
-      // provider process that never yields its message stream). Time-box it so
-      // the caller, and any lock or worker it holds, moves on and leaves a
-      // diagnosable trail. A close that finishes late is still logged.
+      // provider process that never yields its message stream).
       const closeScopeWithin = (
         scope: Scope.Closeable,
         annotations: { readonly providerSessionId?: ProviderSessionId; readonly reason: string },
@@ -937,6 +985,7 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
+        readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
@@ -948,13 +997,20 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
+                  const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
+                    entry,
+                    reason: input.reason,
+                    ...(input.detachedThreadId === undefined
+                      ? {}
+                      : { detachedThreadId: input.detachedThreadId }),
+                  });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
                   }
                   if (input.gracefulSubscribers === true) {
                     yield* endSubscribers(entry);
                   } else if (input.reason === "server_shutdown") {
-                    yield* closeSubscribers(entry);
+                    yield* interruptSubscribers(entry);
                   } else {
                     yield* failSubscribers(
                       entry,
@@ -969,6 +1025,7 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
+                    releasedBackgroundTasks,
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
@@ -1010,10 +1067,6 @@ export const layerWithOptions = (
                         // a DIFFERENT credential (left behind by an old session
                         // the thread rotated away from) must not veto revoking
                         // this session's own credential, or it leaks forever.
-                        // A reservation means an in-flight open is configuring
-                        // a provider process with this credential right now;
-                        // revoking it here would strand that process (eager
-                        // adapters cannot pick up a rotated token).
                         const heldElsewhere =
                           isMcpCredentialReserved(threadId, mcpCredentialId) ||
                           Array.from(current.values()).some(
@@ -1043,8 +1096,6 @@ export const layerWithOptions = (
           ),
         );
 
-      // Annotated to break the releaseIfStillIdle <-> scheduleIdleReleaseInternal
-      // inference cycle introduced by the pin re-arm below.
       const releaseIfStillIdle = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly generation: number;
@@ -1088,8 +1139,6 @@ export const layerWithOptions = (
                 return [true, updated] as const;
               });
               if (!shouldContinuePin) {
-                // Generation or runtime advanced while we probed pending work;
-                // the current owner of the entry owns idle release.
                 return;
               }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
@@ -1207,7 +1256,6 @@ export const layerWithOptions = (
           }),
         );
 
-      /** Returns the runtime the thread was attached to, or undefined if it already was. */
       const attachThread = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
@@ -1228,10 +1276,6 @@ export const layerWithOptions = (
           }),
         );
 
-      /**
-       * Undoes an attach to `runtime`. A replacement session that reopened under
-       * the same id since is left alone.
-       */
       const removeThreadAttachment = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
@@ -1347,8 +1391,6 @@ export const layerWithOptions = (
               }
             }
           }).pipe(
-            // An interrupted attach is undone too, so the next attach writes
-            // the attachment instead of finding the thread already attached.
             Effect.onError(() =>
               attachedTo === undefined
                 ? Effect.void
@@ -1363,8 +1405,6 @@ export const layerWithOptions = (
                         if (preparedForCleanup?.issued !== true) return Effect.void;
                         const mcpCredentialId = preparedForCleanup.mcpCredentialId;
                         const attachedRuntime = attachedTo;
-                        // As in release: a replacement session (or an open
-                        // configuring one) may have taken the credential up.
                         return Ref.get(sessions).pipe(
                           Effect.flatMap((current) =>
                             (mcpCredentialId !== undefined &&
@@ -1386,12 +1426,9 @@ export const layerWithOptions = (
                   ),
             ),
           );
-          return threadAttachment.withLock(threadAttachmentKey(input), attach).pipe(
-            // The entry's own record (written above while the thread is
-            // attached) guards the credential from here on; the reservation
-            // is only needed until then. Ensuring covers defects/interrupts.
-            Effect.ensuring(Effect.sync(dropReservation)),
-          );
+          return threadAttachment
+            .withLock(threadAttachmentKey(input), attach)
+            .pipe(Effect.ensuring(Effect.sync(dropReservation)));
         });
 
       const markBusy = (providerSessionId: ProviderSessionId, turnKey: string) =>
@@ -1419,9 +1456,6 @@ export const layerWithOptions = (
           }),
         );
 
-      // Clearing a turn that is not marked busy (one whose failed start already
-      // cleared it, or a subagent turn the manager never started) only
-      // records activity.
       const markIdle = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
@@ -1480,10 +1514,9 @@ export const layerWithOptions = (
         });
 
       /**
-       * Starts tracking the provider thread an app thread runs its turns on, and
-       * stops any unload pending for it. Called before the thread is resumed or
-       * given a turn, so an unload cannot land between a resume that found the
-       * thread loaded and the turn that relies on it.
+       * Called before the thread is resumed or given a turn, so an unload
+       * cannot land between a resume that found the thread loaded and the turn
+       * that relies on it.
        */
       const holdThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -1512,12 +1545,6 @@ export const layerWithOptions = (
           yield* cancelIdleFiber(previous?.fiber ?? null);
         });
 
-      /**
-       * A shared runtime never goes idle while any of its threads is in use, so
-       * its threads get the idle timeout one by one: a thread with no turn for
-       * `idleTimeoutMs` is unloaded from the runtime, along with the native MCP
-       * servers it started. Its next turn's resume loads it again.
-       */
       const scheduleThreadUnload = (
         providerSessionId: ProviderSessionId,
         providerThreadId: ProviderThreadId,
@@ -1535,7 +1562,6 @@ export const layerWithOptions = (
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
           );
-          // A turn that started meanwhile already moved the generation on.
           const previous = yield* updateIdleThreadUnload(providerSessionId, threadId, (current) =>
             current?.generation === pending.generation
               ? { ...current, generation, fiber }
@@ -1682,8 +1708,6 @@ export const layerWithOptions = (
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
-        // Every provider's turn operations pass through here, so this is where they are
-        // counted. Only turn starts are timed: until the provider accepts the turn.
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -1808,10 +1832,7 @@ export const layerWithOptions = (
               }),
             ).pipe(
               // A start that fails or is stopped may never emit turn.terminal,
-              // so it clears its own turn or the session never goes idle. If
-              // the adapter emits the terminal anyway, clearing the same turn
-              // again changes nothing, so another thread's turn on a shared
-              // session stays busy either way.
+              // so it clears its own turn or the session never goes idle.
               Effect.andThen(
                 holdThreadLoaded({
                   providerSessionId,
@@ -1893,6 +1914,21 @@ export const layerWithOptions = (
         return entry.runtime.events.pipe(
           Stream.runForEach((event) => {
             if (shutdownSignal.received) return Effect.void;
+            // Live output skips run subscribers and ingestion entirely: it is
+            // never persisted, and a flood of it must not queue ahead of real events.
+            if (event.type === "command_output.delta") {
+              return commandOutput.append(event);
+            }
+            // A settled item carries its final output, so its live tail can go.
+            const releaseLiveOutput =
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              !isOrchestrationV2WorkActive(event.turnItem.status)
+                ? commandOutput.finish({
+                    threadId: event.turnItem.threadId,
+                    itemId: event.turnItem.id,
+                  })
+                : Effect.void;
             if (
               event.type === "provider_session.updated" &&
               event.providerSession.status === "stopped"
@@ -1948,6 +1984,7 @@ export const layerWithOptions = (
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                  yield* releaseLiveOutput;
                 }),
               ),
             );
@@ -1955,7 +1992,6 @@ export const layerWithOptions = (
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              // A provider that exits on the shutdown signal is released by shutdown.
               if (shutdownSignal.received) return;
               const current = (yield* Ref.get(sessions)).get(
                 sessionKey(entry.runtime.providerSessionId),
@@ -1971,15 +2007,17 @@ export const layerWithOptions = (
                 }).pipe(logReleaseFailure(entry.runtime.providerSessionId));
                 return;
               }
-              const cause = Exit.isFailure(exit)
-                ? exit.cause
-                : Cause.fail(
-                    new ProviderAdapter.ProviderAdapterEventStreamError({
-                      driver: entry.runtime.driver,
-                      providerSessionId: entry.runtime.providerSessionId,
-                      cause: "Provider event stream ended unexpectedly.",
-                    }),
-                  );
+              // Subscribers read an interrupt as server shutdown, so keep it for that.
+              const cause =
+                Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
+                  ? exit.cause
+                  : Cause.fail(
+                      new ProviderAdapter.ProviderAdapterEventStreamError({
+                        driver: entry.runtime.driver,
+                        providerSessionId: entry.runtime.providerSessionId,
+                        cause: "Provider event stream ended unexpectedly.",
+                      }),
+                    );
               yield* publishToSubscribers(entry.eventSubscribers, {
                 type: "failure",
                 cause,
@@ -1996,11 +2034,8 @@ export const layerWithOptions = (
         );
       };
 
-      // Parent of every session scope. On layer close, shutdown releases the
-      // live sessions first, then closes any session whose open is still in
-      // flight, time-boxed so a stuck adapter cannot hold up server shutdown.
-      // Parallel, so one session whose close hangs does not stop the rest from
-      // closing within the time box.
+      // The service launcher kills the server 5 s after it asks it to stop, and
+      // a busy server can hold 15 sessions.
       const sessionScopes = yield* Scope.make("parallel");
       const shutdown = Effect.gen(function* () {
         const activeSessions = [...(yield* Ref.get(sessions)).values()];
@@ -2018,7 +2053,7 @@ export const layerWithOptions = (
                 }),
               ),
             ),
-          { discard: true },
+          { concurrency: "unbounded", discard: true },
         );
       });
       yield* Effect.addFinalizer(() =>
@@ -2057,7 +2092,6 @@ export const layerWithOptions = (
                     cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
                   });
                 }
-                // Joining a shared session is a new session for this thread.
                 if (!attached) yield* agentScope.clear(input.threadId);
                 yield* ensureThreadAttached({
                   providerSessionId: input.providerSessionId,
@@ -2083,10 +2117,6 @@ export const layerWithOptions = (
                 input.modelSelection.instanceId,
               );
               const mcpCredentialId = prepared.mcpCredentialId;
-              // The reservation from prepare protects the credential (which
-              // eager adapters bake into the provider process during
-              // openSession) from racing releases until this session's entry
-              // is recorded below. Dropped exactly once on every path.
               let reservationDropped = mcpCredentialId === undefined;
               const dropReservation = Effect.sync(() => {
                 if (!reservationDropped && mcpCredentialId !== undefined) {
@@ -2095,8 +2125,6 @@ export const layerWithOptions = (
                 }
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
-              // The previous session's agent scope must not explain this
-              // session's failures, even when this provider runs without one.
               yield* agentScope.clear(input.threadId);
               const runtime = yield* adapter
                 .openSession({
@@ -2119,17 +2147,12 @@ export const layerWithOptions = (
                 })
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),
-                  // Any failure, including a Stop that interrupts a slow
-                  // handshake, stops the provider process this open started.
                   // The session cleanup runs first, and the close is
                   // time-boxed: this runs under the session's open lock, so an
                   // adapter finalizer that never finishes must not hold the
                   // interrupter, the lock, or later opens.
                   Effect.onError(() =>
                     dropReservation.pipe(
-                      // Clear only a session this open freshly set up: a reused
-                      // one is held by another live provider process and must
-                      // survive this open's failure.
                       Effect.andThen(
                         prepared.issued
                           ? clearMcpSession(input.threadId, mcpCredentialId)
@@ -2188,8 +2211,6 @@ export const layerWithOptions = (
                 updated.set(key, entry);
                 return updated;
               });
-              // The entry now guards the credential via its recorded id, so
-              // the pre-open reservation can be dropped.
               yield* dropReservation;
               yield* withActivityError(
                 input.providerSessionId,
@@ -2222,6 +2243,10 @@ export const layerWithOptions = (
               yield* scheduleIdleRelease(input.providerSessionId);
               return exposedRuntime;
             }),
+          ),
+        isLive: (providerSessionId) =>
+          Ref.get(sessions).pipe(
+            Effect.map((current) => current.has(sessionKey(providerSessionId))),
           ),
         get: (providerSessionId) =>
           Effect.gen(function* () {
@@ -2345,11 +2370,6 @@ export const layerWithOptions = (
                 entry.loadedProviderThreadKeyByThread,
               );
               loadedProviderThreadKeyByThread.delete(input.threadId);
-              // For a plain (workspace-change) detach, the credential id stays
-              // recorded: the thread may re-attach and reuse it, and
-              // releaseEntry revokes it when the provider process finally goes
-              // away. A terminal detach (archive/delete) prunes the record so
-              // nothing vetoes the revocation below.
               const mcpCredentialIdByThread =
                 input.revokeMcpCredential === true
                   ? (() => {
@@ -2358,7 +2378,6 @@ export const layerWithOptions = (
                       return pruned;
                     })()
                   : entry.mcpCredentialIdByThread;
-              // The detach unloads the thread itself below.
               const idleThreadUnloads = new Map(entry.idleThreadUnloads);
               idleThreadUnloads.delete(input.threadId);
               const updatedEntry = {
@@ -2385,13 +2404,7 @@ export const layerWithOptions = (
             // Plain detaches deliberately do not revoke: a detached thread's
             // provider process may still be alive (shared multi-thread codex
             // session across a workspace handoff) and holds its MCP client's
-            // credential for the thread it will re-attach with. Credentials
-            // are revoked when the session entry is released (process gone)
-            // or rotated on the next attach if they stopped resolving.
-            // Terminal detaches (thread archived or deleted) revoke the
-            // thread's credentials immediately, even on a retry where the
-            // entry is already gone: there is no legitimate future re-attach,
-            // and the token must not outlive the thread.
+            // credential for the thread it will re-attach with.
             if (input.revokeMcpCredential === true) {
               yield* clearMcpSession(input.threadId);
             }
@@ -2406,12 +2419,10 @@ export const layerWithOptions = (
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
+                detachedThreadId: input.threadId,
               });
               return;
             }
-            // The shared runtime stays up for other threads, so unload this
-            // thread's native state rather than leaving it (and its MCP
-            // servers) resident until the whole runtime is released.
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
               // Serialized with re-attachment: a thread whose next turn
@@ -2431,8 +2442,6 @@ export const layerWithOptions = (
                     detachedProviderThreads.filter((thread) => thread.nativeThreadRef !== null),
                     (providerThread) =>
                       unloadThread({ providerThread }).pipe(
-                        // Bounded so a wedged provider cannot hold up the
-                        // thread's next attach.
                         Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                         Effect.catchCause((cause) =>
                           Effect.logWarning(

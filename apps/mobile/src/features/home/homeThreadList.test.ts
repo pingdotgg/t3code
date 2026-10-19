@@ -363,8 +363,6 @@ describe("home project scopes", () => {
 
   it("prefers an exact scope key over a project ID that collides with it", () => {
     const environmentId = EnvironmentId.make("environment-local");
-    // project.create accepts caller-supplied IDs, so one project's scoped ref
-    // key can equal another project's normalized workspace-root scope key.
     const collidingProject = makeProject({
       environmentId,
       id: ProjectId.make("/workspaces/target"),

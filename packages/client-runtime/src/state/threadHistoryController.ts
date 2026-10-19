@@ -16,20 +16,12 @@ export type ThreadHistoryHandler = {
   readonly loadEarlier: (throughEntryId?: string) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
 };
 
-/**
- * Opaque registration token returned by `register`. Finalizers must pass the
- * same token so an older fiber cannot delete a newer handler for the key.
- */
 export type ThreadHistoryRegistration = {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly handler: ThreadHistoryHandler;
 };
 
-/**
- * Per-thread registration for progressive history loads. Thread state fibers
- * register while active; mobile UI dispatches through `loadEarlier`.
- */
 export class ThreadHistoryController extends Context.Service<
   ThreadHistoryController,
   {

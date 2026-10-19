@@ -111,7 +111,6 @@ describe("writeTextToClipboard", () => {
       });
 
       const pendingCopy = writeTextToClipboard("remote command", "command");
-      // The fallback must run during the original user gesture, before any await.
       expect(execCommand).toHaveBeenCalledWith("copy");
       if (result === "success") {
         await expect(pendingCopy).resolves.toBe(true);

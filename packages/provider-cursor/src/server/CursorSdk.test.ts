@@ -6,9 +6,8 @@ import { isCursorShellSpawnFailure } from "./CursorSdk.ts";
 
 const cursorSdkUrl = new URL("./CursorSdk.ts", import.meta.url).href;
 
-// Builds the CursorSdk layer in a fresh process. @cursor/sdk is stubbed so the guard
-// can be tested without the real package. The vitest worker already has its
-// own unhandledRejection listener, which would hide the process-exit behavior.
+// The vitest worker already has its own unhandledRejection listener, which
+// would hide the process-exit behavior.
 const probeProgram = `
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +24,7 @@ writeFileSync(
 );
 registerHooks({
   resolve(specifier, context, next) {
-    if (specifier === "@cursor/sdk") {
+    if (specifier === "@cursor/sdk" || specifier === "@cursor/sdk/sqlite") {
       return { url: pathToFileURL(stub).href, shortCircuit: true };
     }
     return next(specifier, context);

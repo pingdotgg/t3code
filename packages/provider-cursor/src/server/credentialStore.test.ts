@@ -18,7 +18,6 @@ const legacyCredentials = {
   apiKey: "test-only-legacy-key",
   createdAtMs: 100,
 };
-// The SDK's FileCredentialStore writes pretty-printed JSON.
 const legacyFileText = `{
   "version": 1,
   "backendUrl": "https://api.cursor.com",

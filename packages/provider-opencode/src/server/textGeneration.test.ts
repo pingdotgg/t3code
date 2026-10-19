@@ -53,8 +53,6 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
       const index = runtimeMock.state.startCalls.length + 1;
       const url = `http://127.0.0.1:${4_300 + index}`;
       runtimeMock.state.startCalls.push(binaryPath);
-      // The production runtime binds server lifetime to the caller's scope.
-      // Mirror that here so the closeCalls probe observes scope close.
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           runtimeMock.state.closeCalls.push(url);

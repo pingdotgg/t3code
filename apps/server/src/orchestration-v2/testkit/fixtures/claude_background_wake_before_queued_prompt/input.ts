@@ -25,8 +25,6 @@ export function claudeBackgroundWakeBeforeQueuedPromptInput(): OrchestratorFixtu
       { type: "message", text: CLAUDE_BACKGROUND_WAKE_BEFORE_QUEUED_PROMPT_LAUNCH_PROMPT },
       { type: "await_run_status", targetRunIndex: 2, status: "completed" },
       { type: "message", text: CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_STOP_PROMPT },
-      // Sent as soon as the thread is idle, as in the recording, so it
-      // reaches the CLI while the stop notification's wake turn is queued.
       { type: "message", text: CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_RESUME_PROMPT },
       { type: "message", text: CLAUDE_BACKGROUND_SUBAGENT_LIFECYCLE_FINAL_PROMPT },
     ],

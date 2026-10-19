@@ -19,7 +19,6 @@ const screenshot = {
   title: null,
   toolName: "mcp__t3-code__device_screenshot",
   input: { deviceId: "phone" },
-  // What a detail read returns: the image's position without its bytes.
   output: {
     content: [
       { type: "text", text: "Captured the home screen." },
@@ -51,5 +50,43 @@ describe("tool output images", () => {
     const output = { content: [{ type: "image", mimeType: "image/svg+xml" }] };
     expect(turnItemOutputImages({ ...screenshot, output })).toEqual([]);
     expect(turnItemOutputText({ ...screenshot, output })).toBe("[image]");
+  });
+
+  it("omits Claude Read's image placeholder when the file has a preview", () => {
+    const output = {
+      type: "image",
+      file: { filePath: "/tmp/blk.png", type: "image/png", sizeBytes: 1024 },
+    };
+    const item = { ...screenshot, toolName: "Read", viewedImagePath: "/tmp/blk.png", output };
+
+    expect(turnItemOutputImages(item)).toEqual([]);
+    expect(turnItemOutputText(item)).toBeNull();
+    expect(turnItemOutputText({ ...item, viewedImagePath: undefined })).toBe("[image]");
+  });
+
+  it("keeps accompanying text and literal image markers when the file has a preview", () => {
+    const output = {
+      content: [
+        { type: "text", text: "Read /tmp/blk.png. Literal marker: [image]" },
+        screenshot.output.content[1],
+      ],
+    };
+    expect(turnItemOutputText({ ...screenshot, viewedImagePath: "/tmp/blk.png", output })).toBe(
+      "Read /tmp/blk.png. Literal marker: [image]",
+    );
+  });
+
+  it("keeps placeholders for unserved images in a list despite a file preview", () => {
+    const blocks = [
+      { type: "text", text: "Read /tmp/blk.png." },
+      { type: "image", file: { type: "image/png", sizeBytes: 1024 } },
+      screenshot.output.content[1],
+      { type: "image", mimeType: "image/svg+xml" },
+    ];
+    for (const output of [blocks, { content: blocks }, { content: blocks, isError: false }]) {
+      const item = { ...screenshot, viewedImagePath: "/tmp/blk.png", output };
+      expect(turnItemOutputText(item)).toBe("Read /tmp/blk.png.\n[image]\n[image]");
+      expect(turnItemOutputImages(item)).toHaveLength(1);
+    }
   });
 });

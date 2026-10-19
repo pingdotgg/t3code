@@ -1120,6 +1120,14 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     ceil(codeFont.lineHeight)
   }
 
+  /// Wrapped rows fill the code viewport; unwrapped rows keep one line and scroll horizontally.
+  private func codeLayoutWidthLimit(font: UIFont) -> CGFloat? {
+    guard style.wordWrap else { return ReviewDiffCodeLayout.unboundedWidth }
+    let width = viewportWidth - codeStartX - style.codePadding
+    let characterWidth = monospaceCharacterWidth(font: font)
+    return characterWidth > 0 && width >= characterWidth ? width : nil
+  }
+
   func frameForRow(at index: Int) -> CGRect? {
     guard rows.indices.contains(index), rowOffsets.indices.contains(index) else {
       return nil
@@ -1141,9 +1149,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     completion: @escaping () -> Void
   ) {
     let font = codeFont
-    let width = viewportWidth - codeStartX - style.codePadding
     let characterWidth = monospaceCharacterWidth(font: font)
-    guard style.wordWrap, width >= characterWidth, characterWidth > 0 else {
+    guard let width = codeLayoutWidthLimit(font: font) else {
       completion()
       return
     }
@@ -1160,7 +1167,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       }
       DispatchQueue.main.async { [weak self] in
         guard let self, isCurrent() else { return }
-        if self.codeFont != font || self.viewportWidth - self.codeStartX - self.style.codePadding != width {
+        if self.codeFont != font || self.codeLayoutWidthLimit(font: font) != width {
           self.prepareRows(rows, on: queue, isCurrent: isCurrent, completion: completion)
           return
         }
@@ -1176,18 +1183,16 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     var nextOffsets: [CGFloat] = []
     var nextFileHeaderRowIndices: [Int] = []
     nextOffsets.reserveCapacity(rows.count)
-    var maxColumnCountsByFileId: [String: Int] = [:]
+    var maxWidthsByFileId: [String: CGFloat] = [:]
     var nextCodeLayouts: [String: ReviewDiffCodeLayout] = [:]
     var offset: CGFloat = 0
     let font = codeFont
     let characterWidth = monospaceCharacterWidth(font: font)
-    let wrapAvailableWidth = viewportWidth - codeStartX - style.codePadding
-    let wrapColumns = style.wordWrap && characterWidth > 0 && wrapAvailableWidth >= characterWidth
-      ? Int(wrapAvailableWidth / characterWidth)
-      : nil
-    if codeLayoutWidth != wrapAvailableWidth || codeLayoutFont != font {
+    let layoutWidth = codeLayoutWidthLimit(font: font)
+    let wrapColumns = style.wordWrap ? layoutWidth.map { Int($0 / characterWidth) } : nil
+    if let layoutWidth, codeLayoutWidth != layoutWidth || codeLayoutFont != font {
       codeLayoutsByRowId.removeAll()
-      codeLayoutWidth = wrapAvailableWidth
+      codeLayoutWidth = layoutWidth
       codeLayoutFont = font
     }
 
@@ -1202,27 +1207,30 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       switch row.kind {
       case "line":
         // UTF-16 columns match the word diff ranges and the segments drawCodeLines draws.
-        let columnCount = row.content?.utf16.count ?? 0
-        maxColumnCountsByFileId[fileId] = max(maxColumnCountsByFileId[fileId] ?? 0, columnCount)
-        if wrapColumns != nil, let content = row.content {
+        var width = CGFloat(row.content?.utf16.count ?? 0) * characterWidth
+        if let layoutWidth, let content = row.content {
           let cached = codeLayoutsByRowId[row.id]
           let layout: ReviewDiffCodeLayout
           if let cached, cached.text == content {
             layout = cached
           } else {
             layout = ReviewDiffCodeLayout(
-              text: content, font: font, width: wrapAvailableWidth, characterWidth: characterWidth
+              text: content, font: font, width: layoutWidth, characterWidth: characterWidth
             )
           }
           nextCodeLayouts[row.id] = layout
+          // Tabs and fallback glyphs are wider than one column.
+          width = layout.usedWidth
           if rowHeight > 0 {
             rowHeight = max(rowHeight, layout.firstLineHeight) + layout.extraHeight
           }
         }
+        maxWidthsByFileId[fileId] = max(maxWidthsByFileId[fileId] ?? 0, width)
       case "hunk":
-        maxColumnCountsByFileId[fileId] = max(
-          maxColumnCountsByFileId[fileId] ?? 0,
-          row.text?.utf16.count ?? 0
+        // Hunk context can hold tabs and draws in its own font, so measure what drawHunkRow draws.
+        maxWidthsByFileId[fileId] = max(
+          maxWidthsByFileId[fileId] ?? 0,
+          textWidth(row.text ?? "", font: hunkFont)
         )
       default:
         break
@@ -1233,10 +1241,8 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     codeCharacterWidth = characterWidth
     codeWrapColumns = wrapColumns
     codeLayoutsByRowId = nextCodeLayouts
-    contentWidthsByFileId = maxColumnCountsByFileId.mapValues { maxColumnCount in
-      let measuredWidth = ceil(CGFloat(maxColumnCount) * characterWidth) + style.codePadding * 2
-      return max(0, min(style.contentWidth, measuredWidth))
-    }
+    // Measured widths are not capped, so the end of every line stays reachable by scrolling.
+    contentWidthsByFileId = maxWidthsByFileId.mapValues { ceil($0) + style.codePadding * 2 }
     rowOffsets = nextOffsets
     fileHeaderRowIndices = nextFileHeaderRowIndices
     contentHeight = offset
@@ -2375,7 +2381,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
         version: codeDecorationVersion
       )
       layout.draw(
-        at: CGPoint(x: codeStartX, y: rect.minY + max(0, (firstLineRect.height - layout.firstLineHeight) / 2)),
+        at: CGPoint(x: codeStartX - horizontalOffset, y: rect.minY + max(0, (firstLineRect.height - layout.firstLineHeight) / 2)),
         clip: context.boundingBoxOfClipPath
       )
       context.restoreGState()

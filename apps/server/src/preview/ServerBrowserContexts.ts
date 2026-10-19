@@ -16,9 +16,7 @@ const loadPlaywright = () =>
 
 interface Options {
   readonly profilesDir: string;
-  /** The shared headless browser's executable, installing it on first use. */
   readonly executable: () => Promise<string>;
-  /** Replaces a failed launch's error with the host setup it is missing, if any. */
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
   readonly onContextClose?: (context: BrowserContext) => void;
@@ -31,9 +29,7 @@ const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
 };
 
 /**
- * The headless shell's identity as the Chrome it is built from: its user agent
- * without `HeadlessChrome`, and client hints whose brands agree with it. Sites
- * block a user agent that disagrees with `Sec-CH-UA`, so both change together.
+ * Sites block a user agent that disagrees with `Sec-CH-UA`, so both change together.
  */
 const chromeIdentity = (
   headlessUserAgent: string,
@@ -43,14 +39,12 @@ const chromeIdentity = (
   const fullVersion = version?.[1];
   const major = version?.[2];
   if (!version || !fullVersion || !major) return null;
-  // Chrome's GREASE brand and order for this major version, as the shell reports them.
   const brands = (names: (version: string) => string) => [
     { brand: "Chromium", version: names(major) },
     { brand: "Google Chrome", version: names(major) },
     { brand: "Not A(Brand", version: names("99") },
   ];
   return {
-    // Chrome reduces its user agent to the major version.
     userAgent: headlessUserAgent.replace(version[0], `Chrome/${major}.0.0.0`),
     userAgentMetadata: {
       brands: brands((value) => value),
@@ -66,10 +60,6 @@ const chromeIdentity = (
   };
 };
 
-/**
- * Presents a headless page as plain Chrome. Applies to the page, its frames,
- * and its workers; a popup gets its own call once it becomes a tab.
- */
 export const presentAsChrome = async (
   cdp: CDPSession,
   host: { readonly platform: NodeJS.Platform; readonly arch: string },
@@ -79,11 +69,9 @@ export const presentAsChrome = async (
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
-/** Persistent human profiles keep their storage; isolated agents share a browser, never a context. */
 export class ServerBrowserContexts {
   private readonly options: Options;
   private readonly contexts = new Map<string, Promise<BrowserContext>>();
-  /** Profile clears in progress; a context for that profile opens after its storage is gone. */
   private readonly clearing = new Map<string, Promise<void>>();
   private browser: Promise<Browser> | undefined;
   private closing: Promise<void> | undefined;
@@ -98,7 +86,6 @@ export class ServerBrowserContexts {
     return {
       executablePath,
       env,
-      // People drive these tabs, so they must not announce automation (navigator.webdriver).
       args: [
         "--disable-gpu",
         "--force-device-scale-factor=2",
@@ -187,7 +174,6 @@ export class ServerBrowserContexts {
     );
   }
 
-  /** A throwaway page in the shared browser, for work that must not touch a tab's own storage. */
   async scratchPage() {
     if (this.closing) throw new Error("The preview browser is closed.");
     const context = await (await this.sharedBrowser()).newContext();
@@ -196,10 +182,6 @@ export class ServerBrowserContexts {
     return page;
   }
 
-  /**
-   * Drives a page the desktop app renders, through the CDP endpoint its relay
-   * serves. The page keeps the desktop's storage, size, and window.
-   */
   async connectDesktopPage(endpoint: string) {
     const { chromium } = loadPlaywright();
     const browser = await chromium.connectOverCDP(endpoint, { timeout: 15_000 });
@@ -211,7 +193,6 @@ export class ServerBrowserContexts {
     return { browser, page };
   }
 
-  /** Closes a human profile's persistent context, ending its tabs, then deletes its storage. */
   async clearProfile(profileId: string) {
     if (profileId === INCOGNITO_BROWSER_PROFILE_ID) return;
     const key = JSON.stringify([profileId, null]);

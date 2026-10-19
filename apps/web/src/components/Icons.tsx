@@ -366,13 +366,13 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
 
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
-    {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}
+    {}
     <rect x="1" y="4" width="3" height="14" />
     <rect x="4" y="18" width="18" height="3" />
-    {/* Front frame: top bar + right bar only — left and bottom are replaced by the back strips above */}
+    {}
     <rect x="4" y="4" width="18" height="3" />
     <rect x="19" y="7" width="3" height="11" />
-    {/* Two diamonds, offset slightly to the right within the open area */}
+    {}
     <path d="M11 10L13 12L11 14L9 12Z" />
     <path d="M16 10L18 12L16 14L14 12Z" />
   </svg>
@@ -680,7 +680,6 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
-// Official two-color mark from https://forgejo.org/favicon.svg.
 export const ForgejoIcon: Icon = (props) => (
   <svg viewBox="0 0 212 212" aria-hidden="true" {...props}>
     <g transform="translate(6 6)" fill="none">
@@ -693,16 +692,12 @@ export const ForgejoIcon: Icon = (props) => (
   </svg>
 );
 
-// GitCafe's own mark, from https://git.cafe/favicon.svg, inset so the full-bleed square does not
-// read heavier than the round and cut-out marks beside it.
 export const GitCafeIcon: Icon = (props) => (
   <svg viewBox="0 0 64 64" aria-hidden="true" {...props}>
     <rect x="4.8" y="4.8" width="54.4" height="54.4" fill="#a78bfa" />
   </svg>
 );
 
-// macOS System Settings > Privacy & Security pane marks, so the SnapShot setup
-// step points at the same icon the user is about to look for.
 export const MacScreenRecordingIcon: Icon = (props) => {
   const gradientId = useId();
   return (
@@ -755,31 +750,6 @@ export const MacAccessibilityIcon: Icon = (props) => {
         stroke="#fff"
         strokeWidth="1.6"
         strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-};
-
-// Codex's Computer Use app mark, shown on computer-use rows in the work log.
-export const ComputerUseAppIcon: Icon = (props) => {
-  const gradientId = `${useId().replaceAll(":", "")}-computer-use-app-gradient`;
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" {...props}>
-      <defs>
-        <linearGradient id={gradientId} x1="2" y1="2" x2="22" y2="22">
-          <stop offset="0" stopColor="#00dff0" />
-          <stop offset="0.42" stopColor="#3b9cff" />
-          <stop offset="0.72" stopColor="#b044f5" />
-          <stop offset="1" stopColor="#ff78b6" />
-        </linearGradient>
-      </defs>
-      <rect x="1" y="1" width="22" height="22" rx="5" fill={`url(#${gradientId})`} />
-      <path
-        d="m7.2 6.2 10.5 4.1-4.2 2.1-2 4.7z"
-        fill="white"
-        stroke="#315cff"
-        strokeWidth="1.1"
         strokeLinejoin="round"
       />
     </svg>

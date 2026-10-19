@@ -7,6 +7,10 @@
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"
     },
+    "./image-attachment-size": {
+      "types": "./src/imageAttachmentSize.ts",
+      "default": "./src/imageAttachmentSize.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
@@ -158,6 +162,10 @@
     "./state/git": {
       "types": "./src/state/git.ts",
       "default": "./src/state/git.ts"
+    },
+    "./state/command-output": {
+      "types": "./src/state/commandOutput.ts",
+      "default": "./src/state/commandOutput.ts"
     },
     "./state/item-support": {
       "types": "./src/state/itemSupport.ts",
@@ -347,6 +355,10 @@
       "types": "./src/work-log/scrollAnchor.ts",
       "default": "./src/work-log/scrollAnchor.ts"
     },
+    "./pull-request-link-input": {
+      "types": "./src/pullRequestLinkInput.ts",
+      "default": "./src/pullRequestLinkInput.ts"
+    },
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"
@@ -414,6 +426,10 @@
     "./pull-request-markdown": {
       "types": "./src/pullRequestMarkdown.ts",
       "default": "./src/pullRequestMarkdown.ts"
+    },
+    "./pull-request-query": {
+      "types": "./src/pullRequestQuery.ts",
+      "default": "./src/pullRequestQuery.ts"
     }
   },
   "scripts": {

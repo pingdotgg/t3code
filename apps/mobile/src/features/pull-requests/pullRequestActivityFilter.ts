@@ -30,7 +30,6 @@ function eventCount(activity: PullRequestActivity) {
 }
 
 export function filterPullRequestActivity(activity: PullRequestActivity, filter: ActivityFilter) {
-  // A discussion's replies stay together, even when a bot replies to a human.
   const reviewThreads =
     filter.kind === "commits"
       ? []

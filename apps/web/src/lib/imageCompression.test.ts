@@ -23,14 +23,6 @@ vi.mock("heic-to/csp", () => ({
   heicTo: mocks.heicTo,
 }));
 
-/**
- * jsdom has no real canvas/codec, so the re-encode path is exercised with
- * stubbed `createImageBitmap` + `OffscreenCanvas`. The encoder stub returns a
- * payload whose size scales with quality, mirroring how a real JPEG encoder
- * shrinks as quality drops — enough to verify the ladder logic and budget
- * enforcement without pulling in a native canvas.
- */
-
 const originalCreateImageBitmap = globalThis.createImageBitmap;
 const originalOffscreenCanvas = globalThis.OffscreenCanvas;
 
@@ -97,12 +89,6 @@ function makeHeicFile(options?: {
   );
 }
 
-/**
- * Installs a fake bitmap + canvas whose encoded size follows `sizeForQuality`.
- * `supportsWebp: false` makes `convertToBlob` hand back a differently-typed
- * blob for WebP requests, which is how a real browser signals it cannot
- * encode that format.
- */
 function stubCanvasPipeline(
   sizeForQuality: (quality: number) => number,
   options?: { supportsWebp?: boolean; htmlCanvas?: boolean },
@@ -280,12 +266,10 @@ describe("compressImageForStash", () => {
     expect(result.ok && result.image.recompressed).toBe(false);
     expect(result.ok && result.image.mimeType).toBe("image/png");
     expect(result.ok && result.image.dataUrl.startsWith("data:image/png")).toBe(true);
-    // Untouched payloads must not pay for a decode.
     expect(bitmapSpy).not.toHaveBeenCalled();
   });
 
   it("re-encodes an oversized image to WebP within the budget", async () => {
-    // Comfortably under budget at the very first quality step.
     const { close, fillRect } = stubCanvasPipeline(() => 120_000);
 
     const result = await compressImageForStash(makeFile(4_000_000));
@@ -294,9 +278,7 @@ describe("compressImageForStash", () => {
     expect(result.ok && result.image.recompressed).toBe(true);
     expect(result.ok && result.image.mimeType).toBe("image/webp");
     expect(result.ok && result.image.dataUrl.length <= MAX_STASH_IMAGE_DATA_URL_CHARS).toBe(true);
-    // sizeBytes should describe the re-encoded payload, not the 4MB original.
     expect(result.ok && result.image.sizeBytes).toBeLessThan(4_000_000);
-    // WebP keeps alpha, so no white matte should be painted.
     expect(fillRect).not.toHaveBeenCalled();
     expect(close).toHaveBeenCalled();
   });
@@ -308,12 +290,10 @@ describe("compressImageForStash", () => {
 
     expect(result.ok && result.image.recompressed).toBe(true);
     expect(result.ok && result.image.mimeType).toBe("image/jpeg");
-    // JPEG has no alpha, so transparent regions must be matted white.
     expect(fillRect).toHaveBeenCalled();
   });
 
   it("steps quality down until the encoded image fits", async () => {
-    // Only the lowest quality step (0.68) lands under the budget.
     const { close } = stubCanvasPipeline((quality) => (quality <= 0.68 ? 400_000 : 3_000_000));
 
     const result = await compressImageForStash(makeFile(9_000_000));
@@ -329,7 +309,6 @@ describe("compressImageForStash", () => {
     const result = await compressImageForStash(makeFile(9_000_000));
 
     expect(result).toEqual({ ok: false, reason: "too-large" });
-    // The bitmap must still be released on the give-up path.
     expect(close).toHaveBeenCalled();
   });
 
@@ -374,7 +353,6 @@ describe("compressImageForStash", () => {
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.recompressed).toBe(false);
-    // Pass-through must be the same File object, not a copy.
     expect(result.ok && result.file).toBe(original);
     expect(bitmapSpy).not.toHaveBeenCalled();
   });
@@ -387,7 +365,6 @@ describe("compressImageForStash", () => {
     expect(result.ok).toBe(true);
     expect(result.ok && result.recompressed).toBe(true);
     expect(result.ok && result.file.type).toBe("image/webp");
-    // The re-encoded name must match the new container format.
     expect(result.ok && result.file.name).toBe("shot.webp");
     expect(result.ok && result.file.size).toBeLessThanOrEqual(1_000_000);
   });
@@ -402,7 +379,6 @@ describe("compressImageForStash", () => {
     );
 
     expect(result).toEqual({ ok: false, reason: "too-large" });
-    // The whole point of the ceiling is to never decode such a file.
     expect(bitmapSpy).not.toHaveBeenCalled();
   });
 
@@ -416,8 +392,6 @@ describe("compressImageForStash", () => {
   });
 
   it("shrinks below the source size when the image is already under MAX_DIMENSION", async () => {
-    // A small-but-heavy source (e.g. a dense PNG): only a real downscale can
-    // get it under budget, since quality alone is stubbed to never suffice.
     let smallestRequested = Number.POSITIVE_INFINITY;
     const close = vi.fn();
     vi.stubGlobal(
@@ -437,7 +411,6 @@ describe("compressImageForStash", () => {
           return { fillStyle: "", fillRect: vi.fn(), drawImage: vi.fn() };
         }
         async convertToBlob({ type }: { type: string; quality: number }) {
-          // Only a genuinely downscaled pass fits the budget.
           const size = smallestRequested < 800 ? 100_000 : 5_000_000;
           return new Blob([new Uint8Array(size)], { type });
         }
@@ -447,8 +420,6 @@ describe("compressImageForStash", () => {
     const result = await compressImageForStash(makeFile(4_000_000));
 
     expect(result.ok).toBe(true);
-    // Fallback passes must scale off the bitmap, not a fixed 2048 ceiling
-    // that would never go below an 800px source.
     expect(smallestRequested).toBeLessThan(800);
   });
 });
@@ -598,6 +569,115 @@ describe("HEIC attachment preparation", () => {
   });
 });
 
+describe("attachment max edge", () => {
+  const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
+  const u16 = (n: number) => [(n >>> 8) & 0xff, n & 0xff];
+  const pngHeader = (width: number, height: number) => [
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+    ...u32(13),
+    0x49,
+    0x48,
+    0x44,
+    0x52,
+    ...u32(width),
+    ...u32(height),
+    8,
+    6,
+    0,
+    0,
+    0,
+  ];
+  const jpegHeader = (width: number, height: number) => [
+    0xff,
+    0xd8,
+    0xff,
+    0xc0,
+    ...u16(17),
+    8,
+    ...u16(height),
+    ...u16(width),
+  ];
+  const image = (header: number[], name: string, type: string) =>
+    new File([new Uint8Array([...header, ...new Uint8Array(2048).fill(7)])], name, { type });
+
+  function stubDecoder(bitmapSize: { width: number; height: number }) {
+    const decode = vi.fn(async () => ({ ...bitmapSize, close: vi.fn() }));
+    const canvases: Array<{ width: number; height: number }> = [];
+    const encodes: Array<{ type: string; quality: number }> = [];
+    const fillRect = vi.fn();
+    vi.stubGlobal("createImageBitmap", decode);
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        constructor(width: number, height: number) {
+          canvases.push({ width, height });
+        }
+        getContext() {
+          return { fillRect, drawImage: vi.fn() };
+        }
+        async convertToBlob(options: { type: string; quality: number }) {
+          encodes.push(options);
+          return new Blob([new Uint8Array(500_000)], { type: options.type });
+        }
+      },
+    );
+    return { decode, canvases, encodes, fillRect };
+  }
+
+  it("scales a large PNG screenshot under the byte cap to 2000px and keeps it a PNG", async () => {
+    const { decode, canvases, encodes, fillRect } = stubDecoder({ width: 3024, height: 1964 });
+    const original = image(pngHeader(3024, 1964), "shot.png", "image/png");
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(decode).toHaveBeenCalledExactlyOnceWith(original, { imageOrientation: "from-image" });
+    expect(canvases).toEqual([{ width: 2000, height: 1299 }]);
+    expect(encodes.map(({ type }) => type)).toEqual(["image/png"]);
+    expect(fillRect).not.toHaveBeenCalled();
+    expect(result.ok && result.recompressed).toBe(true);
+    expect(result.ok && result.imageSize).toEqual({ width: 2000, height: 1299 });
+    expect(result.ok && result.file.name).toBe("shot.png");
+    expect(result.ok && result.file.type).toBe("image/png");
+  });
+
+  it("scales a rotated JPEG by its displayed size and keeps it a JPEG", async () => {
+    const { canvases, encodes } = stubDecoder({ width: 3024, height: 4032 });
+    const original = image(jpegHeader(4032, 3024), "photo.jpg", "image/jpeg");
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(canvases).toEqual([{ width: 1500, height: 2000 }]);
+    expect(encodes).toEqual([{ type: "image/jpeg", quality: 0.92 }]);
+    expect(result.ok && result.file.type).toBe("image/jpeg");
+    expect(result.ok && result.imageSize).toEqual({ width: 1500, height: 2000 });
+  });
+
+  it.each([
+    { label: "a 2000px PNG", header: pngHeader(2000, 1200), type: "image/png" },
+    {
+      label: "a 3000px GIF",
+      header: [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0xb8, 0x0b, 0x10, 0x04],
+      type: "image/gif",
+    },
+  ])("passes $label through without decoding it", async ({ header, type }) => {
+    const { decode } = stubDecoder({ width: 3000, height: 1040 });
+    const original = image(header, "image", type);
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(result.ok && result.file).toBe(original);
+    expect(result.ok && result.recompressed).toBe(false);
+    expect(decode).not.toHaveBeenCalled();
+  });
+});
+
 describe("snapshot coordinates after compression", () => {
   const source: SnapShotSource = {
     kind: "snap-shot",
@@ -649,7 +729,7 @@ describe("snapshot coordinates after compression", () => {
               sizeBytes: compressed.file.size,
               dataUrl: `data:${compressed.file.type};base64,${Buffer.from(await compressed.file.arrayBuffer()).toString("base64")}`,
             };
-      expect(image.imageSize).toEqual({ width: 2048, height: 1280 });
+      expect(image.imageSize).toEqual({ width: 2000, height: 1250 });
       const resized = resizeSnapShotSource(source, image.imageSize);
       const [restored] = hydrateImagesFromPersisted([
         {
@@ -662,10 +742,10 @@ describe("snapshot coordinates after compression", () => {
         },
       ]);
       expect(restored?.source?.accessibility).toMatchObject({
-        imageSize: { width: 2048, height: 1280 },
+        imageSize: { width: 2000, height: 1250 },
         root: {
-          bounds: { x: 0, y: 0, width: 2048, height: 1280 },
-          children: [{ bounds: { x: 1920, y: 1120, width: 80, height: 80 } }, { bounds: null }],
+          bounds: { x: 0, y: 0, width: 2000, height: 1250 },
+          children: [{ bounds: { x: 1875, y: 1094, width: 78, height: 78 } }, { bounds: null }],
         },
       });
       expect(source.accessibility).toMatchObject({ imageSize: { width: 2560, height: 1600 } });

@@ -10,13 +10,10 @@ import {
   formatComposerContextReference,
   replaceComposerContextReferences,
 } from "@t3tools/shared/composerContextReferences";
-/** Clipboard records referenced by the copied text, including dependent screenshots. */
 export function readPastedComposerContext(
   clipboardData: Pick<DataTransfer, "getData">,
 ): ComposerContextClipboardFragment | null {
   const pastedText = clipboardData.getData("text/plain");
-  // Only records whose links are in the pasted text get imported; a fragment may carry
-  // more (it was built for a larger copy) and must not start transfers for those.
   const decodedFragment =
     decodeComposerContextFragment(clipboardData.getData(COMPOSER_CONTEXT_CLIPBOARD_MIME)) ??
     decodeComposerContextClipboardHtml(clipboardData.getData("text/html"));
@@ -40,7 +37,6 @@ export function readPastedComposerContext(
   };
 }
 
-/** Imports the same structured clipboard payload for focused paste and paste-to-focus. */
 export function importPastedComposerText(
   clipboardData: Pick<DataTransfer, "getData">,
   importContextFragment?: (

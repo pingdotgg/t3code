@@ -156,11 +156,9 @@ export function failEnvironmentNotFound(reason: EnvironmentResourceNotFoundReaso
 }
 
 /**
- * `<img>` and WebSocket cannot set headers, so media routes (device hub,
- * preview stream) authenticate the way the `/ws` upgrade does: a cookie for browser
- * sessions, or a short-lived `wsTicket` minted over authenticated HTTP for
- * bearer and DPoP clients. The upgrade authenticator already implements that
- * fallback order, so it is used for plain requests as well.
+ * `<img>` and WebSocket cannot set headers, so media routes (device hub, preview stream)
+ * authenticate the way the `/ws` upgrade does: a cookie for browser sessions, or a short-lived
+ * `wsTicket` minted over authenticated HTTP for bearer and DPoP clients.
  */
 export const authenticateMediaRequest = (requiredScope: AuthEnvironmentScope) =>
   Effect.gen(function* () {

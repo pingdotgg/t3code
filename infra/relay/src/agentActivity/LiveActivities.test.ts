@@ -52,6 +52,13 @@ describe("LiveActivities", () => {
       const dialect = new PgDialect();
 
       const fakeDb = {
+        select: () => ({
+          from: (table: unknown) => {
+            expect(table).toBe(relayLiveActivities);
+            calls.push("select");
+            return { where: () => Effect.succeed([]) };
+          },
+        }),
         update: (table: unknown) => {
           expect(table).toBe(relayLiveActivities);
           calls.push("update");
@@ -95,6 +102,7 @@ describe("LiveActivities", () => {
         yield* liveActivities.register({ userId: "user-2", registration });
 
         expect(calls).toEqual([
+          "select",
           "update",
           "update.set",
           "update.where",
@@ -144,6 +152,59 @@ describe("LiveActivities", () => {
       );
     },
   );
+
+  it.effect("keeps the arming time when the current card re-registers its token", () => {
+    const armedAt = "2026-05-25T00:00:00.000Z";
+    const insertedValues: Array<Record<string, unknown>> = [];
+    const conflictSets: Array<Record<string, unknown> | undefined> = [];
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () =>
+            Effect.succeed([{ activityPushToken: "current-token", remoteStartedAt: armedAt }]),
+        }),
+      }),
+      update: () => ({ set: () => ({ where: () => Effect.void }) }),
+      insert: () => ({
+        values: (values: Record<string, unknown>) => {
+          insertedValues.push(values);
+          return {
+            onConflictDoUpdate: (config: { readonly set?: Record<string, unknown> }) => {
+              conflictSets.push(config.set);
+              return Effect.void;
+            },
+          };
+        },
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+    const register = (activityPushToken: string) =>
+      Effect.flatMap(LiveActivities.LiveActivities, (liveActivities) =>
+        liveActivities.register({
+          userId: "user-1",
+          registration: {
+            deviceId: "device-1" as RelayLiveActivityRegistrationRequest["deviceId"],
+            activityPushToken:
+              activityPushToken as RelayLiveActivityRegistrationRequest["activityPushToken"],
+          },
+        }),
+      );
+
+    return Effect.gen(function* () {
+      yield* register("current-token");
+      yield* register("new-card-token");
+
+      // The foreground refresh still clears the delivered baseline so the
+      // replay repaints the card, but only a new card counts as freshly armed.
+      expect(insertedValues[0]).toMatchObject({ remoteStartedAt: armedAt });
+      expect(conflictSets[0]).toMatchObject({ remoteStartedAt: armedAt, lastAggregateJson: null });
+      expect(insertedValues[1]?.remoteStartedAt).not.toBe(armedAt);
+      expect(conflictSets[1]?.remoteStartedAt).not.toBe(armedAt);
+    }).pipe(
+      Effect.provide(
+        LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
 
   it.effect("preserves ended state when a delayed update delivery is marked", () => {
     const insertedValues: Array<Record<string, unknown>> = [];
@@ -225,9 +286,6 @@ describe("LiveActivities", () => {
       yield* mark("live_activity_update");
       yield* mark("live_activity_end");
 
-      // A start begins a new activity generation and an end retires the
-      // current one; both must drop the stored update token so later
-      // deliveries can't route to the dead activity. Plain updates keep it.
       expect(conflictConfigs[0]?.set).toEqual(
         expect.objectContaining({
           activityPushToken: null,
@@ -266,6 +324,7 @@ describe("LiveActivities", () => {
       select: () => ({
         from: () => ({
           leftJoin: () => ({ where: () => Effect.fail(cause) }),
+          where: () => Effect.fail(cause),
         }),
       }),
     } as unknown as RelayDb.RelayDb["Service"];

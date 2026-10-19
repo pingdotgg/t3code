@@ -83,7 +83,6 @@ it("draws the final size of a fast chunked download even inside the throttle win
 
 it("uses color only in capable terminals that have not requested NO_COLOR", () => {
   const output = terminal();
-  // Create a new renderer after changing the color preference.
   vi.stubEnv("NO_COLOR", undefined);
   const chunks: string[] = [];
   const progress = createUpdateProgress({

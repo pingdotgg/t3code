@@ -45,10 +45,6 @@ export interface SettingsSecret {
 
 type SecretValue = Pick<SettingsSecret, "value" | "redacted">;
 
-/**
- * Visits credential fields declared by schemas and dynamically sensitive environment variables.
- * Store keys and client representations stay here; callers supply only the secret operation.
- */
 export function mapSettingsSecrets(
   settings: ServerSettings,
   map: (secret: SettingsSecret) => SecretValue,

@@ -18,7 +18,6 @@ const Catalog = Schema.Struct({
   ),
 });
 
-/** Account choices come from OpenAI; native model/list contributes capability metadata only. */
 export const chatGptModels = Effect.fn("chatGptModels")(function* (
   accessToken: string,
   nativeModels: ReadonlyArray<ServerProviderModel>,

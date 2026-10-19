@@ -1,5 +1,5 @@
 import {
-  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
@@ -26,6 +26,8 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -188,7 +190,7 @@ export function projectCommandErrorFromLiveServerRequest(cause: unknown): Projec
 }
 
 const projectCommandUuid = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
+  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
   Effect.mapError(
     (cause) =>
       new ProjectCommandIdGenerationError({
@@ -219,7 +221,7 @@ const withProjectCliSessionToken = <A, E, R>(
 ) =>
   Effect.acquireUseRelease(
     environmentAuth.issueSession({
-      scopes: AuthAdministrativeScopes,
+      scopes: AuthStandardClientScopes,
       label: "t3 project cli",
     }),
     (issued) => run(issued.token),
@@ -373,7 +375,6 @@ const tryResolveLiveProjectExecutionMode = Effect.fn("tryResolveLiveProjectExecu
       origin: runtimeState.value.origin,
       cause: attempted.failure,
     });
-    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return Option.none<{ readonly origin: string }>();
   },
 );
@@ -424,6 +425,11 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );
 
+    // An unreachable server may still be running; never write behind it.
+    yield* ServerOwnership.acquireServerOwnership(config.serverRuntimeStatePath).pipe(
+      Effect.provide(ProcessRunner.layer),
+    );
+    yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
     return yield* Effect.gen(function* () {
       const snapshot = yield* getOfflineSnapshot();
       const projects = yield* ProjectService.ProjectService;
@@ -435,6 +441,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       yield* Console.log(output);
     }).pipe(Effect.provide(layerOfflineRuntime));
   }).pipe(
+    Effect.scoped,
     Effect.provide(
       Layer.mergeAll(EnvironmentAuth.layerRuntime, WorkspacePaths.layer).pipe(
         Layer.provideMerge(FetchHttpClient.layer),

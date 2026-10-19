@@ -85,7 +85,6 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
   });
 
   it("detects Azure DevOps SSH remotes", () => {
-    // The default Azure DevOps SSH clone URL uses the ssh.dev.azure.com host.
     expect(
       detectSourceControlProviderFromRemoteUrl("git@ssh.dev.azure.com:v3/org/project/repo")?.kind,
     ).toBe("azure-devops");
@@ -93,7 +92,6 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("ssh://git@ssh.dev.azure.com:22/v3/org/project/repo")
         ?.kind,
     ).toBe("azure-devops");
-    // Legacy visualstudio.com SSH host stays classified too.
     expect(
       detectSourceControlProviderFromRemoteUrl("git@vs-ssh.visualstudio.com:v3/org/project/repo")
         ?.kind,
@@ -147,6 +145,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("https://bitbucket.example.com/workspace/repo.git")
         ?.kind,
     ).toBe("bitbucket");
+  });
+
+  it("detects GitHub Enterprise Cloud data residency hosts on ghe.com", () => {
+    expect(detectSourceControlProviderFromRemoteUrl("https://acme.ghe.com/owner/repo.git")).toEqual(
+      {
+        kind: "github",
+        name: "GitHub Self-Hosted",
+        baseUrl: "https://acme.ghe.com",
+      },
+    );
+    expect(detectSourceControlProviderFromRemoteUrl("git@acme.ghe.com:owner/repo.git")?.kind).toBe(
+      "github",
+    );
+    expect(detectSourceControlProviderFromRemoteUrl("https://ghe.com/owner/repo.git")?.kind).toBe(
+      "unknown",
+    );
   });
 
   it("does not match provider names embedded in unrelated DNS labels", () => {

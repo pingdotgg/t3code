@@ -28,7 +28,6 @@ interface PostedRequest {
   readonly signal: AbortSignal;
 }
 
-/** Answers every post with `status`, or fails like a refused connection when it is null. */
 const checkWith = (
   status: number | null,
   overrides: Partial<ServerConfig.ServerConfig["Service"]> = {},

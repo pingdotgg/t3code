@@ -20,7 +20,6 @@ export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
-/** A PR's relations include archived threads that normal palette search omits. */
 export function buildLinkedThreadActionItems(
   input: CommandPaletteLinkedThreads & {
     query: string;
@@ -52,12 +51,6 @@ export function browseInputEndPaddingClass(input: {
   return "*:data-[slot=autocomplete-input]:pe-24!";
 }
 
-/**
- * The global search overlay hosts three mutually exclusive surfaces: the
- * command palette (⌘K), the project file picker (⌘P), and project content
- * search (⇧⌘F). One reducer owns open/mode state so the surfaces can never
- * stack and re-triggering a mode's shortcut toggles it closed.
- */
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
@@ -138,12 +131,9 @@ export interface CommandPaletteItem {
   readonly searchRecency?: number;
   readonly icon: ReactNode;
   readonly disabled?: boolean;
-  /** Optional content rendered inline before the title text. */
   readonly titleLeadingContent?: ReactNode;
-  /** Optional content rendered inline after the title text (before the timestamp). */
   readonly titleTrailingContent?: ReactNode;
   readonly shortcutCommand?: KeybindingCommand;
-  /** Sorts after every other match in its group; see `SettingsSearchItem.secondary`. */
   readonly secondary?: boolean;
 }
 
@@ -183,15 +173,9 @@ export type CommandPaletteRow =
       readonly kind: "item";
       readonly key: string;
       readonly item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
-      /** Position among enabled items, or null for disabled rows the keyboard skips. */
       readonly itemIndex: number | null;
     };
 
-/**
- * Flattens groups into the rows a virtualized list renders. `itemValues` is the
- * highlightable item order Base UI navigates; `rowIndexByItemIndex` maps a
- * highlight back to its row for scrolling.
- */
 export function buildCommandPaletteRows(groups: ReadonlyArray<CommandPaletteGroup>) {
   const rows: CommandPaletteRow[] = [];
   const itemValues: string[] = [];
@@ -217,7 +201,6 @@ export function buildCommandPaletteRows(groups: ReadonlyArray<CommandPaletteGrou
   return { rows, itemValues, rowIndexByItemIndex };
 }
 
-/** The enabled item Enter should run for a highlight, whether or not its row is mounted. */
 export function findHighlightedCommandPaletteItem(
   groups: ReadonlyArray<CommandPaletteGroup>,
   highlightedItemValue: string | null,
@@ -245,10 +228,6 @@ export function enumerateCommandPaletteItems(
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
-// A project as the palette shows it. `displayName` is the grouped label (for
-// example "owner/repo" when projects are merged across machines). Keep `title`
-// as the real project title: the automatic project icon is derived from it, and
-// every other surface uses the real title, so overriding it desyncs the icon.
 export type CommandPaletteProject = Project & { readonly displayName: string };
 
 export function buildCommandPaletteProjectMetadata(input: {
@@ -319,11 +298,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   projectTitleById: ReadonlyMap<Project["id"], string>;
   sortOrder: SidebarThreadSortOrder;
   icon: ReactNode;
-  /** Optional content rendered inline before the title text per-thread. */
   renderLeadingContent?: (thread: TThread) => ReactNode;
-  /** Optional content rendered inline after the title text per-thread. */
   renderTrailingContent?: (thread: TThread) => ReactNode;
-  /** Optional rich description (e.g. favicon + workspace icons). Falls back to text. */
   renderDescription?: (thread: TThread, meta: { projectTitle: string | undefined }) => ReactNode;
   getContentMatch?: (thread: TThread) => CommandPaletteThreadContentMatch | undefined;
   runThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
@@ -367,7 +343,6 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
           projectTitle ?? ``,
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,
-          // Last so pasted IDs never outrank title matches for shared substrings.
           thread.id,
         ],
         title: thread.title,
@@ -428,7 +403,6 @@ function rankCommandPaletteItemMatch(
     const fieldRank = rankSearchFieldMatch(field, normalizedQuery, queryTokens);
     if (fieldRank !== Number.NEGATIVE_INFINITY) {
       if (index === 0 && item.searchRecency !== undefined) {
-        // All non-exact thread title matches share a tier so recency breaks the tie.
         return 1_000 + Number(fieldRank === 3);
       }
       return 1_000 - index * 100 + fieldRank;

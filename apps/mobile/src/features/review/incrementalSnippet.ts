@@ -1,6 +1,5 @@
 import type { HighlighterCore } from "@shikijs/core";
 
-/** A code block owns this session. Only completed lines survive the next update. */
 export function createIncrementalSnippet(
   highlighter: HighlighterCore,
   language: string,
@@ -55,8 +54,6 @@ export function createIncrementalSnippet(
     }
     return next.value;
   };
-  // A small append can finish during render, avoiding a plain-text commit before
-  // the asynchronous effect supplies colors. Cold/large changes stay asynchronous.
   highlight.read = (code: string) => {
     if (!cached || !code.startsWith(cached.prefix)) return undefined;
     const tail = code.slice(cached.prefix.length);

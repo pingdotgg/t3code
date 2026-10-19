@@ -2,7 +2,6 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 import * as NodeURL from "node:url";
 
-/** Import restrictions every file keeps, including the one module exempt from the glyph rule. */
 const RESTRICTED_IMPORT_PATHS = [
   {
     name: "@t3tools/client-runtime",
@@ -16,11 +15,6 @@ const RESTRICTED_IMPORT_PATHS = [
   },
 ];
 
-/**
- * The cva functions behind components/ui exports. They style a foreign element to look
- * like a Button or Toggle, which bypasses the component's variants; render the component
- * instead (`render={<Button …/>}`, or `SelectButton` for a picker trigger).
- */
 const RESTRICTED_UI_VARIANT_PATTERNS = [
   {
     group: ["**/components/ui/*", "**/ui/*", "./ui/*"],
@@ -30,7 +24,6 @@ const RESTRICTED_UI_VARIANT_PATTERNS = [
   },
 ];
 
-/** Lucide's pull-request glyphs, which only `pullRequestIcons.tsx` may name. */
 const RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS = {
   name: "lucide-react",
   importNames: [
@@ -78,7 +71,6 @@ export default defineConfig({
     ],
   },
   staged: {
-    // Formatter only for now — no lint or typecheck on commit.
     "*": "vp fmt --no-error-on-unmatched-pattern",
   },
   fmt: {
@@ -94,6 +86,8 @@ export default defineConfig({
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
       "**/routeTree.gen.ts",
+      "**/*.graphql.ts",
+      "packages/source-control-github/schema/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -119,6 +113,8 @@ export default defineConfig({
       "pnpm-lock.yaml",
       "*.tsbuildinfo",
       "**/routeTree.gen.ts",
+      "**/*.graphql.ts",
+      "packages/source-control-github/schema/**",
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
@@ -165,6 +161,7 @@ export default defineConfig({
       ],
       "t3code/no-global-process-runtime": "error",
       "t3code/no-inline-schema-compile": "warn",
+      "t3code/no-low-value-comments": "error",
       "t3code/no-manual-effect-runtime-in-tests": "error",
       "t3code/no-native-title-tooltip": "error",
       "t3code/no-raw-mcp-registration": "error",
@@ -182,7 +179,6 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: false }] },
       },
       {
-        // Only shared command boundaries install the session-backed permission guard.
         files: [
           "packages/client-runtime/src/state/runtime.ts",
           "packages/client-runtime/src/state/vcsAction.ts",
@@ -195,7 +191,6 @@ export default defineConfig({
         },
       },
       {
-        // These clients are session metadata, device streams, and an Expo update adapter.
         files: [
           "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
@@ -205,12 +200,10 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },
       {
-        // Incompatible hosts cannot open a normal session; their updater uses a dedicated socket.
         files: ["packages/client-runtime/src/connection/outdatedHostUpdate.ts"],
         rules: { "t3code/no-rpc-permission-bypass": "off" },
       },
       {
-        // RPC implementation and transport test fixtures need the raw client.
         files: [
           "packages/client-runtime/src/rpc/**",
           "**/*.{test,spec}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
@@ -218,12 +211,18 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": "off" },
       },
       {
-        // The one place that reads the host platform to seed the injected references.
         files: ["packages/shared/src/HostProcess.ts"],
         rules: { "t3code/no-global-process-runtime": "off" },
       },
       {
-        // The registration helpers that only accept handlers built by McpToolAccess.
+        // The `t3` npm launcher is published as plain, dependency-free Node.
+        files: ["scripts/npm-launcher/**"],
+        rules: {
+          "t3code/no-global-process-runtime": "off",
+          "t3code/namespace-node-imports": "off",
+        },
+      },
+      {
         files: ["apps/server/src/mcp/McpHttpServer.ts"],
         rules: { "t3code/no-raw-mcp-registration": "off" },
       },
@@ -241,14 +240,21 @@ export default defineConfig({
         },
       },
       {
-        // The one module allowed to name lucide's pull-request glyphs; everything else picks
-        // from its vocabulary. The other import restrictions still apply here.
         files: ["apps/web/src/components/pullRequest/pullRequestIcons.tsx"],
         rules: { "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }] },
       },
       {
         files: ["apps/mobile/src/**"],
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
+      },
+      {
+        files: ["apps/mobile/src/**"],
+        excludeFiles: [
+          "apps/mobile/src/components/ui/AppSymbol.tsx",
+          "apps/mobile/src/components/ui/AppSymbol.ios.tsx",
+          "apps/mobile/src/features/pull-requests/pullRequestGlyphs.ts",
+        ],
+        rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
       },
       {
         // React commits state set in a raw ResizeObserver callback after the paint, so derived
@@ -261,19 +267,14 @@ export default defineConfig({
         rules: { "t3code/no-raw-resize-observer": "error" },
       },
       {
-        // Every class in web code must be one Tailwind generates: a typo or a class nothing
-        // declares ships silently unstyled. JS hooks use data attributes, not class names.
         files: ["apps/web/src/**"],
         rules: { "shadcn/no-unknown-classes": "error" },
       },
       {
-        // State indicators paint inward; decorative rings keep their own geometry.
         files: ["apps/web/src/**"],
         rules: { "t3code/no-outset-state-indicators": "error" },
       },
       {
-        // Colors come from theme tokens so status tones follow custom themes. components/ui
-        // has no findings and stays covered too.
         files: ["apps/web/src/**"],
         rules: { "shadcn/no-raw-colors": "error" },
       },
@@ -284,41 +285,24 @@ export default defineConfig({
         rules: { "shadcn/no-raw-colors": "off" },
       },
       {
-        // components/ui exports own their look. App code picks a variant or size instead
-        // of restyling with className; layout classes (width, flex, margin, position) stay
-        // allowed because placement belongs to the parent. components/ui is for generic
-        // primitives: a look that belongs to one feature stays in that feature's component.
         files: ["apps/web/src/**"],
         excludeFiles: ["apps/web/src/components/ui/**"],
         rules: {
-          // A className built at runtime on a ui component is one no-restyle cannot read.
           "shadcn/require-static-classes": "error",
-          // Appearance values come from the theme and Tailwind's scales. Layout stays free
-          // (placement belongs to the parent); the other entries are values no scale can hold.
           "shadcn/no-arbitrary-values": [
             "error",
             {
               allow: [
                 "layout",
-                // Which properties an element animates is per-element behaviour, like layout,
-                // not a design value; timing curves and durations still come from the theme.
                 "transition",
-                // Overlays that follow their frame's corner, which is set at runtime
-                // (floating preview) or by the element they decorate (composer outline).
                 "rounded-[inherit]",
-                // Inline chips size in em so they scale with the text they sit in
-                // (the composer honours the prompt font-size preference).
                 "gap-[0.33em]",
                 "px-[0.5em]",
                 "rounded-[0.5em]",
                 "text-[0.86em]",
-                // Project icons render from 14px to 48px and keep one proportional corner.
                 "rounded-[25%]",
-                // An emoji project icon fills its container, whatever size the parent gives it.
                 "text-[length:80cqh]",
-                // The platform's own selection colour on a selected composer chip.
                 "bg-[Highlight]",
-                // Brand marks keep their brand colours (Cursor, Grok, Claude).
                 "fill-[#26251E]",
                 "fill-[#EDECEC]",
                 "fill-[#0F0F0F]",
@@ -346,6 +330,29 @@ export default defineConfig({
         },
       },
       {
+        // Every web file must compile under the React Compiler. Its bailout rules are errors here,
+        // and manual memoization is redundant. No upstream rule bans useMemo/useCallback, hence
+        // t3code/no-manual-memo.
+        files: ["apps/web/src/**/*.{ts,tsx}"],
+        rules: {
+          "react/exhaustive-effect-dependencies": "error",
+          "react/globals": "error",
+          "react/hooks": "error",
+          "react/immutability": "error",
+          // The compiler memoizes context values; this rule would ask for useMemo.
+          "react/jsx-no-constructed-context-values": "off",
+          "react/memo-dependencies": "error",
+          "react/preserve-manual-memoization": "error",
+          "react/purity": "error",
+          "react/refs": "error",
+          "react/set-state-in-effect": "error",
+          "react/set-state-in-render": "error",
+          "react/static-components": "error",
+          "react/unsupported-syntax": "error",
+          "t3code/no-manual-memo": "error",
+        },
+      },
+      {
         // The sign-in masthead is T3 brand artwork: fixed gradients, not theme surfaces.
         files: ["apps/web/src/components/auth/AuthSurfaceShell.tsx"],
         rules: { "shadcn/no-arbitrary-values": "off" },
@@ -364,7 +371,20 @@ export default defineConfig({
         rules: { "t3code/no-hermes-unsupported-apis": "error" },
       },
       {
-        // Reviewed native and third-party interop boundaries that cannot consume a className.
+        // Mobile is ratcheting toward full React Compiler coverage
+        // (apps/mobile/src/reactCompilerCoverage.test.ts). Directives would hide bailouts from it;
+        // the manual memo hooks go once the allowlist there is empty.
+        files: ["apps/mobile/src/**/*.{ts,tsx}"],
+        rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
+      },
+      {
+        // The compiler only compiles a use* function that calls a hook; one that calls none is
+        // silently left as a plain function, so whatever it returns loses its caching.
+        files: ["apps/web/src/**/*.{ts,tsx}", "apps/mobile/src/**/*.{ts,tsx}"],
+        excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
+        rules: { "t3code/no-hookless-use-function": "error" },
+      },
+      {
         files: [
           "apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx",
           "apps/mobile/src/features/connection/ConnectionsNewRouteScreen.tsx",
@@ -384,10 +404,8 @@ export default defineConfig({
           "apps/mobile/src/features/settings/appearance/components/FontSizeSliderRow.tsx",
           "apps/mobile/src/features/threads/NewTaskContextPickerScreens.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
-          "apps/mobile/src/features/threads/ThreadAgentsSheet.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",
           "apps/mobile/src/features/threads/ThreadSettingsSheet.tsx",
-          "apps/mobile/src/features/threads/git/GitOverviewSheet.tsx",
           "apps/mobile/src/features/threads/thread-list-items.tsx",
           "apps/mobile/src/features/threads/thread-list-v2-items.tsx",
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
@@ -402,7 +420,6 @@ export default defineConfig({
     ],
     options: {
       reportUnusedDisableDirectives: "error",
-      // Revisit once Oxlint's tsgolint path can integrate with @effect/tsgo diagnostics.
       typeAware: false,
       typeCheck: false,
     },

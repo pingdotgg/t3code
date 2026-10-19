@@ -15,14 +15,12 @@ import {
 const container = { width: 1_000, height: 700 };
 const source = { width: 1_600, height: 1_000 };
 const gap = PREVIEW_MINI_PLAYER_EDGE_GAP;
-// A centered composer stack with margins on each side.
 const composer = { left: 100, right: 900, height: 150 };
 const obstacles: PreviewMiniPlayerObstacles = { composer, detailsCard: null };
 const tallComposer: PreviewMiniPlayerObstacles = {
   composer: { ...composer, height: 300 },
   detailsCard: null,
 };
-// The inline details card docked to the top-right corner.
 const detailsCard = { left: 680, right: 988, bottom: 260 };
 const withCard: PreviewMiniPlayerObstacles = { composer, detailsCard };
 
@@ -124,8 +122,6 @@ describe("resolvePreviewMiniPlayerFrame", () => {
   });
 
   it("keeps a tall frame parked beside the composer across layout passes", () => {
-    // The frame an edge resize produced in the left margin, resolved again from
-    // the stored width and position on the next render.
     const phone = { width: 390, height: 844 };
     const beside = { composer: { left: 300, right: 900, height: 300 }, detailsCard: null };
     const resized = resizePreviewMiniPlayer({
@@ -248,8 +244,6 @@ describe("resizePreviewMiniPlayer", () => {
   });
 
   it("lets a player beside a tall composer keep its height on an edge drag", () => {
-    // A portrait player parked in the margin left of the composer, already
-    // taller than the rows above the composer, nudged from its right edge.
     const phone = { width: 390, height: 844 };
     const start = { x: 12, y: 100, width: 240, height: 519 };
     const beside = { composer: { left: 300, right: 900, height: 300 }, detailsCard: null };
@@ -263,7 +257,6 @@ describe("resizePreviewMiniPlayer", () => {
         obstacles: beside,
       }),
     ).toEqual({ x: 12, y: 100, width: 250, height: 541 });
-    // The same drag with the composer under the player is still held above it.
     expect(
       resizePreviewMiniPlayer({
         start: { ...start, x: 400 },
@@ -316,7 +309,6 @@ describe("resolvePreviewMiniPlayerFrame with the details card", () => {
   });
 
   it("opens left of the card when it cannot fit beneath it", () => {
-    // A tall card leaves too few rows above the composer for a full player.
     const tallCard = { ...withCard, detailsCard: { ...detailsCard, bottom: 480 } };
     expect(
       resolvePreviewMiniPlayerFrame({
@@ -330,9 +322,6 @@ describe("resolvePreviewMiniPlayerFrame with the details card", () => {
   });
 
   it("keeps a stored player's size when the card covers its columns", () => {
-    // The card leaves ~290 rows beneath it; fitting into them would collapse
-    // a 480-wide player to ~1px tall. The frame keeps its size and the clamp
-    // relocates it to the open columns left of the card.
     const frame = resolvePreviewMiniPlayerFrame({
       width: 480,
       position: { x: 700, y: 280 },
@@ -391,7 +380,6 @@ describe("clampPreviewMiniPlayerPosition", () => {
   });
 
   it("keeps the player out from under the details card", () => {
-    // Dragged up into the card's columns: pushed down to its bottom edge.
     expect(clampPreviewMiniPlayerPosition({ x: 700, y: 40 }, container, player, withCard)).toEqual({
       x: 628,
       y: 260 + gap,
@@ -410,14 +398,11 @@ describe("clampPreviewMiniPlayerPosition", () => {
   });
 
   it("clears the card and the composer together in a tight column", () => {
-    // Its own columns have too few rows between the card and the composer,
-    // so it slides left of the card, where the rows above the composer suffice.
     const tight = { composer: { left: 0, right: 1_000, height: 300 }, detailsCard };
     expect(clampPreviewMiniPlayerPosition({ x: 700, y: 600 }, container, player, tight)).toEqual({
       x: 680 - gap - 360,
       y: 700 - 300 - gap - 240,
     });
-    // Too tall for any column: the card wins and the player sits below it.
     expect(
       clampPreviewMiniPlayerPosition(
         { x: 700, y: 600 },
@@ -429,8 +414,6 @@ describe("clampPreviewMiniPlayerPosition", () => {
   });
 
   it("stays inside the container when a full-width card leaves no open rows", () => {
-    // A card reaching past the player's last row would push the fallback
-    // below the container; the clamp keeps the bottom edge visible instead.
     const wall = {
       composer,
       detailsCard: { left: 0, right: 1_000, bottom: 690 },

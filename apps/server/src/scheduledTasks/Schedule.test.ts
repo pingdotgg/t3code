@@ -58,11 +58,8 @@ describe("scheduled task schedule calculation", () => {
     const dueAt = DateTime.makeUnsafe("2026-07-01T09:00:00.000Z");
     const withinGrace = DateTime.makeUnsafe("2026-07-01T09:05:00.000Z");
     const pastGrace = DateTime.makeUnsafe("2026-07-01T15:00:00.000Z");
-    // A run only slightly late (poll jitter, short sleep) still fires.
     expect(isMissedFixedTimeRun(fixedTime, dueAt, withinGrace)).toBe(false);
-    // A run hours past its slot is skipped and rescheduled instead.
     expect(isMissedFixedTimeRun(fixedTime, dueAt, pastGrace)).toBe(true);
-    // Interval schedules always catch up with a single run, never skip.
     expect(isMissedFixedTimeRun({ type: "interval", everyMs: 60_000 }, dueAt, pastGrace)).toBe(
       false,
     );
@@ -81,14 +78,12 @@ describe("scheduled task schedule calculation", () => {
         { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 2] },
       ),
     ).toBe(true);
-    // Weekday masks are sets: order and duplicates do not change firing.
     expect(
       isSameSchedule(
         { type: "fixed_time", timeOfDay: "09:00", weekdays: [5, 1] },
         { type: "fixed_time", timeOfDay: "09:00", weekdays: [1, 5, 5] },
       ),
     ).toBe(true);
-    // Omitted, empty, and all-seven masks all mean daily.
     expect(
       isSameSchedule(
         { type: "fixed_time", timeOfDay: "09:00" },

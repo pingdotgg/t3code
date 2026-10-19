@@ -11,9 +11,9 @@
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
     },
-    "./server/GitHubApi": {
-      "types": "./src/server/GitHubApi.ts",
-      "import": "./src/server/GitHubApi.ts"
+    "./server/GitHubRest": {
+      "types": "./src/server/GitHubRest.ts",
+      "import": "./src/server/GitHubRest.ts"
     },
     "./server/gitHubAuthStatus": {
       "types": "./src/server/gitHubAuthStatus.ts",
@@ -31,9 +31,9 @@
       "types": "./src/server/GitHubCredentials.ts",
       "import": "./src/server/GitHubCredentials.ts"
     },
-    "./server/githubGraphQl": {
-      "types": "./src/server/githubGraphQl.ts",
-      "import": "./src/server/githubGraphQl.ts"
+    "./server/GitHubRequestPolicy": {
+      "types": "./src/server/GitHubRequestPolicy.ts",
+      "import": "./src/server/GitHubRequestPolicy.ts"
     },
     "./server/GitHubPullRequestApi": {
       "types": "./src/server/GitHubPullRequestApi.ts",
@@ -74,7 +74,8 @@
   },
   "scripts": {
     "typecheck": "tsc-rs --noEmit",
-    "test": "vp test run --config ../../vite.config.ts --dir ."
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "generate": "graphqlgen"
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
@@ -84,6 +85,7 @@
     "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/graphql-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
     "@t3tools/source-control-testing": "workspace:*",

@@ -6,11 +6,11 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { MaterialNewThreadButton } from "../../components/MaterialNewThreadButton";
+import { NewThreadButton } from "../../components/NewThreadButton";
 import type { AndroidHomeFabLayout as SharedAndroidHomeFabLayout } from "./AndroidHomeFab.shared";
 import { useWorkspaceState } from "../../state/workspace";
-import { MaterialFabScrollContext } from "./MaterialFabScrollContext";
-import { updateMaterialFabScroll } from "./material-fab-scroll";
+import { FabScrollContext } from "./FabScrollContext";
+import { updateFabScroll } from "./fab-scroll";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
@@ -23,7 +23,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   const scrollState = useRef({ anchor: 0, expanded: true });
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const next = updateMaterialFabScroll(
+    const next = updateFabScroll(
       scrollState.current,
       contentOffset.y,
       contentSize.height - layoutMeasurement.height,
@@ -35,9 +35,9 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
   // Remount only the FAB when its font or pane changes to clear the cached expanded width.
   return (
     <View className="flex-1" onLayout={(event) => setLayoutWidth(event.nativeEvent.layout.width)}>
-      <MaterialFabScrollContext value={onScroll}>{props.children}</MaterialFabScrollContext>
+      <FabScrollContext value={onScroll}>{props.children}</FabScrollContext>
       {!props.disabled && state.hasConnections && layoutWidth !== null ? (
-        <MaterialNewThreadButton
+        <NewThreadButton
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
           extended
           expanded={expanded}

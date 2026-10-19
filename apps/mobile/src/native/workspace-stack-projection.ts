@@ -6,7 +6,6 @@ import type {
 
 type Route = StackNavigationState<ParamListBase>["routes"][number];
 
-/** Project one router history into native columns and a modal presentation stack. */
 export function projectWorkspaceStack(
   state: StackNavigationState<ParamListBase>,
   isOverlay: (route: Route) => boolean,
@@ -71,7 +70,6 @@ export function nativeStackPopAction(
   };
 }
 
-/** Group pushes with the modal that owns their native stack. */
 export function partitionStackPresentations<T>(
   routes: readonly T[],
   isModal: (route: T) => boolean,

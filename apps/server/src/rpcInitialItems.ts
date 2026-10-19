@@ -1,7 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
-/** A request-owned prefix, consumed once before its RPC's live stream. */
 export function rpcInitialItems<A>(items: ReadonlyArray<A>): Stream.Stream<A> {
   let pending: ReadonlyArray<A> | undefined = items;
   return Stream.unwrap(

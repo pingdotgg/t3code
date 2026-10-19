@@ -218,7 +218,6 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     ),
   );
   yield* runtime.auth.controller.subscribe("managed-codex-snapshot").pipe(
-    // Disconnect also publishes idle when a saved account has no active sign-in flow.
     Stream.filter((state) => ["idle", "succeeded", "failed", "cancelled"].includes(state.phase)),
     // Sign-out closes the scope of an in-flight probe, which fails that refresh
     // with an interrupt. Keep listening so the sign-out's own idle still refreshes.
@@ -285,21 +284,44 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     snapshotForCwd: (cwd: string) =>
       enabled
         ? resolveRuntime.pipe(
-            Effect.flatMap((effective) =>
-              probeCodexSkillsForCwd({
-                binaryPath: effective.config.binaryPath,
-                homePath: effective.config.homePath,
-                launchArgs: effective.config.launchArgs,
-                cwd,
-                environment: effective.environment,
-              }),
-            ),
-            Effect.flatMap((skills) =>
-              snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),
-            ),
+            Effect.matchEffect({
+              // Signed out or not set up, there is nothing to scan with and the
+              // machine snapshot's empty inventory says as much. Otherwise the
+              // runtime failed for a signed-in account (a token refresh or
+              // reconnect) or before the first check, and the scan failed.
+              onFailure: (cause) =>
+                snapshot.getSnapshot.pipe(
+                  Effect.filterOrFail(
+                    (machine) => machine.auth.status === "unauthenticated",
+                    () => cause,
+                  ),
+                ),
+              onSuccess: (effective) =>
+                probeCodexSkillsForCwd({
+                  binaryPath: effective.config.binaryPath,
+                  homePath: effective.config.homePath,
+                  launchArgs: effective.config.launchArgs,
+                  cwd,
+                  environment: effective.environment,
+                }).pipe(
+                  Effect.flatMap((skills) =>
+                    snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),
+                  ),
+                ),
+            }),
             Effect.scoped,
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.catch(() => snapshot.getSnapshot),
+            // Fail rather than return the machine snapshot: the registry
+            // publishes any returned snapshot as this workspace's inventory.
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER,
+                  instanceId,
+                  detail: `Failed to probe Codex skills for '${cwd}'`,
+                  cause,
+                }),
+            ),
           )
         : snapshot.getSnapshot,
   } satisfies ProviderInstance;

@@ -6,7 +6,6 @@ import {
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useEffectEvent,
   useRef,
@@ -47,7 +46,7 @@ export function AssistantCitationChip({
     onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
-    /** Returns focus to the host editor when the popover closes instead of to the pencil trigger. */
+    onDraftChange?: (comment: string) => void;
     onRestoreFocus?: () => void;
   };
 }) {
@@ -77,7 +76,6 @@ export function AssistantCitationChip({
     if (settleDraftOnClose("none")) {
       commentEditor?.onOpenChange(false);
     } else {
-      // Keep the draft mounted, positioned at the composer trigger instead of a detached range.
       setUnavailableSourceAnchor(sourceAnchor);
     }
   });
@@ -91,8 +89,6 @@ export function AssistantCitationChip({
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  // A multi-line selection's bounding box spans the full message width; anchor
-  // the bubble to the selection's last line, where the pointer released.
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
@@ -187,7 +183,6 @@ export function AssistantCitationChip({
               finalFocus={
                 commentEditor.onRestoreFocus
                   ? () => {
-                      // Leave focus alone when the user closed the popover by moving to another control.
                       const activeElement = document.activeElement;
                       if (
                         activeElement === document.body ||
@@ -211,6 +206,7 @@ export function AssistantCitationChip({
                 inputRef={commentInputRef}
                 onDraftChange={(comment) => {
                   draftCommentRef.current = comment;
+                  commentEditor.onDraftChange?.(comment);
                 }}
                 onSubmit={(comment) => {
                   if (!commentEditor.onSave(comment)) return false;
@@ -244,19 +240,15 @@ export function AssistantCitationChip({
 
 function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
   const [fade, setFade] = useState({ top: false, bottom: false });
-  const updateFade = useCallback((element: HTMLElement) => {
+  const updateFade = (element: HTMLElement) => {
     const top = element.scrollTop > 1;
     const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
     setFade((current) =>
       current.top === top && current.bottom === bottom ? current : { top, bottom },
     );
-  }, []);
-  // Stable so a fade update during resize delivery does not resubscribe the element.
-  const observeFade = useCallback(
-    (element: HTMLDivElement | null) =>
-      element ? observeResize(element, () => updateFade(element)) : undefined,
-    [updateFade],
-  );
+  };
+  const observeFade = (element: HTMLDivElement | null) =>
+    element ? observeResize(element, () => updateFade(element)) : undefined;
   return (
     <div
       ref={observeFade}

@@ -3,10 +3,6 @@ import type { ServerProviderModel } from "@t3tools/contracts";
 
 import * as ModelCatalog from "./ModelCatalog.ts";
 
-/**
- * Covers catalog semantics with synthetic models. Real model data lives in the
- * server's model-manifest.json and is not asserted here.
- */
 const model = (overrides: Partial<ServerProviderModel>): ServerProviderModel => ({
   slug: "model-test",
   name: "Model Test",
@@ -27,7 +23,6 @@ const catalogModel = (
   profileAdapter: undefined,
 });
 
-/** Strips a vendor prefix, the way a driver maps qualified slugs to catalog families. */
 const prefixFamily: ModelCatalog.CatalogMatching = {
   family: (slug) => slug.replace(/^vendor\./, ""),
 };
@@ -40,10 +35,8 @@ describe("classifyCatalogModels", () => {
     };
     const models = [
       model({ slug: "current-a" }),
-      // Stale flag from a previous classification pass must be cleared.
       model({ slug: "current-b", isLegacy: true }),
       model({ slug: "old-model" }),
-      // Custom models are user-defined and never reclassified.
       model({ slug: "my-own-model", isCustom: true, isLegacy: true }),
     ];
     assert.deepStrictEqual(
@@ -100,7 +93,6 @@ describe("applyCatalogDefault", () => {
       model({ slug: "model-old" }),
       model({ slug: "model-new", isDefault: true, aliases: ["provider-default"] }),
     ]);
-    // The account does not offer the catalog default: keep the runtime's choice.
     assert.deepStrictEqual(
       ModelCatalog.applyCatalogDefault(models.slice(0, 1), catalog),
       models.slice(0, 1),

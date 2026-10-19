@@ -1,3 +1,4 @@
+import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
@@ -117,6 +118,21 @@ describe("buildComposerPromptHistoryEntries", () => {
       { id: "m4", prompt: "same" },
     ]);
   });
+
+  it("skips messages sent by automations, agents, and T3 Code", () => {
+    const typed = buildComposerPromptHistoryEntries([
+      { id: "m1", role: "user", text: "typed" },
+      { id: "m2", role: "user", text: "scheduled", scheduledTaskId: ScheduledTaskId.make("task") },
+      {
+        id: "scheduled-task-message:task:1:scheduled",
+        role: "user",
+        text: "[Triggered by schedule task: Daily]\n\nlegacy scheduled",
+      },
+      { id: "m3", role: "user", text: "from agent", createdBy: "agent", creationSource: "mcp" },
+      { id: "m4", role: "user", text: "from server", createdBy: "agent", creationSource: "server" },
+    ]);
+    expect(typed).toEqual([{ id: "m1", prompt: "typed" }]);
+  });
 });
 
 describe("stepComposerPromptHistory", () => {
@@ -144,7 +160,6 @@ describe("stepComposerPromptHistory", () => {
     const position: ComposerPromptHistoryPosition = { entryId: "m3", recalled: "third" };
     expect(backward(position, "third edited")).toBeNull();
     expect(forward(position, "third edited")).toBeNull();
-    // Sent and cleared: ArrowUp starts over from the newest entry.
     expect(backward(position, "")?.position).toEqual({ entryId: "m3", recalled: "third" });
   });
 
@@ -166,7 +181,6 @@ describe("stepComposerPromptHistory", () => {
       currentPrompt: "A",
     });
     expect(older?.prompt).toBe("zeroth");
-    // Unknown id with no matching text: browsing is over.
     const missing = stepComposerPromptHistory({
       direction: "forward",
       entries: grown,

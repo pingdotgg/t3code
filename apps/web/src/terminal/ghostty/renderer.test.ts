@@ -225,8 +225,6 @@ describe("renderGhosttySnapshot", () => {
       cursorOn: false,
     });
 
-    // The cursor row still repaints so the block disappears, but the inverted
-    // glyph the on phase draws over the cell is gone.
     expect(fillTextCalls).toEqual([["abx", 4, 15, 21.6]]);
   });
 

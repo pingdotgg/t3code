@@ -2,12 +2,6 @@ import { withDeviceHubQuery } from "@t3tools/client-runtime/state/deviceHubAcces
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import type { DevicePlatform } from "@t3tools/contracts";
 
-/**
- * Read-only hub endpoints the Tools drawer consumes directly: the accessibility
- * tree, the foreground app, and the event log. Everything that changes device
- * state goes through the `device.action` RPC instead, so this file never POSTs.
- */
-
 export interface DeviceAxElement {
   readonly id: string;
   readonly label: string;
@@ -70,11 +64,6 @@ const numberOr = (value: unknown, fallback: number) =>
 
 const AX_ELEMENT_LIMIT = 500;
 
-/**
- * serve-sim's helper returns the native nested tree; the root node is the
- * application covering the whole screen. Flatten it the way serve-sim's own
- * overlay does: skip nodes with the root's frame, cap the count.
- */
 const flattenIosAxTree = (roots: ReadonlyArray<unknown>): ReadonlyArray<DeviceAxElement> => {
   const first = roots[0];
   const rootFrame = isRecord(first) && isRecord(first.frame) ? first.frame : null;
@@ -131,15 +120,12 @@ export async function fetchDeviceAxTree(
     const error = isRecord(payload) && typeof payload.error === "string" ? payload.error : null;
     return { elements: [], errors: [error ?? "Unexpected accessibility payload."] };
   }
-  // uiautomator reports pixel bounds; the first node is the full window.
   const nodes = payload.nodes.filter(
     (node): node is Record<string, unknown> => isRecord(node) && isRecord(node.bounds),
   );
   const root = nodes[0]?.bounds as Record<string, unknown> | undefined;
   const screenWidth = Math.max(1, numberOr(root?.right, 1));
   const screenHeight = Math.max(1, numberOr(root?.bottom, 1));
-  // Layout containers span the whole window and would tint the entire
-  // screen; only nodes a user could point at are worth drawing.
   const elements = nodes.slice(1).flatMap((node): DeviceAxElement[] => {
     const bounds = node.bounds as Record<string, unknown>;
     const left = numberOr(bounds.left, 0);
@@ -176,14 +162,11 @@ const openEventSource = (
   source.addEventListener("message", (event) => {
     try {
       onMessage(JSON.parse(String(event.data)));
-    } catch {
-      // Keep-alive comments and malformed frames carry nothing to render.
-    }
+    } catch {}
   });
   return () => source.close();
 };
 
-/** iOS only: the frontmost app, pushed by serve-sim whenever it changes. */
 export function subscribeDeviceForeground(
   target: Target,
   onChange: (app: DeviceForegroundInfo | null) => void,
@@ -219,11 +202,6 @@ const toEventLogEntry = (raw: unknown): DeviceEventLogEntry | null => {
   };
 };
 
-/**
- * iOS only: serve-sim's event log, seeded with recent history and then pushed
- * live. Android's session recorder only tracks replayable gestures, which the
- * user already sees themselves, so it is not surfaced.
- */
 export function subscribeDeviceEventLog(
   target: Target,
   onEvents: (entries: ReadonlyArray<DeviceEventLogEntry>, reset: boolean) => void,

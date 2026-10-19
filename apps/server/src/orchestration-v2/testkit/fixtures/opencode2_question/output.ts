@@ -13,10 +13,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/**
- * The question tool's form is a user input request with the model's options and
- * a free-form answer; the answer goes back to OpenCode and the turn uses it.
- */
 export function assertOpenCode2QuestionOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -26,7 +22,6 @@ export function assertOpenCode2QuestionOutput(
   assertSemanticProjectionIntegrity(projection);
   assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertUserMessagesInclude(projection, [OPENCODE2_QUESTION_PROMPT]);
-  // The form is the item; OpenCode's own `question` tool call is not repeated.
   assertTurnItemTypeSequence(projection, [
     "user_message",
     "assistant_message",

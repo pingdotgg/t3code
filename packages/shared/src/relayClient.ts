@@ -21,6 +21,7 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { isWindowsRenameLock } from "./atomicWrite.ts";
 import * as HostProcess from "./HostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.10.0";
@@ -30,9 +31,6 @@ export const CLOUDFLARED_VERSION = "2026.10.0";
 export const CLOUDFLARED_MIN_VERSION = "2025.6.1";
 const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
-// Generous bound for a ~40MB binary download; without it a stalled
-// connection parks the install forever (same unbounded-wait family as the
-// other relay/cloud network calls).
 const CLOUDFLARED_DOWNLOAD_TIMEOUT = "10 minutes";
 
 export type RelayClientExecutableSource = "override" | "managed" | "path";
@@ -138,7 +136,6 @@ const trimmedString = (name: string) =>
 
 const CloudflaredConfig = Config.all({
   executableOverride: trimmedString(CLOUDFLARED_PATH_ENV_NAME),
-  path: trimmedString("PATH"),
 });
 
 export interface CloudflaredRelayClientOptions {
@@ -147,14 +144,7 @@ export interface CloudflaredRelayClientOptions {
 }
 
 export interface RelayClientShape {
-  /**
-   * Finds the relay client to run, without downloading anything: the override,
-   * else the pinned managed folder, else the newest older managed folder, else
-   * `cloudflared` on PATH. Every candidate must report a compatible version, and
-   * the status carries the version the binary reports.
-   */
   readonly resolve: Effect.Effect<RelayClientStatus>;
-  /** Installs the pinned managed release unless it, or a valid override, is already present. */
   readonly install: Effect.Effect<AvailableRelayClient, RelayClientInstallError>;
   readonly installWithProgress: (
     report: (event: RelayClientInstallProgressEvent) => Effect.Effect<void>,
@@ -163,7 +153,6 @@ export interface RelayClientShape {
   readonly pruneManagedVersions: Effect.Effect<void>;
 }
 
-/** True when this is the pinned managed release, which needs no update. */
 export function isPinnedManagedRelayClient(client: AvailableRelayClient): boolean {
   return client.source === "managed" && client.version === CLOUDFLARED_VERSION;
 }
@@ -190,20 +179,17 @@ function parseVersion(value: string): readonly [number, number, number] | null {
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
 
-/** Orders `YYYY.M.P` cloudflared versions; unparseable versions sort first. */
 export function compareCloudflaredVersions(left: string, right: string): number {
   const a = parseVersion(left) ?? [0, 0, 0];
   const b = parseVersion(right) ?? [0, 0, 0];
   return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
-/** Reads the version from `cloudflared version` output, e.g. `cloudflared version 2026.5.2 (built ...)`. */
 export function parseCloudflaredVersionOutput(output: string): string | null {
   const version = parseVersion(output);
   return version ? version.join(".") : null;
 }
 
-// A changed file is a new key, so a replaced binary is probed again.
 class VersionProbeKey extends Data.Class<{
   readonly executablePath: string;
   readonly size: number;
@@ -212,13 +198,6 @@ class VersionProbeKey extends Data.Class<{
 
 function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
-}
-
-// Windows refuses to rename a file another process briefly holds open, such as a virus
-// scanner reading the binary that just ran. These codes clear once it lets go.
-function isTransientWindowsLock(error: PlatformError.PlatformError): boolean {
-  const code = (error.reason.cause as NodeJS.ErrnoException | undefined)?.code;
-  return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 }
 
 const wrapInstallFailure =
@@ -275,10 +254,8 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   // `cloudflared version` costs a process spawn, so answers are cached per file
-  // revision. Before `--no-autoupdate`, a managed binary could replace itself in
-  // place, so the version is read from the binary, never from its folder name.
-  // A failed or timed-out probe is not cached, so a slow spawn under an AV scan
-  // does not hide a good binary until it changes on disk.
+  // revision. A failed or timed-out probe is not cached, so a slow spawn under
+  // an AV scan does not hide a good binary until it changes on disk.
   const versionCache = yield* Cache.makeWith(
     (key: VersionProbeKey) =>
       spawner
@@ -347,8 +324,10 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   });
 
   const resolvePathExecutable = Effect.gen(function* () {
-    const config = yield* loadCloudflaredConfig;
-    const pathValue = Option.getOrUndefined(config.path);
+    // The default ConfigProvider is cached the first time any Config is read.
+    // Server startup reads its config before fixPath hydrates the environment,
+    // so reading PATH through Config here can retain the service's stale PATH.
+    const pathValue = (yield* HostProcess.Environment).PATH?.trim();
     if (!pathValue) return null;
     const delimiter = platform === "win32" ? ";" : ":";
     for (const directory of pathValue.split(delimiter)) {
@@ -384,9 +363,6 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
       );
       return missingStatus;
     }
-    // A managed binary reports the version it actually runs. One that replaced
-    // itself in place still serves as a fallback; the runtime sees it is not the
-    // pinned release and installs that.
     const pinned = yield* compatibleCandidate(managedPath, "managed");
     if (pinned) return pinned;
     for (const version of yield* olderManagedVersions) {
@@ -413,13 +389,12 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
     }
   }).pipe(Effect.withSpan("cloudflared.pruneManagedVersions"));
 
-  /** Moves the new binary toward its final path, waiting out a brief Windows lock. */
   const renameWhenUnlocked = (from: string, to: string) =>
     fileSystem.rename(from, to).pipe(
       Effect.retry({
         times: ACTIVATE_RETRY_COUNT,
         schedule: Schedule.spaced(ACTIVATE_RETRY_DELAY),
-        while: (error) => platform === "win32" && isTransientWindowsLock(error),
+        while: (error) => platform === "win32" && isWindowsRenameLock(error),
       }),
     );
 
@@ -603,7 +578,7 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
         });
       }
 
-      const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4}.tmp`;
+      const stagedPath = `${managedPath}.${yield* crypto.randomUUIDv4()}.tmp`;
       yield* report("activating");
       yield* renameWhenUnlocked(executablePath, stagedPath).pipe(
         wrapInstallFailure("write_failed", "Could not stage the relay client."),

@@ -19,9 +19,9 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
 import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
@@ -43,7 +43,6 @@ const TOOLBAR_FLIP_TIMING = {
 const TOOLBAR_HALF_HEIGHT = 22;
 const TOOLBAR_PERSPECTIVE = 600;
 
-/** Moves each face around the same horizontal axis, keeping their edges together. */
 function toolbarFlip(fromDegrees: number, toDegrees: number): EntryExitAnimationFunction {
   return () => {
     "worklet";
@@ -94,7 +93,6 @@ const WAVEFORM_TIMING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 
-/** Rotates the compact draft away without unmounting or resizing its native editor. */
 export function ComposerDictationDraftContent(props: {
   readonly children: ReactNode;
   readonly className?: string;
@@ -132,7 +130,6 @@ export function ComposerDictationDraftContent(props: {
   );
 }
 
-/** Flips the entire row while keeping the outgoing controls intact until it leaves. */
 export function ComposerDictationToolbar(props: {
   readonly children: ReactNode;
   readonly showsDictation: boolean;
@@ -188,7 +185,6 @@ const WaveformBar = memo(function WaveformBar(props: {
 const COMPACT_WAVEFORM_BAR_COUNT = 8;
 const COMPACT_WAVEFORM_BAR_HEIGHT = 14;
 
-/** A fixed-size waveform of the latest samples, for tight spaces like the global dictation pill. */
 export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
   readonly audioLevels: SharedValue<number[]>;
 }) {

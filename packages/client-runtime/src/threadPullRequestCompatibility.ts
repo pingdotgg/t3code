@@ -11,7 +11,6 @@ type LinkingCapabilities = Pick<
   "threadPullRequests" | "threadPullRequestLinking"
 >;
 
-/** Capability negotiation keeps both single-link and multi-link environments usable. */
 export function threadPullRequestLinkMode(capabilities: LinkingCapabilities | null | undefined) {
   return capabilities?.threadPullRequests === true
     ? "multiple"

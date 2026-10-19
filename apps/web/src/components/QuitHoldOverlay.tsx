@@ -2,14 +2,8 @@ import { useEffect, useState } from "react";
 
 import { isMacPlatform } from "../lib/utils";
 
-// A released hold hint lingers for the original hold duration. Double-press
-// hints disappear as soon as their acceptance window closes.
 const HOLD_HINT_LINGER_MS = 1200;
 
-/**
- * The desktop main process intercepts the quit accelerator and pushes
- * press/release states while it waits for a hold or second press.
- */
 export function QuitHoldOverlay() {
   const [visibleMode, setVisibleMode] = useState<"hold" | "double-click" | null>(null);
 

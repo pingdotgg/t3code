@@ -7,7 +7,6 @@ export interface TimelineMinimapItem {
   readonly assistantText: string | null;
 }
 
-/** Keep full source text untouched until a minimap preview is opened. */
 export function deriveTimelineMinimapItems(
   rows: ReadonlyArray<MessagesTimelineRow>,
 ): TimelineMinimapItem[] {

@@ -343,7 +343,6 @@ it.effect.each([
       DateTime.formatIso(candidate.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
     );
-    // The shell carries the same stamp, which orders the Working section.
     const shellThread = (yield* store.getShellSnapshot()).threads.find(
       (thread) => thread.id === threadId,
     );
@@ -516,12 +515,9 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
       `EXPLAIN QUERY PLAN ${shellQuery![0]}`,
       shellQuery![1],
     );
-    // A failed run's root node is often null, and every runless item shares that
-    // node_id, so a node_ordinal lookup walks the whole history once per thread.
     const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
     assert.lengthOf(itemLookups, 2);
-    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
-    // The pending secret request lookup is bounded the same way.
+    assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_failed_error_idx")));
     const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));
     assert.lengthOf(secretLookups, 1);
     assert.include(secretLookups[0]!.detail, "turn_items_thread_run_idx");

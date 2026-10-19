@@ -3,10 +3,6 @@ import { useId, useState } from "react";
 
 import { cn } from "../../lib/utils";
 
-/**
- * Long error text clamped to a few lines with a toggle to reveal the rest.
- * Short single-line text renders as-is without the toggle.
- */
 export function ExpandableText({
   text,
   className,

@@ -71,23 +71,20 @@ const DROPPED_REQUEST_HEADER_PREFIXES = ["proxy-", "cf-", "x-forwarded-", "x-b3-
 
 export const isRelayHookPath = (url: string): boolean => url.startsWith(RELAY_HOOK_PATH_PREFIX);
 
-/** Replaces the hook token (and any query) so traces and logs never record the secret. */
 export const redactRelayHookUrl = (url: string): string => {
   const path = url.split("?", 1)[0] ?? url;
   const segments = path.split("/");
   if (segments.length >= 6) {
-    // URL-safe, so span attributes built from the parsed URL keep it readable.
     segments[5] = "redacted";
   }
   return segments.join("/");
 };
 
 /**
- * Request budget for public hook forwarding, keyed by a hash of the hook URL
- * (endpoint, hook and token). Requests with a wrong token get their own
- * budget, so they cannot use up a real sender's; the environment rejects them.
- * Built from decoded segments, because the environment decodes them too: two
- * spellings of one token (`token`, `%74oken`) must share one budget.
+ * Requests with a wrong token get their own budget, so they cannot use up a
+ * real sender's; the environment rejects them. Built from decoded segments,
+ * because the environment decodes them too: two spellings of one token
+ * (`token`, `%74oken`) must share one budget.
  */
 const hookBudgetKey = (hook: {
   readonly endpointKey: string;
@@ -113,9 +110,7 @@ const hookBudgetKey = (hook: {
 export class HookRateLimiter extends Context.Service<
   HookRateLimiter,
   {
-    /** One hook URL's budget, keyed by `hookBudgetKey`. */
     readonly allowHook: (key: string) => Effect.Effect<boolean>;
-    /** One endpoint's overall budget, keyed by its endpoint key. */
     readonly allowEndpoint: (endpointKey: string) => Effect.Effect<boolean>;
   }
 >()("t3code-relay/hooks/HookForwarder/HookRateLimiter") {}
@@ -156,7 +151,6 @@ function parseHookPath(url: string) {
   const path = queryIndex === -1 ? url : url.slice(0, queryIndex);
   const search = queryIndex === -1 ? "" : url.slice(queryIndex);
   const segments = path.split("/");
-  // ["", "v1", "hooks", endpointKey, hookId, token]
   if (segments.length !== 6) return null;
   const [, , , endpointKey, rawHookId, rawToken] = segments;
   if (!endpointKey || !MANAGED_ENDPOINT_KEY_PATTERN.test(endpointKey) || !rawHookId || !rawToken) {
@@ -277,7 +271,6 @@ const make = Effect.gen(function* () {
       yield* outcome("method_not_allowed");
       return errorResponse(405, "method_not_allowed", { allow: "GET, POST, PUT, PATCH" });
     }
-    // When the sender called, not when the environment failed to answer.
     const receivedAt = DateTime.formatIso(yield* DateTime.now);
     const parsed = parseHookPath(request.url);
     if (!parsed) {
@@ -288,13 +281,10 @@ const make = Effect.gen(function* () {
       "relay.hook.endpoint_key": parsed.endpointKey,
       "relay.hook_id": parsed.hookId,
     });
-    // A coarse budget per endpoint first, so minting new hook ids or tokens
-    // cannot buy unlimited lookups and forwards, or fill the inbox.
     const endpointAllowed = yield* rateLimiter.allowEndpoint(parsed.endpointKey);
     const hookAllowed =
       endpointAllowed && (yield* rateLimiter.allowHook(yield* hookBudgetKey(parsed)));
     if (!endpointAllowed || !hookAllowed) {
-      // Which budget ran out: the whole endpoint's, or this one hook URL's.
       yield* Effect.annotateCurrentSpan({
         "relay.hook.rate_limit": endpointAllowed ? "hook" : "endpoint",
       });
@@ -342,7 +332,7 @@ const make = Effect.gen(function* () {
     // One id per request, so a request that reached the environment before a
     // timeout and is later delivered from the inbox runs only once.
     yield* Effect.annotateCurrentSpan({ "relay.hook.body_bytes": body.success.byteLength });
-    const deliveryId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const deliveryId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     // Proves to the environment that this delivery id, receive time and
     // trace context came from the relay. Signed once here and stored with a
     // held request, so the inbox never needs the signing key.
@@ -351,7 +341,7 @@ const make = Effect.gen(function* () {
       deliveryId,
       receivedAt,
       hookId: parsed.hookId,
-      jti: yield* crypto.randomUUIDv4.pipe(Effect.orDie),
+      jti: yield* crypto.randomUUIDv4().pipe(Effect.orDie),
     });
     const hook = {
       id: deliveryId,
@@ -364,7 +354,6 @@ const make = Effect.gen(function* () {
       headers: { ...forwardedHeaders(request.headers), [RELAY_HOOK_DELIVERY_HEADER]: proof },
       body: body.success,
     };
-    // Held only for environments that opted in; otherwise the relay is a plain proxy.
     const holdOrFail = (status: 503 | 504, error: string) =>
       Effect.gen(function* () {
         if (!endpoint.holdWhileOffline) {
@@ -390,7 +379,6 @@ const make = Effect.gen(function* () {
           return errorResponse(status, error);
         }
         if (!stored) {
-          // The inbox span carries which cap refused it (relay.inbox.refused).
           yield* outcome("inbox_full");
           return errorResponse(503, "inbox_full");
         }
@@ -421,8 +409,6 @@ const make = Effect.gen(function* () {
         ? {}
         : { "relay.hook.upstream_outcome": response.outcome }),
     });
-    // Only content-type is passed through: no location (redirects are never
-    // followed or relayed), no cookies, no upstream infrastructure headers.
     const headers = {
       ...SANDBOXED_RESPONSE_HEADERS,
       ...(response.contentType ? { "content-type": response.contentType } : {}),
@@ -442,11 +428,6 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(HookForwarder, make);
 
-/**
- * Implements the RelayApi `hooks` group. The endpoints are raw: the forwarder
- * re-reads the encoded path segments from the request so the token and hook
- * id reach the environment byte for byte, and streams the body itself.
- */
 export const layerApi = HttpApiBuilder.group(
   RelayApi,
   "hooks",

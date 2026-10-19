@@ -14,7 +14,6 @@ function asTrimmedString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/** A Claude `Skill` call: the skill it loads and the arguments it passes, if any. */
 export function claudeSkillInvocation(
   toolName: string | null | undefined,
   input: unknown,
@@ -25,15 +24,43 @@ export function claudeSkillInvocation(
   return name === undefined ? undefined : { name, args: asTrimmedString(record?.args) };
 }
 
-/**
- * Activity log heading a dynamic tool derives from its input: CUA's `title`,
- * or the skill a Claude `Skill` call loads.
- */
+export function isJavaScriptReplTool(toolName: string | null | undefined): boolean {
+  return toolName === "js" || toolName === "cua_repl.js" || toolName === "node_repl.js";
+}
+
+export const COMPUTER_USE_TOOL_SOURCE = {
+  key: "computer-use",
+  name: "Computer Use",
+  kind: "computer",
+} as const;
+
+export function dynamicToolSurface(toolName: string | null | undefined, input: unknown) {
+  if (toolName === "cua_repl.js") return "computer" as const;
+  const code = asRecord(input)?.code;
+  return isJavaScriptReplTool(toolName) &&
+    typeof code === "string" &&
+    (/\bsky\s*\./u.test(code) || /["']@oai\/sky["']/u.test(code))
+    ? ("computer" as const)
+    : undefined;
+}
+
 export function dynamicToolTitle(
   toolName: string | null | undefined,
   input: unknown,
+  retainedTitle?: string | null,
 ): string | undefined {
-  if (toolName === "cua_repl.js") return asTrimmedString(asRecord(input)?.title);
+  if (isJavaScriptReplTool(toolName)) {
+    const title = asTrimmedString(retainedTitle);
+    const meaningfulTitle =
+      title && title.toLowerCase() !== "js" && title.toLowerCase() !== toolName?.toLowerCase()
+        ? title
+        : undefined;
+    return (
+      asTrimmedString(asRecord(input)?.title) ??
+      meaningfulTitle ??
+      (dynamicToolSurface(toolName, input) === "computer" ? "Computer use" : "Run JavaScript")
+    );
+  }
   const skill = claudeSkillInvocation(toolName, input);
   return skill === undefined ? undefined : `Skill: ${skill.name}`;
 }
@@ -157,7 +184,6 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
   }
 }
 
-/** Structured paths from tool input, never file-body text. */
 export function collectToolFilePaths(data: unknown): string[] {
   const paths: string[] = [];
   collectPaths(data, paths, new Set<string>(), 0);
@@ -219,7 +245,6 @@ export type ToolActivityAction = "command" | "read" | "file_change" | "search" |
 
 function toolNameToken(value: string | undefined): string | undefined {
   const trimmed = asTrimmedString(value);
-  // Server-prefixed MCP names (`github.read_file`, `mcp__db__find`) are not local reads or searches.
   if (!trimmed || /__|[./]/u.test(trimmed)) {
     return undefined;
   }
@@ -336,7 +361,6 @@ function searchTargetName(value: string | undefined): string | undefined {
   return value.split(/[\\/]/u).findLast((part) => part.length > 0 && part !== ".");
 }
 
-/** Cursor-style row: "Searched files *.{ts,tsx} in t3chat-new". */
 export function formatSearchToolLabel(
   data: Record<string, unknown> | undefined,
 ): string | undefined {
@@ -362,7 +386,6 @@ export function formatSearchToolLabel(
   return undefined;
 }
 
-/** Work-log heading for a file read: verb plus the structured path, never the path alone. */
 export function formatReadToolLabel(path: string, extraCount = 0): string {
   const trimmed = path.trim();
   const suffix = extraCount > 0 ? ` +${extraCount} more` : "";

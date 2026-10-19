@@ -13,7 +13,6 @@ import {
   decodeViewerJson,
 } from "./bitbucketPullRequestJson.ts";
 
-/** Shaped after a real api.bitbucket.org pull request, trimmed to the fields that are read. */
 function pullRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 897,
@@ -24,8 +23,12 @@ function pullRequest(overrides: Record<string, unknown> = {}): Record<string, un
     created_on: "2026-06-16T05:04:32.258456+00:00",
     updated_on: "2026-06-16T05:04:33.750542+00:00",
     author: { display_name: "Bilal Hassan", nickname: "bilal", type: "user" },
-    source: { branch: { name: "feat/page" }, repository: { full_name: "fork/web" } },
-    destination: { branch: { name: "master" } },
+    source: {
+      branch: { name: "feat/page" },
+      commit: { hash: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93", type: "commit" },
+      repository: { full_name: "fork/web" },
+    },
+    destination: { branch: { name: "master" }, commit: { hash: "base-commit" } },
     links: { html: { href: "https://bitbucket.org/acme/web/pull-requests/897" } },
     ...overrides,
   };
@@ -52,11 +55,11 @@ describe("decodePullRequestPageJson", () => {
       url: "https://bitbucket.org/acme/web/pull-requests/897",
       author: { login: "bilal", name: "Bilal Hassan" },
       headBranch: "feat/page",
+      headSha: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93",
       headRepositoryNameWithOwner: "fork/web",
       baseBranch: "master",
       state: "open",
       isDraft: false,
-      // Bitbucket says nothing about conflicts on the pull request itself.
       mergeability: "unknown",
     });
     expect(decoded.next).toBeNull();
@@ -106,6 +109,27 @@ describe("decodePullRequestPageJson", () => {
 });
 
 describe("decodePullRequestJson", () => {
+  it("preserves the source commit hash as the head SHA", () => {
+    const decoded = expectSuccess(decodePullRequestJson(JSON.stringify(pullRequest())));
+
+    expect(decoded).toMatchObject({ headSha: "9f3a7c2d8b1e6f045a9c3d7e2b8f1a6c0d4e5f93" });
+  });
+
+  it.each([
+    { metadata: "absent commit", commit: undefined },
+    { metadata: "null commit", commit: null },
+    { metadata: "absent hash", commit: {} },
+    { metadata: "null hash", commit: { hash: null } },
+  ])("reads detail and list payloads with $metadata", ({ commit }) => {
+    const raw = pullRequest({ source: { branch: { name: "feat/page" }, commit } });
+    const detail = expectSuccess(decodePullRequestJson(JSON.stringify(raw)));
+    const list = expectSuccess(decodePullRequestPageJson(page([raw])));
+
+    expect(detail).toMatchObject({ number: 897, headBranch: "feat/page", headSha: null });
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({ number: 897, headBranch: "feat/page", headSha: null });
+  });
+
   it("reads reviewers as review requests", () => {
     const decoded = expectSuccess(
       decodePullRequestJson(
@@ -134,7 +158,6 @@ describe("decodePullRequestJson", () => {
                 state: "approved",
                 participated_on: "2026-06-17T09:00:00+00:00",
               },
-              // Added as a reviewer but has not voted, so there is no verdict to show.
               {
                 user: { nickname: "sam", display_name: "Sam" },
                 role: "REVIEWER",
@@ -211,7 +234,6 @@ describe("decodeCommentsJson", () => {
     expect(decoded.comments[0]).toMatchObject({
       id: "797230941",
       kind: "issue-comment",
-      // An app account has no nickname, so its display name is the only handle it has.
       author: { login: "Release Bot" },
       createdAt: "2026-05-15T01:58:38.220Z",
     });
@@ -370,8 +392,6 @@ describe("repository permission decoding", () => {
   });
 
   it("grants write where Bitbucket named no permission at all", () => {
-    // An empty page is Bitbucket declining to say, which is an unknown standing rather than a
-    // refusal — and an unknown one is granted.
     expect(expectSuccess(decodeRepositoryPermissionJson(page([])))).toBe(true);
   });
 });

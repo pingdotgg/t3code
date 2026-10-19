@@ -23,7 +23,6 @@ export interface QueuedThreadRun {
   readonly run: Run;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
-  /** Editing replaces this message's content, so its id and context travel with the row. */
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
 }
@@ -107,7 +106,6 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   );
 }
 
-/** Automatic completion/notification runs are not messages in the user's queue. */
 export function getUserQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {

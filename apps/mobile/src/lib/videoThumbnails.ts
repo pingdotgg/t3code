@@ -24,7 +24,6 @@ async function extractFrame(uri: string, signal: AbortSignal) {
       cancel = () => resolve(null);
     });
     signal.addEventListener("abort", cancel, { once: true });
-    // An unreachable environment must not hold up thumbnails for other environments.
     timeout = setTimeout(cancel, 15_000);
     const frame = (async () => {
       await player.replaceAsync({ uri, contentType: "progressive" });
@@ -44,7 +43,6 @@ async function extractFrame(uri: string, signal: AbortSignal) {
   }
 }
 
-/** Serializes frame extraction and releases each temporary player and local-file lease. */
 export function loadVideoThumbnail(
   key: string,
   resolveSource: (

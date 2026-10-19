@@ -95,3 +95,32 @@ Downloads, it may need Full Disk Access for the `t3` executable listed in
 
 For failures after signing in to T3 Connect, see
 [connection troubleshooting](./remote-access.md#t3-connect-troubleshooting).
+
+## Reclaim database space
+
+T3 Code removes superseded internal history on its own while it runs; your
+conversations are kept. Databases created before this shrank automatically
+still hold the freed space on disk until a one-time offline repair returns it
+and turns on automatic shrinking. Settings > Storage (web and desktop) or
+Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
+reclaimed.
+
+Run `t3 doctor` on the machine that hosts the environment. It reports the
+database size and the space it can reclaim, then asks which repairs to run;
+pass `--fix` to run the recommended ones without a prompt (for scripts), or
+`--dry-run` to only report. An installed background service for the same data
+directory is stopped for the repair and started again afterwards, also when
+the repair fails. Quit a server you started by hand, or the desktop app, first:
+the repair refuses to touch a database that is in use. Use `--base-dir` for a
+different data directory.
+
+The repair can take several minutes on a large database. It rebuilds the
+database through a temporary copy, so it needs free space of about the
+database's size twice over: once in the system temporary directory (`TMPDIR`
+or `/tmp` on Linux and macOS) and once next to the database for its
+write-ahead log.
+
+If you upgraded from a version before 0.1.0, its database (`state.sqlite`) is
+still kept next to the current one so you can roll back. `t3 doctor` offers to
+delete it, but never selects that repair for you and `--fix` skips it: once it
+is gone, a version before 0.1.0 starts with no threads or settings.

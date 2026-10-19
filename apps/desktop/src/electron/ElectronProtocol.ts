@@ -52,8 +52,6 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
   }
 }
 
-// The scheme either proxies to a dev server (`targetOrigin`) or serves the
-// built client from disk (`assetDirectory`).
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
   readonly clerkFrontendApiHostname: string | undefined;
@@ -96,9 +94,8 @@ export function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrat
     "style-src 'self' 'unsafe-inline'",
     `font-src 'self' ${input.scheme}: data:`,
     "worker-src 'self' blob:",
-    // Document viewers use local Blob URLs and signed assets from runtime environments.
-    // HTML viewers retain their own sandbox; the renderer's script policy stays unchanged.
     "frame-src 'self' blob: http: https:",
+    "object-src 'self' blob: http: https:",
     "form-action 'self'",
   ].join("; ");
 }
@@ -161,8 +158,6 @@ const netFetch = (url: string, init: RequestInit) =>
     catch: (cause) => new ElectronProtocolFetchError({ cause }),
   });
 
-// The dev renderer target can briefly refuse connections while Vite restarts:
-// retry idempotent requests after 50ms, then 150ms, and keep the last failure.
 const fetchWithTransientRetry = (url: string, init: RequestInit) =>
   netFetch(url, init).pipe(
     Effect.retry({ schedule: Schedule.exponential("50 millis", 3), times: 2 }),
@@ -213,9 +208,6 @@ const proxyRequest = Effect.fn("desktop.protocol.proxyRequest")(function* (
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 });
 
-// Serves the packaged web client without a backend: files resolve within the
-// asset directory, and any other path falls back to index.html so the SPA
-// router handles it, except for asset-shaped misses (`/missing.js`) which 404.
 const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   request: Request,
   assetDirectory: string,
@@ -276,7 +268,6 @@ export const make = Effect.gen(function* () {
                   contentSecurityPolicy,
                 );
               }
-              // Reject with net.fetch's own error, as an unproxied fetch would.
               return runPromise(
                 proxyRequest(request, input.targetOrigin, contentSecurityPolicy).pipe(
                   Effect.catchTags({

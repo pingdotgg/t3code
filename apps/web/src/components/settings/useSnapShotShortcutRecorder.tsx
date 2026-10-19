@@ -4,7 +4,7 @@ import {
   type SnapShotShortcut,
 } from "@t3tools/contracts";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import {
   formatSnapShotShortcutLabel,
@@ -30,7 +30,6 @@ const MODIFIER_CODES: Readonly<Record<SnapShotModifier, readonly [string, string
   alt: ["AltLeft", "AltRight"],
 };
 
-/** The same recorder for inline changes and config-backed setup, without saving either. */
 export function useSnapShotShortcutRecorder({
   shortcut,
   shortcutLabel,
@@ -53,12 +52,12 @@ export function useSnapShotShortcutRecorder({
   const [recording, setRecording] = useState(false);
   const [requests] = useState(createRecordingRequestTracker);
   const heldModifierCodes = useRef(new Set<string>());
-  const stopRecording = useCallback(() => {
+  const stopRecording = () => {
     requests.clear();
     heldModifierCodes.current.clear();
     setRecording(false);
     void bridge?.setSnapShotShortcutSuppressed(false).catch(() => undefined);
-  }, [bridge, requests]);
+  };
   const startRecording = async () => {
     if (!bridge || disabled) return;
     const request = requests.tryBegin();

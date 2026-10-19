@@ -237,7 +237,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             body: "",
           },
         }),
-        argsMustContain: `--model ${SYNTHETIC_CLAUDE_COLLIDING_ALIAS} --settings`,
+        argsMustContain: `--model ${SYNTHETIC_CLAUDE_COLLIDING_ALIAS} --effort max --settings`,
         claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
       },
       (textGeneration) =>
@@ -480,6 +480,43 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
         );
 
         expect(error._tag).toBe("TextGenerationError");
+      }),
+    ),
+  );
+
+  const apiError = "API Error: 400 Model blocked by guardrail: 4 endpoints excluded";
+  const wrapperNotice = "Using the OpenRouter credential from the global credential file.";
+  it.effect.each([
+    [
+      "the stdout error over a stderr notice",
+      JSON.stringify({ is_error: true, api_error_status: 400, result: apiError }),
+      apiError,
+    ],
+    [
+      "the verbose stdout error over a stderr notice",
+      JSON.stringify([
+        { type: "system", subtype: "init" },
+        { type: "result", is_error: true, result: apiError },
+        { type: "result", is_error: true, result: " " },
+      ]),
+      apiError,
+    ],
+    ["stderr when stdout has no error", "not json", wrapperNotice],
+  ] as const)("reports %s when the Claude CLI fails", ([, output, expected]) =>
+    withFakeClaudeEnv({ output, stderr: wrapperNotice, exitCode: 1 }, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          }),
+        );
+
+        expect(error.detail).toBe(`Claude CLI command failed: ${expected}`);
       }),
     ),
   );

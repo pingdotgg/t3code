@@ -16,16 +16,13 @@ import type { FilePreviewSource } from "../components/FilePreviewModal";
 import type { MediaVideoPreviewSource } from "./videoPreviewSource";
 import type { MediaActionsSource } from "./mediaActionsSource";
 
-/** Resolves only explicit media references. Ordinary links keep their existing navigation. */
 export function resolveMarkdownMediaPreview(
   href: string,
   input: {
     readonly environmentId: EnvironmentId;
     readonly threadId: ThreadId | undefined;
     readonly workspaceRoot: string | null | undefined;
-    /** Captured markdown may only open media with a direct URL. */
     readonly captured?: boolean;
-    /** Image syntax can target an endpoint without a recognizable extension. */
     readonly imageEmbed?: boolean;
   },
 ):

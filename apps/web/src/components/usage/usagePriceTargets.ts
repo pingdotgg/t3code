@@ -8,7 +8,6 @@ export interface UsagePriceTarget {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly prices: Readonly<Record<string, UsageModelPriceOverride>> | null;
-  /** Model mappings. `null` when they are not loaded or the server cannot store them. */
   readonly aliases: Readonly<Record<string, string>> | null;
   readonly unavailable: string | null;
 }
@@ -24,7 +23,6 @@ export type UsagePriceWriteResult =
 
 /**
  * Each destination settles independently; retry callers pass only the failed destinations.
- * Prices and mappings for one destination go out in a single patch.
  */
 export async function writeUsagePrices(input: {
   readonly targets: readonly UsagePriceTarget[];

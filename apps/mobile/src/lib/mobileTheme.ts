@@ -31,8 +31,6 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
 ];
 
-// Closed set: every key `createMobileThemeVariables` writes. Reads of a
-// misspelled variable then fail to compile instead of yielding undefined.
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
@@ -77,7 +75,6 @@ export function createMobileThemeSelectionPatch(
   return {
     lightThemeId: nextThemeIds.light,
     darkThemeId: nextThemeIds.dark,
-    // Keep older OTA bundles on the theme for the appearance currently in use.
     themeId: nextThemeIds[activeAppearance],
   };
 }
@@ -146,9 +143,9 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
 }
 
 /**
- * An opaque form of a theme colour, composited over the surface behind it. Native chip drawing
- * parses only opaque hex — an `rgba()` string falls back to a default that is nothing like the
- * colour asked for — so a translucent role like `--color-border` has to be flattened first.
+ * Native chip drawing parses only opaque hex — an `rgba()` string falls back to a default that
+ * is nothing like the colour asked for — so a translucent role like `--color-border` has to be
+ * flattened first.
  */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
@@ -191,7 +188,6 @@ function contrastRatio(
   );
 }
 
-/** Keep the theme tint while adjusting lightness to contrast with every supplied surface. */
 export function themeColorWithContrast(
   accent: string,
   surface: string | ReadonlyArray<string>,
@@ -389,8 +385,6 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  // Mobile groups and floating controls need a tonal fill, rather than the
-  // nearly neutral raised surface used by desktop outlined cards.
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
@@ -425,7 +419,6 @@ export function getMobileThemeVariables(
         : undefined,
   );
 
-  // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
 }
 

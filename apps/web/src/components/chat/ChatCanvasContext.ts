@@ -11,7 +11,6 @@ export const ChatCanvasContext = createContext<{
   clearPreview: (key: string) => void;
   registerTimeline: (element: HTMLElement | null) => void;
   reportDetailsCard: (card: PreviewMiniPlayerObstacles["detailsCard"]) => void;
-  /** Height reserved above the details card, such as the open find bar. */
   detailsCardTopInset: number;
 } | null>(null);
 

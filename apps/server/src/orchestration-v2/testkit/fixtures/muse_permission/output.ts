@@ -11,9 +11,9 @@ import {
 import { MUSE_PERMISSION_APPROVED_FILE, MUSE_PERMISSION_DECLINED_FILE } from "./input.ts";
 
 /**
- * Supervised: both commands ask first. The approved one runs. Decline answers
- * with Muse's Reject (`abort`) choice, so the command never runs and the turn
- * still settles instead of waiting on an answer Muse cannot accept.
+ * Decline answers with Muse's Reject (`abort`) choice, so the command never
+ * runs and the turn still settles instead of waiting on an answer Muse cannot
+ * accept.
  */
 export function assertMusePermissionOutput(
   result: OrchestratorV2ScenarioResult,
@@ -44,7 +44,6 @@ export function assertMusePermissionOutput(
   );
   const approval = projection.turnItems.find((item) => item.type === "approval_request");
   const options = approval?.type === "approval_request" ? (approval.options ?? []) : [];
-  // Reject is offered as the decline button, not hidden behind "cancel".
   assert.includeDeepMembers(
     options.map((option) => option.decision),
     ["accept", "decline"],

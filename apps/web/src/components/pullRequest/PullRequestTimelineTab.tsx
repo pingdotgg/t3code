@@ -19,7 +19,7 @@ import { useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { formatRelativeTimeLabel } from "~/timestampFormat";
+import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
@@ -50,11 +50,9 @@ import {
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
-/** What every comment on the timeline needs to react; only the subject differs between them. */
 interface ReactionSurface {
   readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
-  /** Thread the timeline is shown beside, so body links can open in its in-app browser. */
   readonly threadRef: ScopedThreadRef | null;
   readonly reference: PullRequestRef;
   readonly onRefresh: () => void;
@@ -182,7 +180,6 @@ function ConversationCard({
   reactions,
 }: {
   event: PullRequestTimelineEvent;
-  /** The remark behind this entry, only where this reader may rewrite it. */
   editable: PullRequestComment | null;
   cwd: string;
   onOpen: (url: string) => void;
@@ -223,7 +220,9 @@ function ConversationCard({
               {event.reviewState ? <ReviewStateBadge state={event.reviewState} /> : null}
             </div>
             <PullRequestMetaLine className="mt-1 flex-wrap text-2xs text-muted-foreground">
-              <span>{formatRelativeTimeLabel(event.at)}</span>
+              <span>
+                <RelativeTime timestamp={event.at} />
+              </span>
               {event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
                   <FileCode2Icon aria-hidden className="size-3 shrink-0" />
@@ -330,7 +329,7 @@ function ConversationGroup({
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
                 {actors.length.toLocaleString()} {actors.length === 1 ? "author" : "authors"} ·{" "}
-                {formatRelativeTimeLabel(first.at)}
+                <RelativeTime timestamp={first.at} />
               </span>
             </span>
             <ChevronDownIcon
@@ -391,7 +390,9 @@ function CommitEvent({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
             <code className="font-mono">{event.id.slice(0, 7)}</code>
-            <span>{formatRelativeTimeLabel(event.at)}</span>
+            <span>
+              <RelativeTime timestamp={event.at} />
+            </span>
           </div>
         </div>
         {event.additions !== null && event.deletions !== null ? (
@@ -432,18 +433,13 @@ function LifecycleEvent({ event }: { event: PullRequestTimelineEvent }) {
           <span className="font-semibold text-foreground">{presentation.label}</span>
         </div>
         <div className="mt-0.5 text-2xs text-muted-foreground">
-          {formatRelativeTimeLabel(event.at)}
+          <RelativeTime timestamp={event.at} />
         </div>
       </div>
     </div>
   );
 }
 
-/**
- * A verdict, as its own row rather than a line inside a collapsed conversation. It wears the
- * reviewer's face on the rail and the verdict's own icon beside their name, so "approved" reads
- * at a glance from the same place a merge or a commit does.
- */
 function ReviewVerdictEvent({
   event,
   outcome,
@@ -454,7 +450,6 @@ function ReviewVerdictEvent({
 }: {
   event: PullRequestTimelineEvent;
   outcome: PullRequestReviewOutcome;
-  /** Commits landed after this verdict, so it speaks for code the branch no longer has. */
   stale: boolean;
   cwd: string;
   onOpen: (url: string) => void;
@@ -462,8 +457,6 @@ function ReviewVerdictEvent({
 }) {
   return (
     <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
-      {/* Pinned rather than centred: this row grows with a body, and a
-          centred avatar drifts down beside it instead of sitting by the name. */}
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
         className="top-6"
@@ -473,11 +466,6 @@ function ReviewVerdictEvent({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
             <ActorName actor={event.actor} />
-            {/* The word alone, in the verdict's own colour — green for an approval, red for a
-                request for changes. A verdict overtaken by later commits keeps its word and
-                loses that colour: it still happened, and it no longer speaks for what is on the
-                branch. Lowercased in the styling rather than the string, so what a screen reader
-                announces stays the label every other surface uses. */}
             <Tooltip disabled={!stale}>
               <TooltipTrigger
                 render={
@@ -499,7 +487,9 @@ function ReviewVerdictEvent({
           </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <PullRequestMetaLine className="flex-wrap text-2xs text-muted-foreground">
-              <span>{formatRelativeTimeLabel(event.at)}</span>
+              <span>
+                <RelativeTime timestamp={event.at} />
+              </span>
               {event.path ? (
                 <span className="inline-flex min-w-0 items-center gap-1">
                   <FileCode2Icon aria-hidden className="size-3 shrink-0" />
@@ -522,8 +512,6 @@ function ReviewVerdictEvent({
         ) : null}
         <OpenOnHostButton url={event.url} onOpen={onOpen} />
       </div>
-      {/* An approval usually carries no words. When it does they are the review, so they stay
-          visible rather than being folded away with the ordinary conversation. */}
       {event.body ? (
         <TimelineBody
           body={event.body}
@@ -565,8 +553,6 @@ export function PullRequestTimelineTab({
     reference,
     onRefresh,
   };
-  // A timeline entry keeps only what it draws, so the remarks this reader may rewrite are looked
-  // up here by the id the entry carries.
   const editable = new Map(
     detail.comments
       .filter((comment) => canEditPullRequestComment(detail, comment))

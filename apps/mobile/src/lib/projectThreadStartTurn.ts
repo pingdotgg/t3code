@@ -23,7 +23,6 @@ export interface ProjectThreadStartTurnSpec {
   readonly createdAt: string;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
-  /** New uploads or server-owned attachments from a cancelled setup. */
   readonly uploadedAttachments: ReadonlyArray<UploadedMobileAttachment | ChatAttachment>;
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
@@ -32,15 +31,9 @@ export interface ProjectThreadStartTurnSpec {
   readonly branch: string | null;
   readonly worktreePath: string | null;
   readonly startFromOrigin: boolean;
-  /** Generated temp branch for worktree mode; unused for local mode. */
   readonly worktreeBranchName: string;
 }
 
-/**
- * Single source of the `thread.turn.start` bootstrap payload used to create a
- * thread from a project draft — shared by the immediate send path and the
- * offline outbox drain so both deliver identical commands.
- */
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
   const title = deriveThreadTitleSeed({ text: spec.text, attachments: spec.uploadedAttachments });
   const isWorktree = spec.workspaceMode === "worktree";

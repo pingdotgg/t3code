@@ -1,4 +1,3 @@
-/** Native Pi session usage, including calls billed outside the main conversation. */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -99,7 +98,7 @@ function parseRecord(parsed: unknown, state: typeof PiScanState.Type): readonly 
       speed: "standard",
       // Forks copy entries verbatim, including ID/timestamp. Entry IDs are only
       // eight random hex digits, so retain timestamp/model to avoid collisions
-      // across unrelated sessions. Parent IDs may change when Pi branches.
+      // across unrelated sessions.
       dedupeKey: JSON.stringify(["pi", entry.id, entry.timestamp, model]),
     },
   ];

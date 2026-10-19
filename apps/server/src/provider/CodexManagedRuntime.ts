@@ -15,7 +15,6 @@ export interface CodexEffectiveRuntime {
   readonly revision: string;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
-// Managed sign-in stores tokens in T3's credential store and never writes native auth.json.
 const managedCodexLaunchArgs = [
   'model_provider="openai_token_sharing"',
   'model_providers.openai_token_sharing.name="OpenAI Token Sharing"',

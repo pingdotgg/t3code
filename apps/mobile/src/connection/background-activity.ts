@@ -81,7 +81,9 @@ export const layerReporter = Layer.effectDiscard(
                 observedAt: DateTime.makeUnsafe(observedAtMs),
               }),
             )
-            .pipe(Effect.ignore),
+            // Not `ignore`: tearing down an environment mid-request interrupts its report,
+            // and an interrupt leaking out here would end the reporting loop for good.
+            .pipe(Effect.ignoreCause),
         { concurrency: "unbounded", discard: true },
       );
     }).pipe(Effect.withSpan("mobile.backgroundActivity.report"));

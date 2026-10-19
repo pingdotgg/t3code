@@ -114,8 +114,6 @@ describe("RPC authorization scopes", () => {
   });
 
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
-    // The candidate list is a read like the detail beside it, and asking somebody for a review is
-    // a write like every other pull request operation.
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsChecks)).toBe(
       AuthOrchestrationReadScope,
     );
@@ -258,6 +256,27 @@ describe("RPC scope middleware", () => {
         requiredPermission: missing,
       });
       expect(handled).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports only authorized requests that succeed", () =>
+    Effect.gen(function* () {
+      const observed: Array<string> = [];
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.serverProbe, () => Effect.succeed({})),
+            group.toLayerHandler(WS_METHODS.serverRetryResourceTelemetry, () => Effect.never),
+            RpcAuthorization.layer([AuthOrchestrationReadScope], (method) =>
+              Effect.sync(() => void observed.push(method)),
+            ),
+          ),
+        ),
+      );
+
+      yield* client[WS_METHODS.serverProbe]({});
+      yield* client[WS_METHODS.serverRetryResourceTelemetry]({}).pipe(Effect.flip);
+      expect(observed).toEqual([WS_METHODS.serverProbe]);
     }).pipe(Effect.scoped),
   );
 });

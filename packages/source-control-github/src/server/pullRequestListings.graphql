@@ -1,0 +1,132 @@
+# Listings: a search across one or more repositories, and a repository's own list for one GitHub's
+# search index does not cover. Both answer with the same row.
+
+# One listing row. `first` on the inner connections is a bound rather than a page: a pull request
+# with more than twenty labels shows twenty, and one that has asked more than twenty people for a
+# review is already past what a row can say.
+#
+# `additions` and `deletions` are asked for only with `$stats`: measured over twelve repositories
+# at a hundred rows, a search answers in ~4.0s without them and ~7.1s with them, for two numbers at
+# the end of a row. The cross-repository search reads them afterwards, in `PullRequestStats`.
+# `stack` and `stackEntry` exist on github.com only (`$stacks`).
+fragment PullRequestRow on PullRequest {
+  stack @include(if: $stacks) {
+    number
+    size
+    baseRefName
+  }
+  stackEntry @include(if: $stacks) {
+    position
+  }
+  number
+  title
+  url
+  author {
+    login
+    avatarUrl
+    ... on User {
+      name
+    }
+  }
+  headRefName
+  baseRefName
+  state
+  isDraft
+  mergeable
+  reviewDecision
+  latestReviews(first: 20) {
+    nodes {
+      state
+      author {
+        login
+      }
+    }
+  }
+  additions @include(if: $stats)
+  deletions @include(if: $stats)
+  createdAt
+  updatedAt
+  mergedAt
+  repository {
+    nameWithOwner
+  }
+  reviewRequests(first: 20) {
+    nodes {
+      requestedReviewer {
+        ... on User {
+          login
+        }
+        ... on Team {
+          slug
+        }
+      }
+    }
+  }
+  labels(first: 20) {
+    nodes {
+      name
+      color
+    }
+  }
+  # GitHub's rollup for the head commit, one enum, rather than the whole check list: measured at a
+  # hundred rows, 0.8s -> 3.0s and 15 KB, against 425 KB for the same verdict as a check array.
+  commits(last: 1) {
+    nodes {
+      commit {
+        statusCheckRollup {
+          state
+        }
+      }
+    }
+  }
+}
+
+# Every repository of a host in one read, which is what makes a listing one request rather than
+# one per repository. `$first` is at most 100: `search` refuses anything larger with
+# EXCESSIVE_PAGINATION.
+query PullRequestSearch(
+  $q: String!
+  $first: Int!
+  $after: String
+  $stacks: Boolean!
+  $stats: Boolean!
+) {
+  search(query: $q, type: ISSUE, first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ...PullRequestRow
+    }
+  }
+}
+
+# A repository's pull requests without search, newest created first: the order `gh pr list` lists
+# in when it does not search, for a repository GitHub's search index does not cover.
+query PullRequestList(
+  $owner: String!
+  $name: String!
+  $states: [PullRequestState!]
+  $first: Int!
+  $after: String
+  $stacks: Boolean!
+  $stats: Boolean!
+) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(
+      first: $first
+      after: $after
+      states: $states
+      orderBy: { field: CREATED_AT, direction: DESC }
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        ...PullRequestRow
+      }
+    }
+  }
+}

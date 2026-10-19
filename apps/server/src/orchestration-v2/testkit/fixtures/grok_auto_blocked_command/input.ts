@@ -15,7 +15,6 @@ export const GROK_AUTO_BLOCKED_COMMAND_PROMPT = [
   "The second path does not exist. Do not run anything else, then reply exactly: permission test done",
 ].join("\n");
 
-/** Auto mode; the user approves the one command Grok's classifier holds. */
 export function grokAutoBlockedCommandInput(): OrchestratorFixtureInput {
   return {
     runtimeMode: "auto",

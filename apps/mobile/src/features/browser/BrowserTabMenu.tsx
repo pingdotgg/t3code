@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -9,9 +10,9 @@ import {
   type PreviewViewportSetting,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
-import { Alert } from "react-native";
 
-import { ControlPill, ControlPillMenu } from "../../components/ControlPill";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -21,7 +22,6 @@ const APPEARANCES = [
   { id: "dark", title: "Dark" },
 ] as const;
 
-/** One preset per kind of screen; the web's device toolbar offers the full list. */
 const VIEWPORTS = [
   { id: "fill", title: "Fit to screen", setting: FILL_PREVIEW_VIEWPORT },
   ...(["Phone", "Tablet", "Desktop"] as const).flatMap((category) => {
@@ -37,19 +37,16 @@ const VIEWPORTS = [
   }),
 ];
 
-/**
- * The browser tab's menu: appearance, zoom, viewport, a hard reload, and its
- * profile's site data. Each runs through the environment, as on web and
- * desktop, so every client and agent sees the same tab. None need control.
- */
 export function BrowserTabMenu({
   environmentId,
   tab,
   disabled,
+  onPaste,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly disabled: boolean;
+  readonly onPaste?: () => void;
 }) {
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
@@ -69,6 +66,7 @@ export function BrowserTabMenu({
         : "custom";
 
   const actions: MenuAction[] = [
+    ...(onPaste ? [{ id: "paste", title: "Paste", image: "doc.on.clipboard" }] : []),
     { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
     {
       id: "appearance",
@@ -113,10 +111,11 @@ export function BrowserTabMenu({
 
   const run = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     const result = await adjust({ environmentId, input: { ...target, ...change } });
-    if (result._tag === "Failure") Alert.alert("Could not change this browser tab");
+    if (result._tag === "Failure") Dialog.alert("Could not change this browser tab");
   };
 
   const onAction = (id: string) => {
+    if (id === "paste") return onPaste?.();
     if (id === "hard-reload") return void run({ hardReload: true });
     if (id === "zoom:in") return void run({ zoomFactor: zoomTo(1) });
     if (id === "zoom:out") return void run({ zoomFactor: zoomTo(-1) });
@@ -133,7 +132,7 @@ export function BrowserTabMenu({
       if (!option) return;
       void resize({ environmentId, input: { ...target, viewport: option.setting } }).then(
         (result) => {
-          if (result._tag === "Failure") Alert.alert("Could not change the viewport");
+          if (result._tag === "Failure") Dialog.alert("Could not change the viewport");
         },
       );
     }
@@ -144,7 +143,7 @@ export function BrowserTabMenu({
   );
   if (disabled) return pill;
   return (
-    <ControlPillMenu
+    <Menu
       accessible
       accessibilityLabel="Browser tab options"
       accessibilityRole="button"
@@ -152,6 +151,6 @@ export function BrowserTabMenu({
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
       {pill}
-    </ControlPillMenu>
+    </Menu>
   );
 }

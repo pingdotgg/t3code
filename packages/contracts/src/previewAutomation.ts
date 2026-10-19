@@ -25,7 +25,6 @@ const OptionalTimeoutMs = Schema.optional(
     .annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." }),
 ).annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." });
 
-/** Operations understood by desktop hosts predating viewport resizing. */
 export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "status",
   "open",
@@ -41,7 +40,6 @@ export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "recordingStop",
 ] as const;
 
-/** Advertised by current desktop hosts for mixed-version routing. */
 const PREVIEW_AUTOMATION_OPERATIONS = [
   ...PREVIEW_AUTOMATION_V1_OPERATIONS,
   "resize",
@@ -75,7 +73,6 @@ const PreviewAutomationTabTargetFields = {
 export const PreviewAutomationTabTargetInput = Schema.Struct(PreviewAutomationTabTargetFields);
 export type PreviewAutomationTabTargetInput = typeof PreviewAutomationTabTargetInput.Type;
 
-/** `human`: a person controls the tab now; `agent`: an agent session opened it; `unclaimed`: neither. */
 export const PreviewAutomationTabOwner = Schema.Literals(["agent", "human", "unclaimed"]);
 
 export const PreviewAutomationProfile = Schema.Struct({
@@ -108,15 +105,11 @@ export const PreviewAutomationStatus = Schema.Struct({
       }),
     ),
   ),
-  /** Optional for compatibility with desktop hosts predating viewport sizing. */
   viewportSetting: Schema.optional(PreviewViewportSetting),
-  /** Measured guest-page viewport in CSS pixels when a webview is ready. */
   viewport: Schema.optional(PreviewRenderedViewportSize),
-  /** Server hosts: a file picker the page opened, answered with preview_upload. */
   fileChooser: Schema.optional(
     Schema.NullOr(Schema.Struct({ multiple: Schema.Boolean, accept: Schema.String })),
   ),
-  /** Server hosts: files this tab downloaded, saved on the environment until the tab closes. */
   downloads: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -146,9 +139,7 @@ export const PreviewAutomationStatus = Schema.Struct({
       }),
     ),
   ),
-  /** Server hosts: the browser profiles preview_open accepts, as the user's client reported them. */
   profiles: Schema.optional(Schema.Array(PreviewAutomationProfile)),
-  /** Server hosts: the profile preview_open uses when given none. */
   defaultProfileId: Schema.optional(BrowserProfileId),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
@@ -481,7 +472,7 @@ export const PreviewAutomationSelectResult = Schema.Struct({
 });
 export type PreviewAutomationSelectResult = typeof PreviewAutomationSelectResult.Type;
 
-/** A required locator field. Its JSON schema keeps only the description on its last check. */
+/** Its JSON schema keeps only the description on its last check. */
 const DescribedLocator = (description: string) =>
   Schema.String.check(Schema.isTrimmed())
     .check(Schema.isNonEmpty({ description }))
@@ -775,8 +766,7 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
   /**
-   * Missing means the pre-capability-negotiation V1 operation set. This lets
-   * a newer server safely coexist with an older desktop during rollout.
+   * Missing means the pre-capability-negotiation V1 operation set.
    */
   supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
 });
@@ -840,7 +830,6 @@ export const PreviewAutomationResponse = Schema.Struct({
 });
 export type PreviewAutomationResponse = typeof PreviewAutomationResponse.Type;
 
-// Thread fields are absent when the caller signed in from outside a T3 thread.
 const McpCapabilityErrorFields = {
   environmentId: EnvironmentId,
   threadId: Schema.optional(ThreadId),
@@ -848,7 +837,6 @@ const McpCapabilityErrorFields = {
   providerInstanceId: Schema.optional(ProviderInstanceId),
 };
 
-/** Agents read this message, so it names the next step and not only the failure. */
 export class PreviewAutomationUnavailableError extends Schema.TaggedError<PreviewAutomationUnavailableError>()(
   "PreviewAutomationUnavailableError",
   {
@@ -861,7 +849,6 @@ export class PreviewAutomationUnavailableError extends Schema.TaggedError<Previe
   }
 }
 
-/** A `t3-code` MCP tool was called with a credential that does not carry its capability. */
 export class McpCapabilityUnavailableError extends Schema.TaggedError<McpCapabilityUnavailableError>()(
   "McpCapabilityUnavailableError",
   {
@@ -882,7 +869,6 @@ const PreviewAutomationScopeErrorFields = {
   providerInstanceId: ProviderInstanceId,
 };
 
-/** The automation host id of an environment's own server browser. */
 export const SERVER_BROWSER_AUTOMATION_CLIENT_ID = "server-browser";
 
 const PreviewAutomationRequestErrorFields = {
@@ -1010,10 +996,6 @@ export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewA
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationRemoteDiagnosticFields,
-    /**
-     * What went wrong, as the server's own browser reported it, such as a
-     * page that refused the connection. Absent for other hosts.
-     */
     reason: Schema.optional(Schema.String),
   },
 ) {
@@ -1031,7 +1013,6 @@ export class PreviewAutomationInvalidSelectorError extends Schema.TaggedError<Pr
     ...PreviewAutomationRemoteDiagnosticFields,
     selectorKind: Schema.optional(Schema.Literals(["locator", "selector"])),
     selectorLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-    /** The selector was an `aria-ref` from an older snapshot. */
     staleRef: Schema.optional(Schema.Boolean),
   },
 ) {

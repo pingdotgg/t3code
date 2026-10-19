@@ -285,7 +285,6 @@ it.effect.each(["sqlite", "memory"] as const)(
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [oldRunId]), [item]);
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [runId]), []);
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, []), []);
-      // Pairing depends on IDs, not payload decoding or item status.
       const resultId = TurnItemId.make("interrupt-result");
       assert.isTrue(yield* store.hasUnpairedRunInterruptRequest(threadId, item.id, resultId));
       assert.isFalse(yield* store.hasUnpairedRunInterruptRequest(threadId, resultId, item.id));

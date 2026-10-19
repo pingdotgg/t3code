@@ -18,6 +18,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
@@ -35,6 +36,8 @@ import {
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
+import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
@@ -47,6 +50,7 @@ import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import { dispatchFailure } from "../threadAccess.ts";
+import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
@@ -58,6 +62,11 @@ import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
+
+const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+  Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+);
 
 // Effect returns a declared tool failure as `isError` with its encoded payload
 // as JSON text, never as `structuredContent`.
@@ -77,7 +86,6 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
-// Registration asks for every service the thread tools declare; these cases call none that use them.
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
@@ -103,9 +111,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
       names.add(tool.name);
       const schema = Tool.getJsonSchema(tool);
       expect(schema).toMatchObject({ type: "object" });
-      // The published tool catalog must also work with providers without $ref support.
       expect(JSON.stringify(schema), tool.name).not.toContain('"$ref"');
-      // Every published tool must have labels for its lifecycle, branding, and a summary.
       const definition = resolveT3McpToolDefinition(tool.name);
       expect(definition, tool.name).not.toBeNull();
       expect(
@@ -289,11 +295,9 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
         Layer.provide(NodeServices.layer),
-        // The preview browser is not installed in a fresh home, so nothing downloads.
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            // A live run: publishing stores a page, so it needs the caller's active turn.
             getThreadShell: () =>
               Effect.succeed({
                 id: threadId,
@@ -359,6 +363,131 @@ it.effect("keeps unexpected handler defects private through the production regis
     ),
   ),
 );
+
+it.effect("records the calling agent and the agent a tool acted on", () => {
+  // Recording runs detached from the tool response, so each expected event is awaited.
+  const recorded = [
+    Deferred.makeUnsafe<{ event: string; properties: object }>(),
+    Deferred.makeUnsafe<{ event: string; properties: object }>(),
+  ];
+  let recordedCount = 0;
+  const shell = (id: ThreadId, instanceId: string, model: string) =>
+    ({
+      id,
+      projectId: "mcp-core-project",
+      providerInstanceId: ProviderInstanceId.make(instanceId),
+      modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      archivedAt: null,
+      deletedAt: null,
+      activeRunId: "mcp-core-run",
+      createdBy: "agent",
+      creationSource: "mcp",
+      lineage: {
+        parentThreadId: id === threadId ? ThreadId.make("mcp-core-parent") : null,
+        relationshipToParent: id === threadId ? "subagent" : null,
+        rootThreadId: ThreadId.make("mcp-core-parent"),
+      },
+    }) as never;
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    yield* server
+      .callTool({ name: "t3_thread_fork", arguments: { sourcePoint: { type: "latest_stable" } } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const { event, properties } = yield* Deferred.await(recorded[0]!);
+    expect(event).toBe("mcp.tool.invoked");
+    expect(properties).toMatchObject({
+      tool: "t3_thread_fork",
+      outcome: "ok",
+      callerProvider: "codex",
+      callerModel: "gpt-5.5",
+      callerOrigin: "agent",
+      callerDepth: 1,
+      targetProvider: "claudeAgent",
+      targetModel: "claude-opus-5-5",
+      targetRuntimeMode: "full-access",
+      targetInteractionMode: "default",
+      crossProvider: true,
+    });
+    expect(properties).toHaveProperty("durationMs");
+    expect(Object.values(properties).some((value) => String(value).includes("mcp-core"))).toBe(
+      false,
+    );
+
+    // Queue tools return only a sequence, so the receiving thread comes from the input.
+    yield* server
+      .callTool({
+        name: "t3_queue_edit",
+        arguments: { threadId: "mcp-core-other", queuedRunId: "mcp-core-queued", text: "secret" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    // The fork recorded a single event, so the next one is the queue edit.
+    expect((yield* Deferred.await(recorded[1]!)).properties).toMatchObject({
+      tool: "t3_queue_edit",
+      outcome: "ok",
+      callerProvider: "codex",
+      targetProvider: "claudeAgent",
+      crossProvider: true,
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(
+                id === threadId
+                  ? shell(threadId, "codex", "gpt-5.5")
+                  : shell(id, "claudeAgent", "claude-opus-5-5"),
+              ),
+            getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+            getProjectThreadRecords: () =>
+              Effect.succeed({ thread: shell(threadId, "codex", "gpt-5.5") } as never),
+            dispatch: () => Effect.succeed({ sequence: 1 } as never),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([
+              {
+                instanceId: ProviderInstanceId.make("codex"),
+                driver: "codex",
+                models: [{ slug: "gpt-5.5", isCustom: false }],
+              } as never,
+              {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                driver: "claudeAgent",
+                models: [{ slug: "claude-opus-5-5", isCustom: false }],
+              } as never,
+            ]),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(
+            AnalyticsService.AnalyticsService,
+            AnalyticsService.AnalyticsService.of({
+              record: (event, properties) =>
+                Deferred.succeed(recorded[recordedCount++]!, {
+                  event,
+                  properties: properties ?? {},
+                }).pipe(Effect.asVoid),
+              flush: Effect.void,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
 
 it("keeps MCP preference output allowlisted and Unicode-bounded", () => {
   const settings = {
@@ -578,7 +707,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
     expect(declaredFailure(result)).toMatchObject({ code: "thread_credential_required" });
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerOrchestratorToolkit.pipe(
+      layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -617,7 +746,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     expect(allowed.isError).toBe(false);
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerOrchestratorToolkit.pipe(
+      layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -692,7 +821,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
       expect(declaredFailure(result)).toMatchObject({ code: "runtime_mode_escalation_denied" });
     }).pipe(
       Effect.provide(
-        McpHttpServer.layerOrchestratorToolkit.pipe(
+        layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
@@ -796,7 +925,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
     expect(stopped).toEqual([{ threadId: "workflow-parent", subagentId: "workflow-coordinator" }]);
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerOrchestratorToolkit.pipe(
+      layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
@@ -851,8 +980,6 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     const refused = yield* call("t3_attachment_discard", { attachmentId }, otherThread);
     expect(declaredFailure(refused)).toMatchObject({ code: "invalid_request" });
 
-    // Another prepare a day later keeps it: the file outlives its URL's 24 hours
-    // by as long as the upload took, up to the URL's own lifetime.
     yield* TestClock.adjust(24 * 60 * 60 * 1000 + 5 * 60_000);
     yield* call(
       "t3_attachment_prepare_upload",
@@ -860,7 +987,6 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
       scope,
     );
 
-    // A new provider session of the same thread still owns the upload.
     const discarded = yield* call(
       "t3_attachment_discard",
       { attachmentId },

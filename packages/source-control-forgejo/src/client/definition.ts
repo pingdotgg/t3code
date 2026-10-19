@@ -1,8 +1,3 @@
-/**
- * Forgejo's client definition, which covers Gitea as well. Browser- and React Native-safe.
- *
- * @module source-control-forgejo/client/definition
- */
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   type ChangeRequestProjectIdentity,
@@ -59,9 +54,7 @@ export const definition = defineSourceControlClient({
       ) {
         return `${remote.origin}/${repository}/pulls/${number}`;
       }
-    } catch {
-      // Not an HTTP remote.
-    }
+    } catch {}
     return `https://${host}/${repository}/pulls/${number}`;
   },
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
@@ -76,7 +69,6 @@ export const definition = defineSourceControlClient({
   reviewSummaryRequired: (verdict) => verdict === "request-changes",
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
-  // Forgejo servers are addressed with their port, so two on one hostname stay apart.
   changeRequestUrlHost: (url) => url.host,
   checkoutChangeRequestHost: () => null,
   isChangeRequestInRepository: (identity, link) => {

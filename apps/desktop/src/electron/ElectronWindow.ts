@@ -139,7 +139,6 @@ export const make = Effect.gen(function* () {
     );
     return windowsForegroundFocus;
   };
-  // Tracks a capture reveal in flight. Ordinary reveals keep Electron's native path.
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
   const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
@@ -269,8 +268,6 @@ export const make = Effect.gen(function* () {
             return;
           }
 
-          // Only a capture reveal fights another process for the foreground, which
-          // needs Win32 calls that load native modules. Everything else stays native.
           const captureReveal = platform === "win32" && captureRevealWindows.delete(window.id);
           const shellHostedForeground =
             captureReveal && (await isWindowsShellHostedForeground().catch(() => false));

@@ -25,10 +25,7 @@ describe("settings scope environment labels", () => {
     const environments = [first, second];
     expect(
       environments.map((environment) => settingsScopeEnvironmentLabel(environment, environments)),
-    ).toEqual([
-      "Development · https://first.example.com",
-      "Development · https://second.example.com",
-    ]);
+    ).toEqual(["Development · first.example.com", "Development · second.example.com"]);
   });
 
   it("falls back to environment IDs when duplicate names have no display URL", () => {

@@ -1,14 +1,16 @@
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail, PullRequestMergeMethod } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View } from "react-native";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
-import { ControlPillMenu } from "../../components/ControlPillMenu";
-import { MaterialButton } from "../../components/MaterialButton";
-import { MaterialIconButton } from "../../components/MaterialIconButton";
+import { Platform, Pressable, View } from "react-native";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { Menu } from "../../components/ui/Menu";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -23,6 +25,7 @@ import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequ
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import type { PullRequestStackState } from "./usePullRequestStack";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 export function PullRequestMergeControls(props: {
   readonly pr: PullRequestDetail;
@@ -95,47 +98,45 @@ export function PullRequestMergeControls(props: {
       return;
     pending.current = true;
     setBusy(true);
-    try {
-      const response = await runAction({
-        ...target,
-        input: {
-          ...target.input,
-          action,
-          ...(action === "merge" && method && stack.stack && scope
+    const response = await runAction({
+      ...target,
+      input: {
+        ...target.input,
+        action,
+        ...(action === "merge" && method && stack.stack && scope
+          ? {
+              stackNumber: stack.stack.number,
+              expectedStackHeads: scope.heads,
+              mergeMethod: method,
+            }
+          : action === "merge" && method
             ? {
-                stackNumber: stack.stack.number,
-                expectedStackHeads: scope.heads,
-                mergeMethod: method,
+                resolveMergeMethod: (fresh) => {
+                  if (
+                    !canPerformPullRequestAction(fresh, "merge") ||
+                    !allowedMergeMethods(fresh).includes(method)
+                  )
+                    throw new Error("The pull request changed. Refresh before merging.");
+                  return method;
+                },
               }
-            : action === "merge" && method
-              ? {
-                  resolveMergeMethod: (fresh) => {
-                    if (
-                      !canPerformPullRequestAction(fresh, "merge") ||
-                      !allowedMergeMethods(fresh).includes(method)
-                    )
-                      throw new Error("The pull request changed. Refresh before merging.");
-                    return method;
-                  },
-                }
-              : action === "enable-auto-merge" && method
-                ? { mergeMethod: method }
-                : {}),
-        },
-      });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-    } catch (cause) {
-      Alert.alert(
+            : action === "enable-auto-merge" && method
+              ? { mergeMethod: method }
+              : {}),
+      },
+    });
+    // A stack can partly merge before the provider reports a failure.
+    refreshDetail();
+    refreshActivity();
+    stack.refresh();
+    pending.current = false;
+    setBusy(false);
+    if (AsyncResult.isFailure(response)) {
+      const cause = squashAtomCommandFailure(response);
+      Dialog.alert(
         "Couldn't complete the merge action",
         cause instanceof Error ? cause.message : "Try again.",
       );
-    } finally {
-      // A stack can partly merge before the provider reports a failure.
-      refreshDetail();
-      refreshActivity();
-      stack.refresh();
-      pending.current = false;
-      setBusy(false);
     }
   };
   const confirm = (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
@@ -155,7 +156,7 @@ export function PullRequestMergeControls(props: {
           : action === "disable-auto-merge"
             ? "Stop the provider from automatically merging this pull request."
             : `Merge #${pr.number} into ${pr.baseBranch} using ${method}.`;
-    Alert.alert(title, message, [
+    Dialog.alert(title, message, [
       { text: "Cancel", style: "cancel" },
       {
         text: action === "merge" ? label : title.replace("?", ""),
@@ -174,7 +175,7 @@ export function PullRequestMergeControls(props: {
       >
         {Platform.OS === "android" ? (
           <View className="min-w-0 flex-1">
-            <MaterialButton
+            <Button
               label={busy ? "Working…" : !permissions.connected ? "Reconnect to merge" : label}
               tone="primary"
               fullWidth
@@ -195,10 +196,10 @@ export function PullRequestMergeControls(props: {
             className="min-h-11 min-w-0 flex-1 flex-row items-center justify-center gap-2 px-3 py-2 active:opacity-70"
           >
             {busy || checkingStack ? (
-              <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+              <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
             ) : (
               <SymbolView
-                name="arrow.triangle.merge"
+                name={PullRequestGlyph.merged}
                 size={16}
                 tintColorClassName={
                   canMerge ? "accent-prominent-action-foreground" : "accent-icon-muted"
@@ -213,7 +214,7 @@ export function PullRequestMergeControls(props: {
           </Pressable>
         )}
         {methods.length > 0 || canAutoMerge ? (
-          <ControlPillMenu
+          <Menu
             title="Merge options"
             actions={[
               ...methods.map((id) => ({
@@ -242,7 +243,7 @@ export function PullRequestMergeControls(props: {
           >
             {Platform.OS === "android" ? (
               <View pointerEvents="none">
-                <MaterialIconButton
+                <IconButton
                   accessibilityLabel="Merge options"
                   icon="chevron.down"
                   variant="tonal"
@@ -263,7 +264,7 @@ export function PullRequestMergeControls(props: {
                 />
               </Pressable>
             )}
-          </ControlPillMenu>
+          </Menu>
         ) : null}
       </View>
       {permissions.connected &&

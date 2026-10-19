@@ -11,9 +11,7 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-/** The relay outputs a client (web, desktop, mobile) needs at build time. */
 export interface RelayClientConfig {
-  /** Alchemy types this as optional for workers reachable at no URL; ours always has one. */
   readonly url: string | undefined;
   readonly mobileTracingUrl: string;
   readonly mobileTracingDataset: string;
@@ -60,18 +58,15 @@ export class EnvValueNotSingleLineError extends Schema.TaggedError<EnvValueNotSi
 }
 
 /**
- * Replaces or appends each `NAME=value` assignment, leaving unrelated lines
- * alone. Every existing line for a name is dropped, not just the first: the
- * file is read with `parseEnv`, where the last duplicate wins, so a stale
- * second copy would override the value just written.
+ * Every existing line for a name is dropped, not just the first: the file is
+ * read with `parseEnv`, where the last duplicate wins, so a stale second copy
+ * would override the value just written.
  */
 export function reconcileEnvFile(
   contents: string,
   entries: Readonly<Record<string, string>>,
 ): string {
   const lines = contents === "" ? [] : contents.replace(/\n$/u, "").split("\n");
-  // The forms `parseEnv` treats as an assignment: leading whitespace, an
-  // optional `export`, and whitespace around `=`.
   const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u;
   const pending = new Map(Object.entries(entries));
   const out: string[] = [];
@@ -93,7 +88,6 @@ export function reconcileEnvFile(
       const closing = lines.findIndex((candidate, at) => at > index && candidate.includes(quote));
       if (closing !== -1) index = closing;
     }
-    // The first occurrence keeps its position; later duplicates are dropped.
     const value = pending.get(name);
     if (value !== undefined) {
       out.push(`${name}=${value}`);
@@ -104,17 +98,9 @@ export function reconcileEnvFile(
   return out.length === 0 ? "" : `${out.join("\n")}\n`;
 }
 
-/** Whether a value that opens with `quote` also closes on the same line. */
 const closesQuote = (value: string, quote: string): boolean =>
   value.length > 1 && value.slice(1).includes(quote);
 
-/**
- * Writes the relay's client configuration into the repo-root `.env` so the
- * web, desktop, and mobile dev servers build against the stage just deployed.
- * An Action rather than post-deploy scripting: it takes the stack outputs as
- * input, so it runs only when one of them changed and is skipped on a no-op
- * deploy. Set `T3CODE_RELAY_CLIENT_CONFIG_ENV` to write elsewhere (CI does).
- */
 export const tokenDigest = (tokens: ReadonlyArray<Redacted.Redacted<string>>): string =>
   NodeCrypto.createHash("sha256").update(tokens.map(Redacted.value).join("\n")).digest("hex");
 

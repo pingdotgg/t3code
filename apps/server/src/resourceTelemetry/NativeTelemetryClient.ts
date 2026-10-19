@@ -40,7 +40,8 @@ import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshotWithoutMutex } from "../utils/subscribeBeforeSnapshot.ts";
 
 const SAMPLE_INTERVAL_MS = 1_000;
-const UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS = 5_000;
+// The sidecar treats 0 as "sample only on request".
+const IDLE_SAMPLE_INTERVAL_MS = 0;
 const BATTERY_SAMPLE_INTERVAL_MS = 5_000;
 const CONSTRAINED_SAMPLE_INTERVAL_MS = 15_000;
 const HANDSHAKE_TIMEOUT = Duration.seconds(5);
@@ -258,13 +259,14 @@ function isThermallyConstrained(snapshot: HostPowerSnapshot): boolean {
   return snapshot.thermalState === "serious" || snapshot.thermalState === "critical";
 }
 
+// Without a live subscriber the sidecar does not sample on a timer, so an idle server
+// never walks the process table. History then covers only time with a subscriber.
 export function resolveNativeSampleIntervalMs(
   snapshot: HostPowerSnapshot,
   liveSubscriberCount: number,
 ): number {
-  if (snapshot.stale || snapshot.source === "unknown") {
-    return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
-  }
+  if (liveSubscriberCount === 0) return IDLE_SAMPLE_INTERVAL_MS;
+  if (snapshot.stale || snapshot.source === "unknown") return SAMPLE_INTERVAL_MS;
   if (
     snapshot.suspended ||
     snapshot.locked === "true" ||
@@ -274,7 +276,7 @@ export function resolveNativeSampleIntervalMs(
     return CONSTRAINED_SAMPLE_INTERVAL_MS;
   }
   if (snapshot.onBattery === "true") return BATTERY_SAMPLE_INTERVAL_MS;
-  return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
+  return SAMPLE_INTERVAL_MS;
 }
 
 export function commitCollectionControlUpdate<E, R>(
@@ -382,7 +384,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       updatedAt: initializedAt,
     },
     liveSubscriberCount: 0,
-    sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
+    sampleIntervalMs: IDLE_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
   const externalProcesses = yield* Ref.make<ReadonlyArray<ResourceMonitorExternalProcess>>([]);
@@ -862,7 +864,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           reason: Option.getOrElse(current.lastError, () => "sidecar is not running"),
         });
       }
-      const requestId = yield* crypto.randomUUIDv4.pipe(
+      const requestId = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
           (cause) =>
             new NativeTelemetryCommandFailed({
@@ -921,7 +923,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       });
     }
 
-    const requestId = yield* crypto.randomUUIDv4.pipe(
+    const requestId = yield* crypto.randomUUIDv4().pipe(
       Effect.mapError(
         (cause) =>
           new NativeTelemetryCommandFailed({
@@ -976,11 +978,13 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       });
     }
 
-    const requestId = yield* crypto.randomUUIDv4.pipe(
-      Effect.mapError(
-        (cause) => new NativeTelemetryCommandFailed({ operation: "createRequestId", cause }),
-      ),
-    );
+    const requestId = yield* crypto
+      .randomUUIDv4()
+      .pipe(
+        Effect.mapError(
+          (cause) => new NativeTelemetryCommandFailed({ operation: "createRequestId", cause }),
+        ),
+      );
     const deferred = yield* Deferred.make<
       ReadonlyArray<ResourceMonitorProcessTableEntry>,
       NativeTelemetryClientError
@@ -1069,7 +1073,7 @@ export const layerTest = (
       lastSampleAt: Option.none<DateTime.Utc>(),
       lastError: Option.some("Resource monitor test implementation is unavailable."),
       restartCount: 0,
-      sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
+      sampleIntervalMs: IDLE_SAMPLE_INTERVAL_MS,
     });
   return Layer.succeed(
     NativeTelemetryClient,

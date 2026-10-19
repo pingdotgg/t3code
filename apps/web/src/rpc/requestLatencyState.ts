@@ -66,11 +66,6 @@ export function getSlowRpcAckRequests(): ReadonlyArray<SlowRpcAckRequest> {
   return getSlowRpcAckRequestsValue();
 }
 
-/**
- * Starts the slow-request timer for one in-flight unary RPC. `method` is the
- * bare WS method (used to decide whether and how long to wait); `tag` is the
- * human-readable label shown in the toast, which defaults to the method.
- */
 export function trackRpcRequestSent(requestId: string, method: string, tag = method): void {
   if (!shouldTrackRpcAck(method)) {
     return;

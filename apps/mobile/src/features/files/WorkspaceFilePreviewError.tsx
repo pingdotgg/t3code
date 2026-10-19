@@ -2,18 +2,13 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback } from "react";
 import { View } from "react-native";
 
-import { EmptyState } from "../../components/EmptyState";
+import { EmptyState } from "../../components/ui/EmptyState";
 import { environmentCatalog } from "../../connection/catalog";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 
-/**
- * Terminal state for a preview whose signed asset URL will not arrive. A dead
- * environment reuses the same notice the terminal and review sheets show, so the
- * user gets one recognizable way back online.
- */
 export function WorkspaceFilePreviewError(props: {
   readonly environmentId: EnvironmentId | null;
   readonly reason: AssetUrlFailureReason;

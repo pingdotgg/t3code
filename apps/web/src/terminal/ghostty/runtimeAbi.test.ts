@@ -18,9 +18,6 @@ describe("vendored libghostty-vt WebAssembly", () => {
     const wasm = decodeWasmDataUrl(wasmDataUrl);
     expect(wasm.byteLength).toBeLessThan(750_000);
 
-    // The artifact carries its own provenance: the build embeds the pinned
-    // revision as semver build metadata, so the repository's canonical VERSION
-    // file is the single source of truth and drift is caught here without a copy.
     const result = await WebAssembly.instantiate(wasm.buffer as ArrayBuffer, {
       env: { log: () => {} },
     });
@@ -124,14 +121,10 @@ describe("vendored libghostty-vt WebAssembly", () => {
       call("ghostty_wasm_free_u8_array", value, 1);
     };
 
-    // Ghostty's own default is a steady cursor, so the blink the web terminal
-    // inherited from xterm.js only exists because option 23 asks for it.
     expect(blinking()).toBe(false);
     setDefaultCursorBlink(true);
     expect(blinking()).toBe(true);
 
-    // Programs still own the cursor: DECSCUSR steady block and DEC mode 12 both
-    // stop the blink, and DECSCUSR reset returns to the embedder default.
     write("\u001b[2 q");
     expect(blinking()).toBe(false);
     write("\u001b[0 q");
@@ -141,8 +134,6 @@ describe("vendored libghostty-vt WebAssembly", () => {
     write("\u001b[?12h");
     expect(blinking()).toBe(true);
 
-    // RIS restores Ghostty's built-in steady default rather than the embedder's,
-    // which is why the core reapplies the option around a session replay.
     call("ghostty_terminal_reset", terminal);
     expect(blinking()).toBe(false);
     setDefaultCursorBlink(true);
@@ -675,13 +666,10 @@ describe("vendored libghostty-vt WebAssembly", () => {
       new TextDecoder().decode(new Uint8Array(memory.buffer, remappedOutput, remappedOutputLength)),
     ).toBe("\u001b[106;5u");
 
-    // Without the Kitty report-event-types flag a release encodes nothing, so
-    // the surface's keyup handler stays silent for legacy sessions.
     call("ghostty_key_event_set_action", keyEvent, 0);
     expect(call("ghostty_key_encoder_encode", keyEncoder, keyEvent, 0, 0, written)).toBe(0);
     expect(new DataView(memory.buffer, written, 4).getUint32(0, true)).toBe(0);
 
-    // With report-event-types enabled the same release encodes an event-typed code.
     const reportEvents = new TextEncoder().encode("\u001b[>3u");
     const reportEventsPointer = alloc(reportEvents.length);
     new Uint8Array(memory.buffer, reportEventsPointer, reportEvents.length).set(reportEvents);

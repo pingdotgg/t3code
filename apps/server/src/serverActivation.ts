@@ -9,7 +9,6 @@ export class ServerActivation extends Context.Reference<Effect.Effect<void> | un
   { defaultValue: () => undefined },
 ) {}
 
-/** Forks a long-running root before commit, returning it after it reaches the activation boundary. */
 export const forkParkedFiber = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<Fiber.Fiber<A, E>, never, Scope.Scope | R> =>
@@ -26,7 +25,6 @@ export const forkParkedFiber = <A, E, R>(
     return fiber;
   });
 
-/** Forks a long-running root before commit and proves it is parked at the activation boundary. */
 export const forkParked = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<void, never, Scope.Scope | R> => forkParkedFiber(effect).pipe(Effect.asVoid);

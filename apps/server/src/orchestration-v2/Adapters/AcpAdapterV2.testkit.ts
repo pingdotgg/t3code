@@ -153,12 +153,6 @@ function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
   return ["--experimental-strip-types", scriptPath];
 }
 
-/**
- * Holds the replay agent's inbound lines at a gate the scenario releases.
- * The agent writes one line per `emit_inbound` entry in transcript order, so
- * the Nth line it writes belongs to the Nth inbound entry and carries its
- * label. Lines after a held one wait with it, which keeps wire order.
- */
 function holdGatedReplayLines(
   transcript: AcpReplayTranscript,
   replayGate: ProviderReplayGate,

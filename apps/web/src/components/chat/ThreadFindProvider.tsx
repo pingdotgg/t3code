@@ -49,7 +49,6 @@ export function ThreadFindProvider({
     find.open,
     find.close,
   ]);
-  // Before paint, so the details card makes room in the same frame the bar appears.
   useLayoutEffect(() => onOpenChange(find.isOpen), [find.isOpen, onOpenChange]);
   return (
     <ThreadFindBarContext value={find.barProps}>

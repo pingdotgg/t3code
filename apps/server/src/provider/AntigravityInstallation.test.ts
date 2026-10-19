@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -34,7 +35,6 @@ const previousReleaseId = "1".repeat(64);
 const previousVersion = "fixture-old";
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-// Small ZIPs made with Python's zipfile module. The unsafe entries are intentional.
 const zipFixtures = {
   complete:
     "UEsDBBQAAAAIAAAAIl1zEy/oFAAAABQAAAASAAAAYWd5X2FjcF9zZXJ2ZXIucGFyS8wryUwvSizLLKlUKCoFcnJTuQBQSwMEFAAAAAgAAAAiXV9yAykQAAAADgAAABUAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWzLyU9OzFHISCzKSy0u5gIAUEsBAhQDFAAAAAgAAAAiXXMTL+gUAAAAFAAAABIAAAAAAAAAAAAAAO2BAAAAAGFneV9hY3Bfc2VydmVyLnBhclBLAQIUAxQAAAAIAAAAIl1fcgMpEAAAAA4AAAAVAAAAAAAAAAAAAADtgUQAAABsb2NhbGhhcm5lc3NfZXh0ZXJuYWxQSwUGAAAAAAIAAgCDAAAAhwAAAAAA",
@@ -127,6 +127,7 @@ interface HarnessOptions {
   readonly contentLength?: number;
   readonly contentEncoding?: string;
   readonly platform?: NodeJS.Platform;
+  readonly arch?: NodeJS.Architecture;
   readonly path?: string;
   readonly previous?: boolean;
   readonly fileSystem?: FileSystem.FileSystem;
@@ -142,10 +143,11 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   const baseDir =
     options.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-test-" }));
   const platform = options.platform ?? hostPlatform;
+  const arch = options.arch ?? "x64";
   const archive = options.archive ?? completeArchive;
   const asset =
     options.asset === undefined ? yield* releaseAsset(archive, platform) : options.asset;
-  const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-x64`);
+  const managedDirectory = path.join(baseDir, "tools", "antigravity-acp", `${platform}-${arch}`);
   if (options.previous) {
     yield* writeRelease(managedDirectory, {
       ...(yield* releaseAsset(archive, platform)),
@@ -185,7 +187,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
-    Effect.provideService(HostProcess.Architecture, "x64"),
+    Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -305,38 +307,76 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect.each([
-    {
-      name: "the expected release with protocol 1",
-      protocolVersion: 1,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "the expected release with protocol 2 and legacy fields",
-      protocolVersion: 2,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "an unsupported protocol version",
-      protocolVersion: 3,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: false,
-    },
-    { name: "a different agent", agentName: "other-agent", version: "fixture-new", valid: false },
-    {
-      name: "a different version",
-      agentName: "antigravity-acp",
-      version: "other-version",
-      valid: false,
-    },
-  ])("validates $name with initialize only and removes the disposable profile", (testCase) =>
+  it.effect.each(
+    [
+      {
+        name: "the expected release with protocol 1",
+        protocolVersion: 1,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: true,
+      },
+      {
+        name: "the expected release with protocol 2 and legacy fields",
+        protocolVersion: 2,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: true,
+      },
+      {
+        name: "an unsupported protocol version",
+        protocolVersion: 3,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: false,
+      },
+      { name: "a different agent", agentName: "other-agent", version: "fixture-new", valid: false },
+      {
+        name: "a different version",
+        agentName: "antigravity-acp",
+        version: "other-version",
+        valid: false,
+      },
+      {
+        name: "the Windows ARM release with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: true,
+      },
+      {
+        name: "an invalid Windows ARM release with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "other-version",
+        valid: false,
+      },
+      {
+        name: "a cancelled Windows ARM verification with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        cancel: true,
+        valid: false,
+      },
+    ].flatMap((testCase) => {
+      const cleanupErrorTags =
+        testCase.platform === "win32"
+          ? (["Unknown", "PermissionDenied", "Busy"] as const)
+          : (["Unknown"] as const);
+      return cleanupErrorTags.map((cleanupErrorTag) => ({
+        ...testCase,
+        cleanupErrorTag,
+        name: `${cleanupErrorTag}: ${testCase.name}`,
+      }));
+    }),
+  )("validates $name with initialize only and removes the disposable profile", (testCase) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const platform = testCase.platform ?? hostPlatform;
       const encoder = new TextEncoder();
       const decodeRequest = Schema.decodeUnknownEffect(
         Schema.fromJsonString(
@@ -348,6 +388,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       );
       const methods: string[] = [];
       const profiles = new Set<string>();
+      const cleanupRetryStarted = yield* Deferred.make<void>();
+      const initializationStarted = yield* Deferred.make<void>();
+      let childProcessesRunning = false;
+      let profileRemovalAttempts = 0;
       let closedRuntimes = 0;
       const spawner = ChildProcessSpawner.make(
         Effect.fn("test.spawnAntigravityValidator")(function* (command) {
@@ -358,8 +402,15 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           if (!profile) return yield* Effect.die("Expected a disposable validation profile.");
           profiles.add(profile);
           const helper = command.args[0] === "-e";
-          // The runtime unpacks straight into the disposable profile.
-          if (!helper) expect(command.options.env?.TMPDIR).toBe(profile);
+          if (!helper) childProcessesRunning = true;
+          if (!helper) {
+            if (platform === "win32") {
+              expect(command.options.env?.TEMP).toBe(profile);
+              expect(command.options.env?.TMP).toBe(profile);
+            } else {
+              expect(command.options.env?.TMPDIR).toBe(profile);
+            }
+          }
           const output = yield* Queue.unbounded<Uint8Array>();
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
@@ -381,7 +432,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
               ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
               : Deferred.await(exited),
             isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
-            kill: () => terminate,
+            kill: () =>
+              Effect.sync(() => {
+                if (!helper) childProcessesRunning = false;
+              }).pipe(Effect.andThen(terminate)),
             unref: Effect.succeed(Effect.void),
             stdin: Sink.forEach((bytes: Uint8Array) =>
               Effect.gen(function* () {
@@ -389,6 +443,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
                   Effect.orDie,
                 );
                 methods.push(request.method);
+                if (testCase.cancel) {
+                  yield* Deferred.succeed(initializationStarted, undefined);
+                  return;
+                }
                 yield* Queue.offer(
                   output,
                   encoder.encode(
@@ -431,15 +489,59 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       const { installation, stagingReleased } = yield* makeHarness({
         previous: true,
         useDefaultValidation: true,
+        platform,
+        ...(testCase.arch ? { arch: testCase.arch } : {}),
+        archive:
+          platform === "win32" ? Buffer.from(zipFixtures.windows, "base64") : completeArchive,
+        fileSystem: FileSystem.FileSystem.of({
+          ...fs,
+          remove: (target, options) =>
+            Effect.suspend(() => {
+              if (platform === "win32" && profiles.has(target)) {
+                profileRemovalAttempts += 1;
+                expect(childProcessesRunning).toBe(false);
+                // Even after the tree exits, Windows can briefly retain a DLL handle.
+                if (profileRemovalAttempts === 1) {
+                  return Deferred.succeed(cleanupRetryStarted, undefined).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: testCase.cleanupErrorTag,
+                          module: "FileSystem",
+                          method: "remove",
+                          description: "Unpacked DLL is in use",
+                        }),
+                      ),
+                    ),
+                  );
+                }
+              }
+              return fs.remove(target, options);
+            }),
+        }),
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
-      yield* installation.start;
+      const started = yield* installation.start;
+      const cancellation = testCase.cancel
+        ? yield* Deferred.await(initializationStarted).pipe(
+            Effect.andThen(installation.cancel(started.operationId!)),
+            Effect.forkChild,
+          )
+        : undefined;
+      if (platform === "win32") {
+        yield* Effect.raceFirst(
+          Deferred.await(cleanupRetryStarted).pipe(Effect.andThen(TestClock.adjust("100 millis"))),
+          terminalState(installation),
+        );
+      }
+      if (cancellation) yield* Fiber.join(cancellation);
       expect((yield* terminalState(installation)).phase).toBe(
-        testCase.valid ? "succeeded" : "failed",
+        testCase.cancel ? "cancelled" : testCase.valid ? "succeeded" : "failed",
       );
       yield* Deferred.await(stagingReleased);
       expect(methods).toEqual(["initialize"]);
       expect(closedRuntimes).toBe(1);
       expect(profiles.size).toBe(1);
+      if (platform === "win32") expect(profileRemovalAttempts).toBe(2);
       for (const profile of profiles) {
         expect(yield* fs.exists(profile)).toBe(false);
       }
@@ -482,7 +584,6 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     { name: "oversized member", archive: Buffer.from(zipFixtures.oversizedMember, "base64") },
   ])("rejects $name before runtime validation", ({ completeAsset, ...options }) =>
     Effect.gen(function* () {
-      // Pin the asset to the complete archive so the download itself is what disagrees.
       const asset =
         completeAsset === undefined ? undefined : { ...(yield* releaseAsset()), ...completeAsset };
       const { installation, validations, stagingReleased, fs, path } = yield* makeHarness({

@@ -105,8 +105,6 @@ describe("splitFilePathPosition", () => {
 });
 
 describe("parseMarkdownFileLink", () => {
-  // Both clients consume this table, so a path the web app recognizes is one
-  // the mobile app recognizes too.
   it.each([
     ["/Users/julius/project/AGENTS.md", "/Users/julius/project/AGENTS.md"],
     ["/home/me/notes.md", "/home/me/notes.md"],

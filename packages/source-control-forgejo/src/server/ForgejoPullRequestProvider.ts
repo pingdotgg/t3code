@@ -251,7 +251,10 @@ export const make = Effect.gen(function* () {
           },
           ForgejoStatus,
         );
-        return { state: forgejoChangeRequest(pr).state, checks: forgejoChecks(statuses.items) };
+        return {
+          state: forgejoChangeRequest(pr).state,
+          checks: forgejoChecks(statuses.items, pr.html_url),
+        };
       },
     ),
     getChangeRequest: Effect.fn("ForgejoPullRequestProvider.getChangeRequest")(function* (input) {
@@ -275,7 +278,7 @@ export const make = Effect.gen(function* () {
           const actor = forgejoActor(user);
           return actor ? [actor] : [];
         }),
-        checks: forgejoChecks(statuses.items),
+        checks: forgejoChecks(statuses.items, pr.html_url),
         baseComparison: !pr.merge_base
           ? "unknown"
           : pr.merge_base === pr.base.sha
@@ -302,7 +305,11 @@ export const make = Effect.gen(function* () {
               })),
             ),
             page({ ...input, path: `${pullPath(input)}/reviews` }, ForgejoReview),
-            page({ ...input, path: `${pullPath(input)}/commits` }, ForgejoCommit),
+            // Without these, each commit lists its files and a big merge outgrows the output limit.
+            page(
+              { ...input, path: `${pullPath(input)}/commits?files=false&verification=false` },
+              ForgejoCommit,
+            ),
             page({ ...input, path: `${issuePath(input)}/reactions` }, ForgejoReaction),
             getViewer(input),
           ],
@@ -400,7 +407,7 @@ export const make = Effect.gen(function* () {
           ? yield* read(
               {
                 ...input,
-                path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}`,
+                path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}?files=false&verification=false`,
               },
               ForgejoCommit,
             )

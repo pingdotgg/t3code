@@ -101,7 +101,6 @@ describe("mobile slash commands", () => {
       }),
     ).toEqual({ text: "", cursor: 0, interactionMode: "plan" });
 
-    // A provider switch can invalidate an open menu before a tap arrives.
     expect(
       resolveComposerCommandSelection({
         draftMessage: "/plan",

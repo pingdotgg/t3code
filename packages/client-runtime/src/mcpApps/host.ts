@@ -4,19 +4,8 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 
-/**
- * The host side of the MCP Apps bridge (spec 2026-01-26, plus the draft
- * additions the current SDK sends: `ui/download-file` and
- * `ui/notifications/request-teardown`): JSON-RPC 2.0 over postMessage between a
- * client and one app document. It is transport-free so web (an iframe) and
- * mobile (a WebView) share every protocol rule; each platform supplies how to
- * post a message and how to reach the environment.
- */
-
 const MAX_MESSAGE_BYTES = 256 * 1024;
-/** Requests an app may have in flight at once; more are refused, not queued. */
 const MAX_PENDING_REQUESTS = 16;
-/** How long the host waits for an app to answer `ui/resource-teardown`. */
 const TEARDOWN_TIMEOUT_MS = 2000;
 const encoder = new TextEncoder();
 
@@ -48,11 +37,9 @@ export interface McpAppHostContext {
     readonly bottom: number;
     readonly left: number;
   };
-  /** The tool call that created the app: the server's MCP `Tool` definition. */
   readonly toolInfo?: { readonly tool: unknown };
 }
 
-/** A file an app asked the host to save (`ui/download-file`): embedded, or linked on its server. */
 export type McpAppDownload =
   | {
       readonly _tag: "embedded";
@@ -67,10 +54,6 @@ export type McpAppDownload =
       readonly mimeType?: string;
     };
 
-/**
- * The bytes of an MCP resource's contents: `text` as UTF-8, `blob` decoded
- * from base64. Undefined when it has neither or the base64 is malformed.
- */
 export function mcpResourceBytes(content: unknown): Uint8Array | undefined {
   if (!Predicate.isObject(content)) return undefined;
   if (typeof content.text === "string") return encoder.encode(content.text);
@@ -88,13 +71,11 @@ export interface McpAppCallToolResult {
   readonly _meta?: unknown;
 }
 
-/** Thrown by host callbacks to refuse a request with a message the app can show. */
 export class McpAppHostRefusal extends Error {}
 
 export interface McpAppHostOptions {
   readonly app: McpAppReference;
   readonly hostVersion: string;
-  /** Posts one JSON-RPC message to the app document. */
   readonly post: (message: unknown) => void;
   readonly hostContext: () => McpAppHostContext;
 
@@ -110,13 +91,8 @@ export interface McpAppHostOptions {
     readonly content?: ReadonlyArray<unknown>;
     readonly structuredContent?: Record<string, unknown>;
   }) => Promise<void>;
-  /**
-   * Switches the app to a mode the host and the app both offer, returning the
-   * resulting mode. The host has already checked both lists.
-   */
   readonly requestDisplayMode: (mode: McpAppDisplayMode) => Promise<McpAppDisplayMode>;
   readonly downloadFile: (files: ReadonlyArray<McpAppDownload>) => Promise<void>;
-  /** The app asked to be closed (`ui/notifications/request-teardown`). */
   readonly onRequestTeardown: () => void;
   readonly onSizeChanged: (size: { readonly width?: number; readonly height?: number }) => void;
 }
@@ -124,15 +100,10 @@ export interface McpAppHostOptions {
 export interface McpAppHost {
   /** Handles one message the app posted; the caller has already checked its source. */
   readonly receive: (data: unknown) => void;
-  /**
-   * Supplies the original tool call's arguments and result. They reach the
-   * app once it has initialized, whichever happens last, and only once.
-   */
   readonly setToolCall: (call: {
     readonly arguments: unknown;
     readonly result: McpAppCallToolResult | undefined;
   }) => void;
-  /** Sends `host-context-changed` with the fields that differ from what the app last saw. */
   readonly updateHostContext: () => void;
   /**
    * Asks the app to wrap up before its document goes away (`ui/resource-teardown`),
@@ -155,9 +126,8 @@ function isId(value: unknown): value is JsonRpcId {
 }
 
 /**
- * A `CallToolResult` as the spec's schema accepts it. Providers can report
- * absent fields as null (Codex sends `_meta: null`), which the MCP Apps SDK
- * rejects, dropping the whole notification or response.
+ * Providers can report absent fields as null (Codex sends `_meta: null`), which
+ * the MCP Apps SDK rejects, dropping the whole notification or response.
  */
 function normalizeMcpAppToolResult(result: McpAppCallToolResult): McpAppCallToolResult {
   return {
@@ -186,7 +156,6 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
   let toolCallSent = false;
   let pending = 0;
   let sentContext: McpAppHostContext | undefined;
-  /** Modes the app declared at initialize; undefined when it declared none. */
   let appDisplayModes: ReadonlyArray<string> | undefined;
   let nextHostRequestId = 0;
   const hostRequests = new Map<string, () => void>();
@@ -372,7 +341,6 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         answer(id, () =>
           options.downloadFile(files).then(
             () => ({}),
-            // The draft reports a refused or failed download in the result.
             (error: unknown) =>
               error instanceof McpAppHostRefusal ? { isError: true } : Promise.reject(error),
           ),
@@ -390,7 +358,6 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         if (initialized) return;
         initialized = true;
         sendToolCall();
-        // The theme or size may have changed since the initialize response.
         hostHandle.updateHostContext();
         return;
       }
@@ -409,11 +376,9 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
         options.onRequestTeardown();
         return;
       default:
-      // notifications/message (logging) and unknown notifications are ignored.
     }
   };
 
-  /** A response to a request the host sent the app. */
   const handleResponse = (id: JsonRpcId) => {
     const settle = hostRequests.get(String(id));
     if (settle === undefined) return;
@@ -490,7 +455,6 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
 
 const MAX_DOWNLOAD_NAME = 200;
 
-/** The file name an app gave a download, or the last part of its URI. */
 function downloadName(uri: unknown, name: unknown): string {
   const raw =
     typeof name === "string" && name.trim() !== ""
@@ -498,14 +462,12 @@ function downloadName(uri: unknown, name: unknown): string {
       : typeof uri === "string"
         ? (uri.split(/[/?#]/).findLast(Boolean) ?? "download")
         : "download";
-  // Path separators, reserved characters, and control characters.
   const safe = Array.from(raw, (char) =>
     /[\\/:*?"<>|]/.test(char) || char.charCodeAt(0) < 32 ? "-" : char,
   ).join("");
   return safe.slice(0, MAX_DOWNLOAD_NAME) || "download";
 }
 
-/** `ui/download-file` contents: MCP embedded resources and resource links. */
 function readDownloads(contents: unknown): ReadonlyArray<McpAppDownload> | undefined {
   if (!Array.isArray(contents) || contents.length === 0) return undefined;
   const files: Array<McpAppDownload> = [];
@@ -536,10 +498,6 @@ function readDownloads(contents: unknown): ReadonlyArray<McpAppDownload> | undef
   return files;
 }
 
-/**
- * Maps T3's resolved theme variables to the spec's standardized style names, so
- * apps written for any MCP Apps host pick up the thread's colors and fonts.
- */
 export function mcpAppStyleVariables(
   theme: Readonly<Record<string, string>>,
 ): Record<string, string> {

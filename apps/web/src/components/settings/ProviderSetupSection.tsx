@@ -1,5 +1,6 @@
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
@@ -34,7 +35,6 @@ interface ProviderSetupSectionProps {
   readonly onEnable: () => void;
 }
 
-/** Read the configured method from the instance config. Unknown values fall back to personal. */
 export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMethod {
   const value =
     config !== null && typeof config === "object" && "authMethod" in config
@@ -45,12 +45,11 @@ export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMetho
   );
 }
 
-/** Setup state belongs to the selected environment and is never saved in client settings. */
 export function ProviderSetupSection(props: ProviderSetupSectionProps) {
   return (
     <section
       aria-label="Antigravity setup"
-      className="@container/setup divide-y divide-border/50 text-xs"
+      className="@container/setup divide-y divide-border/50 text-xs [&_[data-slot=settings-row]]:rounded-none"
     >
       <SettingsRow
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
@@ -157,23 +156,22 @@ function ProviderSetupActions({
     pendingRef.current = true;
     setPendingLabel(label);
     setError(null);
-    try {
-      const result = await request();
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const failure = squashAtomCommandFailure(result);
-          setError(failure instanceof Error ? failure.message : "Provider setup failed.");
-        }
-        return false;
-      }
-      return true;
-    } catch {
+    const settled = await settlePromise(request);
+    pendingRef.current = false;
+    setPendingLabel(null);
+    if (settled._tag === "Failure") {
       setError("Provider setup failed. Try again.");
       return false;
-    } finally {
-      pendingRef.current = false;
-      setPendingLabel(null);
     }
+    const result = settled.value;
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const failure = squashAtomCommandFailure(result);
+        setError(failure instanceof Error ? failure.message : "Provider setup failed.");
+      }
+      return false;
+    }
+    return true;
   }
 
   async function removeRuntime() {
@@ -187,6 +185,10 @@ function ProviderSetupActions({
 
   return (
     <div className="divide-y divide-border/50">
+      {/* Keep the live region first so the last visible row is not followed by a sibling that adds its divider. */}
+      <p className="sr-only" role="status">
+        {pendingLabel ? `${pendingLabel}.` : null}
+      </p>
       <SettingsRow
         title="Runtime"
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
@@ -300,9 +302,6 @@ function ProviderSetupActions({
         readOnly={false}
       />
 
-      <p className="sr-only" role="status">
-        {pendingLabel ? `${pendingLabel}.` : null}
-      </p>
       {error || queryError ? (
         <div className="grid gap-2 px-3 py-3 sm:px-4">
           <p role="alert" className="text-destructive [overflow-wrap:anywhere]">

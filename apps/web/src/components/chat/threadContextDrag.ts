@@ -1,15 +1,34 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useSyncExternalStore } from "react";
-
-/**
- * Dragging a sidebar thread past the list edge turns the sort gesture into a context drop.
- * The composer form marks itself as the target; the sidebar hit-tests the pointer against it
- * and hands over the dragged thread refs through a DOM event, so neither side imports the
- * other. Ghost position lives here rather than in Sidebar state so pointer moves only
- * re-render the ghost.
- */
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { type RefObject, useEffect, useEffectEvent, useSyncExternalStore } from "react";
 
 export const THREAD_CONTEXT_DROP_EVENT = "t3-thread-context-drop";
+
+export function useThreadContextDrop(
+  targetRef: RefObject<EventTarget | null>,
+  environmentId: EnvironmentId,
+  targetKey: string,
+  onDrop: (refs: ReadonlyArray<ScopedThreadRef>, isActive: () => boolean) => void,
+) {
+  const handleDrop = useEffectEvent(onDrop);
+  useEffect(() => {
+    const target = targetRef.current;
+    if (!target) return;
+    let active = true;
+    const listener = (event: Event) =>
+      handleDrop((event as CustomEvent<ReadonlyArray<ScopedThreadRef>>).detail, () => active);
+    target.addEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
+    return () => {
+      active = false;
+      target.removeEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
+    };
+  }, [
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new environment or target ends the previous listener, so isActive reports false to drops still in flight for it.
+    environmentId,
+    targetKey,
+    targetRef,
+  ]);
+}
+
 const DROP_TARGET_ATTRIBUTE = "data-thread-context-drop";
 const DROP_OVER_ATTRIBUTE = "data-thread-context-over";
 
@@ -50,7 +69,6 @@ function findDropTarget(point: { x: number; y: number }): HTMLElement | null {
   );
 }
 
-/** Tracks the ghost and the highlighted drop target while the pointer is outside the list. */
 export function moveThreadContextDrag(
   point: { x: number; y: number },
   label: { title: string; count: number },
@@ -70,7 +88,6 @@ export function endThreadContextDrag() {
   setGhost(null);
 }
 
-/** True when a composer accepted the drop. */
 export function dropThreadContext(
   point: { x: number; y: number },
   threads: ReadonlyArray<ScopedThreadRef>,

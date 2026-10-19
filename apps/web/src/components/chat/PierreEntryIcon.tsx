@@ -1,5 +1,5 @@
 import { FileIcon, FolderIcon } from "lucide-react";
-import { memo, useInsertionEffect, useMemo } from "react";
+import { memo, useInsertionEffect } from "react";
 
 import { ensurePierreIconSprite, resolvePierreIconForEntry } from "../../pierre-icons";
 import { cn } from "~/lib/utils";
@@ -67,10 +67,7 @@ export const PierreEntryIcon = memo(function PierreEntryIcon(props: {
   className?: string;
 }) {
   useInsertionEffect(ensurePierreIconSprite, []);
-  const icon = useMemo(
-    () => resolvePierreIconForEntry(props.pathValue, props.kind, props.mimeType),
-    [props.kind, props.pathValue, props.mimeType],
-  );
+  const icon = resolvePierreIconForEntry(props.pathValue, props.kind, props.mimeType);
 
   if (!icon) {
     return props.kind === "directory" ? (

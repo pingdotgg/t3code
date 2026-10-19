@@ -58,7 +58,6 @@ export class ElectronShell extends Context.Service<
   ElectronShell,
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
-    /** Opens a known System Settings pane by identifier, not by URL. */
     readonly openSystemSettings: (pane: SystemSettingsPane) => Effect.Effect<boolean>;
     readonly copyText: (text: string) => Effect.Effect<void>;
   }

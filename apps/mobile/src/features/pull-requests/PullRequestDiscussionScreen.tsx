@@ -1,17 +1,23 @@
+import { Toolbar } from "../../components/ui/Toolbar";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  type AtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import type { PullRequestThreadComment } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, View } from "react-native";
+import { Platform, ScrollView, View } from "react-native";
 import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
-import { MaterialButton } from "../../components/MaterialButton";
-import { GlassSurface } from "../../components/GlassSurface";
-import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { Button } from "../../components/ui/Button";
+import { GlassSurface } from "../../components/ui/GlassSurface";
+import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { relativeTime } from "../../lib/time";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -57,57 +63,58 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(64);
-  const operation = async (run: () => Promise<void>) => {
+  const operation = async (run: () => Promise<AtomCommandResult<unknown, unknown> | undefined>) => {
     if (pending.current) return;
     pending.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
-    try {
-      await run();
-    } catch (cause) {
+    const result = await run();
+    pending.current = false;
+    setBusy(false);
+    if (result && AsyncResult.isFailure(result)) {
+      const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error ? cause.message : "The provider could not complete this action.",
       );
-    } finally {
-      pending.current = false;
-      setBusy(false);
     }
   };
   const post = () =>
     operation(async () => {
-      if (!permissions.canReply || !body.trim() || !thread) return;
+      if (!permissions.canReply || !body.trim() || !thread) return undefined;
       const submitted = body;
       const response = await reply({
         ...target,
         input: { ...target.input, threadId: thread.id, body: submitted },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (AsyncResult.isFailure(response)) return response;
       setBody((current) => (current === submitted ? "" : current));
       setNotice("Reply posted.");
       refresh();
+      return response;
     });
   const toggleResolved = () =>
     operation(async () => {
-      if (!thread || !permissions.canResolve) return;
+      if (!thread || !permissions.canResolve) return undefined;
       const response = await resolve({
         ...target,
         input: { ...target.input, threadId: thread.id, resolved: !thread.isResolved },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-      refresh();
+      if (AsyncResult.isSuccess(response)) refresh();
+      return response;
     });
   const nextCursor = cursor === undefined ? thread?.nextCommentsCursor : cursor;
   const more = () =>
     operation(async () => {
-      if (!thread || !nextCursor) return;
+      if (!thread || !nextCursor) return undefined;
       const response = await loadMore({
         ...target,
         input: { ...target.input, threadId: thread.id, cursor: nextCursor },
       });
-      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      if (AsyncResult.isFailure(response)) return response;
       setExtra((comments) => [...comments, ...response.value.comments]);
       setCursor(response.value.nextCursor);
+      return response;
     });
   const comments = [
     ...new Map(
@@ -145,13 +152,13 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
           />
         ) : null}
         {permissions.canResolve && thread ? (
-          <NativeHeaderToolbar placement="right">
-            <NativeHeaderToolbar.Button
+          <Toolbar placement="right">
+            <Toolbar.Button
               label={resolveLabel}
               disabled={busy || activity.isPending}
               onPress={() => void toggleResolved()}
             />
-          </NativeHeaderToolbar>
+          </Toolbar>
         ) : null}
         <ScrollViewMarker style={{ flex: 1 }}>
           <ScrollView
@@ -163,7 +170,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               paddingBottom: canReply ? composerHeight + bottomInset + 24 : 24,
             }}
           >
-            {activity.isPending && !thread ? <ActivityIndicator /> : null}
+            {activity.isPending && !thread ? <AppActivityIndicator /> : null}
             {thread ? (
               <View className="gap-2 pb-4">
                 <Text selectable className="font-mono text-xs text-foreground-muted">
@@ -174,7 +181,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                   {thread.isResolved ? "Resolved" : "Unresolved"}
                   {thread.isOutdated ? " · Outdated" : ""}
                 </Text>
-                <MaterialButton
+                <Button
                   label="View file diff"
                   onPress={() =>
                     navigation.navigate("PullRequestFile", { ...params, path: thread.path })
@@ -199,7 +206,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
               </View>
             ))}
             {nextCursor ? (
-              <MaterialButton
+              <Button
                 label={busy ? "Loading…" : "Load more replies"}
                 disabled={busy}
                 onPress={() => void more()}
@@ -232,7 +239,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 className="max-h-36 min-h-12 min-w-0 flex-1 rounded-[24px] border-0 bg-transparent px-4 py-3 text-base text-foreground"
               />
               <View>
-                <MaterialButton
+                <Button
                   label={busy ? "Posting…" : "Reply"}
                   tone="contrast"
                   disabled={busy || !body.trim()}

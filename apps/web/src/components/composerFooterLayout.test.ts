@@ -80,8 +80,6 @@ describe("shouldUseCompactComposerPrimaryActions", () => {
 
 describe("overlayComposerIsResting", () => {
   it("drops a resting reservation once a status bar replaces the composer", () => {
-    // The composer rested on a scroll, then the thread swapped it for the
-    // subagent bar. The bar's 56px overlay must not keep the resting estimate.
     const isResting = overlayComposerIsResting({
       composerMounted: false,
       composerReportedResting: true,
@@ -222,8 +220,6 @@ describe("shouldAnimateComposerRestingTransition", () => {
 });
 
 describe("resolveRestingComposerControlsLayout", () => {
-  // Picker 140 natural / 96 minimum, plus a 9px separator. Traits 60,
-  // mode 140, overflow 24, gap 4.
   const base = {
     gap: 4,
     naturalFixedWidth: 149,
@@ -233,7 +229,6 @@ describe("resolveRestingComposerControlsLayout", () => {
   };
 
   it("shows everything when the host has room", () => {
-    // 149 + 60 + 140 + 4 * 2 = 357
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 357 })).toEqual({
       hiddenCount: 0,
       visible: true,
@@ -241,7 +236,6 @@ describe("resolveRestingComposerControlsLayout", () => {
   });
 
   it("moves trailing blocks into the overflow menu until the rest fits", () => {
-    // 149 + 60 + 24 + 4 * 2 = 241
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 356 })).toEqual({
       hiddenCount: 1,
       visible: true,
@@ -250,7 +244,6 @@ describe("resolveRestingComposerControlsLayout", () => {
       hiddenCount: 1,
       visible: true,
     });
-    // 149 + 24 + 4 = 177
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 240 })).toEqual({
       hiddenCount: 2,
       visible: true,
@@ -262,7 +255,6 @@ describe("resolveRestingComposerControlsLayout", () => {
       hiddenCount: 2,
       visible: true,
     });
-    // 105 + 24 + 4 = 133
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 133 })).toEqual({
       hiddenCount: 2,
       visible: true,
@@ -306,10 +298,6 @@ describe("resolveRestingComposerControlsLayout", () => {
 });
 
 describe("context strip labels and resting composer controls", () => {
-  // Widths captured from a desktop renderer that crashed with React error
-  // 185. The strip is 724px wide. Its expanded labels need 327px, and the
-  // rest of its chrome needs 125px. The composer controls sit in the host
-  // that takes whatever is left.
   const stripWidth = 724;
   const labelWidth = 327;
   const chromeWidth = 125;
@@ -327,15 +315,12 @@ describe("context strip labels and resting composer controls", () => {
   }
 
   it("keeps the labels compact when the full controls only fit beside compact labels", () => {
-    // Compact labels leave 599px, so the composer shows every block.
     const layout = resolveRestingComposerControlsLayout({
       ...measurement,
       hostWidth: hostWidth(true),
     });
     expect(layout).toEqual({ hiddenCount: 0, visible: true });
 
-    // The strip reserves the natural controls width, so expanding the
-    // labels is off the table: 125 + 327 + 364 > 724.
     const compact = resolveContextStripLabelsCompact({
       compact: true,
       neededWidth: chromeWidth + labelWidth + naturalWidth,
@@ -343,17 +328,12 @@ describe("context strip labels and resting composer controls", () => {
     });
     expect(compact).toBe(true);
 
-    // The next pass sees the same inputs and lands on the same answer.
     expect(
       resolveRestingComposerControlsLayout({ ...measurement, hostWidth: hostWidth(compact) }),
     ).toEqual(layout);
   });
 
   it("does not settle when the strip only reserves the visible controls", () => {
-    // Regression guard for the alternating layout. Reserving only the
-    // controls left visible after two blocks moved into overflow makes the
-    // strip expand its labels, which shrinks the host below what the full
-    // controls need, which hides the blocks again.
     const hiddenControlsWidth = 137;
     const expands = !resolveContextStripLabelsCompact({
       compact: true,
@@ -368,8 +348,6 @@ describe("context strip labels and resting composer controls", () => {
 });
 
 describe("resolveRestingComposerControlsLayout hysteresis", () => {
-  // Same cluster as above: picker 140 natural / 96 minimum plus a 9px
-  // separator, traits 60, mode 140, overflow 24, gap 4.
   const base = {
     gap: 4,
     naturalFixedWidth: 149,
@@ -379,7 +357,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   };
 
   it("keeps a block in overflow when re-showing it would leave no slack", () => {
-    // 149 + 60 + 140 + 4 * 2 = 357 fills the host exactly.
     expect(
       resolveRestingComposerControlsLayout({
         ...base,
@@ -415,7 +392,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   });
 
   it("requires slack before partially restoring a cluster", () => {
-    // One inline block, the picker, and overflow need 149 + 60 + 24 + 8 = 241px.
     const previous = { hiddenCount: 2, visible: true };
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 241, previous })).toEqual(
       previous,
@@ -434,17 +410,14 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   });
 
   it("settles when the measured picker width jitters below a pixel", () => {
-    // Regression guard for React error #185 ("Maximum update depth
-    // exceeded"). The composer re-measures on every render, so the picker's
-    // recovered natural width can land a fraction of a pixel apart between
-    // renders. Without hysteresis that flips hiddenCount forever.
+    // The composer re-measures on every render, so the picker's recovered
+    // natural width can land a fraction of a pixel apart between renders.
+    // Without hysteresis that flips hiddenCount forever.
     let layout = { hiddenCount: 0, visible: true };
     const settled: string[] = [];
     for (let index = 0; index < 10; index += 1) {
       layout = resolveRestingComposerControlsLayout({
         ...base,
-        // The picker's recovered natural width lands a half pixel apart
-        // between renders.
         naturalFixedWidth: index % 2 === 0 ? 149 : 149.5,
         hostWidth: 357,
         previous: layout,
@@ -455,7 +428,6 @@ describe("resolveRestingComposerControlsLayout hysteresis", () => {
   });
 
   it("keeps the cluster hidden until its minimum width clears the slack", () => {
-    // 105 + 24 + 4 = 133 is the exact minimum for the hidden cluster.
     expect(
       resolveRestingComposerControlsLayout({
         ...base,

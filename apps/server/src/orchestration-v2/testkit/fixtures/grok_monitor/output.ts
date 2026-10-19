@@ -39,7 +39,6 @@ export function assertGrokMonitorOutput(
   assert.equal(monitor?.status, "completed");
   assert.equal(monitor?.output, GROK_MONITOR_TICKS.map((tick) => `${tick}\n`).join(""));
 
-  // Every tick before the end is shown running, with the output so far.
   const monitorUpdates = result.domainEvents.flatMap((event) =>
     event.type === "turn-item.updated" &&
     event.payload.id === monitor?.id &&
@@ -55,7 +54,6 @@ export function assertGrokMonitorOutput(
     assert.equal(monitorUpdates[tickUpdate]?.status, "running", `${tick} must show running`);
   }
 
-  // Run 1 settles only after the monitor's structured end.
   const monitorCompletedAt = result.domainEvents.findIndex(
     (event) =>
       event.type === "turn-item.updated" &&
@@ -76,8 +74,6 @@ export function assertGrokMonitorOutput(
   );
   assert.include(rootTexts, "ROOT_DONE");
 
-  // Full access approves the monitor prompt for T3. It must answer with
-  // Grok's allow-once: Grok saves `always-allow` for the whole project.
   const permissionAnswer = transcript.entries.find(
     (entry) =>
       entry.type === "expect_outbound" &&
@@ -91,7 +87,6 @@ export function assertGrokMonitorOutput(
     { outcome: { outcome: "selected", optionId: "allow-once" } },
   );
 
-  // The timeline names the monitor from Grok's task_completed snapshot.
   assert.deepEqual(backgroundNotifications(projection), [
     {
       summary: 'Monitor "Watch three tick echoes" finished',
@@ -100,7 +95,6 @@ export function assertGrokMonitorOutput(
     },
   ]);
 
-  // Grok's own wake reply is a provider continuation, not more of run 1.
   const wakeMessage = projection.messages.find((message) => message.id === wakeRun?.userMessageId);
   assert.equal(`${wakeMessage?.createdBy}:${wakeMessage?.creationSource}`, "agent:provider");
   assert.isNotEmpty(

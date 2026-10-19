@@ -33,10 +33,6 @@ const killGroup = (pgid: number) =>
     if (groupExists(pgid)) process.kill(-pgid, "SIGKILL");
   });
 
-/**
- * Spawns a throwaway process group shaped like `opencode serve`: by default a
- * shell leader whose argv ends in the serve arguments, plus a `sleep` member.
- */
 const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
   Effect.acquireRelease(
     Effect.gen(function* () {
@@ -53,7 +49,6 @@ const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
     ({ pid }) => killGroup(pid),
   );
 
-/** A T3 server that recorded its OpenCode server and then died without cleanup. */
 const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }) =>
   Effect.gen(function* () {
     const previousServer = yield* spawnGroup([]);
@@ -61,7 +56,6 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
       stateDir,
       ownerPid: previousServer.pid,
     });
-    // The previous server never gets to forget its entry.
     yield* Effect.asVoid(previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS }));
     process.kill(-previousServer.pid, "SIGKILL");
     yield* previousServer.exited;
@@ -102,7 +96,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
-      // The wrapper starts the serve process in its group and exits.
       const wrapper = yield* spawnGroup(
         SERVE_ARGS,
         '/bin/sh -c "sleep 600 & wait" "$0" "$@" & exit 0',
@@ -129,7 +122,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const unrelated = yield* spawnGroup(SERVE_ARGS);
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
-      // Same pid, a different process: what a recycled pid looks like.
       const entry = yield* fs.readFileString(entryPath);
       yield* fs.writeFileString(entryPath, entry.replace(/"startTime":"[^"]+"/, '"startTime":"1"'));
 
@@ -149,7 +141,6 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const unrelated = yield* spawnGroup(SERVE_ARGS);
       yield* recordFromDeadServer(stateDir, unrelated);
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
-      // Same pid and start second, but not the server T3 started.
       const entry = yield* fs.readFileString(entryPath);
       yield* fs.writeFileString(entryPath, entry.replace("--port=4096", "--port=4097"));
 
@@ -186,8 +177,6 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-startup-" });
-      // A wrapper that leaves the serve process running in its group and exits 0,
-      // which the spawner's own cleanup does not stop.
       const binaryPath = path.join(tempDir, "opencode");
       yield* fs.writeFileString(binaryPath, "#!/bin/sh\nsleep 600 &\nexit 0\n");
       yield* fs.chmod(binaryPath, 0o755);
@@ -210,7 +199,6 @@ describe.skipIf(observedPlatforms.length === 0)("OpenCode server startup", () =>
           Layer.succeed(
             OpenCodeServerLedger.OpenCodeServerLedger,
             OpenCodeServerLedger.OpenCodeServerLedger.of({
-              // Recording stalls until the scope is interrupted, after the wrapper exited.
               track: (server) =>
                 Effect.gen(function* () {
                   yield* (yield* Deferred.await(spawned)).exitCode.pipe(Effect.ignore);

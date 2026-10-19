@@ -86,8 +86,6 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
         try {
           messages.push(decodeQueuedThreadMessage(JSON.parse(await entry.text()) as unknown));
         } catch (cause) {
-          // Recover readable messages without treating their attachment
-          // owners as the complete inventory needed for cleanup.
           errors.push(
             new ThreadOutboxStorageError({
               operation: "read-message",

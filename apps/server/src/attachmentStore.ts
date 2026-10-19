@@ -103,6 +103,21 @@ export function createDeterministicAttachmentId(
   return `${threadSegment}-${uuid}`;
 }
 
+/**
+ * A retry resends the same bytes and keeps its id. Editing a queued message
+ * reuses the message id, so the bytes also stop a new image from taking an
+ * earlier image's id and file. Clients cache attachment images by id, which
+ * relies on ids never changing bytes.
+ */
+export function chatAttachmentStableKey(
+  messageId: string,
+  index: number,
+  bytes: Uint8Array,
+): string {
+  const digest = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+  return `${messageId}:${index}:${digest}`;
+}
+
 export function parseThreadSegmentFromAttachmentId(attachmentId: string): string | null {
   const normalizedId = normalizeAttachmentRelativePath(attachmentId);
   if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
@@ -116,9 +131,8 @@ export function parseThreadSegmentFromAttachmentId(attachmentId: string): string
 }
 
 /**
- * Attachments a thread's tool calls published: `html_render` pages and
- * captured MCP App documents. Only ids minted for this thread count, so
- * deleting a fork never removes its source's pages.
+ * Only ids minted for this thread count, so deleting a fork never removes its
+ * source's pages.
  */
 export function threadHtmlRenderAttachmentIds(
   threadId: string,
@@ -136,7 +150,6 @@ export function threadHtmlRenderAttachmentIds(
   });
 }
 
-/** Null for attachment types this build does not know; callers skip those. */
 export function attachmentRelativePath(attachment: ChatAttachment): string | null {
   switch (attachment.type) {
     case "image": {

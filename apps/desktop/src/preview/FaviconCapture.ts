@@ -642,8 +642,6 @@ async function rasterizeFavicon(
   ]);
 
   const result = new Promise<RasterizationResult>((resolve, reject) => {
-    // Electron cannot cancel isolated-world execution. This timeout ends only
-    // the logical attempt; renderer work may finish after a newer attempt starts.
     const timeout = AbortSignal.timeout(FAVICON_RASTER_TIMEOUT_MS);
     let settled = false;
     const finish = (complete: () => void) => {

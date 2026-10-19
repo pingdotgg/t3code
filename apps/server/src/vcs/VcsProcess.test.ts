@@ -7,7 +7,9 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -92,6 +94,98 @@ describe("VcsProcess.run", () => {
         expect(error.retryable === true).toBe(retryable);
         const encoded = yield* encodeExitError(error);
         expect(encoded).not.toContain("/private/repo");
+      }),
+  );
+
+  it.effect.each([
+    {
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync", "writeout-only"],
+    },
+    {
+      stderr:
+        "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock'",
+      fsyncMethods: ["fsync", "writeout-only"],
+    },
+    { stderr: "fatal: Operation not supported", fsyncMethods: ["fsync"] },
+    {
+      stderr:
+        "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock': Input/output error",
+      fsyncMethods: ["fsync"],
+    },
+    {
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync", "writeout-only"],
+      fallbackFails: true,
+    },
+    {
+      platform: "linux",
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync"],
+    },
+    {
+      operation: baseInput.operation,
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync"],
+    },
+  ] as const)(
+    "falls back to writeout-only only for unsupported fsync on macOS: $stderr",
+    ({ stderr, fsyncMethods, ...scenario }) =>
+      Effect.gen(function* () {
+        const seen: Array<ReadonlyArray<string>> = [];
+        const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(
+            HostProcess.Platform,
+            "platform" in scenario ? scenario.platform : "darwin",
+          ),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.sync(() => {
+                seen.push(input.args);
+                const failed =
+                  input.args.includes("core.fsyncMethod=fsync") ||
+                  ("fallbackFails" in scenario && scenario.fallbackFails);
+                return {
+                  stdout: "",
+                  stderr: failed ? stderr : "",
+                  code: ChildProcessSpawner.ExitCode(failed ? 128 : 0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        );
+        const exit = yield* service
+          .run({
+            ...baseInput,
+            operation:
+              "operation" in scenario
+                ? scenario.operation
+                : VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+            args: ["-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync", "add"],
+          })
+          .pipe(Effect.exit);
+        expect(seen).toEqual(
+          fsyncMethods.map((method) => [
+            "-c",
+            "core.fsync=objects,reference",
+            "-c",
+            `core.fsyncMethod=${method}`,
+            "add",
+          ]),
+        );
+        expect(Exit.isSuccess(exit)).toBe(
+          fsyncMethods.length === 2 && !("fallbackFails" in scenario && scenario.fallbackFails),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+            _tag: "Some",
+            value: { _tag: "VcsProcessExitError", exitCode: 128 },
+          });
+        }
       }),
   );
 
@@ -290,6 +384,32 @@ describe("VcsProcess.run", () => {
       expect(result.stdoutTruncated).toBe(false);
       expect(result.stderrTruncated).toBe(false);
     }).pipe(provideLive),
+  );
+
+  it.effect("keeps git from opening a folder laid out as a bare repository", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-vcs-bare-" });
+      yield* fileSystem.makeDirectory(path.join(cwd, "objects", "info"), { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(cwd, "refs", "heads"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(cwd, "HEAD"), "ref: refs/heads/main\n");
+      yield* fileSystem.writeFileString(
+        path.join(cwd, "config"),
+        '[core]\n\trepositoryformatversion = 0\n\tbare = false\n\tworktree = .\n\tfsmonitor = "echo ran >> fsmonitor-runs; false"\n',
+      );
+
+      const result = yield* run({
+        operation: "test.bare-repository",
+        command: "git",
+        args: ["status"],
+        cwd,
+        allowNonZeroExit: true,
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(yield* fileSystem.exists(path.join(cwd, "fsmonitor-runs"))).toBe(false);
+    }).pipe(Effect.scoped, provideLive, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("writes stdin before waiting for exit", () =>

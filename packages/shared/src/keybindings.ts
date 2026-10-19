@@ -29,7 +29,7 @@ export interface ShortcutModifierStateLike {
   altKey: boolean;
 }
 
-const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
+export const EVENT_CODE_SHORTCUT_KEYS: Readonly<Record<string, string>> = {
   Backquote: "`",
   Backslash: "\\",
   BracketLeft: "[",

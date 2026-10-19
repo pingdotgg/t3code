@@ -58,14 +58,10 @@ it("only replays a command receipt for the thread it was recorded against", () =
   const threadB = ThreadId.make("thread-b");
 
   assert.strictEqual(canReplayCommandReceipt(threadA, threadA), true);
-  // A reused command id aimed at another thread must not report the first
-  // thread's success as this thread's (v1 #5246).
   assert.strictEqual(canReplayCommandReceipt(threadA, threadB), false);
 });
 
 it("links and unlinks a pull request through thread.metadata.update (#8160)", () => {
-  // The fold is exercised through the schema: a command carrying the link
-  // must round-trip, and one without it must leave the field untouched.
   const decode = Schema.decodeUnknownSync(OrchestrationV2Command);
   const linked = decode({
     type: "thread.metadata.update",

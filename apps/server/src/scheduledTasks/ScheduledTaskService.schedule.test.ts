@@ -87,7 +87,6 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       const expectedDueAt = DateTime.formatIso(DateTime.toUtc(dueAt));
       expect(created.task.nextRunAt).toBe(expectedDueAt);
 
-      // Cross the due time before the scheduler's first five-second tick.
       yield* TestClock.setTime(DateTime.toEpochMillis(dueAt) + 1_000);
       const update = yield* decodeUpsertInput({
         ...input,

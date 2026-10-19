@@ -173,8 +173,6 @@ function logicalIncoming(message: JsonRpcMessage): LogicalFrame | undefined {
   };
 }
 
-// Recorded agent frames name workspace paths (tool inputs, fs requests) as
-// <workspace>; point them at this replay's workspace like expectations do.
 function materializeInbound(value: unknown): unknown {
   if (typeof value === "string") return expandExpectedString(value);
   if (Array.isArray(value)) return value.map(materializeInbound);

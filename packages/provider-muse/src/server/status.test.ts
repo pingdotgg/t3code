@@ -33,8 +33,8 @@ const metaCatalog = {
   providerId: "meta",
   models: [
     {
-      modelId: "muse-discovered",
-      displayLabel: "Muse Discovered",
+      modelId: "muse-wonder-1.0",
+      displayLabel: "muse-wonder-1.0",
       providerId: "meta",
       isDefault: true,
     },
@@ -114,7 +114,11 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(snapshot.auth).toEqual({ status: "unknown" });
         expect(snapshot.version).toBe("1.0.3-R2198.1");
         expect(snapshot.models.map((model) => model.slug)).toEqual([
-          "muse-discovered",
+          "muse-wonder-1.0",
+          "muse-custom",
+        ]);
+        expect(snapshot.models.map((model) => model.name)).toEqual([
+          "Muse Wonder 1.0",
           "muse-custom",
         ]);
         const descriptor = snapshot.models[0]?.capabilities?.optionDescriptors?.[0];
@@ -124,6 +128,27 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         expect(host.connection.request).toHaveBeenCalledWith("model/list", {});
         expect(host.connection.command).not.toHaveBeenCalled();
         expect(host.close).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  it.effect("preserves a configured display name for a discovered Muse model", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const binaryPath = yield* fakeCli();
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({
+            enabled: true,
+            binaryPath,
+            customModels: [{ slug: "muse-wonder-1.0", name: "Team Wonder" }],
+          }),
+          undefined,
+          undefined,
+          async () => makeHost(metaCatalog),
+        );
+        expect(snapshot.models.map(({ slug, name }) => [slug, name])).toEqual([
+          ["muse-wonder-1.0", "Team Wonder"],
+        ]);
       }),
     ),
   );

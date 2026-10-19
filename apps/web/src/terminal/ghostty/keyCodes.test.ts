@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ghosttyConsumedMods, ghosttyKeyForCode, ghosttyUnshiftedCodepoint } from "./keyCodes";
+import {
+  ghosttyConsumedMods,
+  ghosttyKeyForCode,
+  ghosttyKeyForEvent,
+  ghosttyUnshiftedCodepoint,
+} from "./keyCodes";
 
 describe("ghosttyKeyForCode", () => {
   it("keeps the tail of the pinned Ghostty key enum in order", () => {
@@ -11,6 +16,29 @@ describe("ghosttyKeyForCode", () => {
   });
 });
 
+describe("ghosttyKeyForEvent", () => {
+  it.each(["", "Unidentified", "Unknown"])(
+    "falls back to the logical key when code '%s' is not mapped",
+    (code) => {
+      expect(ghosttyKeyForEvent({ code, key: "Backspace" })).toBe(ghosttyKeyForCode("Backspace"));
+    },
+  );
+
+  it("prefers recognized physical codes over logical keys", () => {
+    expect(ghosttyKeyForEvent({ code: "Delete", key: "Backspace" })).toBe(
+      ghosttyKeyForCode("Delete"),
+    );
+    expect(ghosttyKeyForEvent({ code: "NumpadEnter", key: "Enter" })).toBe(
+      ghosttyKeyForCode("NumpadEnter"),
+    );
+  });
+
+  it("leaves printable characters and unknown keys to the text encoding path", () => {
+    expect(ghosttyKeyForEvent({ code: "", key: "a" })).toBe(0);
+    expect(ghosttyKeyForEvent({ code: "", key: "Unidentified" })).toBe(0);
+  });
+});
+
 describe("ghosttyConsumedMods", () => {
   const shifted = { altKey: false, ctrlKey: false, key: "@", metaKey: false, shiftKey: true };
 
@@ -18,7 +46,6 @@ describe("ghosttyConsumedMods", () => {
     expect(ghosttyConsumedMods(shifted)).toBe(1);
     expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true })).toBe(0);
     expect(ghosttyConsumedMods({ ...shifted, key: "Tab" })).toBe(0);
-    // Deliberate: Shift+Space collapses to Space so it still types one.
     expect(ghosttyConsumedMods({ ...shifted, key: " " })).toBe(1);
   });
 });

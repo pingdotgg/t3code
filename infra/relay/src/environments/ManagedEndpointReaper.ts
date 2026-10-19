@@ -20,13 +20,9 @@ export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
 export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
 export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
 export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
-// Age buckets for legacy candidates, in days since the tunnel went down (or
-// was created, for one that never connected).
 const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
 // A host that never registered recovery cannot replace a deleted tunnel on
 // its own build. Only delete its tunnel after it has been gone this long. A
-// returning host that has updated recovers the tunnel at the same hostname;
-// one that has not sees the client's "update T3 Code" message instead.
 const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
 // Deletions run a few at a time: each one is a row-locked database
 // transaction plus two Cloudflare calls, so one at a time cannot finish a
@@ -36,7 +32,7 @@ const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
 export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
 // Stop starting deletions this long after the sweep starts, leaving room under
 // the cron's two-minute timeout to finish in-flight ones and record the
-// counters. Counted from sweep start so slow listing eats into it.
+// counters.
 const MANAGED_ENDPOINT_SWEEP_DELETE_BUDGET_MS = 90_000;
 
 export interface ManagedEndpointSweepResult {
@@ -47,20 +43,15 @@ export interface ManagedEndpointSweepResult {
   readonly attempted: number;
   readonly deleted: number;
   readonly wouldDelete: number;
-  /** Legacy tunnels past the legacy grace period, and how many were deleted. */
   readonly wouldDeleteLegacy: number;
   readonly deletedLegacy: number;
   readonly skippedLegacy: number;
-  /** Legacy candidates, by days since they went down: over 7, 30, and 90. */
   readonly legacyOver7Days: number;
   readonly legacyOver30Days: number;
   readonly legacyOver90Days: number;
   readonly skippedOrphan: number;
-  /** The allocation row records a different tunnel under this name. */
   readonly skippedReplaced: number;
-  /** The allocation row has not recorded a tunnel yet. */
   readonly skippedUnrecorded: number;
-  /** Cloudflare's count of matching tunnels, before page limits. */
   readonly totalDown: number | null;
   readonly totalInactive: number | null;
   readonly failed: number;
@@ -107,7 +98,6 @@ function isExpiredManagedTunnel(input: {
   return Option.isSome(timestamp) && timestamp.value.epochMilliseconds <= cutoff.epochMilliseconds;
 }
 
-/** Days (fractional) since the tunnel went down, or was created if it never connected. */
 function inactiveDaysAt(
   tunnel: ManagedEndpointProvider.ManagedEndpointTunnel,
   status: "down" | "inactive",
@@ -192,8 +182,6 @@ export const make = Effect.gen(function* () {
       return emptyResult(mode, legacyMode);
     }
     const sweepStartedAtMillis = yield* Clock.currentTimeMillis;
-    // The override exists for the disposable canary stage; prod always
-    // waits the full grace period.
     const legacyGraceMinutes =
       namespace !== MANAGED_ENDPOINT_ZONE_OWNER_STAGE &&
       config.legacyTunnelGraceMinutes !== undefined
@@ -361,8 +349,6 @@ export const make = Effect.gen(function* () {
         tunnel,
         status,
         legacy,
-        // The release re-reads the tunnel and deletes only if it is still in
-        // this status and inactive since before this cutoff.
         inactiveBefore: DateTime.formatIso(legacy ? legacyCutoff : cutoff),
       });
     }
@@ -386,7 +372,6 @@ export const make = Effect.gen(function* () {
               expectedTunnelId: candidate.tunnel.id,
               expectedInactiveBefore: candidate.inactiveBefore,
               expectedStatus: candidate.status,
-              // Only a legacy host needs an update to recover; tell its user so.
               ...(candidate.legacy ? { markReleased: true } : {}),
             })
             .pipe(Effect.result);
@@ -439,7 +424,6 @@ export const make = Effect.gen(function* () {
       truncated,
     };
   }).pipe(
-    // Dry-run rollout reads these counters from the exported span.
     Effect.tap((result) =>
       Effect.annotateCurrentSpan(
         Object.fromEntries(

@@ -22,7 +22,6 @@ const processOutput = TestSourceControlHost.processOutput;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-/** The JSON body a request sends. Forgejo encodes bodies as UTF-8 text. */
 const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
   assert.strictEqual(request.body._tag, "Uint8Array");
   return request.body._tag === "Uint8Array"
@@ -123,7 +122,7 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
   );
 });
 
-it.effect("reads Forgejo checks without repository or viewer requests", () => {
+it.effect("reads the newest Forgejo checks without repository or viewer requests", () => {
   const paths: string[] = [];
   return Effect.gen(function* () {
     const provider = yield* ForgejoPullRequestProvider.make;
@@ -155,7 +154,7 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
             "head":{"ref":"feature","sha":"head","repo":null},"base":{"ref":"main","sha":"base","repo":null},
             "created_at":"2026-09-16T00:00:00Z","updated_at":"2026-09-16T00:00:00Z","closed_at":null,"merged_at":null,"labels":[]}`
                 : input.path.endsWith("page=1")
-                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
+                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00.500Z"},{"context":"build","status":"success","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
                   : "[]",
             ),
           );
@@ -164,6 +163,68 @@ it.effect("reads Forgejo checks without repository or viewer requests", () => {
     ),
   );
 });
+
+it.effect("opens Forgejo Actions check links on the pull request's server", () =>
+  Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const read = provider.getChangeRequestChecks;
+    if (read === undefined) return yield* Effect.die("checks read missing");
+    const result = yield* read({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "forgejo.test",
+      number: 1,
+    });
+    assert.deepStrictEqual(
+      result.checks.map((check) => [check.name, check.url]),
+      [
+        ["actions", "https://forgejo.test/git/acme/web/actions/runs/7/jobs/2"],
+        ["external", "https://ci.example/build/9"],
+        ["none", null],
+      ],
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const status = (context: string, target_url: string | null) => ({
+            context,
+            status: "success",
+            description: null,
+            target_url,
+            updated_at: "2026-10-11T00:00:00Z",
+          });
+          const body = input.path.endsWith("pulls/1")
+            ? {
+                number: 1,
+                title: "Checks",
+                body: "",
+                html_url: "https://forgejo.test/git/acme/web/pulls/1",
+                user: null,
+                state: "open",
+                merged: false,
+                head: { ref: "feature", sha: "head", repo: null },
+                base: { ref: "main", sha: "base", repo: null },
+                created_at: "2026-10-11T00:00:00Z",
+                updated_at: "2026-10-11T00:00:00Z",
+                closed_at: null,
+                merged_at: null,
+                labels: [],
+              }
+            : input.path.endsWith("page=1")
+              ? [
+                  // Forgejo includes any sub-path mount in the relative links it reports.
+                  status("actions", "/git/acme/web/actions/runs/7/jobs/2"),
+                  status("external", "https://ci.example/build/9"),
+                  status("none", null),
+                ]
+              : [];
+          return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  ),
+);
 
 it.effect.each([
   ["Ready", false, true, false, "mergeable"],
@@ -269,7 +330,6 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
         remoteUrl: "",
       });
 
-    // An installation mount in the HTTP path is the login's, not the repository's.
     assert.deepStrictEqual(
       yield* refine!({
         identity: identity("http://forge.test:3000/git/team/repo.git"),
@@ -281,7 +341,6 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
         webUrl: "http://forge.test:3000/git/team/repo",
       },
     );
-    // An SSH alias keeps its whole path.
     assert.strictEqual(
       (yield* refine!({
         identity: identity("ssh://git@ssh.forge.test/team/repo.git"),
@@ -289,7 +348,6 @@ it.effect("gives Forgejo identities the browser URL of the login that serves the
       })).webUrl,
       "http://forge.test:3000/git/team/repo",
     );
-    // Another host's identity, or a remote no Forgejo login serves, is left alone.
     const github = identity("https://github.com/team/repo.git", "github");
     assert.strictEqual(
       yield* refine!({ identity: github, resolveContext: () => Effect.die("not asked") }),
@@ -521,6 +579,59 @@ it.effect(
     );
   },
 );
+
+it.effect("reads Forgejo pull request commits without their file lists", () => {
+  const paths: string[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const activity = yield* provider.getChangeRequestActivity({
+      cwd: "/repo",
+      repository: "maria/project",
+      host: "forgejo.test",
+      number: 30,
+    });
+    assert.deepStrictEqual(
+      activity.commits.map((commit) => commit.oid),
+      ["abc"],
+    );
+    const commitReads = paths.filter((path) =>
+      path.startsWith("repos/maria/project/pulls/30/commits"),
+    );
+    assert.isNotEmpty(commitReads);
+    for (const path of commitReads) {
+      const query = new URLSearchParams(path.split("?")[1]);
+      assert.strictEqual(query.get("files"), "false");
+      assert.strictEqual(query.get("verification"), "false");
+    }
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          const [path, query] = input.path.split("?");
+          const page = Number(new URLSearchParams(query).get("page") ?? "1");
+          const body =
+            path === "user"
+              ? { login: "maria" }
+              : path === "repos/maria/project/pulls/30/commits" && page === 1
+                ? [
+                    {
+                      sha: "abc",
+                      author: null,
+                      commit: {
+                        message: "Reorganize folders",
+                        committer: { date: "2026-10-11T00:00:00Z" },
+                      },
+                      parents: [],
+                    },
+                  ]
+                : [];
+          return encodeJsonEffect(body).pipe(Effect.orDie, Effect.map(processOutput));
+        },
+      }),
+    ),
+  );
+});
 
 it.effect("discovers Forgejo accounts and retains the server port", () =>
   Effect.gen(function* () {

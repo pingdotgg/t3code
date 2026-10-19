@@ -22,7 +22,7 @@ import {
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { request, runStream } from "@t3tools/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
-import { ManagedRelay, relayProtectedErrorMessage } from "@t3tools/client-runtime/relay";
+import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
 
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { resolveCloudPublicConfig } from "./publicConfig";
@@ -115,10 +115,9 @@ const isEnvironmentCloudApiError = Schema.is(
 
 function decodedRelayClientError(message: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
-    const relayError =
-      cause._tag === "ManagedRelayRequestFailedError" ? cause.relayError : undefined;
-    const traceId = cause._tag === "ManagedRelayRequestFailedError" ? cause.traceId : undefined;
-    const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
+    const failed = cause._tag === "ManagedRelayRequestFailedError" ? cause : undefined;
+    const traceId = failed?.traceId;
+    const detail = failed ? relayRequestFailureDetail(failed) : null;
     return new CloudEnvironmentLinkError({
       message: detail ? `${message}: ${detail}` : message,
       cause,
@@ -248,9 +247,6 @@ export function unlinkPrimaryEnvironmentFromCloud(input: {
   }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layer));
 }
 
-// "publish_only" links the environment to the relay for agent-activity
-// publishing alone: no managed tunnel is provisioned, so it can be toggled
-// independently of T3 Connect while clients reach the environment out of band.
 export type CloudLinkMode = "managed" | "publish_only";
 
 const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;

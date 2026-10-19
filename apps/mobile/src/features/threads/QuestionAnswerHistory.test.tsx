@@ -6,10 +6,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("react-native", () => ({
   View: "div",
   Pressable: ({ children }: { children: ReactNode }) => <button>{children}</button>,
-  Image: "img",
   Linking: { openURL: vi.fn() },
 }));
-vi.mock("../../components/AppText", () => ({ AppText: "span" }));
+vi.mock("expo-image", () => ({ Image: "img" }));
+vi.mock("../../components/ui/AppText", () => ({ AppText: "span" }));
 vi.mock("../../state/assets", () => ({ useAssetUrl: () => null }));
 
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";

@@ -35,7 +35,6 @@ const decodeMetadata = Schema.decodeUnknownSync(Schema.fromJsonString(Metadata))
 
 type SetupPaths = { readonly bundle: string; readonly dataHome: string };
 
-/** Copies only the shipped extension, offline. Replaced versions are kept for recovery. */
 export async function installGnomeCaptureBundle({ bundle, dataHome }: SetupPaths) {
   const metadata = decodeMetadata(
     await NodeFSP.readFile(NodePath.join(bundle, "metadata.json"), "utf8"),
@@ -86,7 +85,6 @@ export async function installGnomeCaptureBundle({ bundle, dataHome }: SetupPaths
   }
 }
 
-/** A short-lived, read-only probe unless the user explicitly invokes an action. */
 export class GnomeCaptureSetup {
   private readonly disconnected: Promise<never>;
   private readonly paths: SetupPaths;

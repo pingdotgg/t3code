@@ -1,7 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { DownloadIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
   AuthProvidersManageScope,
   type ServerProvider,
@@ -54,7 +54,6 @@ function ProviderUpdateToastIcon({ provider }: { provider: ServerProvider }) {
         acpRegistryIconUrl={provider.iconUrl}
         iconClassName="size-4"
       />
-      {/* ProviderInstanceIcon stacks at z-30, so the badge must sit above it. */}
       <span className="absolute -right-1 -bottom-1 z-40 inline-flex size-3 items-center justify-center rounded-full bg-popover">
         <DownloadIcon aria-hidden="true" className="size-2.5 text-success" strokeWidth={2.5} />
       </span>
@@ -102,11 +101,6 @@ function addProviderUpdateToast(input: {
   return toastId;
 }
 
-/**
- * The single-prompt provider update notification used when there is only one
- * local environment (no WSL backend). Non-WSL users see exactly this flow — the
- * per-environment split is gated behind WSL presence.
- */
 export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -122,8 +116,6 @@ export function ProviderUpdatePrimaryNotification() {
   const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();
 
-  // If this flow unmounts (e.g. a WSL backend appears and we switch to the
-  // per-environment popover), close any prompt it owns so it does not linger.
   useEffect(() => {
     return () => {
       const activeToast = activeToastRef.current;
@@ -134,36 +126,27 @@ export function ProviderUpdatePrimaryNotification() {
     };
   }, []);
 
-  const updateProviders = useMemo(() => collectProviderUpdateCandidates(providers), [providers]);
-  const notificationKey = useMemo(
-    () => providerUpdateNotificationKey(updateProviders),
-    [updateProviders],
-  );
-  const oneClickProviders = useMemo(
-    () =>
-      updateProviders.filter((provider) => canOneClickUpdateProviderCandidate(provider, providers)),
-    [providers, updateProviders],
+  const updateProviders = collectProviderUpdateCandidates(providers);
+  const notificationKey = providerUpdateNotificationKey(updateProviders);
+  const oneClickProviders = updateProviders.filter((provider) =>
+    canOneClickUpdateProviderCandidate(provider, providers),
   );
 
-  const openProviderSettings = useCallback(
-    (toastId?: ProviderUpdateToastId) => {
-      const activeToast = activeToastRef.current;
-      if (toastId !== undefined) {
-        toastManager.close(toastId);
-      } else if (activeToast?.kind === "prompt") {
-        toastManager.close(activeToast.toastId);
-      }
-      if (
-        activeToast &&
-        (toastId === undefined ||
-          (activeToast.kind === "prompt" && activeToast.toastId === toastId))
-      ) {
-        activeToastRef.current = null;
-      }
-      void navigate({ to: "/settings/providers" });
-    },
-    [navigate],
-  );
+  const openProviderSettings = (toastId?: ProviderUpdateToastId) => {
+    const activeToast = activeToastRef.current;
+    if (toastId !== undefined) {
+      toastManager.close(toastId);
+    } else if (activeToast?.kind === "prompt") {
+      toastManager.close(activeToast.toastId);
+    }
+    if (
+      activeToast &&
+      (toastId === undefined || (activeToast.kind === "prompt" && activeToast.toastId === toastId))
+    ) {
+      activeToastRef.current = null;
+    }
+    void navigate({ to: "/settings/providers" });
+  };
 
   useEffect(() => {
     const activeToast = activeToastRef.current;

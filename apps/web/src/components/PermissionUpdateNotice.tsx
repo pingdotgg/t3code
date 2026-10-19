@@ -32,16 +32,12 @@ function EnvironmentPermissionNotice({
     const key = `t3code:permission-update:v1:${environmentId}`;
     try {
       if (getLocalStorageItem(key, Schema.Boolean)) return;
-    } catch {
-      // An unavailable store must not prevent the notice.
-    }
+    } catch {}
     shown.add(environmentId);
     const persistDismissal = () => {
       try {
         setLocalStorageItem(key, true, Schema.Boolean);
-      } catch {
-        // The in-memory marker still prevents repeats during this launch.
-      }
+      } catch {}
     };
     const dismiss = () => {
       persistDismissal();

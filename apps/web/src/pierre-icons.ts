@@ -95,7 +95,6 @@ export const T3_PIERRE_ICONS = {
     ...Object.fromEntries(
       VIDEO_FILE_EXTENSIONS.map((extension) => [extension, "t3-file-icon-video"]),
     ),
-    // Languages the complete set has no icon for.
     cs: "t3-file-icon-csharp",
     csx: "t3-file-icon-csharp",
     dart: "t3-file-icon-dart",
@@ -150,7 +149,6 @@ export function basenameOfPath(pathValue: string): string {
   return slashIndex === -1 ? pathValue : pathValue.slice(slashIndex + 1);
 }
 
-/** Languages whose files are recognised by name rather than by extension. */
 const LANGUAGE_FILE_NAMES: Record<string, string> = {
   dockerfile: "Dockerfile",
 };

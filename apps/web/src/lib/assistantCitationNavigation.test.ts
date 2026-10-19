@@ -43,7 +43,6 @@ describe("assistant citation navigation", () => {
     for (let reload = 0; reload < 3; reload++) {
       const reloaded = createCitationRouter(href);
       await reloaded.load();
-      // Route normalization rebuilds the current location from its decoded hash.
       await reloaded.navigate({
         to: "/$environmentId/$threadId",
         params: { environmentId: citation.environmentId, threadId: citation.threadId },

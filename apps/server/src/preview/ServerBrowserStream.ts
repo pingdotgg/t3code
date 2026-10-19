@@ -31,13 +31,14 @@ const TAB_GONE_CODE = 4404;
 
 const DEFAULT_QUALITY = 70;
 const MAX_SOCKET_BUFFER_BYTES = 8 * 1024 * 1024;
-const MAX_UNACKNOWLEDGED_FRAMES = 64;
 const textDecoder = new TextDecoder();
 
 const intParam = (params: URLSearchParams, name: string, fallback: number, max: number) => {
   const value = Number(params.get(name));
   return Number.isFinite(value) && value > 0 ? Math.min(Math.round(value), max) : fallback;
 };
+
+type Frame = Extract<ServerBrowser.ServerBrowserViewerOutput, { readonly _tag: "frame" }>;
 
 const isAck = (message: unknown) =>
   typeof message === "object" && message !== null && "type" in message && message.type === "ack";
@@ -71,7 +72,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
     }
     const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
     const params = url.value.searchParams;
-    // Watching needs read access; driving the page is a preview mutation.
     const canOperate =
       session.scopes.includes(AuthPreviewOperateScope) && params.get("interactive") !== "false";
     const threadId = params.get("threadId") ?? "";
@@ -108,7 +108,6 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         delete incoming.headers["sec-websocket-extensions"];
         const transport = incoming.socket;
         const socket = yield* request.upgrade;
-        // The reader performs the upgrade; writes wait for it.
         const reader = yield* socket.reader;
         const writer = yield* socket.writer;
         // A refused upgrade reads as an auth failure to ticket clients, so a
@@ -126,30 +125,36 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         }
         const viewer = attached.viewer;
         // `write` returns once the frame is queued, so Chromium's ack for each
-        // frame waits for the viewer's `ack` message instead.
-        const unacknowledged: Array<Effect.Effect<void>> = [];
+        // frame waits for the viewer's `ack` message instead. Only one frame
+        // is on the wire and only the newest waits behind it, so replies never
+        // queue behind stale images on a slow link.
+        let inFlight: Effect.Effect<void> | null = null;
+        let pending: Frame | null = null;
         const disconnectSlowViewer = Effect.sync(() => transport.destroy()).pipe(
           Effect.andThen(Effect.interrupt),
         );
         const write = (data: Uint8Array | string) =>
           Effect.suspend(() => {
             const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
-            // Include the WebSocket frame header in the budget.
             if (transport.writableLength + bytes + 14 > MAX_SOCKET_BUFFER_BYTES) {
               return disconnectSlowViewer;
             }
             return writer.write(data);
           });
+        const sendFrame = (frame: Frame) => {
+          inFlight = frame.ack;
+          return write(frame.data);
+        };
         const sendOutput = Queue.take(viewer.output).pipe(
           Effect.flatMap((output) => {
             switch (output._tag) {
-              case "frame":
-                if (unacknowledged.length >= MAX_UNACKNOWLEDGED_FRAMES) {
-                  return disconnectSlowViewer;
-                }
-                return write(output.data).pipe(
-                  Effect.andThen(Effect.sync(() => unacknowledged.push(output.ack))),
-                );
+              case "frame": {
+                if (inFlight === null) return sendFrame(output);
+                const superseded = pending;
+                pending = output;
+                // Never sent, but Chromium still waits for its ack.
+                return superseded ? Effect.forkScoped(superseded.ack) : Effect.void;
+              }
               case "viewport":
               case "control":
               case "clipboard":
@@ -179,9 +184,15 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             return canOperate
               ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
               : Effect.void;
-          const ack = unacknowledged.shift();
+          const ack = inFlight;
+          const next = pending;
+          inFlight = null;
+          pending = null;
           // Forked: Chromium acks are paced and must not hold up input.
-          return ack ? Effect.forkScoped(ack).pipe(Effect.asVoid) : Effect.void;
+          return Effect.andThen(
+            ack ? Effect.forkScoped(ack) : Effect.void,
+            next ? sendFrame(next) : Effect.void,
+          );
         };
         const receiveInput = reader.pull.pipe(
           Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
@@ -195,12 +206,10 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
             Effect.as(HttpServerResponse.text("Service Unavailable", { status: 503 })),
           ),
       }),
-      // A dropped socket is a normal end of viewing.
       Effect.catch(() => Effect.succeed(HttpServerResponse.empty())),
     );
   });
 
-/** Which host setup a launch failure is missing, and the command that fixes it. */
 const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
   isSandboxError(cause)
     ? { need: "sandbox", command: cause.setupCommand }
@@ -211,7 +220,6 @@ const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
 
-/** `GET /api/preview-stream/download?threadId&tabId&id`: a file a server tab downloaded. */
 const serveDownload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {
     yield* authenticateMediaRequest(AuthOrchestrationReadScope);
@@ -232,10 +240,6 @@ const serveDownload = (browser: ServerBrowser.ServerBrowser["Service"], params: 
 const UPLOAD_MAX_FILE_BYTES = 100 * 1024 * 1024;
 const UPLOAD_MAX_FILES = 20;
 
-/**
- * `POST /api/preview-stream/upload?threadId&tabId&chooser` with multipart `file`
- * parts: answers the page's open file picker. No parts cancels it.
- */
 const receiveUpload = (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) =>
   Effect.gen(function* () {
     yield* authenticateMediaRequest(AuthPreviewOperateScope);
@@ -274,7 +278,6 @@ const receiveUpload = (browser: ServerBrowser.ServerBrowser["Service"], params: 
       : HttpServerResponse.text("The page's file picker is no longer open.", { status: 409 });
   }).pipe(Effect.scoped);
 
-// Capture the browser because handlers only see request-scoped services.
 export const routeLayer = HttpRouter.use((router) =>
   Effect.gen(function* () {
     const browser = yield* ServerBrowser.ServerBrowser;

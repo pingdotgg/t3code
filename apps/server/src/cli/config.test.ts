@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 
@@ -10,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
@@ -58,6 +61,22 @@ const makeDesktopBootstrap = (
   ...overrides,
 });
 
+const liveProcess = Effect.acquireRelease(
+  Effect.promise(async () => {
+    const child = NodeChildProcess.spawn(process.execPath, ["-e", "process.stdin.resume()"], {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    await NodeEvents.EventEmitter.once(child, "spawn");
+    return child;
+  }),
+  (child) =>
+    Effect.promise(async () => {
+      const exited = NodeEvents.EventEmitter.once(child, "exit");
+      child.kill();
+      await exited;
+    }),
+);
+
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {
     traceMinLevel: "Info",
@@ -100,10 +119,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-" });
+      const child = yield* liveProcess;
+      assert(child.pid !== undefined);
       for (const [name, pid, mode, rejectRunningServer] of [
         ["stale", 2_147_483_647, "web", true],
-        ["desktop", process.pid, "desktop", true],
-        ["serve", process.pid, "web", false],
+        ["own-pid", process.pid, "web", true],
+        ["desktop", child.pid, "desktop", true],
+        ["serve", child.pid, "web", false],
       ] as const) {
         const baseDir = path.join(root, name);
         const stateDir = path.join(baseDir, "userdata");
@@ -119,7 +141,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           }),
         );
         const cwd = path.join(root, `${name}-project`);
-        const config = yield* resolveServerConfig(
+        const configResult = yield* resolveServerConfig(
           {
             ...minimalWebFlags(baseDir),
             mode: Option.some(mode),
@@ -135,11 +157,54 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
               ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
             ),
           ),
+          Effect.result,
         );
-        expect(config.cwd).toBe(cwd);
+        assert(Result.isSuccess(configResult));
+        expect(configResult.success.cwd).toBe(cwd);
         expect(yield* fs.exists(cwd)).toBe(true);
       }
     }),
+  );
+
+  it.effect(
+    "refuses a manual web launch when a runtime record belongs to another live process",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-live-" });
+        const child = yield* liveProcess;
+        assert(child.pid !== undefined);
+        const stateDir = path.join(baseDir, "userdata");
+        yield* fs.makeDirectory(stateDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(stateDir, "server-runtime.json"),
+          yield* encodeUnknownJson({
+            version: 1,
+            pid: child.pid,
+            port: 3773,
+            origin: "http://127.0.0.1:3773",
+            startedAt: "2026-10-01T00:00:00.000Z",
+          }),
+        );
+        const cwd = path.join(baseDir, "project");
+        const error = yield* resolveServerConfig(
+          { ...minimalWebFlags(baseDir), cwd: Option.some(cwd) },
+          Option.none(),
+          { rejectRunningServer: true },
+        ).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            ),
+          ),
+          Effect.flip,
+        );
+        expect(String(error)).toContain("A T3 Code server is already running");
+        expect(String(error)).toContain(`pid ${child.pid}`);
+        expect(yield* fs.exists(cwd)).toBe(false);
+      }),
   );
 
   it.effect("enables a trimmed reusable auth token only for web dev mode", () =>
@@ -800,7 +865,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         ),
       );
 
-      // The switch beats every source, including an endpoint stored in Settings.
       expect(resolved.otlpTracesUrl).toBeUndefined();
       expect(resolved.otlpMetricsUrl).toBeUndefined();
       expect(resolved.otlpLogsUrl).toBeUndefined();
@@ -1121,7 +1185,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         const fd = yield* openBootstrapFd(
           makeDesktopBootstrap({
             otlpMetricsUrl: "http://bootstrap:4318/v1/metrics",
-            // Blank, not an endpoint: it must not stand in front of Settings.
             otlpLogsUrl: "",
           }),
         );
@@ -1153,21 +1216,14 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           ),
         );
 
-        // T3CODE_OTLP_TRACES_URL wins over the OTEL variable for the same
-        // signal, and keeps T3 Code's own headers since T3 Code still owns it.
         expect(resolved.otlpTracesUrl).toBe("http://t3:4318/v1/traces");
         expect(resolved.otlpTracesExport.headers).toEqual({ "x-key": "secret" });
-        // Metrics named no T3CODE_OTLP_METRICS_URL, so the OTEL endpoint wins
-        // over the bootstrap envelope and brings the OTEL headers and protocol.
         expect(resolved.otlpMetricsUrl).toBe("http://otel-metrics:4318/custom");
         expect(resolved.otlpMetricsExport).toEqual({
           ...DEFAULT_SIGNAL_EXPORT,
           protocol: "http/protobuf",
           headers: { "x-key": "otel" },
         });
-        // Logs named no T3 or OTEL endpoint and a blank bootstrap value, so
-        // Settings answers, and logs keep the shared headers since no OTEL
-        // endpoint claimed them.
         expect(resolved.otlpLogsUrl).toBe("http://settings:4318/v1/logs");
         expect(resolved.otlpLogsExport.headers).toEqual({ "x-key": "secret" });
       }),
@@ -1218,10 +1274,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           ),
         );
 
-        // T3CODE_OTLP_TRACES_URL still wins outright.
         expect(resolved.otlpTracesUrl).toBe("http://t3:4318/v1/traces");
-        // The OTEL endpoint claimed metrics and logs, so neither the bootstrap
-        // envelope nor Settings receives them with T3 Code's headers.
         expect(resolved.otlpMetricsUrl).toBeUndefined();
         expect(resolved.otlpLogsUrl).toBeUndefined();
       }),

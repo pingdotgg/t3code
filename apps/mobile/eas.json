@@ -49,12 +49,10 @@
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
     },
-    "v2-preview": {
+    "testflight": {
       "extends": "production",
-      "distribution": "store",
-      "channel": "v2-preview",
       "env": {
-        "T3CODE_MOBILE_UPDATES_ENABLED": "0"
+        "T3CODE_MOBILE_VERSION": "3.0.0"
       }
     },
     "production": {
@@ -72,12 +70,8 @@
     }
   },
   "submit": {
-    "v2-preview": {
-      "extends": "production",
-      "android": {
-        "track": "v2",
-        "releaseStatus": "completed"
-      }
+    "testflight": {
+      "extends": "production"
     },
     "production": {
       "ios": {

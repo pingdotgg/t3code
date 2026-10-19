@@ -14,9 +14,7 @@ import { readSourceControlHostSettings } from "@t3tools/source-control-core/clie
 
 import * as GitCafeClient from "../client/definition.ts";
 
-/** How long a token is reused before `cafe` is asked again, so a re-login applies soon. */
 const TOKEN_TTL = Duration.minutes(5);
-/** No credential is retried sooner, so a fresh `cafe auth login` takes effect on the next read. */
 const MISSING_TTL = Duration.seconds(10);
 
 export interface GitCafeCredential {
@@ -25,7 +23,6 @@ export interface GitCafeCredential {
   readonly source: "settings" | "env" | "cafe";
 }
 
-/** No `CAFE_TOKEN` for the host, and no `cafe` on PATH to ask. */
 export class GitCafeCliMissingError extends Schema.TaggedError<GitCafeCliMissingError>()(
   "GitCafeCliMissingError",
   { host: Schema.String },
@@ -35,7 +32,6 @@ export class GitCafeCliMissingError extends Schema.TaggedError<GitCafeCliMissing
   }
 }
 
-/** `cafe` is installed but holds no login for the host. */
 export class GitCafeNotSignedInError extends Schema.TaggedError<GitCafeNotSignedInError>()(
   "GitCafeNotSignedInError",
   { host: Schema.String },
@@ -45,7 +41,6 @@ export class GitCafeNotSignedInError extends Schema.TaggedError<GitCafeNotSigned
   }
 }
 
-/** `cafe` timed out or failed for a reason other than having no login. */
 export class GitCafeCliFailedError extends Schema.TaggedError<GitCafeCliFailedError>()(
   "GitCafeCliFailedError",
   { host: Schema.String, cause: Schema.Defect() },
@@ -60,25 +55,18 @@ export type GitCafeCredentialUnavailableError =
   | GitCafeNotSignedInError
   | GitCafeCliFailedError;
 
-/** Where GitCafe tokens come from. Callers ask per host and never see how the token was found. */
 export class GitCafeCredentials extends Context.Service<
   GitCafeCredentials,
   {
     readonly get: (
       host: string,
     ) => Effect.Effect<GitCafeCredential, GitCafeCredentialUnavailableError>;
-    /** Drops the held token after GitCafe refused it, so the next read asks its source again. */
     readonly invalidate: (host: string) => Effect.Effect<void>;
-    /**
-     * Environment for a `cafe` run against the host: the token saved in Settings as `CAFE_TOKEN`,
-     * which `cafe` uses before its own login, or nothing when none is saved.
-     */
     readonly cliEnv: (host: string) => Effect.Effect<Readonly<Record<string, string>>>;
   }
 >()("@t3tools/source-control-gitcafe/server/GitCafeCredentials") {}
 
 const normalizeHost = (host: string) => host.trim().toLowerCase();
-/** The host `cafe` and a token saved in Settings target unless told otherwise. */
 const DEFAULT_HOST = "git.cafe";
 
 /**
@@ -97,7 +85,6 @@ export function environmentToken(
   return env.CAFE_TOKEN?.trim() || null;
 }
 
-/** A Git credential `get` answer: `key=value` lines, of which only `password` matters here. */
 function credentialPassword(output: string): string | null {
   for (const line of output.split(/\r?\n/u)) {
     if (line.startsWith("password=")) return line.slice("password=".length).trim() || null;
@@ -145,7 +132,6 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  /** A token saved in Settings, for production git.cafe only; read fresh on every lookup. */
   const fromSettings = (host: string) =>
     normalizeHost(host) !== DEFAULT_HOST
       ? Effect.succeed(null)
@@ -170,7 +156,6 @@ export const make = Effect.gen(function* () {
 
   const cache = yield* Cache.makeWith(lookup, {
     capacity: 4,
-    // A transient failure (a timeout, a locked keyring) is asked again on the next read.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? TOKEN_TTL
@@ -182,8 +167,6 @@ export const make = Effect.gen(function* () {
   });
 
   return GitCafeCredentials.of({
-    // A saved token is read fresh, so saving or removing one applies at once; the cache only
-    // spares asking `cafe` again.
     get: (host) =>
       fromSettings(host).pipe(
         Effect.flatMap(

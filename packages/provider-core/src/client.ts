@@ -1,28 +1,10 @@
-/**
- * The client half of a provider package.
- *
- * Every provider package exports a `ProviderClientDefinition` from its
- * `./client` entry point. Clients render settings, labels, and badges from
- * these definitions plus the server's `ServerProvider` snapshots, so a new
- * provider needs no per-driver branches in web or mobile.
- *
- * Definitions are browser- and React Native-safe: plain data and Effect
- * schemas, no platform UI imports.
- *
- * @module provider-core/client
- */
 import type { ProviderDriverKind } from "@t3tools/contracts";
 import type * as Schema from "effect/Schema";
 
-/**
- * A provider's instance settings schema. Fields carry `providerSettingsForm`
- * annotations, which the settings form renders generically.
- */
 export type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
 } & Schema.Top;
 
-/** An environment variable the settings UI offers for every instance of a driver. */
 export interface ProviderEnvironmentField {
   readonly name: string;
   readonly label: string;
@@ -31,11 +13,6 @@ export interface ProviderEnvironmentField {
   readonly sensitive?: boolean;
 }
 
-/**
- * A provider glyph as plain data, so web and mobile can each draw it with
- * their own SVG renderer. Colors are per theme; a path without a fill uses
- * the icon's `fill`.
- */
 export interface ProviderIcon {
   readonly viewBox: string;
   readonly fill: { readonly light: string; readonly dark: string };
@@ -43,22 +20,25 @@ export interface ProviderIcon {
     readonly d: string;
     readonly fillRule?: "evenodd" | "nonzero";
     readonly fill?: { readonly light: string; readonly dark: string };
+    readonly gradient?: ProviderIconGradient;
   }>;
+}
+
+export interface ProviderIconGradient {
+  readonly x1: number;
+  readonly y1: number;
+  readonly x2: number;
+  readonly y2: number;
+  readonly stops: ReadonlyArray<{ readonly offset: number; readonly color: string }>;
 }
 
 export interface ProviderClientDefinition {
   readonly driverKind: ProviderDriverKind;
   readonly label: string;
-  /** Omitted for drivers whose glyph a client still draws itself. */
   readonly icon?: ProviderIcon;
   readonly settingsSchema: ProviderSettingsSchema;
   readonly environmentFields?: ReadonlyArray<ProviderEnvironmentField>;
-  /** Whether the driver has a default instance backed by legacy `providers.<kind>` settings. */
   readonly hasDefaultInstance?: boolean;
-  /**
-   * Short warning badge beside every instance of the driver, such as "Beta".
-   * It marks the driver kind, so built-in and custom instances show it alike.
-   */
   readonly badgeLabel?: string;
 }
 
@@ -68,10 +48,8 @@ export function defineProviderClient<const Definition extends ProviderClientDefi
   return definition;
 }
 
-/** The provider definitions a client loaded, in presentation order. */
 export interface ProviderClientRegistry {
   readonly definitions: ReadonlyArray<ProviderClientDefinition>;
-  /** `undefined` for drivers this client does not ship, such as a fork's driver. */
   readonly get: (
     driverKind: ProviderDriverKind | undefined,
   ) => ProviderClientDefinition | undefined;

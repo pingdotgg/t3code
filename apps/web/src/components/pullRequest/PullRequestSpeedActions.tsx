@@ -23,7 +23,6 @@ export interface PullRequestSpeedActionResult<Entry = EnvironmentPullRequestEntr
   readonly action: PullRequestAction;
 }
 
-/** No detail or stack reads until a merge is clicked, even on a long list. */
 export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntry>({
   entry,
   hostActions,
@@ -34,7 +33,6 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
   onCloseSweepStart,
 }: {
   entry: Entry;
-  /** What the row's host can do; actions it cannot are not offered. */
   hostActions: ReadonlySet<PullRequestAction>;
   visible: boolean;
   onActed?: (result: PullRequestSpeedActionResult<Entry>) => void;

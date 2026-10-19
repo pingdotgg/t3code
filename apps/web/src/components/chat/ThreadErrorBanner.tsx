@@ -3,9 +3,9 @@ import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { ExpandableText } from "../settings/ExpandableText";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -19,11 +19,6 @@ export function shouldShowThreadErrorBanner(
   return getThreadErrorBannerKey(threadKey, error) !== null && !isDismissed;
 }
 
-// Session-scoped (module-level so it survives ChatView remounts, e.g. route
-// changes between threads). Mirrors the branch-mismatch banner: a dismissal
-// is remembered per thread key plus message, so navigating away to a thread
-// with no error cannot resurrect the banner, while a different error message
-// on the same thread still appears.
 const sessionDismissedThreadErrorBannerKeys = new Set<string>();
 
 export function dismissThreadErrorBannerForSession(bannerKey: string | null): void {
@@ -64,12 +59,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               <p>Review your usage settings in ChatGPT to continue.</p>
             </div>
           ) : (
-            <Tooltip>
-              <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
-              <TooltipPopup side="top" className="whitespace-pre-wrap">
-                {error}
-              </TooltipPopup>
-            </Tooltip>
+            <ExpandableText text={error} />
           )}
         </AlertDescription>
         {(chatGptUsageLimit || onDismiss) && (

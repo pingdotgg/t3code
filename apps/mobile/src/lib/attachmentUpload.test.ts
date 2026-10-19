@@ -19,9 +19,6 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  // The client-runtime attachments module resolves the same file through its
-  // relative import, so these fakes also feed runAttachmentUploadCycle and
-  // verifyPersistedAttachmentUpload.
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
   executeAtomQuery: mocks.executeAtomQuery,
   runAtomCommand: mocks.runAtomCommand,
@@ -32,7 +29,6 @@ vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: { get: mocks.readAtom },
 }));
 
-// The real read lease and cleanup are covered by the composer ownership suite.
 vi.mock("./composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: () => () => {},
 }));
@@ -133,7 +129,6 @@ const file = {
   fileUri: "file:///documents/report.pdf",
 } as const satisfies DraftComposerAttachment;
 
-/** A picture chosen through the document picker: typed `file`, with no usable mime. */
 const documentPickedImage = {
   id: "file-2",
   type: "file",
@@ -413,8 +408,6 @@ describe("prepareTurnAttachments", () => {
   });
 
   it("sends a document-picked picture with the mime it was uploaded under", async () => {
-    // The upload normalises `application/octet-stream` to `image/png`; the message reference
-    // has to agree, or `ChatImageAttachment` rejects the turn and nothing sends.
     const prepared = await prepareTurnAttachments({
       environmentId,
       attachments: [documentPickedImage],
@@ -550,9 +543,6 @@ describe("prepareTurnAttachments", () => {
   });
 
   it("keeps the uploaded id when a document-picked picture uploads as an image", () => {
-    // The draft stays `type: "file"` while the upload is promoted to `"image"`. Comparing the
-    // two types drops the id, so a later send re-uploads the bytes and the draft chip points at
-    // a local id nobody can resolve.
     expect(
       withUploadedMobileAttachmentReferences({
         environmentId,

@@ -8,6 +8,7 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
+  isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
@@ -24,7 +25,7 @@ export const discovery = {
   executable: "tea",
   versionArgs: ["--version"],
   authArgs: ["login", "status", "--output", "json"],
-  remoteRefinementArgs: ["login", "list", "--output", "json"],
+  remoteRefinementArgs: () => ["login", "list", "--output", "json"],
   parseAuth: (input) => {
     const logins = ForgejoCli.parseForgejoLogins(input.stdout);
     const login = logins.find((entry) => entry.default === "true") ?? logins[0];
@@ -119,7 +120,6 @@ export const makeDiscovery = Effect.gen(function* () {
                   }),
         },
       });
-      // A configured fj account owns its requests, including authentication errors.
       if (fj.status === "available" && (login || Result.isFailure(credentials))) {
         if (login && fj.auth.status === "authenticated" && cli.getAccount) {
           const account = yield* cli.getAccount({ cwd, baseUrl: login.url }).pipe(Effect.result);
@@ -150,13 +150,28 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return null;
+        let failure: ForgejoCli.ForgejoCliError | undefined;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
             remoteUrl: input.context.remoteUrl,
-          }).pipe(Effect.orElseSucceed(() => []));
-          const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
+          }).pipe(
+            Effect.catchIf(
+              (error) => isMissingExecutable(error.cause),
+              () => Effect.succeed([]),
+            ),
+            Effect.result,
+          );
+          if (Result.isFailure(logins)) {
+            failure ??= logins.failure;
+            continue;
+          }
+          const login = ForgejoCli.matchForgejoLogin(
+            logins.success,
+            remote,
+            input.context.requestedHost,
+          );
           if (login)
             return {
               kind: SourceControlProviderKind.make("forgejo"),
@@ -164,13 +179,13 @@ export const makeDiscovery = Effect.gen(function* () {
               baseUrl: login.url,
             };
         }
+        if (failure) return yield* failure;
         return null;
       },
     ),
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
 
-/** HTTP paths can include an installation mount; Forgejo's API always names owner/repo. */
 export function repositoryNameFromRemoteUrl(url: string): string | null {
   const path = SourceControlProvider.repositoryPathFromRemoteUrl(url);
   return path === null || !/^https?:\/\//iu.test(url.trim())
@@ -436,6 +451,14 @@ export const make = Effect.gen(function* () {
             ],
           });
         if (input.force) {
+          // The sha comes from the server and git would read anything but a commit as an option.
+          if (!/^[0-9a-f]{7,64}$/i.test(pull.head.sha))
+            return yield* new ForgejoCli.ForgejoCliError({
+              command: repo.command ?? "tea",
+              cwd: input.cwd,
+              detail: "Forgejo reported a pull request head that is not a commit.",
+              reason: "invalid-response",
+            });
           // tea leaves an existing PR branch at its old tip. Keep dirty files safe
           // while bringing the selected branch to the PR revision we fetched.
           yield* process.run({

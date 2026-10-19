@@ -11,6 +11,7 @@ import {
   reduceDesktopUpdateStateOnInstallFailure,
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
+  resolveNotAppliedInstallVersion,
 } from "./updateMachine.ts";
 
 const runtimeInfo = {
@@ -253,5 +254,18 @@ describe("updateMachine", () => {
 
     expect(state.releaseNotes).toEqual([]);
     expect(state.omittedReleaseCount).toBe(0);
+  });
+});
+
+describe("resolveNotAppliedInstallVersion", () => {
+  const record = { fromVersion: "1.2.3", targetVersion: "1.2.4" };
+
+  it("flags the target when the app came back on the version it installed from", () => {
+    expect(resolveNotAppliedInstallVersion(record, "1.2.3")).toBe("1.2.4");
+  });
+
+  it("stays quiet when the install applied or the app runs another version", () => {
+    expect(resolveNotAppliedInstallVersion(record, "1.2.4")).toBeNull();
+    expect(resolveNotAppliedInstallVersion(record, "1.2.5")).toBeNull();
   });
 });

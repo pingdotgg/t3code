@@ -16,6 +16,7 @@ github:aoright
 github:arhxam
 github:bil0000
 github:binbandit
+github:bompus
 github:Brechard
 github:btsouth
 github:cestercian
@@ -52,6 +53,7 @@ github:mackinleysmith
 github:maria-rcks
 github:MatthewFeroz
 github:maxwellyoung
+github:mweinbach
 github:mwolson
 github:myacoub91
 github:naMqe-h

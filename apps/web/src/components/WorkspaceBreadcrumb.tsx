@@ -11,8 +11,6 @@ interface WorkspaceBreadcrumbProps {
 export function WorkspaceBreadcrumb({ ariaLabel, children, className }: WorkspaceBreadcrumbProps) {
   return (
     <nav aria-label={ariaLabel} className={cn("min-w-0", className)}>
-      {/* Keep the flexible container draggable in Electron. Interactive
-          descendants are excluded by the shared .drag-region CSS rules. */}
       <ol className="m-0 flex min-w-0 list-none items-center gap-2 p-0 text-sm sm:gap-3">
         {children}
       </ol>
@@ -30,8 +28,6 @@ export function WorkspaceBreadcrumbText({ children, className, ...props }: Compo
   return (
     <span
       data-slot="workspace-breadcrumb-text"
-      // Center the capital letters with adjacent icons, not the font's leading.
-      // Padding preserves accents and descenders when a label is truncated.
       className={cn(
         "block min-w-0 truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1.5",
         className,

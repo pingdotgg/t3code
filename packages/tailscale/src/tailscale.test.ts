@@ -16,7 +16,9 @@ import {
   ensureTailscaleServe,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
+  parseTailscaleSshEnabled,
   parseTailscaleStatus,
+  readTailscaleSshEnabled,
   readTailscaleStatus,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
@@ -27,15 +29,6 @@ import {
 
 const encoder = new TextEncoder();
 
-/**
- * Asserts nothing reachable from `error` contains `secret`. Recurses through
- * nested objects, arrays, and `cause` chains rather than checking only
- * top-level strings: a leak one level down (say, a wrapped cause carrying raw
- * stderr) is just as visible in a log, and a shallow check would pass it.
- *
- * Walks values instead of serializing so it holds for fields added later, and
- * tracks visited objects so a cyclic cause chain terminates.
- */
 function assertCarriesNoSecret(error: object, secret: string): void {
   const seen = new WeakSet<object>();
 
@@ -164,6 +157,25 @@ describe("tailscale", () => {
     }),
   );
 
+  it.effect("reads Tailscale SSH enablement from local prefs", () => {
+    const prefsJson =
+      '{\n\t"ControlURL": "https://controlplane.tailscale.com",\n\t"RunSSH": true,\n\t"WantRunning": true\n}\n';
+    const layer = layerMockSpawner((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["debug", "prefs"]);
+      return { stdout: prefsJson };
+    });
+
+    return Effect.gen(function* () {
+      assert.isTrue(yield* readTailscaleSshEnabled.pipe(Effect.provide(layer)));
+      assert.isFalse(yield* parseTailscaleSshEnabled('{"RunSSH":false,"WantRunning":true}'));
+      assert.isFalse(yield* parseTailscaleSshEnabled('{"RunSSH":true,"WantRunning":false}'));
+      assert.isFalse(yield* parseTailscaleSshEnabled("{}"));
+      const error = yield* parseTailscaleSshEnabled("{not-json").pipe(Effect.flip);
+      assert.instanceOf(error, TailscaleStatusParseError);
+    });
+  });
+
   it.effect("builds clean HTTPS base URLs", () =>
     Effect.sync(() => {
       assert.equal(
@@ -246,8 +258,6 @@ describe("tailscale", () => {
       assert.equal(serveError.subcommand, "serve");
       assert.strictEqual(serveError.cause, defect);
 
-      // What callers actually rely on: the desktop endpoint providers recover
-      // with `Effect.orElseSucceed`, which only sees the typed error channel.
       const degraded = yield* readTailscaleStatus.pipe(
         Effect.orElseSucceed(() => null),
         Effect.provide(layer),
@@ -291,8 +301,6 @@ describe("tailscale", () => {
       const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(layer));
 
       assert.instanceOf(error, TailscaleCommandExitError);
-      // Unmatched stderr degrades to "unknown" rather than passing text
-      // through — that fallback is what keeps novel output from leaking.
       assert.equal(error.stderrDiagnostic, "unknown");
       assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
       assertCarriesNoSecret(error, "fluffy-badger");
@@ -315,9 +323,9 @@ describe("tailscale", () => {
       assert.equal(error.executable, "tailscale");
       assert.equal(error.subcommand, "status");
       assert.equal(error.argumentCount, 2);
-      assert.equal(error.timeoutMs, 1_500);
+      assert.equal(error.timeoutMs, 3_500);
       assert.isTrue(Cause.isTimeoutError(error.cause));
-      assert.equal(error.message, "tailscale status timed out after 1500ms.");
+      assert.equal(error.message, "tailscale status timed out after 3500ms.");
     }).pipe(Effect.provide(layer));
   });
 
@@ -352,8 +360,6 @@ describe("tailscale", () => {
       assert.notProperty(error, "command");
       assert.notProperty(error, "stderr");
       assert.notInclude(error.message, "tskey-auth-secret-token-value");
-      // The diagnostic classifies the failure without quoting stderr, so the
-      // key cannot reach a log through it either.
       assert.equal(error.stderrDiagnostic, "permission-denied");
       assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
     });

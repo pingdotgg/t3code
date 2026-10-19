@@ -20,7 +20,7 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
   props: ComboboxPrimitive.Root.Props<Value, Multiple>,
 ) {
   const chipsRef = React.useRef<Element | null>(null);
-  const value = React.useMemo(() => ({ chipsRef, multiple: !!props.multiple }), [props.multiple]);
+  const value = { chipsRef, multiple: !!props.multiple };
   return (
     <ComboboxContext value={value}>
       <ComboboxPrimitive.Root {...props} />
@@ -200,7 +200,6 @@ function ComboboxItem({
       data-slot="combobox-item"
       {...props}
     >
-      {/* Children lay out as one row: a label that truncates, then any trailing meta. */}
       <div
         className="flex min-w-0 flex-1 items-center gap-2 [&_svg:not([class*='text-'])]:text-muted-foreground"
         data-slot="combobox-item-content"

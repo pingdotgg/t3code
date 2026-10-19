@@ -1,6 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
 
-/** Arms one control at a time, including controls rendered in a menu portal. */
 export function useInlineActionConfirm(scopeKey: string) {
   const [armed, setArmed] = useState<{
     scopeKey: string;

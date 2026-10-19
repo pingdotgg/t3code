@@ -90,22 +90,15 @@ describe("V2 session presentation", () => {
       expect(deriveCanInterruptRunningThread(true, runtime)).toBe(true);
     }
 
-    // No active thread: never offer Stop, regardless of run status.
     expect(deriveCanInterruptRunningThread(false, runtimeWithStatus("running", runId))).toBe(false);
 
-    // Queued with nothing interruptible: the server rejects interrupting a
-    // queued run, so Stop stays hidden.
     expect(derivePhase(runtimeWithStatus("queued"))).toBe("connecting");
     expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("queued"))).toBe(false);
-    // Queued behind a run that is still interruptible: Stop targets that run.
     expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("queued", runId))).toBe(true);
 
-    // Waiting (e.g. on a subagent) is treated as "running" by derivePhase and
-    // keeps offering Stop, unchanged from before.
     expect(derivePhase(runtimeWithStatus("waiting"))).toBe("running");
     expect(deriveCanInterruptRunningThread(true, runtimeWithStatus("waiting"))).toBe(true);
 
-    // No runtime at all: nothing to interrupt.
     expect(deriveCanInterruptRunningThread(true, null)).toBe(false);
   });
 
@@ -578,9 +571,6 @@ describe("V2 session presentation", () => {
     const entry = entries[0];
     expect(entry?.kind).toBe("work");
     if (entry?.kind === "work") {
-      // An exit-code failure is still an ordinary tool row: the failed
-      // lifecycle status carries the marker, and an "error" tone here would
-      // knock the whole group out of the "Ran N commands" summary.
       expect(entry.entry.tone).toBe("tool");
       expect(entry.entry.toolLifecycleStatus).toBe("failed");
     }
@@ -1039,7 +1029,6 @@ describe("native provider presentation in the v2 timeline", () => {
       kind: "work",
       entry: { questionAnswer: question.questionAnswer },
     });
-    // A separately paged reply stays visible until its question history is available.
     expect(
       deriveTimelineEntriesFromVisibleTurnItems({ ...input, visibleTurnItems: [visible(reply)] })[0]
         ?.kind,

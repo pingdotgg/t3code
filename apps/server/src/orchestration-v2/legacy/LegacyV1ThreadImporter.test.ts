@@ -534,3 +534,72 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
     }),
   );
 });
+
+it.layer(layerTest)("LegacyV1ThreadImporter transcript lookup", (it) => {
+  it.effect("finds imported messages on the V2 thread index, past the thread's V1 events", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+      const threadId = ThreadId.make("thread:legacy-lookup");
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id, title, workspace_root, default_model_selection_json, scripts_json,
+          created_at, updated_at, deleted_at
+        ) VALUES (
+          'project:legacy-lookup', 'Legacy project', '/tmp/legacy-lookup',
+          '{"instanceId":"codex","model":"gpt-5.4"}', '[]',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
+          created_at, updated_at
+        ) VALUES (
+          ${threadId}, 'project:legacy-lookup', 'Migrated conversation',
+          '{"instanceId":"codex","model":"gpt-5.4"}', 'full-access', 'default',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES (
+          'message:legacy-lookup:1', ${threadId}, 'user', 'Question', 0,
+          '2026-01-01T01:00:00.000Z', '2026-01-01T01:00:00.000Z'
+        )
+      `;
+      yield* importer.reconcileShells;
+
+      const statements: string[] = [];
+      const tracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            const query = span.attributes.get("db.query.text");
+            if (
+              typeof query === "string" &&
+              /^\s*SELECT event_id\s+FROM orchestration_events/.test(query)
+            ) {
+              statements.push(query);
+            }
+          };
+          return span;
+        },
+      });
+      yield* importer.ensureTranscript(threadId).pipe(Effect.withTracer(tracer));
+
+      assert.lengthOf(statements, 1);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statements[0]}`,
+        [threadId, "migration:v1:message:%"],
+      );
+      assert.match(
+        plan.map((row) => row.detail).join("\n"),
+        /USING INDEX idx_orchestration_events_agent_stream_sequence \(stream_id=\?\)/,
+      );
+    }),
+  );
+});

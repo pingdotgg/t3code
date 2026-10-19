@@ -1,7 +1,6 @@
 import type { TerminalSessionState } from "@t3tools/client-runtime/state/terminal";
 import { useEffect, useEffectEvent, useRef } from "react";
 
-/** Keep observed history passive while preserving explicit terminal visits and live exits. */
 export function useTerminalLifecycle({
   terminalKey,
   canOperate,
@@ -42,7 +41,6 @@ export function useTerminalLifecycle({
     }
     const current = lifecycle.current;
     if (!canOperate) {
-      // An observe request stays passive before its first snapshot arrives.
       if (observing || terminal.version > 0 || current.wasRunning) current.observed = true;
       current.wasRunning = false;
       return;
@@ -51,7 +49,6 @@ export function useTerminalLifecycle({
       current.wasRunning = false;
       return;
     }
-    // An attachment without its first snapshot has no known process status yet.
     if (terminal.version === 0) return;
 
     if (terminal.status === "running" || terminal.status === "starting") {

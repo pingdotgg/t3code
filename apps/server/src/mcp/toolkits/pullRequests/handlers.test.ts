@@ -137,11 +137,8 @@ function makeLink(
 interface HarnessOptions {
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
-  /** A rejection the orchestrator reports as the dispatch error's cause. */
   readonly reject?: (command: OrchestrationCommand) => string | null;
-  /** Every project in the environment; defaults to the thread's own. */
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
-  /** What the guide service answers for a pull request it is asked to write. */
   readonly generate?: (
     input: PullRequestRef,
   ) => Effect.Effect<
@@ -217,7 +214,6 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     toolkit.handle(name, params).pipe(
       Stream.unwrap,
       Stream.runCollect,
-      // Failure mode is "error", so a delivered result is always the success shape.
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
@@ -275,7 +271,6 @@ describe("pull request toolkit handlers", () => {
       const result = yield* harness.call("watch_pull_request", {
         url: "https://github.com/t3tools/t3code/pull/9",
       });
-      // The harness thread never changes, so the result reports what it still holds.
       expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         {
@@ -578,6 +573,22 @@ describe("listThreadPullRequests", () => {
       [1, { kind: "native", position: 1, size: 2 }],
     ]);
     expect(result.chains).toEqual([{ kind: "native", numbers: [1, 2] }]);
+  });
+
+  it("gives pull requests built on the same one the same position", () => {
+    const result = listThreadPullRequests({
+      pullRequests: [
+        makeLink(1, { headBranch: "feat-a", baseBranch: "main" }),
+        makeLink(2, { headBranch: "feat-b", baseBranch: "feat-a" }),
+        makeLink(3, { headBranch: "feat-c", baseBranch: "feat-a" }),
+      ],
+    });
+    expect(result.pullRequests.map((entry) => [entry.number, entry.stack])).toEqual([
+      [1, { kind: "derived", position: 1, size: 3 }],
+      [2, { kind: "derived", position: 2, size: 3 }],
+      [3, { kind: "derived", position: 2, size: 3 }],
+    ]);
+    expect(result.chains).toEqual([{ kind: "derived", numbers: [1, 2, 3] }]);
   });
 });
 

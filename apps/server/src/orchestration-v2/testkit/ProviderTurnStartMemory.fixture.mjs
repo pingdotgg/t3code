@@ -7,30 +7,47 @@ const mode = process.argv[3];
 const withHandoff = mode.startsWith("handoff");
 const require = NodeModule.createRequire(root + "/apps/server/package.json");
 const load = (name) => import(NodeURL.pathToFileURL(require.resolve("effect/" + name)));
-const [Effect, Layer, FileSystem] = await Promise.all([
+const [Effect, Layer, FileSystem, Path] = await Promise.all([
   load("Effect"),
   load("Layer"),
   load("FileSystem"),
+  load("Path"),
 ]);
 const app = (file) => import(NodeURL.pathToFileURL(root + "/apps/server/src/" + file + ".ts"));
 const providerCore = (file) =>
   import(NodeURL.pathToFileURL(root + "/packages/provider-core/src/server/" + file + ".ts"));
-const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth] =
-  await Promise.all([
-    app("orchestration-v2/ProviderTurnStartService"),
-    app("orchestration-v2/ProjectionStore"),
-    app("orchestration-v2/RunExecutionService"),
-    app("orchestration-v2/ProviderSessionManager"),
-    app("orchestration-v2/RuntimePolicy"),
-    providerCore("IdAllocator"),
-    app("orchestration-v2/EventSink"),
-    app("orchestration-v2/ContextHandoffService"),
-    app("git/GitWorkflowService"),
-    app("project/ProjectService"),
-    app("provider/ProviderAuthService"),
-  ]);
+const [
+  Start,
+  Projection,
+  Run,
+  Sessions,
+  Policy,
+  Id,
+  Sink,
+  Handoff,
+  Git,
+  Project,
+  Auth,
+  Config,
+  Settings,
+] = await Promise.all([
+  app("orchestration-v2/ProviderTurnStartService"),
+  app("orchestration-v2/ProjectionStore"),
+  app("orchestration-v2/RunExecutionService"),
+  app("orchestration-v2/ProviderSessionManager"),
+  app("orchestration-v2/RuntimePolicy"),
+  providerCore("IdAllocator"),
+  app("orchestration-v2/EventSink"),
+  app("orchestration-v2/ContextHandoffService"),
+  app("git/GitWorkflowService"),
+  app("project/ProjectService"),
+  app("provider/ProviderAuthService"),
+  app("config"),
+  app("serverSettings"),
+]);
 let current;
 let fullReads = 0;
+let threadReads = 0;
 const liveRuns = [];
 const refs = [];
 const checkpoints = [];
@@ -48,9 +65,12 @@ const dependencies = Layer.mergeAll(
   Layer.mock(Handoff.ContextHandoffServiceV2)({}),
   Id.layer,
   FileSystem.layerNoop({}),
+  Path.layer,
   Layer.mock(Git.GitWorkflowService)({}),
   Layer.mock(Project.ProjectService)({}),
   Layer.mock(Auth.ProviderAuthService)({}),
+  Layer.mock(Config.ServerConfig)({ worktreesDir: "/synthetic-worktrees" }),
+  Settings.layerTest(),
   Layer.mock(Projection.ProjectionStoreV2)({
     getThreadProjection: () =>
       Effect.sync(() => {
@@ -58,6 +78,13 @@ const dependencies = Layer.mergeAll(
         throw new Error("full transcript read");
       }),
     hasUnpairedRunInterruptRequest: () => Effect.succeed(false),
+    getThreadRecords: (threadId, fields) =>
+      Effect.sync(() => {
+        NodeAssert.equal(threadId, current.thread.id);
+        NodeAssert.deepEqual(fields, []);
+        threadReads++;
+        return { thread: current.thread };
+      }),
     getTurnStartContext: () =>
       Effect.sync(() => {
         fullReads++;
@@ -168,7 +195,6 @@ await Effect.runPromise(
     for (let i = 0; i < count; i++) {
       current = fixture(i);
       yield* service.start({ threadId: "thread", runId: "run:" + i });
-      // The run worker must keep checking current durable state, not its startup copy.
       const controls = liveRuns.at(-1);
       current = { ...current, turnItems: [] };
       NodeAssert.equal(yield* controls.shouldStartProviderTurn(), true);
@@ -181,8 +207,10 @@ await Effect.runPromise(
       NodeAssert.equal(yield* controls.shouldFinalizeRun(), false);
       NodeAssert.deepEqual(yield* controls.loadInheritedBackgroundTurnItems(), []);
       NodeAssert.equal(fullReads, i + 1);
+      NodeAssert.equal(threadReads, i + 1);
       NodeAssert.equal(yield* controls.hasUnpairedRunInterruptRequest(), false);
       NodeAssert.equal(fullReads, i + 1);
+      NodeAssert.equal(threadReads, i + 1);
       current = null;
       if (i === Math.floor(count / 2) - 1 || i === count - 1) {
         yield* Effect.promise(async () => {

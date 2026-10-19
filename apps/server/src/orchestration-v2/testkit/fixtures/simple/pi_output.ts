@@ -13,7 +13,6 @@ function field(value: unknown, key: string): unknown {
   return isRecord(value) ? value[key] : undefined;
 }
 
-/** Data of the last recorded successful response to `command`. */
 function lastPiResponseData(transcript: ProviderReplayTranscript, command: string): unknown {
   const frame = transcript.entries
     .flatMap((entry) => (entry.type === "emit_inbound" ? [entry.frame] : []))
@@ -57,12 +56,6 @@ export function assertPiSettledTokenUsage(
   }
 }
 
-/**
- * Pi-specific additions to the shared simple contract: the streamed thinking
- * block becomes a reasoning item, the settled turn carries the context usage
- * from `get_session_stats`, and the turn's native ref is the session-tree id
- * of its user message (the point rollback and fork re-root at).
- */
 export function assertPiSimpleOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -88,7 +81,7 @@ export function assertPiSimpleOutput(
   const [turn] = projection.providerTurns;
 
   // Pi attaches cumulative usage to every streaming update, zeros until the
-  // provider reports. The running turn moves the meter once per new total.
+  // provider reports.
   const streamedTotals = transcript.entries.flatMap((entry) =>
     entry.type === "emit_inbound" && field(entry.frame, "type") === "message_update"
       ? [field(field(entry.frame, "usage"), "totalTokens")]

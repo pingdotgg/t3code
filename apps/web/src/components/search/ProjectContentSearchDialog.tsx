@@ -1,7 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
@@ -22,10 +22,8 @@ interface ProjectContentSearchDialogProps {
 }
 
 /**
- * Result rows are syntax highlighted, so mounting all 500 possible rows at
- * once stalls the UI. Rows render in windows that grow as the sentinel at the
- * bottom of the list scrolls into view (or keyboard navigation moves past
- * the rendered window).
+ * Result rows are syntax highlighted, so mounting all 500 possible rows at once
+ * stalls the UI.
  */
 const VISIBLE_MATCH_WINDOW = 100;
 
@@ -126,25 +124,27 @@ function OpenContentSearchDialog(props: {
   });
   const canOpenMatches = search.canReadFiles && !search.isPending && search.error === null;
   const matches = search.matches;
-  const visibleMatches = useMemo(() => matches.slice(0, visibleCount), [matches, visibleCount]);
-  const groups = useMemo(() => groupMatches(visibleMatches), [visibleMatches]);
-
-  useEffect(() => {
+  // New results restart the selection and the rendered window.
+  const [resultsFor, setResultsFor] = useState(matches);
+  if (resultsFor !== matches) {
+    setResultsFor(matches);
     setSelectedIndex(0);
     setVisibleCount(VISIBLE_MATCH_WINDOW);
-  }, [matches]);
+  }
+  // Keyboard selection past the window grows it before the row has to scroll into view.
+  if (selectedIndex >= visibleCount) {
+    setVisibleCount(selectedIndex + VISIBLE_MATCH_WINDOW);
+  }
+  const visibleMatches = matches.slice(0, visibleCount);
+  const groups = groupMatches(visibleMatches);
 
   useEffect(() => {
-    if (selectedIndex >= visibleCount) {
-      setVisibleCount(selectedIndex + VISIBLE_MATCH_WINDOW);
-      return;
-    }
     document
       .querySelector<HTMLElement>(`[data-content-search-result="${selectedIndex}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex, visibleCount]);
+  }, [selectedIndex]);
 
-  const observeLoadMoreSentinel = useCallback((sentinel: HTMLElement | null) => {
+  const observeLoadMoreSentinel = (sentinel: HTMLElement | null) => {
     if (!sentinel) return;
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
@@ -153,7 +153,7 @@ function OpenContentSearchDialog(props: {
     });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, []);
+  };
 
   const openMatch = (match: ProjectContentMatch) => {
     if (!canOpenMatches || !readEnvironmentScope(target.environmentId, AuthFilesystemReadScope)) {
@@ -162,7 +162,7 @@ function OpenContentSearchDialog(props: {
     props.onOpenChange(false);
     useRightPanelStore.getState().openFile(target.threadRef, match.path, match.lineNumber);
   };
-  const fileCount = useMemo(() => new Set(matches.map((match) => match.path)).size, [matches]);
+  const fileCount = new Set(matches.map((match) => match.path)).size;
   const showSearchStatus =
     search.canReadFiles &&
     (search.hasQuery || search.isPending || search.error !== null || search.invalidRegex);
@@ -212,9 +212,6 @@ function OpenContentSearchDialog(props: {
             event.preventDefault();
             setSelectedIndex((current) => (current - 1 + matches.length) % matches.length);
           } else if (event.key === "Enter") {
-            // While a newer query is debouncing or in flight, the visible
-            // matches belong to the previous query; opening one would jump
-            // to a result the user did not ask for.
             if (!canOpenMatches) {
               event.preventDefault();
               return;
@@ -326,7 +323,6 @@ export function ProjectContentSearchDialog(props: ProjectContentSearchDialogProp
 
   return target ? (
     <OpenContentSearchDialog
-      // Reset the query and options whenever the workspace changes.
       key={`${target.environmentId}:${target.cwd}`}
       onOpenChange={props.onOpenChange}
       target={target}

@@ -32,8 +32,6 @@ const readWslState: Effect.Effect<
     available,
     wslOnly: settings.wslOnly,
     distros,
-    // Only the dual-mode secondary records this; a wsl-only failure surfaces via
-    // a dialog + Windows fallback, so it stays null there.
     preflightError: settings.wslOnly ? null : Option.getOrNull(preflightError),
   };
 });
@@ -70,9 +68,7 @@ export const setWslBackendEnabled = makeIpcMethod({
       return state;
     }
     // Reconcile is idempotent and never fails; no need for a swap-style
-    // rollback when the WSL side has trouble coming up. With both
-    // backends running side by side, "WSL didn't start" is a transient
-    // state on one instance — the primary stays up either way.
+    // rollback when the WSL side has trouble coming up.
     yield* wslBackend.reconcile;
     return yield* readWslState;
   }),
@@ -90,7 +86,6 @@ export const setWslDistro = makeIpcMethod({
     const settings = yield* appSettings.get;
     // In active wsl-only mode the pool's primary IS the WSL backend, and its
     // distro is captured when that backend starts, so relaunch to replace it.
-    // When WSL is disabled, this only stages a preference for the next enable.
     if (settings.wslBackendEnabled && settings.wslOnly && change.changed) {
       const state = yield* readWslState;
       yield* lifecycle.relaunch(`wslDistro=${distro ?? "default"}`);

@@ -1,6 +1,6 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
   importOpenVsxThemeExtension,
   searchOpenVsxThemes,
@@ -43,16 +43,20 @@ const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = 
 ];
 const SEARCH_DEBOUNCE_MS = 350;
 
-function SourceLinkIcon({ url }: { url: string }) {
+function sourceHost(url: string): string | null {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    if (host === "github.com" || host.endsWith(".github.com"))
-      return <GitHubIcon className="size-3.5" />;
-    if (host === "gitlab.com" || host.endsWith(".gitlab.com"))
-      return <GitLabIcon className="size-3.5" monochrome />;
+    return new URL(url).hostname.toLowerCase();
   } catch {
-    // Fall through to the generic external-link icon.
+    return null;
   }
+}
+
+function SourceLinkIcon({ url }: { url: string }) {
+  const host = sourceHost(url);
+  if (host === "github.com" || host?.endsWith(".github.com"))
+    return <GitHubIcon className="size-3.5" />;
+  if (host === "gitlab.com" || host?.endsWith(".gitlab.com"))
+    return <GitLabIcon className="size-3.5" monochrome />;
   return <ExternalLinkIcon className="size-3.5" />;
 }
 
@@ -92,21 +96,23 @@ export function ThemeSearchSection({
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<OpenVsxThemeExtension | null>(null);
   const requestRef = useRef<AbortController | null>(null);
-  // The (query, sort) pair the last search actually ran, so an install
-  // finishing can tell a same-key rerun (which must not wipe an install
-  // error) from a query that changed mid-install (which must be searched).
-  const lastSearchKeyRef = useRef<string | null>(null);
-  // The (query, sort) pair from the previous effect run, so a search error
-  // that belongs to an older key can be cleared when the user returns to
-  // already-shown results without clearing a fresh install error.
-  const prevSearchKeyRef = useRef<string | null>(null);
+  // Recorded only once a search succeeds, so a finished install reruns the
+  // search only when the query or sort changed while it was in flight, and the
+  // install error the user needs to see survives.
+  const [lastSearchKey, setLastSearchKey] = useState<string | null>(null);
+  const [handledSearch, setHandledSearch] = useState<{
+    key: string;
+    query: string;
+    fetch: boolean;
+  } | null>(null);
+  // An install aborts any search, so once it ends the current key is checked
+  // again even though it has not changed.
+  const [searchInterrupted, setSearchInterrupted] = useState(false);
 
-  useEffect(() => {
-    requestRef.current?.abort();
-    requestRef.current = null;
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
-      lastSearchKeyRef.current = null;
-      prevSearchKeyRef.current = null;
       setQuery("");
       setSortBy("downloadCount");
       setResults(null);
@@ -114,147 +120,160 @@ export function ThemeSearchSection({
       setIsSearching(false);
       setInstallingId(null);
       setPendingUpdate(null);
+      setLastSearchKey(null);
+      setHandledSearch(null);
+      setSearchInterrupted(false);
     }
+  }
+
+  useEffect(() => {
+    if (!open) return;
     return () => {
       requestRef.current?.abort();
       requestRef.current = null;
     };
   }, [open]);
 
-  const runSearch = useCallback(
-    async (searchText: string, nextSort = sortBy) => {
-      const trimmed = searchText.trim();
-      if (!trimmed) return;
-      requestRef.current?.abort();
-      const controller = new AbortController();
-      requestRef.current = controller;
-      setError(null);
-      setIsSearching(true);
-      try {
-        const nextResults = await searchOpenVsxThemes(trimmed, {
-          signal: controller.signal,
-          sortBy: nextSort,
-        });
-        if (!controller.signal.aborted) {
-          setResults(nextResults);
-          lastSearchKeyRef.current = `${trimmed}\u0000${nextSort}`;
-        }
-      } catch (cause) {
-        if (!controller.signal.aborted) {
-          setResults(null);
-          lastSearchKeyRef.current = null;
-          setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
-        }
-      }
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setIsSearching(false);
-      }
-    },
-    [sortBy],
-  );
-
-  const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
-
-  useEffect(() => {
-    if (query.trim() || installingId !== null) return;
-    requestRef.current?.abort();
-    requestRef.current = null;
-    lastSearchKeyRef.current = null;
+  const queryCleared = !query.trim() && installingId === null;
+  if (
+    queryCleared &&
+    (results !== null ||
+      error !== null ||
+      isSearching ||
+      lastSearchKey !== null ||
+      handledSearch !== null)
+  ) {
     setResults(null);
     setError(null);
     setIsSearching(false);
-  }, [query, installingId]);
+    setLastSearchKey(null);
+    setHandledSearch(null);
+  }
 
   useEffect(() => {
-    if (!open) return;
-    const searchKey = `${debouncedQuery}\u0000${sortBy}`;
-    const keyChanged = prevSearchKeyRef.current !== searchKey;
-    prevSearchKeyRef.current = searchKey;
-    if (installingId !== null) return;
-    if (!debouncedQuery) {
-      lastSearchKeyRef.current = null;
-      requestRef.current?.abort();
-      requestRef.current = null;
-      setResults(null);
-      setError(null);
-      setIsSearching(false);
-      return;
-    }
-    if (debouncedQuery !== query.trim()) {
-      // The debounced value still trails the input (dialog reopened with the
-      // box reset, or the user is mid-keystroke). Searching it would hit Open
-      // VSX for a query that is no longer visible; wait for the debounce to
-      // catch up to the current input instead.
-      return;
-    }
-    if (lastSearchKeyRef.current === searchKey) {
-      // The results already match this query. A request for a newer key may
-      // still be in flight (typed and then undone); abort it so it cannot
-      // overwrite the results. Only a genuine key change makes a stale search
-      // error irrelevant, so an install error on an unchanged query survives.
-      requestRef.current?.abort();
-      requestRef.current = null;
-      setIsSearching(false);
-      if (keyChanged) setError(null);
-      return;
-    }
-    void runSearch(debouncedQuery);
-    // `sortBy` is deliberately not a direct dependency: the guards above read
-    // the current value from the fresh render closure. An install finishing
-    // reruns the search only when the query or sort changed while it was in
-    // flight (checked via lastSearchKeyRef, recorded only once a search
-    // succeeds), so the install error the user needs to see is preserved
-    // across that rerun.
-  }, [open, query, debouncedQuery, installingId, runSearch]);
+    if (!queryCleared) return;
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, [queryCleared]);
 
-  const handleSortChange = useCallback((value: OpenVsxThemeSort | null) => {
+  const startRequest = () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    return controller;
+  };
+
+  const fetchResults = (trimmed: string, controller: AbortController) => {
+    const key = `${trimmed}\u0000${sortBy}`;
+    void searchOpenVsxThemes(trimmed, { signal: controller.signal, sortBy })
+      .then(
+        (nextResults) => {
+          if (controller.signal.aborted) return;
+          setResults(nextResults);
+          setLastSearchKey(key);
+        },
+        (cause: unknown) => {
+          if (controller.signal.aborted) return;
+          setResults(null);
+          setLastSearchKey(null);
+          setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
+        },
+      )
+      .then(() => {
+        if (requestRef.current !== controller) return;
+        requestRef.current = null;
+        setIsSearching(false);
+      });
+  };
+
+  const runSearch = (searchText: string) => {
+    const trimmed = searchText.trim();
+    if (!trimmed) return;
+    setError(null);
+    setIsSearching(true);
+    fetchResults(trimmed, startRequest());
+  };
+
+  const debouncedQuery = useDebouncedValue(query.trim(), SEARCH_DEBOUNCE_MS);
+  const searchKey = `${debouncedQuery}\u0000${sortBy}`;
+  // An unsettled query would hit Open VSX for text that is no longer visible;
+  // wait for the debounce to catch up to the current input instead.
+  const searchSettled =
+    open && installingId === null && debouncedQuery !== "" && debouncedQuery === query.trim();
+
+  const keyChanged = handledSearch?.key !== searchKey;
+  if (searchSettled && (keyChanged || searchInterrupted)) {
+    // Typing and then undoing lands back on the key already shown; keep those
+    // results instead of searching again.
+    const fetch = lastSearchKey !== searchKey;
+    setHandledSearch({ key: searchKey, query: debouncedQuery, fetch });
+    setSearchInterrupted(false);
+    // An install error on an unchanged, already-shown query stays visible.
+    if (fetch || keyChanged) setError(null);
+    setIsSearching(fetch);
+  }
+
+  const fetchHandledSearch = useEffectEvent((searchText: string) => {
+    fetchResults(searchText, startRequest());
+  });
+
+  useEffect(() => {
+    if (!handledSearch) return;
+    if (handledSearch.fetch) {
+      fetchHandledSearch(handledSearch.query);
+      return;
+    }
+    // A request for a newer key may still be in flight; abort it so it cannot
+    // overwrite the results being kept.
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, [handledSearch]);
+
+  const handleSortChange = (value: OpenVsxThemeSort | null) => {
     const nextSort = SORT_OPTIONS.find((option) => option.value === value)?.value;
     if (!nextSort) return;
     setSortBy(nextSort);
-  }, []);
+  };
 
-  const handleInstall = useCallback(
-    async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
-      setError(null);
-      let installedCollection: ReadonlyArray<ThemeDefinition>;
-      try {
-        installedCollection = getStoredCustomThemeCollection(extension.collectionId);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
-        return;
-      }
-      const updated = installedCollection.length > 0;
-      if (updated && !allowUpdate) {
-        setPendingUpdate(extension);
-        return;
-      }
+  const handleInstall = async (extension: OpenVsxThemeExtension, allowUpdate: boolean) => {
+    setError(null);
+    let installedCollection: ReadonlyArray<ThemeDefinition>;
+    try {
+      installedCollection = getStoredCustomThemeCollection(extension.collectionId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
+      return;
+    }
+    const updated = installedCollection.length > 0;
+    if (updated && !allowUpdate) {
+      setPendingUpdate(extension);
+      return;
+    }
 
-      requestRef.current?.abort();
-      const controller = new AbortController();
-      requestRef.current = controller;
-      setIsSearching(false);
-      setInstallingId(extension.id);
-      try {
-        const themes = await importOpenVsxThemeExtension(extension, controller.signal);
-        if (!controller.signal.aborted) {
-          const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
-            expectedCollection: installedCollection,
-          });
-          onInstalled(imported, { updated });
-        }
-      } catch (cause) {
-        if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : "That theme could not be added.");
-        }
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setIsSearching(false);
+    setSearchInterrupted(true);
+    setInstallingId(extension.id);
+    try {
+      const themes = await importOpenVsxThemeExtension(extension, controller.signal);
+      if (!controller.signal.aborted) {
+        const imported = replaceCustomThemeCollection(extension.collectionId, themes, {
+          expectedCollection: installedCollection,
+        });
+        onInstalled(imported, { updated });
       }
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setInstallingId(null);
+    } catch (cause) {
+      if (!controller.signal.aborted) {
+        setError(cause instanceof Error ? cause.message : "That theme could not be added.");
       }
-    },
-    [onInstalled],
-  );
+    }
+    if (requestRef.current === controller) {
+      requestRef.current = null;
+      setInstallingId(null);
+    }
+  };
 
   return (
     <section className="space-y-3" aria-labelledby="theme-search-heading">
@@ -277,7 +296,7 @@ export function ThemeSearchSection({
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === "Enter" && !isSearching && installingId === null)
-              void runSearch(query.trim());
+              runSearch(query.trim());
           }}
           placeholder="Search themes..."
           size="lg"
@@ -298,7 +317,7 @@ export function ThemeSearchSection({
                 variant="ghost"
                 onClick={() => {
                   if (query.trim() === suggestion) {
-                    void runSearch(suggestion);
+                    runSearch(suggestion);
                   } else {
                     setQuery(suggestion);
                   }

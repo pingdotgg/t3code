@@ -214,6 +214,33 @@ it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
   });
 });
 
+it("tells a host glab has no login for apart from output that cannot say", () => {
+  const refine = (stderr: string) =>
+    GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("unknown"),
+          name: "git.example.test",
+          baseUrl: "https://git.example.test",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://git.example.test/group/project.git",
+      },
+      auth: { exitCode: ChildProcessSpawner.ExitCode(1), stdout: "", stderr },
+    });
+
+  assert.strictEqual(
+    refine("x git.example.test has not been authenticated with glab. Run `glab auth login`"),
+    null,
+  );
+  assert.strictEqual(
+    refine("No GitLab instances have been authenticated with glab. Run `glab auth login`"),
+    null,
+  );
+  assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
+});
+
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {
   assert.deepStrictEqual(
     parseGitLabAuthStatusHosts(`localhost:8080

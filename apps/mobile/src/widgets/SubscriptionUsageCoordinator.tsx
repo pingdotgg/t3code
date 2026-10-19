@@ -12,9 +12,8 @@ import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 // Isolate quota changes from the much busier thread/config presentation stream.
 const snapshotAtom = Atom.make((get) =>
   buildSubscriptionUsageSnapshot(
-    get(environmentPresentations.presentationsAtom),
+    get(environmentPresentations.presentationsWithProvidersAtom),
     Linking.createURL("settings/usage", { queryParams: { tab: "limits" } }),
-    // Android scrolls the full list; iOS stores a bounded widget timeline.
     Platform.OS === "android" ? Infinity : 6,
   ),
 ).pipe(Atom.withEquality((a, b) => JSON.stringify(a) === JSON.stringify(b)));

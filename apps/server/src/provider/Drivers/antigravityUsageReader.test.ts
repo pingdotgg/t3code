@@ -1,8 +1,9 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's File.Info has no ctime or sub-millisecond mtime, which the cache tests compare.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -10,10 +11,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Tracer from "effect/Tracer";
 
 import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
 
-/** A writable connection that stays open until the enclosing scope closes. */
 const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
   const context = yield* Layer.build(NodeSqliteClient.layer({ filename }));
   const sql = Context.get(context, SqlClient.SqlClient);
@@ -23,7 +24,6 @@ const openDatabase = Effect.fn("openDatabase")(function* (filename: string) {
   };
 });
 
-/** Seeds `filename` and closes it, as a provider that has finished writing. */
 const seedDatabase = <E>(
   filename: string,
   seed: (db: Effect.Success<ReturnType<typeof openDatabase>>) => Effect.Effect<void, E>,
@@ -321,8 +321,6 @@ describe("readAntigravityUsage", () => {
       const cache = makeAntigravityUsageCache();
       assert.deepStrictEqual((yield* readAntigravityUsage(dir, 0, cache)).errors, []);
 
-      // An exclusive lock makes a fresh read fail without touching the file, so
-      // only a cache hit can still return the earlier records.
       yield* db.exec("BEGIN EXCLUSIVE");
       assert.strictEqual((yield* readAntigravityUsage(dir, 0)).errors.length, 1);
       const cached = yield* readAntigravityUsage(dir, 0, cache);
@@ -443,6 +441,137 @@ describe("readAntigravityUsage", () => {
       const result = yield* readAntigravityUsage(dir, 0);
       assert.deepStrictEqual(result.errors, []);
       assert.strictEqual(records(result)[0]?.totals.uncachedInputTokens, 10);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  const recordReads = Effect.gen(function* () {
+    const reads: Array<{ sql: string; rows: number }> = [];
+    const all = NodeSqlite.StatementSync.prototype.all;
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        vi.spyOn(NodeSqlite.StatementSync.prototype, "all").mockImplementation(function (
+          this: NodeSqlite.StatementSync,
+          ...params
+        ) {
+          const result = all.apply(this, params);
+          reads.push({ sql: this.sourceSQL, rows: result.length });
+          return result;
+        }),
+      ),
+      (spy) => Effect.sync(() => spy.mockRestore()),
+    );
+    return reads;
+  });
+
+  const stepUsage = (responseId: string) =>
+    new Uint8Array(protoBytes(9, [...protoNumber(2, 10), ...protoText(11, responseId)]));
+
+  it.effect("reads one Antigravity generation or one page of steps per statement", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
+        Effect.gen(function* () {
+          yield* db.exec(
+            "CREATE TABLE `gen_metadata` (`idx` integer,`data` blob,`size` integer NOT NULL DEFAULT 0,PRIMARY KEY (`idx`))",
+          );
+          yield* db.exec(
+            "CREATE TABLE `steps` (`idx` integer,`step_type` integer NOT NULL DEFAULT 0,`status` integer NOT NULL DEFAULT 0,`metadata` blob,PRIMARY KEY (`idx`))",
+          );
+          yield* db.exec("CREATE INDEX `idx_steps_status` ON `steps`(`status`)");
+          yield* db.exec("CREATE INDEX `idx_steps_step_type` ON `steps`(`step_type`)");
+          yield* db.exec("BEGIN");
+          for (let idx = 0; idx < 3; idx++) {
+            yield* db.run("INSERT INTO gen_metadata (idx, data) VALUES (?, ?)", [
+              idx,
+              antigravityGeneration(`g-${idx}`),
+            ]);
+          }
+          for (let idx = 0; idx < 250; idx++) {
+            yield* db.run("INSERT INTO steps (idx, metadata) VALUES (?, ?)", [
+              idx,
+              idx >= 75 && idx < 175 ? null : stepUsage(`s-${idx}`),
+            ]);
+          }
+          yield* db.exec("COMMIT");
+        }),
+      );
+      const reads = yield* recordReads;
+      const spans: Tracer.NativeSpan[] = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const result = yield* readAntigravityUsage(dir, 0).pipe(
+        Effect.provideService(Tracer.Tracer, tracer),
+      );
+      assert.deepStrictEqual(result.errors, []);
+      assert.deepStrictEqual(
+        records(result).map((record) => record.dedupeKey),
+        [
+          ...Array.from({ length: 75 }, (_, idx) => `antigravity:11:s-${idx}`),
+          ...Array.from({ length: 75 }, (_, idx) => `antigravity:11:s-${idx + 175}`),
+          ...Array.from({ length: 3 }, (_, idx) => `antigravity:11:g-${idx}`),
+        ],
+      );
+      assert.isTrue(spans.some((span) => span.name === "sqlite"));
+      assert.deepStrictEqual(
+        spans.flatMap((span) => {
+          const query = span.attributes.get("db.query.text");
+          return typeof query === "string" && query.includes("rowid > ?") ? [query] : [];
+        }),
+        [],
+      );
+      for (const [table, total, most] of [
+        ["steps", 250, 64],
+        ["gen_metadata", 3, 1],
+      ] as const) {
+        const rows = reads
+          .filter((read) => read.sql.includes(`FROM ${table} `))
+          .map((read) => read.rows);
+        assert.strictEqual(
+          rows.reduce((sum, count) => sum + count, 0),
+          total,
+          table,
+        );
+        assert.isAtMost(Math.max(...rows), most, table);
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("returns Antigravity records in idx order however the rows are stored", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const dir = yield* tempDir;
+      yield* seedDatabase(path.join(dir, "session-1.db"), (db) =>
+        Effect.gen(function* () {
+          yield* createTables(db);
+          yield* db.exec("BEGIN");
+          for (let idx = 99; idx >= 0; idx--) {
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [idx, stepUsage(`s-${idx}`)]);
+          }
+          for (const idx of [1, 0]) {
+            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+              idx,
+              antigravityGeneration(`g-${idx}`),
+            ]);
+          }
+          yield* db.exec("COMMIT");
+        }),
+      );
+      const result = yield* readAntigravityUsage(dir, 0);
+      assert.deepStrictEqual(result.errors, []);
+      assert.deepStrictEqual(
+        records(result).map((record) => record.dedupeKey),
+        [
+          ...Array.from({ length: 100 }, (_, idx) => `antigravity:11:s-${idx}`),
+          "antigravity:11:g-0",
+          "antigravity:11:g-1",
+        ],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

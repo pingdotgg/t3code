@@ -74,6 +74,7 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
+import { ConfigurationError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
@@ -192,7 +193,7 @@ export function cursorRuntimeAgentPolicy(
   return {
     autoReview:
       runtimePolicy.approvalPolicy === undefined
-        ? runtimePolicy.runtimeMode === "approval-required"
+        ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
         : runtimePolicy.approvalPolicy !== "never",
     sandboxEnabled:
       runtimePolicy.sandboxPolicy === undefined
@@ -290,9 +291,6 @@ function nativeThreadId(providerThread: OrchestrationV2ProviderThread): string {
  * Every Cursor settings layer the Cursor CLI loads: project and user rules,
  * skills, hooks, and MCP servers, team and MDM admin policy, and account
  * plugins. The SDK loads none of them when `settingSources` is omitted.
- * Sandbox policy files are read either way, and hooks can only deny or ask
- * (which local SDK runs reject), so these layers do not loosen the sandbox or
- * approval mode T3 sets.
  */
 const CURSOR_AGENT_SETTING_SOURCES = [
   "project",
@@ -328,6 +326,35 @@ export function makeCursorAgentOptions(input: {
     ...(mcpServers === undefined ? {} : { mcpServers }),
   };
 }
+
+/**
+ * Raised when Cursor rejects the selected model, usually a custom model outside
+ * the account catalog. `makeProviderFailure` shows its message to the user.
+ */
+class CursorModelUnavailableError extends Schema.TaggedError<CursorModelUnavailableError>()(
+  "CursorModelUnavailableError",
+  {
+    model: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Cursor cannot run the model "${this.model}". Cursor only runs models from your Cursor account. Choose one of those, or use OpenCode for OpenRouter and other API-key models.`;
+  }
+}
+
+/**
+ * Maps runner failures from opening or sending to an agent. The SDK checks the
+ * model against the account catalog before either and rejects it with an
+ * uncoded ConfigurationError listing every account model, so its message
+ * prefix is the only signal.
+ */
+const classifyCursorModelRejection =
+  (modelSelection: ModelSelection) => (error: CursorAgentSdk.CursorAgentSdkRunnerError) =>
+    error.cause instanceof ConfigurationError &&
+    error.cause.message.startsWith("Cannot use this model:")
+      ? new CursorModelUnavailableError({ model: modelSelection.model, cause: error.cause })
+      : error;
 
 function stableJson(value: unknown): string {
   try {
@@ -788,6 +815,10 @@ interface CursorProjectionTarget {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"] | null;
 }
 
+// Fallback final output when Cursor's result carries none. The persisted row only
+// ever shows a bounded tail, so keep a little more than that.
+const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
+
 interface ActiveCursorToolCall {
   readonly callId: string;
   toolCall: ToolCall;
@@ -826,7 +857,6 @@ interface ActiveCursorTurn {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly startedAt: DateTime.Utc;
   readonly completed: Deferred.Deferred<void, never>;
-  // Item ordinals allocated in this turn. No later turn looks items up here.
   readonly itemOrdinals: Map<string, number>;
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly subagents: Map<string, ActiveCursorSubagent>;
@@ -1122,7 +1152,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const emitToolArtifacts = Effect.fnUntraced(function* (input: {
           readonly active: ActiveCursorToolCall;
           readonly completed: boolean;
-          /** Terminal status for a tool the turn ended before Cursor completed it. */
           readonly unfinishedStatus?: "interrupted" | "failed" | "cancelled";
         }) {
           const { active } = input;
@@ -1230,8 +1259,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 toolCall.result?.status === "success" &&
                 toolCall.result.value.diffString !== undefined
                   ? { diffStr: toolCall.result.value.diffString }
-                  : // A failed change keeps its error where the diff would be.
-                    toolCall.result?.status === "error" && outputText.trim().length > 0
+                  : toolCall.result?.status === "error" && outputText.trim().length > 0
                     ? { diffStr: outputText }
                     : {}),
                 ...(toolCall.type === "write" ? { newStr: toolCall.args.fileText } : {}),
@@ -1263,7 +1291,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     : toolCall.type === "semSearch"
                       ? toolCall.args.targetDirectories?.join(", ")
                       : pattern;
-              // A failed search keeps its error as one row under the searched path.
               const results =
                 toolCall.result?.status === "error" && outputText.trim().length > 0
                   ? [{ fileName: searchPath?.trim() || ".", preview: outputText }]
@@ -1922,8 +1949,24 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               if (shell === undefined) {
                 return;
               }
-              shell.streamedOutput += shellOutputText(update.event);
-              yield* emitToolArtifacts({ active: shell, completed: false });
+              const chunk = shellOutputText(update.event);
+              if (chunk.length === 0) return;
+              // The completed call persists the final output once. Re-emitting the
+              // whole accumulated output on every delta grew the event store
+              // quadratically; live output goes to the command output hub instead.
+              shell.streamedOutput = (shell.streamedOutput + chunk).slice(
+                -MAX_CURSOR_STREAMED_OUTPUT_CHARS,
+              );
+              yield* emitProviderEvent({
+                type: "command_output.delta",
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                threadId: shell.target.threadId,
+                itemId: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  nativeItemId: shell.callId,
+                }),
+                chunk,
+              });
               return;
             }
             default:
@@ -1965,8 +2008,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
           input.context.finalized = true;
           const completedAt = yield* DateTime.now;
-          // Tools still here never got a tool-call-completed. A stopped or
-          // failed turn cut them short, so they end with the turn's status.
           for (const tool of input.context.tools.values()) {
             yield* emitToolArtifacts({
               active: tool,
@@ -1975,9 +2016,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
           }
           input.context.tools.clear();
-          // This interaction stops delivering updates at finalization. Tasks
-          // without a completion have an unknown outcome. Background launch
-          // acknowledgements have already settled their rows.
           for (const subagent of input.context.subagents.values()) {
             if (!isOrchestrationV2WorkActive(subagent.task.status)) continue;
             yield* emitSubagent({
@@ -2086,19 +2124,21 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
-          const sdkSession = yield* runner.open({
-            operation: openInput.operation,
-            ...(openInput.agentId === undefined ? {} : { agentId: openInput.agentId }),
-            options: makeCursorAgentOptions({
-              ...(apiKey === undefined ? {} : { apiKey }),
-              modelSelection: openInput.modelSelection,
-              runtimePolicy: openInput.runtimePolicy,
+          const sdkSession = yield* runner
+            .open({
+              operation: openInput.operation,
+              ...(openInput.agentId === undefined ? {} : { agentId: openInput.agentId }),
+              options: makeCursorAgentOptions({
+                ...(apiKey === undefined ? {} : { apiKey }),
+                modelSelection: openInput.modelSelection,
+                runtimePolicy: openInput.runtimePolicy,
+                threadId: openInput.threadId,
+                mcpSession: yield* mcpSessions.read(openInput.threadId),
+              }),
               threadId: openInput.threadId,
-              mcpSession: yield* mcpSessions.read(openInput.threadId),
-            }),
-            threadId: openInput.threadId,
-            providerSessionId: input.providerSessionId,
-          });
+              providerSessionId: input.providerSessionId,
+            })
+            .pipe(Effect.mapError(classifyCursorModelRejection(openInput.modelSelection)));
           const next = {
             nativeThreadId: sdkSession.agentId,
             session: sdkSession,
@@ -2207,21 +2247,23 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
             // MCP send overrides replace the ambient servers loaded when the agent opens.
-            const sdkRun = yield* agent.session.send({
-              message,
-              options: {
-                model: cursorSdkModelSelection(turnInput.modelSelection),
-                mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-              },
-              onDelta: (update) => {
-                if (context === null) {
-                  return Effect.sync(() => {
-                    pendingUpdates.push(update);
-                  });
-                }
-                return handleInteractionUpdate(context, update);
-              },
-            });
+            const sdkRun = yield* agent.session
+              .send({
+                message,
+                options: {
+                  model: cursorSdkModelSelection(turnInput.modelSelection),
+                  mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
+                },
+                onDelta: (update) => {
+                  if (context === null) {
+                    return Effect.sync(() => {
+                      pendingUpdates.push(update);
+                    });
+                  }
+                  return handleInteractionUpdate(context, update);
+                },
+              })
+              .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
@@ -2299,14 +2341,18 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       status,
                       ...(status === "failed"
                         ? {
-                            failure: makeProviderFailure({
-                              cause:
-                                transportFailure ?? (result as { readonly error?: unknown }).error,
-                              class:
-                                transportFailure === undefined
-                                  ? "provider_error"
-                                  : "transport_error",
-                            }),
+                            failure:
+                              transportFailure === undefined
+                                ? makeProviderFailure({
+                                    cause: result.error,
+                                    // makeProviderFailure never reads a cause's own text.
+                                    message: result.error?.message,
+                                    class: "provider_error",
+                                  })
+                                : makeProviderFailure({
+                                    cause: transportFailure,
+                                    class: "transport_error",
+                                  }),
                           }
                         : {}),
                     });
@@ -2322,7 +2368,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                       ...(context.interrupted
                         ? {}
                         : {
-                            failure: makeProviderFailure({ cause, class: "transport_error" }),
+                            failure: makeProviderFailure({
+                              cause,
+                              message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
+                                ? CursorAgentSdk.cursorSdkFailureMessage(cause)
+                                : undefined,
+                              class: "transport_error",
+                            }),
                           }),
                     });
                   }
@@ -2452,8 +2504,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           interruptTurn: Effect.fn("CursorAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput) {
               const context = yield* Ref.get(activeTurn);
-              // Stop on a settled turn: finalization already ended its tools
-              // and subagents, so nothing of it is left running to stop.
               if (context === null && turnInput.requestRuntimeRestart === true) return;
               if (context?.providerTurnId !== turnInput.providerTurnId) {
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({

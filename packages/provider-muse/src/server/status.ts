@@ -24,8 +24,8 @@ const MUSE_PRESENTATION = {
   displayName: "Muse Code",
   showInteractionModeToggle: false,
   reportsContextWindow: true,
-  // Muse has no native "accept edits" or reviewer-backed mode, so T3 offers only
-  // the two it maps directly: promptUnmatched and allowAll.
+  // Muse has no native "accept edits" mode, so T3 offers only the two it maps
+  // directly: :ask-me with promptUnmatched, and :unrestricted with allowAll.
   supportedRuntimeModes: ["approval-required", "full-access"],
 } as const;
 
@@ -60,7 +60,6 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 ) {
   if (!settings.enabled) return yield* makePendingMuseProvider(settings);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  // The driver passes a prepared environment; direct callers get the host's without META_API_KEY.
   const museEnvironment = environment ?? makeMuseEnvironment();
   const snapshot = (probe: ProviderProbeResult, models: ReadonlyArray<ServerProviderModel> = []) =>
     buildServerProvider({

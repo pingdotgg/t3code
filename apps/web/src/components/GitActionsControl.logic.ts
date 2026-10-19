@@ -206,8 +206,6 @@ export function buildMenuItems(
     dialogAction: "push",
   };
 
-  // An open change request is surfaced by the standalone attribution row, so
-  // the menu offers no change-request entry at all while one is open.
   if (hasOpenPr) {
     return [commitItem, pushItem];
   }
@@ -352,8 +350,6 @@ export function resolveQuickAction(
     };
   }
 
-  // An open change request is surfaced by the standalone attribution row in the
-  // details panel, so the action button rests in its disabled up-to-date state.
   if (hasOpenPr && gitStatus.hasUpstream) {
     return {
       label: "Commit",
@@ -432,6 +428,18 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
+/**
+ * Why the default-ref dialog cannot check out a feature branch, or null when it can.
+ * The server names that branch from the uncommitted changes, so a clean tree cannot use it.
+ */
+export function resolveFeatureBranchUnavailableReason(input: {
+  branchName: string;
+  hasWorkingTreeChanges: boolean;
+}): string | null {
+  if (input.hasWorkingTreeChanges) return null;
+  return `There are no changes to commit, so a feature branch can't be named. Create a branch yourself or continue on ${input.branchName}.`;
+}
+
 export function resolveThreadBranchUpdate(
   result: GitRunStackedActionResult,
 ): { branch: string } | null {
@@ -484,5 +492,4 @@ export function resolveLiveThreadBranchUpdate(input: {
   };
 }
 
-// Re-export from shared for backwards compatibility in this module's exports
 export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
