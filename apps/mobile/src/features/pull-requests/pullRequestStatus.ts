@@ -82,7 +82,7 @@ export function checkStatus(check: PullRequestCheck) {
     case "cancelled":
       return { label: "Cancelled", icon: "minus", tint: "accent-icon-muted" } as const;
     case "skipped":
-      return { label: "Skipped", icon: "minus", tint: "accent-icon-muted" } as const;
+      return { label: "Skipped", icon: "slash.circle", tint: "accent-icon-muted" } as const;
     case "neutral":
       return { label: "Neutral", icon: "minus", tint: "accent-icon-muted" } as const;
   }

@@ -23,6 +23,7 @@ import IconArrowUpRightCircle from "@tabler/icons-react-native/IconArrowUpRightC
 import IconArrowsLeftRight from "@tabler/icons-react-native/IconArrowsLeftRight";
 import IconArrowsDiagonal2 from "@tabler/icons-react-native/IconArrowsDiagonal2";
 import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
+import IconBan from "@tabler/icons-react-native/IconBan";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
@@ -236,6 +237,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   play: IconPlayerPlay,
   plus: IconPlus,
   minus: IconMinus,
+  "slash.circle": IconBan,
   "qrcode.viewfinder": IconQrcode,
   "point.3.connected.trianglepath.dotted": IconNetwork,
   "point.topleft.down.curvedto.point.bottomright.up": IconGitMerge,
