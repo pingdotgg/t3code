@@ -14,6 +14,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -139,6 +140,57 @@ class ReviewDiffCodeLayoutTest {
     val span = text.getSpans(0, text.length, BackgroundColorSpan::class.java).single()
     assertEquals(3, text.getSpanStart(span))
     assertEquals(21, text.getSpanEnd(span))
+  }
+
+  @Test
+  fun cachedContentWidthMatchesFreshMeasurementAfterUpdatesAndRemoval() {
+    val context = RuntimeEnvironment.getApplication()
+    val drawing = ReviewDiffCanvasDrawing(context)
+    val style = DiffStyle.defaults(1f)
+    fun assertFresh(
+      rows: List<DiffRow>,
+      tokens: Map<String, List<DiffToken>> = emptyMap(),
+      currentStyle: DiffStyle = style
+    ) {
+      assertEquals(
+        ReviewDiffCanvasDrawing(context).contentWidth(rows, tokens, currentStyle),
+        drawing.contentWidth(rows, tokens, currentStyle),
+      )
+    }
+
+    val line = row("مرحبا\t漢字 e\u0301 ".repeat(20))
+    val rows = listOf(line)
+    val tokens = mapOf(
+      line.id to listOf(
+        DiffToken("مرحبا", Color.RED, 2),
+        DiffToken(line.content.drop(5), Color.BLUE, 1),
+      ),
+    )
+    assertFresh(rows)
+    assertFresh(rows, tokens)
+    assertFresh(rows, tokens)
+    assertFresh(
+      rows,
+      tokens,
+      style.copy(
+        codeFontSizePx = 24f,
+        codeFontWeight = "bold",
+        gutterWidthPx = 90f,
+        codePaddingPx = 16f,
+        changeBarWidthPx = 5f,
+      ),
+    )
+
+    val hunk = line.copy(kind = "hunk", id = "hunk", text = "@@ context @@ ".repeat(100))
+    val hunkRows = listOf(line, hunk)
+    assertFresh(hunkRows, tokens)
+    assertFresh(hunkRows, tokens, style.copy(hunkFontSizePx = 22f, hunkFontWeight = "bold"))
+    val shortHunk = hunk.copy(text = "@@ short @@")
+    assertFresh(listOf(line, shortHunk), tokens)
+    assertFresh(listOf(shortHunk), tokens)
+    assertFresh(rows, tokens, style.copy(wordWrap = true))
+    assertFresh(rows, tokens)
+    assertFresh(rows)
   }
 
   private fun row(content: String) = DiffRow(

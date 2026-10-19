@@ -122,6 +122,7 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   readonly themeJson: string;
   readonly styleJson?: string;
   readonly rowHeight: number;
+  /** Android ignores this and measures the widest row. */
   readonly contentWidth: number;
   readonly initialRowIndex?: number;
   readonly scrollEnabled?: boolean;
