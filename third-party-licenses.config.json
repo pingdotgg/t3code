@@ -151,6 +151,19 @@
   ],
   "packageOverrides": [
     {
+      "repositoryUrl": "https://github.com/trycua/cua",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Cua AI, Inc."]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/jhugman/uniffi-bindgen-react-native",
+      "generatedNotice": {
+        "licenseId": "MPL-2.0"
+      }
+    },
+    {
       "name": "@react-native-async-storage/async-storage",
       "version": "3.1.1",
       "sourceUrl": "https://github.com/react-native-async-storage/async-storage",
