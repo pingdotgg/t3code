@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -287,7 +288,9 @@ export const make = Effect.gen(function* () {
       if (generation !== undefined || missingMergedAt) {
         yield* pullRequests.invalidate({ reference: ref });
       }
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      const summary = yield* pullRequests
+        .summary(ref, { recoverTransientFailure: false })
+        .pipe(Effect.provideService(SourceControlReadContext.Background, true));
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         generation !== undefined ||
@@ -306,6 +309,7 @@ export const make = Effect.gen(function* () {
         : knownUnstacked
           ? { stack: null }
           : yield* pullRequests.stack(ref, { includeDetails: false }).pipe(
+              Effect.provideService(SourceControlReadContext.Background, true),
               Effect.map((stack) => ({
                 stack: stack === null ? null : ({ kind: "native", ...stack } as const),
               })),

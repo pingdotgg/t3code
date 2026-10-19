@@ -66,6 +66,7 @@ import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryServic
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestWatchReactor from "./PullRequestWatchReactor.ts";
+import { makeGitHubReadAdmissionFixture } from "./testkit/pullRequestFixtures.ts";
 import { PULL_REQUEST_WATCH_WAKE_LIMIT } from "./pullRequestWatch.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
@@ -3084,6 +3085,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       let comments: Array<PullRequestComment> = [];
       let detailReads = 0;
       let activityReads = 0;
+      const admission = yield* makeGitHubReadAdmissionFixture;
+      let admissionTarget: "fingerprint" | "detail" | "activity" | null = "fingerprint";
+      const proveAdmission =
+        (name: "fingerprint" | "detail" | "activity") =>
+        <A, E, R>(answer: Effect.Effect<A, E, R>) => {
+          if (admissionTarget !== name) return answer;
+          admissionTarget = null;
+          return admission.proveBackgroundRead(name, answer);
+        };
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -3105,7 +3115,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                         }),
                       )
                     : Effect.succeed(fingerprint),
-                ),
+                ).pipe(proveAdmission("fingerprint")),
               invalidate: () =>
                 Effect.sync(() => {
                   cachedChecks = null;
@@ -3128,7 +3138,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                       url: null,
                     })),
                   };
-                }),
+                }).pipe(proveAdmission("detail")),
               activity: () =>
                 Effect.sync(() => {
                   activityReads += 1;
@@ -3139,7 +3149,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                     reviewThreads: [],
                     commits: [],
                   };
-                }),
+                }).pipe(proveAdmission("activity")),
             }),
           ),
         ),
@@ -3153,6 +3163,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.deepEqual(reads(), { detail: 1, activity: 1 });
 
+      admissionTarget = "detail";
       checks = { lint: "failure", test: "pending" };
       yield* reactor.sweep;
       assert.deepEqual(reads(), { detail: 2, activity: 1 });
@@ -3169,6 +3180,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(reads(), { detail: 3, activity: 1 });
 
       yield* TestClock.adjust("1 millis");
+      admissionTarget = "activity";
       comments = [
         {
           id: "comment-1",
@@ -3284,6 +3296,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const incomplete = mode !== "single page" && mode !== "paginated";
       let recovering = false;
       let pagesRead = 0;
+      const commentAdmission = mode === "paginated" ? yield* makeGitHubReadAdmissionFixture : null;
+      let commentAdmissionUsed = false;
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -3321,7 +3335,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 pagesRead += 1;
                 assert.equal(input.threadId, "review-thread");
                 if (input.cursor === "after-10") {
-                  return Effect.succeed({ comments: [eleventh], nextCursor: "after-11" });
+                  const page = Effect.succeed({ comments: [eleventh], nextCursor: "after-11" });
+                  if (commentAdmission === null || commentAdmissionUsed) return page;
+                  commentAdmissionUsed = true;
+                  return commentAdmission.proveBackgroundRead("thread-comments", page);
                 }
                 assert.equal(input.cursor, "after-11");
                 if (!recovering && mode === "page failure") {

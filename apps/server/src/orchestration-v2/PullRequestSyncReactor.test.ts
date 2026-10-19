@@ -39,7 +39,10 @@ import * as ServerActivation from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
-import type { PullRequestTestThread } from "./testkit/pullRequestFixtures.ts";
+import {
+  makeGitHubReadAdmissionFixture,
+  type PullRequestTestThread,
+} from "./testkit/pullRequestFixtures.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("sync-project");
@@ -388,6 +391,7 @@ describe("PullRequestSyncReactor", () => {
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
+        const admission = yield* makeGitHubReadAdmissionFixture;
         let attempts = 0;
         const nativeStack: PullRequestStack = {
           id: "stack",
@@ -399,7 +403,10 @@ describe("PullRequestSyncReactor", () => {
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(7)] })]),
           summary: (input) =>
-            Effect.succeed(makeSummary(input, { state: "merged", mergedAt: NOW })),
+            admission.proveBackgroundRead(
+              "summary",
+              Effect.succeed(makeSummary(input, { state: "merged", mergedAt: NOW })),
+            ),
           stack: () =>
             ++attempts === 1
               ? Effect.fail(
@@ -408,7 +415,7 @@ describe("PullRequestSyncReactor", () => {
                     detail: "temporary failure",
                   }),
                 )
-              : Effect.succeed(nativeStack),
+              : admission.proveBackgroundRead("stack", Effect.succeed(nativeStack)),
         });
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);

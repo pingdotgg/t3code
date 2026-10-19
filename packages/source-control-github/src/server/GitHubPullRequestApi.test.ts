@@ -18,6 +18,7 @@ import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
@@ -74,6 +75,7 @@ type ApiCall =
   | {
       readonly kind: "graphql";
       readonly partial?: boolean;
+      readonly authorization?: string | undefined;
       /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
       readonly host: string;
@@ -128,6 +130,7 @@ const mockHttp = Layer.succeed(
         query: sent.query,
         variables: sent.variables,
         partial: true,
+        authorization: request.headers.authorization,
       };
       // A mocked failure with a status is what GitHub would have answered with it.
       const answer = yield* (
@@ -849,6 +852,121 @@ layer("GitHubPullRequestApi.layer", (it) => {
         yield* Fiber.interrupt(first);
         expect(yield* Fiber.join(second)).toEqual({ accountId: "123", viewer: "viewer" });
         expect(verifications).toBe(2);
+      }),
+  );
+
+  it.effect.each(["hosts", "credentials", "scopes"] as const)(
+    "admits a mixed summary batch ahead of background work without combining %s",
+    (separation) =>
+      Effect.gen(function* () {
+        const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
+        const release = yield* Deferred.make<void>();
+        const full = yield* Deferred.make<void>();
+        const order: string[] = [];
+        let heldCount = 0;
+        const hold = policy.request(
+          { host: "github.com", operation: "hold", resource: "graphql", allowReserve: false },
+          () =>
+            Effect.gen(function* () {
+              if (++heldCount === 8) yield* Deferred.succeed(full, undefined);
+              yield* Deferred.await(release);
+              return { _tag: "Ok" as const, status: 200, headers: {}, value: undefined };
+            }),
+        );
+        const held = yield* Effect.forEach(Array.from({ length: 8 }), () =>
+          hold.pipe(
+            Effect.provideService(SourceControlReadContext.Background, true),
+            Effect.forkChild({ startImmediately: true }),
+          ),
+        );
+        yield* Deferred.await(full);
+        const backlog = yield* Effect.forEach(["first", "second"], (name) =>
+          policy
+            .request(
+              { host: "github.com", operation: name, resource: "graphql", allowReserve: false },
+              () =>
+                Effect.sync(() => {
+                  order.push(name);
+                  return { _tag: "Ok" as const, status: 200, headers: {}, value: undefined };
+                }),
+            )
+            .pipe(
+              Effect.provideService(SourceControlReadContext.Background, true),
+              Effect.forkChild({ startImmediately: true }),
+            ),
+        );
+        mockedExecute.mockImplementation((call) =>
+          Effect.sync(() => {
+            assert.equal(call.kind, "graphql");
+            const variables = call.kind === "graphql" ? call.variables : {};
+            order.push(Object.values(variables ?? {}).includes(30) ? "background" : "mixed");
+            return output(
+              encodeJson({
+                data: {
+                  _0_repository: { pullRequest: null },
+                  _1_repository: { pullRequest: null },
+                },
+              }),
+            );
+          }),
+        );
+        const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const reads = yield* Effect.forEach(
+          [
+            { group: "a", background: true },
+            { group: "b", background: true },
+            { group: "b", background: false },
+            { group: "a", background: true },
+          ],
+          ({ group, background }, index) => {
+            const host = separation === "hosts" ? `github.${group}.test` : "github.com";
+            const credential = separation === "credentials" ? group : "shared";
+            return api
+              .getPullRequestSummary({
+                cwd: "/w",
+                host,
+                repository: "acme/web",
+                number: 30 + index,
+              })
+              .pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+                  host,
+                  token: Redacted.make(credential),
+                  credentialFingerprint: credential,
+                }),
+                Effect.provideService(
+                  SourceControlRateLimit.CredentialScope,
+                  separation === "scopes" ? group : "",
+                ),
+                Effect.provideService(SourceControlReadContext.Background, background),
+                Effect.result,
+              );
+          },
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 millis");
+        expect(mockedExecute).not.toHaveBeenCalled();
+        yield* Deferred.succeed(release, undefined);
+        const results = yield* Fiber.join(reads);
+        yield* Effect.forEach([...held, ...backlog], Fiber.join);
+        expect(
+          results.every(
+            (result) =>
+              Result.isFailure(result) && result.failure._tag === "GitHubApiNotFoundError",
+          ),
+        ).toBe(true);
+        expect(order).toEqual(["first", "mixed", "second", "background"]);
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+        expect(varsAt(0)).toMatchObject({ _0_number: 31, _1_number: 32 });
+        expect(varsAt(1)).toMatchObject({ _0_number: 30, _1_number: 33 });
+        expect(callAt(0)).toMatchObject({
+          host: separation === "hosts" ? "github.b.test" : "github.com",
+          authorization: `Bearer ${separation === "credentials" ? "b" : "shared"}`,
+        });
+        expect(callAt(1)).toMatchObject({
+          host: separation === "hosts" ? "github.a.test" : "github.com",
+          authorization: `Bearer ${separation === "credentials" ? "a" : "shared"}`,
+        });
       }),
   );
 

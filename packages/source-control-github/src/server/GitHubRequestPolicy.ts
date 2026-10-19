@@ -9,6 +9,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
+import * as SourceControlReadContext from "@t3tools/source-control-core/server/SourceControlReadContext";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
@@ -240,6 +241,10 @@ export const make = Effect.gen(function* () {
   const quota = yield* GitHubQuota.GitHubQuota;
   const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
   const slots = yield* Semaphore.make(CONCURRENCY);
+  const backgroundAdmission = yield* Semaphore.make(1);
+  const tryBackgroundAdmission = backgroundAdmission.takeIfAvailable(1);
+  const waitForBackgroundAdmission = backgroundAdmission.withPermit(Effect.void);
+  let backgroundPending = 0;
 
   const credential: GitHubRequestPolicy["Service"]["credential"] = Effect.fn(
     "GitHubRest.credential",
@@ -345,10 +350,59 @@ export const make = Effect.gen(function* () {
         );
         return yield* settle(lease, answer);
       });
+      const background = yield* SourceControlReadContext.Background;
+      const gated = background
+        ? Effect.uninterruptibleMask((restore) =>
+            Effect.suspend(() => {
+              backgroundPending++;
+              let pending = true;
+              let admissionHeld = false;
+              const releaseAdmission = Effect.suspend(() => {
+                if (pending) {
+                  pending = false;
+                  backgroundPending--;
+                }
+                if (!admissionHeld) return Effect.void;
+                admissionHeld = false;
+                return backgroundAdmission.release(1).pipe(Effect.asVoid);
+              });
+              // Record ownership while masked: cancellation after a restored manual take can
+              // otherwise lose the admission ticket before its finalizer knows it was acquired.
+              const acquireAdmission: Effect.Effect<void> = tryBackgroundAdmission.pipe(
+                Effect.flatMap((available) => {
+                  if (!available) {
+                    return restore(waitForBackgroundAdmission).pipe(
+                      Effect.andThen(acquireAdmission),
+                    );
+                  }
+                  admissionHeld = true;
+                  return Effect.void;
+                }),
+              );
+              return acquireAdmission.pipe(
+                Effect.flatMap(() =>
+                  restore(
+                    slots.withPermit(
+                      // Only one background read waits at the shared gate. Return its ticket
+                      // before HTTP starts so background reads can still fill all eight slots.
+                      Effect.uninterruptible(releaseAdmission).pipe(Effect.andThen(run)),
+                    ),
+                  ),
+                ),
+                Effect.ensuring(releaseAdmission),
+              );
+            }),
+          )
+        : Effect.suspend(() =>
+            // Give a woken admission waiter a turn before a fresh ordinary read retakes a slot.
+            backgroundPending > 0
+              ? Effect.yieldNow.pipe(Effect.andThen(slots.withPermit(run)))
+              : slots.withPermit(run),
+          );
       // The rate-limit scope follows the credential, so a pause on one account never blocks another.
-      return yield* slots
-        .withPermit(run)
-        .pipe(Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint));
+      return yield* gated.pipe(
+        Effect.provideService(SourceControlRateLimit.CredentialScope, scope || fingerprint),
+      );
     });
 
   return GitHubRequestPolicy.of({ request, credential });
